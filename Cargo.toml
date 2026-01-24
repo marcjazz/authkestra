@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "authly-core",
+    "authly-flow",
+    "authly-session",
+    "authly-token",
+    "authly-providers-github",
+    "authly-axum",
+]

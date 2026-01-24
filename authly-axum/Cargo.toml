@@ -1,0 +1,22 @@
+[package]
+name = "authly-axum"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+authly-core = { path = "../authly-core" }
+authly-session = { path = "../authly-session" }
+authly-flow = { path = "../authly-flow" }
+authly-providers-github = { path = "../authly-providers-github" }
+axum = "0.7"
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tower-cookies = "0.10"
+http = "1.0"
+
+[[example]]
+name = "axum_github"
+path = "../examples/axum_github.rs"

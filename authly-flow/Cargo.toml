@@ -1,0 +1,9 @@
+[package]
+name = "authly-flow"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+authly-core = { path = "../authly-core" }
+uuid = { version = "1.0", features = ["v4"] }
+async-trait = "0.1"
