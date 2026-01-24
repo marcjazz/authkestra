@@ -164,6 +164,36 @@ pub trait SessionStore: Send + Sync + 'static {
     async fn save(&self, session: &Session) -> Result<(), authly_core::AuthError>;
     async fn delete(&self, id: &str) -> Result<(), authly_core::AuthError>;
 }
+
+#### SQL Support (`sqlx`)
+
+When the `store-sqlx` feature is enabled (along with `postgres`, `mysql`, or `sqlite`), a `SqlStore` is available.
+
+**Schema:**
+
+```sql
+CREATE TABLE authly_sessions (
+    id VARCHAR(128) PRIMARY KEY,
+    provider_id VARCHAR(255) NOT NULL,
+    external_id VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    username VARCHAR(255),
+    claims TEXT NOT NULL, -- JSON serialized string of additional attributes
+    expires_at TIMESTAMP NOT NULL -- TIMESTAMPTZ for Postgres, INTEGER for Sqlite
+);
+CREATE INDEX idx_authly_sessions_expires_at ON authly_sessions(expires_at);
+CREATE INDEX idx_authly_sessions_provider ON authly_sessions(provider_id, external_id);
+```
+
+**Usage Example (Postgres):**
+
+```rust
+use authly_session::SqlStore;
+use sqlx::postgres::PgPool;
+
+let pool = PgPool::connect("postgres://localhost/auth").await?;
+let store = SqlStore::new(pool);
+```
 ```
 
 ### `authly-axum`
