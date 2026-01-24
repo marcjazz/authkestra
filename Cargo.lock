@@ -81,6 +81,7 @@ dependencies = [
  "http 1.4.0",
  "serde",
  "serde_json",
+ "sqlx",
  "tokio",
  "tower-cookies",
  "uuid",

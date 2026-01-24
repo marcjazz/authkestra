@@ -8,9 +8,10 @@ use axum::{
     routing::get,
     Router,
 };
-use authly_session::SessionStore;
+use authly_session::{SessionStore, SqlStore};
 use std::sync::Arc;
 use tower_cookies::{Cookies, CookieManagerLayer};
+use sqlx::sqlite::SqlitePool;
 
 #[derive(Clone)]
 struct AppState {
@@ -45,9 +46,27 @@ async fn main() {
     );
     let github_flow = Arc::new(OAuth2Flow::new(provider));
     let token_manager = Arc::new(TokenManager::new(jwt_secret.as_bytes()));
-    // For this example, we'll use a simple memory store for sessions if needed,
-    // although this example primarily uses JWT.
-    let session_store: Arc<dyn SessionStore> = Arc::new(authly_session::MemoryStore::new());
+    // For this example, we'll use SQLite for session persistence.
+    let db_url = "sqlite::memory:";
+    let pool = SqlitePool::connect(db_url).await.expect("Failed to connect to SQLite");
+    
+    // Initialize the sessions table
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS authly_sessions (
+            id VARCHAR(128) PRIMARY KEY,
+            provider_id VARCHAR(255) NOT NULL,
+            external_id VARCHAR(255) NOT NULL,
+            email VARCHAR(255),
+            username VARCHAR(255),
+            claims TEXT NOT NULL,
+            expires_at TIMESTAMP NOT NULL
+        )"
+    )
+    .execute(&pool)
+    .await
+    .expect("Failed to create sessions table");
+
+    let session_store: Arc<dyn SessionStore> = Arc::new(SqlStore::new(pool));
 
     let state = AppState {
         github_flow,
