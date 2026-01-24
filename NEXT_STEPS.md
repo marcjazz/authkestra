@@ -27,7 +27,7 @@ Add more OAuth providers to make the library more versatile.
 - [x] Add API documentation (Rustdoc) for public traits and structs.
 
 ## 6. Security Hardening
-- [ ] **PKCE Support:** Implement Proof Key for Code Exchange for better security, especially for public clients.
+- [x] **PKCE Support:** Implement Proof Key for Code Exchange for better security, especially for public clients.
 - [ ] **Secure Session Defaults:** Audit cookie security settings and provide best-practice defaults.
 
 ## 7. Extended Storage & Integrations
