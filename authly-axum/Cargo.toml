@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 authly-core = { path = "../authly-core" }
-authly-session = { path = "../authly-session" }
+authly-session = { path = "../authly-session", features = ["store-redis"] }
 authly-flow = { path = "../authly-flow" }
 authly-providers-github = { path = "../authly-providers-github" }
 authly-providers-google = { path = "../authly-providers-google" }
