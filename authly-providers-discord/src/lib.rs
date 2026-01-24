@@ -10,6 +10,7 @@ pub struct DiscordProvider {
     http_client: reqwest::Client,
     token_url: String,
     user_url: String,
+    revoke_url: String,
 }
 
 impl DiscordProvider {
@@ -21,13 +22,15 @@ impl DiscordProvider {
             http_client: reqwest::Client::new(),
             token_url: "https://discord.com/api/oauth2/token".to_string(),
             user_url: "https://discord.com/api/users/@me".to_string(),
+            revoke_url: "https://discord.com/api/oauth2/token/revoke".to_string(),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn with_test_urls(mut self, token_url: String, user_url: String) -> Self {
+    pub(crate) fn with_test_urls(mut self, token_url: String, user_url: String, revoke_url: String) -> Self {
         self.token_url = token_url;
         self.user_url = user_url;
+        self.revoke_url = revoke_url;
         self
     }
 }
@@ -143,6 +146,26 @@ impl OAuthProvider for DiscordProvider {
             scope: token_response.scope,
         })
     }
+
+    async fn revoke_token(&self, token: &str) -> Result<(), AuthError> {
+        let response = self.http_client
+            .post(&self.revoke_url)
+            .form(&[
+                ("client_id", &self.client_id),
+                ("client_secret", &self.client_secret),
+                ("token", &token.to_string()),
+            ])
+            .send()
+            .await
+            .map_err(|_| AuthError::Network)?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            Err(AuthError::Provider(format!("Failed to revoke token: {}", error_text)))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -174,7 +197,7 @@ mod tests {
             "client_id".to_string(),
             "client_secret".to_string(),
             "http://localhost/callback".to_string(),
-        ).with_test_urls(token_url, user_url);
+        ).with_test_urls(token_url, user_url, "http://localhost/api/oauth2/token/revoke".to_string());
 
         let (identity, token) = provider.exchange_code_for_identity("test_code").await.unwrap();
 

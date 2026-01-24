@@ -52,6 +52,11 @@ pub trait OAuthProvider: Send + Sync {
     async fn refresh_token(&self, _refresh_token: &str) -> Result<OAuthToken, AuthError> {
         Err(AuthError::Provider("Token refresh not supported by this provider".into()))
     }
+
+    /// Revoke an access token.
+    async fn revoke_token(&self, _token: &str) -> Result<(), AuthError> {
+        Err(AuthError::Provider("Token revocation not supported by this provider".into()))
+    }
 }
 
 /// Trait for a Credentials-based provider (e.g., Email/Password).

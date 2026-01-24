@@ -11,6 +11,7 @@ pub struct GoogleProvider {
     auth_url: String,
     token_url: String,
     userinfo_url: String,
+    revoke_url: String,
 }
 
 impl GoogleProvider {
@@ -23,14 +24,16 @@ impl GoogleProvider {
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
             token_url: "https://oauth2.googleapis.com/token".to_string(),
             userinfo_url: "https://www.googleapis.com/oauth2/v3/userinfo".to_string(),
+            revoke_url: "https://oauth2.googleapis.com/revoke".to_string(),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn with_test_urls(mut self, auth_url: String, token_url: String, userinfo_url: String) -> Self {
+    pub(crate) fn with_test_urls(mut self, auth_url: String, token_url: String, userinfo_url: String, revoke_url: String) -> Self {
         self.auth_url = auth_url;
         self.token_url = token_url;
         self.userinfo_url = userinfo_url;
+        self.revoke_url = revoke_url;
         self
     }
 }
@@ -153,6 +156,22 @@ impl OAuthProvider for GoogleProvider {
             scope: token_response.scope,
         })
     }
+
+    async fn revoke_token(&self, token: &str) -> Result<(), AuthError> {
+        let response = self.http_client
+            .post(&self.revoke_url)
+            .form(&[("token", token)])
+            .send()
+            .await
+            .map_err(|_| AuthError::Network)?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            Err(AuthError::Provider(format!("Failed to revoke token: {}", error_text)))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -192,7 +211,7 @@ mod tests {
             "client_id".to_string(),
             "client_secret".to_string(),
             "http://localhost/callback".to_string(),
-        ).with_test_urls(auth_url, token_url, userinfo_url);
+        ).with_test_urls(auth_url, token_url, userinfo_url, "http://localhost/revoke".to_string());
 
         let (identity, token) = provider.exchange_code_for_identity("test_code").await.unwrap();
 

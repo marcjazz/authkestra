@@ -143,6 +143,26 @@ impl OAuthProvider for GithubProvider {
             scope: token_response.scope,
         })
     }
+
+    async fn revoke_token(&self, token: &str) -> Result<(), AuthError> {
+        let response = self.http_client
+            .delete(format!("https://api.github.com/applications/{}/token", self.client_id))
+            .basic_auth(&self.client_id, Some(&self.client_secret))
+            .header("User-Agent", "authly-rs")
+            .json(&serde_json::json!({
+                "access_token": token
+            }))
+            .send()
+            .await
+            .map_err(|_| AuthError::Network)?;
+
+        if response.status().is_success() || response.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            Err(AuthError::Provider(format!("Failed to revoke token: {}", error_text)))
+        }
+    }
 }
 
 #[cfg(test)]
