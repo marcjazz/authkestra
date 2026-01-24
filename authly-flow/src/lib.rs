@@ -11,9 +11,9 @@ impl<P: OAuthProvider> OAuth2Flow<P> {
     }
 
     /// Generates the redirect URL and CSRF state.
-    pub fn initiate_login(&self) -> (String, String) {
-        let state = uuid::Uuid::new_v4().to_string(); 
-        let url = self.provider.get_authorization_url(&state, &[]);
+    pub fn initiate_login(&self, scopes: &[&str]) -> (String, String) {
+        let state = uuid::Uuid::new_v4().to_string();
+        let url = self.provider.get_authorization_url(&state, scopes);
         (url, state)
     }
 
@@ -28,6 +28,11 @@ impl<P: OAuthProvider> OAuth2Flow<P> {
     /// Refresh an access token using a refresh token.
     pub async fn refresh_access_token(&self, refresh_token: &str) -> Result<OAuthToken, AuthError> {
         self.provider.refresh_token(refresh_token).await
+    }
+
+    /// Revoke an access token.
+    pub async fn revoke_token(&self, token: &str) -> Result<(), AuthError> {
+        self.provider.revoke_token(token).await
     }
 }
 

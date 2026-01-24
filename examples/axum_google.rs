@@ -1,4 +1,4 @@
-use authly_axum::AuthSession;
+use authly_axum::{AuthSession, SessionConfig};
 use authly_flow::OAuth2Flow;
 use authly_providers_google::GoogleProvider;
 use authly_session::{Session, SessionStore};
@@ -16,12 +16,19 @@ use tower_cookies::{cookie::SameSite, Cookie, Cookies, CookieManagerLayer};
 struct AppState {
     google_flow: Arc<OAuth2Flow<GoogleProvider>>,
     session_store: Arc<dyn SessionStore>,
+    session_config: SessionConfig,
 }
 
 // Implement FromRef for Axum
 impl axum::extract::FromRef<AppState> for Arc<dyn SessionStore> {
     fn from_ref(state: &AppState) -> Self {
         state.session_store.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for SessionConfig {
+    fn from_ref(state: &AppState) -> Self {
+        state.session_config.clone()
     }
 }
 
@@ -55,6 +62,7 @@ async fn main() {
     let state = AppState {
         google_flow,
         session_store,
+        session_config: SessionConfig::default(),
     };
 
     let app = Router::new()
@@ -78,7 +86,7 @@ async fn google_login(
     State(state): State<AppState>,
     cookies: Cookies,
 ) -> impl IntoResponse {
-    let (url, csrf_state) = state.google_flow.initiate_login();
+    let (url, csrf_state) = state.google_flow.initiate_login(&["openid", "email", "profile"]);
     
     let mut cookie = Cookie::new("oauth_state", csrf_state);
     cookie.set_path("/");
@@ -140,11 +148,7 @@ async fn google_callback(
 
     state.session_store.save_session(&session).await.unwrap();
     
-    let mut cookie = Cookie::new("authly_session", session.id);
-    cookie.set_path("/");
-    cookie.set_http_only(true);
-    cookie.set_same_site(SameSite::Lax);
-    
+    let cookie = state.session_config.create_cookie(session.id);
     cookies.add(cookie);
 
     Redirect::to("/protected").into_response()
