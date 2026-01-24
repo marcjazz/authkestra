@@ -15,7 +15,7 @@ This roadmap outlines the steps to reach a production-ready state.
 ## 3. Expand Provider Support
 Add more OAuth providers to make the library more versatile.
 - [x] **Google:** Implement `authly-providers-google`.
-- [ ] **Discord:** Implement `authly-providers-discord`.
+- [x] **Discord:** Implement `authly-providers-discord`.
 
 ## 4. Enhanced Security & Features
 - [ ] CSRF Protection: Ensure the `state` parameter in OAuth is cryptographically secure and validated.
