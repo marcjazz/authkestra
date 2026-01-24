@@ -74,6 +74,7 @@ where
     cookie.set_path("/");
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Lax);
+    cookie.set_secure(true);
 
     cookies.add(cookie);
 
@@ -81,6 +82,7 @@ where
     pkce_cookie.set_path("/");
     pkce_cookie.set_http_only(true);
     pkce_cookie.set_same_site(SameSite::Lax);
+    pkce_cookie.set_secure(true);
     cookies.add(pkce_cookie);
 
     Redirect::to(&url)
@@ -108,10 +110,12 @@ where
     // Remove cookies after use
     let mut remove_state = Cookie::new("oauth_state", "");
     remove_state.set_path("/");
+    remove_state.set_secure(true);
     cookies.remove(remove_state);
 
     let mut remove_pkce = Cookie::new("oauth_pkce_verifier", "");
     remove_pkce.set_path("/");
+    remove_pkce.set_secure(true);
     cookies.remove(remove_pkce);
 
     let (identity, token, _local_user) = flow
@@ -153,10 +157,11 @@ where
         identity.attributes.insert("refresh_token".to_string(), rt);
     }
 
+    let session_duration = config.max_age.unwrap_or(chrono::Duration::hours(24));
     let session = Session {
         id: uuid::Uuid::new_v4().to_string(),
         identity,
-        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+        expires_at: chrono::Utc::now() + session_duration,
     };
 
     store
@@ -198,4 +203,31 @@ where
         "token_type": "Bearer",
         "expires_in": expires_in_secs
     })))
+}
+
+/// Helper to handle logout by deleting the session from the store and clearing the cookie.
+///
+/// Returns a redirect to the specified URL.
+pub async fn logout(
+    cookies: Cookies,
+    store: Arc<dyn SessionStore>,
+    config: SessionConfig,
+    redirect_to: &str,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let session_id = cookies
+        .get(&config.cookie_name)
+        .map(|c| c.value().to_string());
+
+    if let Some(id) = session_id {
+        store
+            .delete_session(&id)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    let mut cookie = config.create_cookie("".to_string());
+    cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::ZERO));
+    cookies.remove(cookie);
+
+    Ok(Redirect::to(redirect_to))
 }

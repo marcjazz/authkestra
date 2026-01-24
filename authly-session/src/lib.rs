@@ -88,31 +88,38 @@ impl SessionStore for RedisStore {
     }
 }
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+#[derive(Default)]
+pub struct MemoryStore {
+    sessions: Mutex<HashMap<String, Session>>,
+}
+
+impl MemoryStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl SessionStore for MemoryStore {
+    async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
+        Ok(self.sessions.lock().unwrap().get(id).cloned())
+    }
+    async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
+        self.sessions.lock().unwrap().insert(session.id.clone(), session.clone());
+        Ok(())
+    }
+    async fn delete_session(&self, id: &str) -> Result<(), AuthError> {
+        self.sessions.lock().unwrap().remove(id);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    #[derive(Default)]
-    struct MemoryStore {
-        sessions: Mutex<HashMap<String, Session>>,
-    }
-
-    #[async_trait]
-    impl SessionStore for MemoryStore {
-        async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
-            Ok(self.sessions.lock().unwrap().get(id).cloned())
-        }
-        async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
-            self.sessions.lock().unwrap().insert(session.id.clone(), session.clone());
-            Ok(())
-        }
-        async fn delete_session(&self, id: &str) -> Result<(), AuthError> {
-            self.sessions.lock().unwrap().remove(id);
-            Ok(())
-        }
-    }
 
     #[tokio::test]
     async fn test_memory_store() {
