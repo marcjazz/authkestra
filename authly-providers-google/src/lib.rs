@@ -59,30 +59,42 @@ struct GoogleUserResponse {
 
 #[async_trait]
 impl OAuthProvider for GoogleProvider {
-    fn get_authorization_url(&self, state: &str, scopes: &[&str]) -> String {
+    fn get_authorization_url(&self, state: &str, scopes: &[&str], code_challenge: Option<&str>) -> String {
         let scope_param = if scopes.is_empty() {
             "openid email profile".to_string()
         } else {
             scopes.join(" ")
         };
 
-        format!(
+        let mut url = format!(
             "{}?client_id={}&redirect_uri={}&state={}&scope={}&response_type=code&access_type=offline&prompt=consent",
             self.auth_url, self.client_id, self.redirect_uri, state, scope_param
-        )
+        );
+
+        if let Some(challenge) = code_challenge {
+            url.push_str(&format!("&code_challenge={}&code_challenge_method=S256", challenge));
+        }
+
+        url
     }
 
-    async fn exchange_code_for_identity(&self, code: &str) -> Result<(Identity, OAuthToken), AuthError> {
+    async fn exchange_code_for_identity(&self, code: &str, code_verifier: Option<&str>) -> Result<(Identity, OAuthToken), AuthError> {
         // 1. Exchange code for access token
+        let mut params = vec![
+            ("code", code.to_string()),
+            ("client_id", self.client_id.clone()),
+            ("client_secret", self.client_secret.clone()),
+            ("redirect_uri", self.redirect_uri.clone()),
+            ("grant_type", "authorization_code".to_string()),
+        ];
+
+        if let Some(verifier) = code_verifier {
+            params.push(("code_verifier", verifier.to_string()));
+        }
+
         let token_response = self.http_client
             .post(&self.token_url)
-            .form(&[
-                ("code", code),
-                ("client_id", &self.client_id),
-                ("client_secret", &self.client_secret),
-                ("redirect_uri", &self.redirect_uri),
-                ("grant_type", "authorization_code"),
-            ])
+            .form(&params)
             .send()
             .await
             .map_err(|_| AuthError::Network)?
@@ -213,7 +225,7 @@ mod tests {
             "http://localhost/callback".to_string(),
         ).with_test_urls(auth_url, token_url, userinfo_url, "http://localhost/revoke".to_string());
 
-        let (identity, token) = provider.exchange_code_for_identity("test_code").await.unwrap();
+        let (identity, token) = provider.exchange_code_for_identity("test_code", None).await.unwrap();
 
         assert_eq!(identity.provider_id, "google");
         assert_eq!(identity.external_id, "google-123");

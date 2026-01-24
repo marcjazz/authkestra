@@ -18,19 +18,19 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
     }
 
     /// Generates the redirect URL and CSRF state.
-    pub fn initiate_login(&self, scopes: &[&str]) -> (String, String) {
+    pub fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, String) {
         let state = uuid::Uuid::new_v4().to_string();
-        let url = self.provider.get_authorization_url(&state, scopes);
+        let url = self.provider.get_authorization_url(&state, scopes, pkce_challenge);
         (url, state)
     }
 
     /// Completes the flow by exchanging the code.
     /// If a mapper is provided, it will also map the identity to a local user.
-    pub async fn finalize_login(&self, code: &str, received_state: &str, expected_state: &str) -> Result<(Identity, OAuthToken, Option<M::LocalUser>), AuthError> {
+    pub async fn finalize_login(&self, code: &str, received_state: &str, expected_state: &str, pkce_verifier: Option<&str>) -> Result<(Identity, OAuthToken, Option<M::LocalUser>), AuthError> {
         if received_state != expected_state {
             return Err(AuthError::CsrfMismatch);
         }
-        let (identity, token) = self.provider.exchange_code_for_identity(code).await?;
+        let (identity, token) = self.provider.exchange_code_for_identity(code, pkce_verifier).await?;
         
         let local_user = if let Some(mapper) = &self.mapper {
             Some(mapper.map_user(&identity).await?)

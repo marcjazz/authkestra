@@ -55,7 +55,7 @@ struct GithubUserResponse {
 
 #[async_trait]
 impl OAuthProvider for GithubProvider {
-    fn get_authorization_url(&self, state: &str, scopes: &[&str]) -> String {
+    fn get_authorization_url(&self, state: &str, scopes: &[&str], _code_challenge: Option<&str>) -> String {
         let scope_param = if scopes.is_empty() {
             "user:email".to_string()
         } else {
@@ -68,7 +68,7 @@ impl OAuthProvider for GithubProvider {
         )
     }
 
-    async fn exchange_code_for_identity(&self, code: &str) -> Result<(Identity, OAuthToken), AuthError> {
+    async fn exchange_code_for_identity(&self, code: &str, _code_verifier: Option<&str>) -> Result<(Identity, OAuthToken), AuthError> {
         // 1. Exchange code for access token
         let token_response = self.http_client
             .post(&self.token_url)
@@ -196,7 +196,7 @@ mod tests {
             "http://localhost/callback".to_string(),
         ).with_test_urls(token_url, user_url);
 
-        let (identity, token) = provider.exchange_code_for_identity("test_code").await.unwrap();
+        let (identity, token) = provider.exchange_code_for_identity("test_code", None).await.unwrap();
 
         assert_eq!(identity.provider_id, "github");
         assert_eq!(identity.external_id, "123");
