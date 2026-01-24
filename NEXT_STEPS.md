@@ -20,8 +20,8 @@ Add more OAuth providers to make the library more versatile.
 ## 4. Enhanced Security & Features
 - [x] CSRF Protection: Ensure the `state` parameter in OAuth is cryptographically secure and validated.
 - [x] Token Rotation: Implement refresh tokens if the provider supports it.
-- [ ] User Mapping: Allow mapping provider identities to a local user database (e.g., using an ORM like `sqlx` or `diesel`).
+- [x] User Mapping: Allow mapping provider identities to a local user database (e.g., using an ORM like `sqlx` or `diesel`).
 
 ## 5. Documentation
-- [ ] Add `README.md` for each crate.
-- [ ] Add API documentation (Rustdoc) for public traits and structs.
+- [x] Add `README.md` for each crate.
+- [x] Add API documentation (Rustdoc) for public traits and structs.
