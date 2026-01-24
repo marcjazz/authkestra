@@ -4,7 +4,7 @@ use authly_providers_google::GoogleProvider;
 use authly_session::{Session, SessionStore};
 use axum::{
     extract::{Query, State},
-    response::{IntoResponse, Json, Redirect},
+    response::{IntoResponse, Redirect},
     routing::get,
     Router,
 };
@@ -62,7 +62,6 @@ async fn main() {
         .route("/auth/google", get(google_login))
         .route("/auth/google/callback", get(google_callback))
         .route("/protected", get(protected))
-        .route("/refresh", get(refresh_handler))
         .layer(CookieManagerLayer::new())
         .with_state(state);
 
@@ -112,7 +111,7 @@ async fn google_callback(
     remove_cookie.set_path("/");
     cookies.remove(remove_cookie);
 
-    let (identity, _token) = match state
+    let (mut identity, token) = match state
         .google_flow
         .finalize_login(&params.code, &params.state, &expected_state)
         .await
@@ -121,8 +120,15 @@ async fn google_callback(
         Err(e) => return format!("Authentication failed: {}", e).into_response(),
     };
 
-    let mut identity = identity;
-    if let Some(rt) = _token.refresh_token {
+    // Store tokens in identity attributes
+    identity.attributes.insert("access_token".to_string(), token.access_token);
+    
+    if let Some(expires_in) = token.expires_in {
+        let expires_at = chrono::Utc::now().timestamp() + expires_in as i64;
+        identity.attributes.insert("expires_at".to_string(), expires_at.to_string());
+    }
+
+    if let Some(rt) = token.refresh_token {
         identity.attributes.insert("refresh_token".to_string(), rt);
     }
 
@@ -154,26 +160,6 @@ async fn protected(AuthSession(session): AuthSession) -> impl IntoResponse {
     )
 }
 
-async fn refresh_handler(
-    State(state): State<AppState>,
-    AuthSession(session): AuthSession,
-) -> impl IntoResponse {
-    let refresh_token = match session.identity.attributes.get("refresh_token") {
-        Some(rt) => rt,
-        None => return "No refresh token found in session. Try logging in again.".into_response(),
-    };
-
-    match state.google_flow.refresh_access_token(refresh_token).await {
-        Ok(token) => Json(serde_json::json!({
-            "access_token": token.access_token,
-            "expires_in": token.expires_in,
-            "token_type": token.token_type,
-            "scope": token.scope,
-        }))
-        .into_response(),
-        Err(e) => format!("Failed to refresh token: {}", e).into_response(),
-    }
-}
 
 // Minimal MemoryStore for example
 #[derive(Default)]
