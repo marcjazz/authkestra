@@ -1,35 +1,29 @@
 # Next Steps for authly-rs Development
 
-This roadmap outlines the immediate next steps required to transition `authly` from its initial setup to a production-ready state, focusing on implementing core logic, persistence, and testing.
+This roadmap outlines the steps to reach a production-ready state.
 
-## 1. Implement Real Logic in `authly-providers-github`
+## 1. Verify Implementation (Done)
+- [x] Implement real OAuth logic in `authly-providers-github`.
+- [x] Implement Redis persistence in `authly-session`.
+- [x] Add unit tests for providers and session store.
 
-The current implementation in [`authly-providers-github/src/lib.rs`](authly-providers-github/src/lib.rs:1) is likely mocked. Replace the mock implementation with actual OAuth flow logic to communicate with the GitHub API for user authentication.
+## 2. Run and Verify Example
+The example application `examples/axum_github.rs` is ready to run.
 
-*   **Action:** Update provider logic to handle the OAuth redirection, token exchange, and user information retrieval from GitHub.
-*   **Dependencies:** Ensure you have the necessary secrets (Client ID and Secret) configured, likely through environment variables or a configuration layer not yet fully implemented.
+*   **Action:** Configure environment variables in `.env` (use `.env.example` as a template).
+*   **Run:** `cargo run --example axum_github`
+*   **Verify:** Log in with GitHub and check if the session cookie is set and persisted in Redis (if enabled) or memory.
 
-## 2. Implement Real Persistence in `authly-session`
+## 3. Expand Provider Support
+Add more OAuth providers to make the library more versatile.
+*   **Google:** Implement `authly-providers-google`.
+*   **Discord:** Implement `authly-providers-discord`.
 
-The session management layer in [`authly-session/src/lib.rs`](authly-session/src/lib.rs:1) must be upgraded from a likely in-memory store to a durable one.
+## 4. Enhanced Security & Features
+*   **CSRF Protection:** Ensure the `state` parameter in OAuth is cryptographically secure and validated.
+*   **Token Rotation:** Implement refresh tokens if the provider supports it.
+*   **User Mapping:** Allow mapping provider identities to a local user database (e.g., using an ORM like `sqlx` or `diesel`).
 
-*   **Action:** Integrate a production-ready persistence layer, such as **Redis** or a **SQL database** (e.g., PostgreSQL, SQLite via a suitable Rust ORM/client), to store session tokens and user context securely.
-*   **Consideration:** Review the `authly-core` abstraction for session management to ensure compatibility with the chosen backend.
-
-## 3. Run the Example with Real Credentials
-
-Once the GitHub provider and session persistence are implemented, test the full flow using the provided example application.
-
-*   **Action:** Set environment variables for `AUTHLY_GITHUB_CLIENT_ID` and `AUTHLY_GITHUB_CLIENT_SECRET` with valid credentials obtained from the GitHub Developer settings.
-*   **Target:** Run the example application, likely found in [`examples/axum_github.rs`](examples/axum_github.rs:1).
-*   **Verification:** Confirm that a user can successfully log in via GitHub and maintain a session across requests.
-
-## 4. Add Comprehensive Tests
-
-Ensure the reliability and correctness of the implemented features.
-
-*   **Action:** Write unit and integration tests for:
-    *   The concrete provider implementation in [`authly-providers-github`](authly-providers-github/src/lib.rs).
-    *   The session management logic in [`authly-session`](authly-session/src/lib.rs).
-    *   The overall authentication flow as implemented in the example application.
-*   **Goal:** Achieve high test coverage for the core authentication and session handling logic.
+## 5. Documentation
+*   Add `README.md` for each crate.
+*   Add API documentation (Rustdoc) for public traits and structs.
