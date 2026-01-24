@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod pkce;
+
 /// A unified identity structure returned by all providers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
@@ -62,10 +64,10 @@ pub enum AuthError {
 #[async_trait]
 pub trait OAuthProvider: Send + Sync {
     /// Helper to get the authorization URL.
-    fn get_authorization_url(&self, state: &str, scopes: &[&str]) -> String;
+    fn get_authorization_url(&self, state: &str, scopes: &[&str], code_challenge: Option<&str>) -> String;
     
     /// Exchange an authorization code for an Identity.
-    async fn exchange_code_for_identity(&self, code: &str) -> Result<(Identity, OAuthToken), AuthError>;
+    async fn exchange_code_for_identity(&self, code: &str, code_verifier: Option<&str>) -> Result<(Identity, OAuthToken), AuthError>;
 
     /// Refresh an access token using a refresh token.
     async fn refresh_token(&self, _refresh_token: &str) -> Result<OAuthToken, AuthError> {
