@@ -70,20 +70,17 @@ where
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
-    let mut cookie = Cookie::new("oauth_state", csrf_state);
+    let cookie_name = format!("authly_flow_{}", csrf_state);
+
+    let mut cookie = Cookie::new(cookie_name, pkce.code_verifier);
     cookie.set_path("/");
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Lax);
     cookie.set_secure(true);
+    // Set a reasonable expiry for the flow (e.g., 15 minutes)
+    cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::minutes(15)));
 
     cookies.add(cookie);
-
-    let mut pkce_cookie = Cookie::new("oauth_pkce_verifier", pkce.code_verifier);
-    pkce_cookie.set_path("/");
-    pkce_cookie.set_http_only(true);
-    pkce_cookie.set_same_site(SameSite::Lax);
-    pkce_cookie.set_secure(true);
-    cookies.add(pkce_cookie);
 
     Redirect::to(&url)
 }
@@ -98,28 +95,31 @@ where
     P: OAuthProvider + Send + Sync,
     M: authly_core::UserMapper + Send + Sync,
 {
-    let expected_state = cookies
-        .get("oauth_state")
-        .map(|c| c.value().to_string())
-        .unwrap_or_default();
+    let cookie_name = format!("authly_flow_{}", params.state);
 
     let pkce_verifier = cookies
-        .get("oauth_pkce_verifier")
-        .map(|c| c.value().to_string());
+        .get(&cookie_name)
+        .map(|c| c.value().to_string())
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "CSRF validation failed or session expired".to_string(),
+            )
+        })?;
 
-    // Remove cookies after use
-    let mut remove_state = Cookie::new("oauth_state", "");
-    remove_state.set_path("/");
-    remove_state.set_secure(true);
-    cookies.remove(remove_state);
-
-    let mut remove_pkce = Cookie::new("oauth_pkce_verifier", "");
-    remove_pkce.set_path("/");
-    remove_pkce.set_secure(true);
-    cookies.remove(remove_pkce);
+    // Remove cookie after use
+    let mut remove_cookie = Cookie::new(cookie_name, "");
+    remove_cookie.set_path("/");
+    remove_cookie.set_secure(true);
+    cookies.remove(remove_cookie);
 
     let (identity, token, _local_user) = flow
-        .finalize_login(&params.code, &params.state, &expected_state, pkce_verifier.as_deref())
+        .finalize_login(
+            &params.code,
+            &params.state,
+            &params.state, // We use the state itself as expected_state because finding the cookie proves it's ours
+            Some(&pkce_verifier),
+        )
         .await
         .map_err(|e| (StatusCode::UNAUTHORIZED, format!("Authentication failed: {}", e)))?;
 

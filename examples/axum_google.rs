@@ -80,11 +80,7 @@ async fn index() -> impl IntoResponse {
 }
 
 async fn google_login(State(state): State<AppState>, cookies: Cookies) -> impl IntoResponse {
-    initiate_oauth_login(
-        &state.google_flow,
-        &cookies,
-        &["openid", "email", "profile"],
-    )
+    initiate_oauth_login(&state.google_flow, &cookies, &["openid", "email", "profile"])
 }
 
 async fn google_callback(
