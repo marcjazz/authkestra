@@ -32,6 +32,8 @@ pub struct OAuthToken {
     pub refresh_token: Option<String>,
     /// The scopes granted by the user
     pub scope: Option<String>,
+    /// The OIDC ID Token
+    pub id_token: Option<String>,
 }
 
 /// Errors that can occur during the authentication process.

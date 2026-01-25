@@ -10,6 +10,7 @@ authly-flow = { path = "../authly-flow" }
 authly-providers-github = { path = "../authly-providers-github" }
 authly-providers-google = { path = "../authly-providers-google" }
 authly-providers-discord = { path = "../authly-providers-discord" }
+authly-oidc = { path = "../authly-oidc" }
 authly-token = { path = "../authly-token" }
 axum = "0.7"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
@@ -39,3 +40,7 @@ path = "../examples/axum_discord.rs"
 [[example]]
 name = "axum_credentials"
 path = "../examples/axum_credentials.rs"
+
+[[example]]
+name = "oidc_generic"
+path = "../examples/oidc_generic.rs"

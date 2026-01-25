@@ -45,6 +45,7 @@ struct GoogleTokenResponse {
     expires_in: Option<u64>,
     refresh_token: Option<String>,
     scope: Option<String>,
+    id_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -139,6 +140,7 @@ impl OAuthProvider for GoogleProvider {
             expires_in: token_response.expires_in,
             refresh_token: token_response.refresh_token,
             scope: token_response.scope,
+            id_token: token_response.id_token,
         };
 
         Ok((identity, token))
@@ -166,6 +168,7 @@ impl OAuthProvider for GoogleProvider {
             expires_in: token_response.expires_in,
             refresh_token: token_response.refresh_token.or_else(|| Some(refresh_token.to_string())),
             scope: token_response.scope,
+            id_token: token_response.id_token,
         })
     }
 
