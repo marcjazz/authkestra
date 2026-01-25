@@ -1,47 +1,71 @@
-You are a senior Rust library architect.
+# Authly README
 
-Design a production-quality Rust workspace for an authentication framework called "authly".
+# Authly: Explicit, Modular Authentication for Rust
 
-GOAL:
-Create a modular, framework-agnostic authentication orchestration system inspired by Auth.js and Passport.js, but idiomatic to Rust. The system must emphasize explicit control flow, strong typing, and composability over runtime plugins or magic middleware.
+`authly` is a modular, framework-agnostic authentication orchestration system designed to be idiomatic to Rust, emphasizing **explicit control flow, strong typing, and composability** over dynamic middleware strategies common in other ecosystems.
 
-REQUIREMENTS:
-- Use a Cargo workspace with multiple crates
-- Separate concerns clearly between core logic, OAuth flow orchestration, session handling, token handling, providers, and web framework adapters
-- Avoid JavaScript-style dynamic strategies or runtime registries
-- Prefer traits, enums, and explicit types
-- No macros unless absolutely necessary
-- Assume Axum as the first supported framework
+This repository provides a workspace for the core components, focusing initially on OAuth2/OIDC with Axum integration.
 
-CORE CRATES TO DESIGN:
-1. authly-core
-   - Defines error types, Identity struct, Provider traits
-2. authly-flow
-   - Handles OAuth2/OIDC authorization code flows
-3. authly-session
-   - Cookie-based session storage abstraction
-4. authly-token
-   - JWT and PASETO token issuance and validation
-5. authly-providers-github
-   - GitHub OAuth provider implementation
-6. authly-axum
-   - Axum integration helpers (routes, extractors)
+## 🚀 Features
 
-OUTPUT EXPECTATIONS:
-- Propose the directory structure
-- Provide example public APIs (traits, structs, functions)
-- Include minimal Rust code stubs for each crate
-- Show how an Axum app would use authly to implement "Login with GitHub"
-- Favor clarity, correctness, and extensibility over completeness
+*   **Modular Design**: Concerns are strictly separated into crates: `authly-core`, `authly-flow`, `authly-session`, `authly-token`, and framework adapters like `authly-axum`.
+*   **Explicit Flow Control**: Dependencies and authentication context are injected explicitly via **Extractors** (Axum) or constructor arguments, eliminating "magic" middleware.
+*   **Provider Agnostic**: Easily integrate new OAuth providers by implementing the `OAuthProvider` trait.
+*   **Session Management**: Flexible session storage via the `SessionStore` trait, with built-in support for in-memory, Redis, and SQL via `sqlx`.
+*   **Stateless Tokens**: Comprehensive JWT support via `authly-token`.
 
-CONSTRAINTS:
-- No unsafe Rust
-- No global mutable state
-- No hidden request mutation
-- OAuth logic must be reusable outside Axum
+## 📦 Workspace Crates
 
-TONE:
-Professional, precise, and idiomatic Rust. Avoid JavaScript patterns.
+| Crate | Responsibility |
+| :--- | :--- |
+| [`authly-core`](authly-core/README.md) | Foundational types, traits (`Identity`, `OAuthProvider`, `SessionStore`). |
+| [`authly-flow`](authly-flow/README.md) | Orchestrates OAuth2/OIDC flows (Authorization Code, PKCE). |
+| [`authly-session`](authly-session/README.md) | Session persistence layer abstraction. |
+| [`authly-token`](authly-token/README.md) | JWT signing, verification, and token abstraction. |
+| [`authly-providers-github`](authly-providers-github/README.md) | Concrete implementation for GitHub OAuth. |
+| [`authly-providers-google`](authly-providers-google/README.md) | Concrete implementation for Google OAuth. |
+| [`authly-providers-discord`](authly-providers-discord/README.md) | Concrete implementation for Discord OAuth. |
+| [`authly-axum`](authly-axum/README.md) | Axum-specific integration, including `AuthSession` extractors. |
 
-DELIVERABLE:
-A well-structured Rust workspace design with code skeletons and a simple end-to-end example.
+## 🗺️ Technical Design Principles
+
+The architecture favors compile-time guarantees over runtime flexibility:
+
+*   **Trait-Based Extension**: Customization is achieved by implementing traits, not by configuring dynamic strategies.
+*   **Explicit Injection**: Authentication context is never implicitly available; users must explicitly request it via extractors (e.g., `AuthSession(session): AuthSession`).
+*   **Framework Agnostic Core**: `authly-flow` is pure Rust logic, completely independent of any web framework.
+
+## 🚧 Current Status & Roadmap
+
+**Completed Milestones:**
+*   Core structure, GitHub provider, Redis session store, SQL session store (Postgres/MySQL/SQLite), PKCE support, Axum integration stub.
+
+**Next Steps (See [`NEXT_STEPS.md`](NEXT_STEPS.md) for full details):**
+1.  **Protocol Completeness:** Implement OIDC support.
+2.  **Ecosystem Alignment:** Implement **Device Flow** (for CLIs) and **Client Credentials Flow** (for M2M services) based on analysis in [`plans/rust_ecosystem_auth_analysis.md`](plans/rust_ecosystem_auth_analysis.md).
+
+---
+
+## Getting Started (Axum Example)
+
+To use `authly` with Axum:
+
+1.  **Initialize State**: Inject your chosen `SessionStore` and `OAuthProvider` into the Axum `State`.
+2.  **Define Routes**: Use `authly_flow::OAuth2Flow` helpers to generate login/callback routes.
+3.  **Protect Routes**: Use the `AuthSession` extractor to require authentication.
+
+**Example Handler:**
+```rust
+use axum::{routing::get, Router};
+use authly_axum::{AuthSession, HasSessionStore}; // Assumes State implements HasSessionStore
+
+async fn protected_handler(AuthSession(session): AuthSession) -> String {
+    format!("Welcome back, {}!", session.identity.username.unwrap_or_default())
+}
+
+fn app() -> Router {
+    // ... setup state (store, provider)
+    Router::new().route("/protected", get(protected_handler))
+    // ... add auth routes
+}
+```

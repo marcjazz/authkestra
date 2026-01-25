@@ -90,7 +90,7 @@ impl SessionStore for SqlStore<sqlx::Postgres> {
         // Execute query, map error, deserialize data
         // ...
     }
-
+    
     async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
         let query = format!(
             "INSERT INTO {} (id, data, expires_at) VALUES ($1, $2, $3) 
@@ -99,7 +99,7 @@ impl SessionStore for SqlStore<sqlx::Postgres> {
         );
         // ...
     }
-
+    
     async fn delete_session(&self, id: &str) -> Result<(), AuthError> {
          let query = format!("DELETE FROM {} WHERE id = $1", self.table_name);
          // ...
@@ -113,7 +113,7 @@ Repeat for `Sqlite` (similar `ON CONFLICT`) and `MySql` (`ON DUPLICATE KEY UPDAT
 
 Update the "Session" section to include the SQL schema and usage examples.
 
-## Verification
+## 5. Verification
 - Run `cargo check --features postgres`
 - Run `cargo check --features sqlite`
 - Run `cargo check --features mysql`

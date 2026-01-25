@@ -21,8 +21,13 @@ authly/
 ├── authly-token/           # Token operations (JWT, Paseto)
 │   ├── Cargo.toml
 │   └── src/lib.rs
-├── authly-providers/       # (Optional) Grouping folder, or flattened:
-├── authly-providers-github/# GitHub specific implementation
+├── authly-providers-discord/ # Discord specific implementation
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── authly-providers-github/ # GitHub specific implementation
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── authly-providers-google/ # Google specific implementation
 │   ├── Cargo.toml
 │   └── src/lib.rs
 └── authly-axum/            # Axum integration (Extractors, Middlewares)
@@ -34,11 +39,13 @@ authly/
 
 | Crate | Responsibility | Key Dependencies |
 |-------|----------------|------------------|
-| **`authly-core`** | Defines the foundational traits (`Provider`, `Identity`, `SessionStore`) and types (`AuthError`, `UserId`). Must remain stable. | `serde`, `thiserror`, `chrono`, `async-trait` |
+| **`authly-core`** | Defines the foundational traits (`OAuthProvider`, `CredentialsProvider`, `SessionStore`) and types (`AuthError`, `Identity`). Must remain stable. | `serde`, `thiserror`, `chrono`, `async-trait` |
 | **`authly-flow`** | Implements standard authentication flows (e.g., OAuth2 Authorization Code). Pure logic, no HTTP server code. | `authly-core`, `oauth2` (optional), `url` |
-| **`authly-session`** | Manages session persistence and retrieval. Defines the `Session` struct and `SessionStore` trait. Includes memory/redis impls. | `authly-core`, `uuid` |
+| **`authly-session`** | Manages session persistence and retrieval. Defines the `Session` struct and `SessionStore` trait. Includes memory/redis/sqlx impls. | `authly-core`, `uuid`, `sqlx` (optional) |
 | **`authly-token`** | Handles stateless auth (JWT/PASETO). Issuing and validating tokens. | `authly-core`, `jsonwebtoken` |
-| **`authly-providers-github`** | Implements `authly-core::Provider` for GitHub. Handles specific user profile parsing. | `authly-core`, `reqwest`, `serde_json` |
+| **`authly-providers-github`** | Implements `authly-core::OAuthProvider` for GitHub. Handles specific user profile parsing. | `authly-core`, `reqwest`, `serde_json` |
+| **`authly-providers-google`** | Implements `authly-core::OAuthProvider` for Google. | `authly-core`, `reqwest`, `serde_json` |
+| **`authly-providers-discord`** | Implements `authly-core::OAuthProvider` for Discord. | `authly-core`, `reqwest`, `serde_json` |
 | **`authly-axum`** | Provides `FromRequest` implementations (Extractors) and helpers for Axum. Glue code only. | `authly-core`, `authly-session`, `axum`, `tower-cookies` |
 
 ## 3. API Design
@@ -193,7 +200,6 @@ use sqlx::postgres::PgPool;
 
 let pool = PgPool::connect("postgres://localhost/auth").await?;
 let store = SqlStore::new(pool);
-```
 ```
 
 ### `authly-axum`

@@ -22,7 +22,7 @@ Add more OAuth providers to make the library more versatile.
 - [x] Token Rotation: Implement refresh tokens if the provider supports it.
 - [x] User Mapping: Allow mapping provider identities to a local user database (e.g., using an ORM like `sqlx` or `diesel`).
 
-## 5. Documentation (Done)
+## 5. Documentation
 - [x] Add `README.md` for each crate.
 - [x] Add API documentation (Rustdoc) for public traits and structs.
 
@@ -43,3 +43,8 @@ Add more OAuth providers to make the library more versatile.
 - [ ] **CI/CD:** Set up GitHub Actions for automated testing across different Rust versions.
 - [ ] **Integration Testing:** Add comprehensive integration tests with Mock servers for OAuth providers.
 - [ ] **Crates.io Readiness:** Finalize metadata, licenses, and documentation for initial publishing.
+
+## 10. Strategic Additions (New)
+- [ ] **Device Flow:** Implement Device Authorization Flow (RFC 8628) for CLI tools.
+- [ ] **Client Credentials Flow:** Implement M2M authentication support.
+- [ ] **Offline Validation:** Improve JWT/PASETO validation to support JWK caching for edge environments.

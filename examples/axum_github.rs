@@ -45,7 +45,7 @@ async fn main() {
         redirect_uri,
     );
     let github_flow = Arc::new(OAuth2Flow::new(provider));
-    let token_manager = Arc::new(TokenManager::new(jwt_secret.as_bytes()));
+    let token_manager = Arc::new(TokenManager::new(jwt_secret.as_bytes(), Some("authly-rs".to_string())));
     // For this example, we'll use SQLite for session persistence.
     let db_url = "sqlite::memory:";
     let pool = SqlitePool::connect(db_url).await.expect("Failed to connect to SQLite");
@@ -54,10 +54,10 @@ async fn main() {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS authly_sessions (
             id VARCHAR(128) PRIMARY KEY,
+            provider_name VARCHAR(255) NOT NULL,
             provider_id VARCHAR(255) NOT NULL,
-            external_id VARCHAR(255) NOT NULL,
             email VARCHAR(255),
-            username VARCHAR(255),
+            name VARCHAR(255),
             claims TEXT NOT NULL,
             expires_at TIMESTAMP NOT NULL
         )"
@@ -121,10 +121,11 @@ async fn github_logout(
     logout(cookies, state.session_store, SessionConfig::default(), "/").await
 }
 
-async fn protected(AuthToken(identity): AuthToken) -> impl IntoResponse {
+async fn protected(AuthToken(claims): AuthToken) -> impl IntoResponse {
+    let name = claims.identity.as_ref().and_then(|i| i.username.clone()).unwrap_or_else(|| "Unknown".to_string());
     format!(
-        "Hello, {}! Your ID is {}. You are authenticated via the new AuthToken extractor.", 
-        identity.username.unwrap_or_default(), 
-        identity.external_id
+        "Hello, {}! Your ID is {}. You are authenticated via the new AuthToken extractor.",
+        name,
+        claims.sub
     )
 }
