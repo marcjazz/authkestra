@@ -9,7 +9,7 @@ use std::sync::Mutex;
 pub mod sql_store;
 
 #[cfg(feature = "store-sqlx")]
-pub use sql_store::SqlStore;
+pub use sql_store::{SqlSessionStore, SqlStore};
 
 
 #[cfg(feature = "store-redis")]

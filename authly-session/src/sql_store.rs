@@ -5,12 +5,26 @@ use sqlx::Database;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
-pub struct SqlStore<DB: Database> {
+pub struct SqlSessionStore<DB: Database> {
     pool: sqlx::Pool<DB>,
     table_name: String,
 }
 
-impl<DB: Database> SqlStore<DB> {
+pub type SqlStore<DB> = SqlSessionStore<DB>;
+
+/// Internal data model for a session in the SQL database.
+#[derive(sqlx::FromRow)]
+pub struct SqlSessionModel {
+    pub id: String,
+    pub provider_name: String,
+    pub provider_id: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub claims: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl<DB: Database> SqlSessionStore<DB> {
     pub fn new(pool: sqlx::Pool<DB>) -> Self {
         Self {
             pool,
@@ -25,15 +39,15 @@ impl<DB: Database> SqlStore<DB> {
 
 #[cfg(feature = "postgres")]
 #[async_trait]
-impl SessionStore for SqlStore<sqlx::Postgres> {
+impl SessionStore for SqlSessionStore<sqlx::Postgres> {
     async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
         let query = format!(
-            "SELECT id, provider_id, external_id, email, username, claims, expires_at FROM {} WHERE id = $1 AND expires_at > $2",
+            "SELECT id, provider_name, provider_id, email, name, claims, expires_at FROM {} WHERE id = $1 AND expires_at > $2",
             self.table_name
         );
         let now = chrono::Utc::now();
         
-        let row: Option<(String, String, String, Option<String>, Option<String>, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(&query)
+        let row: Option<SqlSessionModel> = sqlx::query_as(&query)
             .bind(id)
             .bind(now)
             .fetch_optional(&self.pool)
@@ -41,20 +55,20 @@ impl SessionStore for SqlStore<sqlx::Postgres> {
             .map_err(|e| AuthError::Session(format!("Postgres load_session error: {}", e)))?;
 
         match row {
-            Some((id, provider_id, external_id, email, username, claims_json, expires_at)) => {
-                let claims: HashMap<String, String> = serde_json::from_str(&claims_json)
+            Some(model) => {
+                let claims: HashMap<String, String> = serde_json::from_str(&model.claims)
                     .map_err(|e| AuthError::Session(format!("Claims deserialization error: {}", e)))?;
                 
                 let session = Session {
-                    id,
+                    id: model.id,
                     identity: Identity {
-                        provider_id,
-                        external_id,
-                        email,
-                        username,
+                        provider_id: model.provider_name,
+                        external_id: model.provider_id,
+                        email: model.email,
+                        username: model.name,
                         attributes: claims,
                     },
-                    expires_at,
+                    expires_at: model.expires_at,
                 };
                 Ok(Some(session))
             }
@@ -64,10 +78,10 @@ impl SessionStore for SqlStore<sqlx::Postgres> {
 
     async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
         let query = format!(
-            "INSERT INTO {} (id, provider_id, external_id, email, username, claims, expires_at)
+            "INSERT INTO {} (id, provider_name, provider_id, email, name, claims, expires_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT(id) DO UPDATE SET
-             provider_id = $2, external_id = $3, email = $4, username = $5, claims = $6, expires_at = $7",
+             provider_name = $2, provider_id = $3, email = $4, name = $5, claims = $6, expires_at = $7",
             self.table_name
         );
         let claims_json = serde_json::to_string(&session.identity.attributes)
@@ -101,15 +115,15 @@ impl SessionStore for SqlStore<sqlx::Postgres> {
 
 #[cfg(feature = "sqlite")]
 #[async_trait]
-impl SessionStore for SqlStore<sqlx::Sqlite> {
+impl SessionStore for SqlSessionStore<sqlx::Sqlite> {
     async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
         let query = format!(
-            "SELECT id, provider_id, external_id, email, username, claims, expires_at FROM {} WHERE id = ?1 AND expires_at > ?2",
+            "SELECT id, provider_name, provider_id, email, name, claims, expires_at FROM {} WHERE id = ?1 AND expires_at > ?2",
             self.table_name
         );
         let now = chrono::Utc::now();
         
-        let row: Option<(String, String, String, Option<String>, Option<String>, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(&query)
+        let row: Option<SqlSessionModel> = sqlx::query_as(&query)
             .bind(id)
             .bind(now)
             .fetch_optional(&self.pool)
@@ -117,20 +131,20 @@ impl SessionStore for SqlStore<sqlx::Sqlite> {
             .map_err(|e| AuthError::Session(format!("Sqlite load_session error: {}", e)))?;
 
         match row {
-            Some((id, provider_id, external_id, email, username, claims_json, expires_at)) => {
-                let claims: HashMap<String, String> = serde_json::from_str(&claims_json)
+            Some(model) => {
+                let claims: HashMap<String, String> = serde_json::from_str(&model.claims)
                     .map_err(|e| AuthError::Session(format!("Claims deserialization error: {}", e)))?;
                 
                 let session = Session {
-                    id,
+                    id: model.id,
                     identity: Identity {
-                        provider_id,
-                        external_id,
-                        email,
-                        username,
+                        provider_id: model.provider_name,
+                        external_id: model.provider_id,
+                        email: model.email,
+                        username: model.name,
                         attributes: claims,
                     },
-                    expires_at,
+                    expires_at: model.expires_at,
                 };
                 Ok(Some(session))
             }
@@ -140,10 +154,10 @@ impl SessionStore for SqlStore<sqlx::Sqlite> {
 
     async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
         let query = format!(
-            "INSERT INTO {} (id, provider_id, external_id, email, username, claims, expires_at)
+            "INSERT INTO {} (id, provider_name, provider_id, email, name, claims, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
-             provider_id = ?2, external_id = ?3, email = ?4, username = ?5, claims = ?6, expires_at = ?7",
+             provider_name = ?2, provider_id = ?3, email = ?4, name = ?5, claims = ?6, expires_at = ?7",
             self.table_name
         );
         let claims_json = serde_json::to_string(&session.identity.attributes)
@@ -177,15 +191,15 @@ impl SessionStore for SqlStore<sqlx::Sqlite> {
 
 #[cfg(feature = "mysql")]
 #[async_trait]
-impl SessionStore for SqlStore<sqlx::MySql> {
+impl SessionStore for SqlSessionStore<sqlx::MySql> {
     async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
         let query = format!(
-            "SELECT id, provider_id, external_id, email, username, claims, expires_at FROM {} WHERE id = ? AND expires_at > ?",
+            "SELECT id, provider_name, provider_id, email, name, claims, expires_at FROM {} WHERE id = ? AND expires_at > ?",
             self.table_name
         );
         let now = chrono::Utc::now();
         
-        let row: Option<(String, String, String, Option<String>, Option<String>, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(&query)
+        let row: Option<SqlSessionModel> = sqlx::query_as(&query)
             .bind(id)
             .bind(now)
             .fetch_optional(&self.pool)
@@ -193,20 +207,20 @@ impl SessionStore for SqlStore<sqlx::MySql> {
             .map_err(|e| AuthError::Session(format!("MySql load_session error: {}", e)))?;
 
         match row {
-            Some((id, provider_id, external_id, email, username, claims_json, expires_at)) => {
-                let claims: HashMap<String, String> = serde_json::from_str(&claims_json)
+            Some(model) => {
+                let claims: HashMap<String, String> = serde_json::from_str(&model.claims)
                     .map_err(|e| AuthError::Session(format!("Claims deserialization error: {}", e)))?;
                 
                 let session = Session {
-                    id,
+                    id: model.id,
                     identity: Identity {
-                        provider_id,
-                        external_id,
-                        email,
-                        username,
+                        provider_id: model.provider_name,
+                        external_id: model.provider_id,
+                        email: model.email,
+                        username: model.name,
                         attributes: claims,
                     },
-                    expires_at,
+                    expires_at: model.expires_at,
                 };
                 Ok(Some(session))
             }
@@ -216,13 +230,13 @@ impl SessionStore for SqlStore<sqlx::MySql> {
 
     async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
         let query = format!(
-            "INSERT INTO {} (id, provider_id, external_id, email, username, claims, expires_at)
+            "INSERT INTO {} (id, provider_name, provider_id, email, name, claims, expires_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
+             provider_name = VALUES(provider_name),
              provider_id = VALUES(provider_id),
-             external_id = VALUES(external_id),
              email = VALUES(email),
-             username = VALUES(username),
+             name = VALUES(name),
              claims = VALUES(claims),
              expires_at = VALUES(expires_at)",
             self.table_name

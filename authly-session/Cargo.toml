@@ -7,9 +7,9 @@ edition = "2021"
 default = []
 store-redis = ["dep:redis"]
 store-sqlx = ["dep:sqlx"]
-postgres = ["store-sqlx", "sqlx/postgres"]
-mysql = ["store-sqlx", "sqlx/mysql"]
-sqlite = ["store-sqlx", "sqlx/sqlite"]
+postgres = ["store-sqlx", "sqlx/postgres", "sqlx/runtime-tokio-rustls"]
+mysql = ["store-sqlx", "sqlx/mysql", "sqlx/runtime-tokio-rustls"]
+sqlite = ["store-sqlx", "sqlx/sqlite", "sqlx/runtime-tokio-rustls"]
 
 [dependencies]
 authly-core = { path = "../authly-core" }
@@ -17,7 +17,7 @@ chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 redis = { version = "0.25", features = ["tokio-comp"], optional = true }
-sqlx = { version = "0.8", features = ["runtime-tokio", "chrono", "tls-native-tls"], default-features = false, optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "chrono", "macros"], default-features = false, optional = true }
 serde_json = "1.0"
 
 [dev-dependencies]
