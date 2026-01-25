@@ -8,5 +8,5 @@ members = [
     "authly-providers-github",
     "authly-providers-google",
     "authly-providers-discord",
-    "authly-axum", "authly-oidc",
+    "authly-axum", "authly-oidc", "authly-actix",
 ]

@@ -33,7 +33,7 @@ Add more OAuth providers to make the library more versatile.
 ## 7. Extended Storage & Integrations
 - [x] **Memory Session Store:** Make the `MemoryStore` public in `authly-session` for development use.
 - [x] **SQL Session Store:** Add support for PostgreSQL/MySQL/SQLite using `sqlx`.
-- [ ] **Actix-web Support:** Implement a sister crate for `authly-axum` to support the Actix ecosystem.
+- [x] **Actix-web Support:** Implement a sister crate for `authly-axum` to support the Actix ecosystem.
 
 ## 8. Protocol Completeness
 - [x] **OIDC (OpenID Connect):** Implement ID Token validation and discovery document support.

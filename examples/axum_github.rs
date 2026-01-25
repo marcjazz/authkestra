@@ -58,8 +58,8 @@ async fn main() {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS authly_sessions (
             id VARCHAR(128) PRIMARY KEY,
-            provider_name VARCHAR(255) NOT NULL,
             provider_id VARCHAR(255) NOT NULL,
+            external_id VARCHAR(255) NOT NULL,
             email VARCHAR(255),
             name VARCHAR(255),
             claims TEXT NOT NULL,
