@@ -9,8 +9,8 @@ This roadmap outlines the steps to reach a production-ready state.
 
 ## 2. Run and Verify Example (Done)
 - [x] Configure environment variables in `.env`.
-- [x] Run the example application: `cargo run --example axum_github`.
-- [x] Verify GitHub login and session persistence.
+- [x] Run the example application: `cargo run --example axum_oauth`.
+- [x] Verify GitHub/Google/Discord login and session persistence.
 
 ## 3. Expand Provider Support
 Add more OAuth providers to make the library more versatile.

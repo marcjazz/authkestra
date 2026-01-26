@@ -26,16 +26,8 @@ dotenvy = "0.15"
 serde_json = "1.0"
 
 [[example]]
-name = "axum_github"
-path = "../examples/axum_github.rs"
-
-[[example]]
-name = "axum_google"
-path = "../examples/axum_google.rs"
-
-[[example]]
-name = "axum_discord"
-path = "../examples/axum_discord.rs"
+name = "axum_oauth"
+path = "../examples/axum_oauth.rs"
 
 [[example]]
 name = "axum_credentials"
