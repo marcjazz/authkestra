@@ -2,8 +2,17 @@
 name = "authly-flow"
 version = "0.1.0"
 edition = "2021"
+description = "OAuth2 and OIDC flow orchestration for the authly framework"
+repository = "https://github.com/marcorichetta/authly-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["auth", "oauth2", "oidc", "flow"]
+categories = ["authentication"]
 
 [dependencies]
 authly-core = { path = "../authly-core" }
+serde = { version = "1.0", features = ["derive"] }
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.0", features = ["time", "macros", "rt-multi-thread"] }
+serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 async-trait = "0.1"

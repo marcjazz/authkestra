@@ -41,10 +41,10 @@ Add more OAuth providers to make the library more versatile.
 
 ## 9. Reliability & Distribution
 - [x] **CI/CD:** Set up GitHub Actions for automated testing across different Rust versions.
-- [ ] **Integration Testing:** Add comprehensive integration tests with Mock servers for OAuth providers.
-- [ ] **Crates.io Readiness:** Finalize metadata, licenses, and documentation for initial publishing.
+- [x] **Integration Testing:** Add comprehensive integration tests with Mock servers for OAuth providers.
+- [x] **Crates.io Readiness:** Finalize metadata, licenses, and documentation for initial publishing.
 
 ## 10. Strategic Additions (New)
-- [ ] **Device Flow:** Implement Device Authorization Flow (RFC 8628) for CLI tools.
-- [ ] **Client Credentials Flow:** Implement M2M authentication support.
-- [ ] **Offline Validation:** Improve JWT/PASETO validation to support JWK caching for edge environments.
+- [x] **Device Flow:** Implement Device Authorization Flow (RFC 8628) for CLI tools.
+- [x] **Client Credentials Flow:** Implement M2M authentication support.
+- [x] **Offline Validation:** Improve JWT/PASETO validation to support JWK caching for edge environments.

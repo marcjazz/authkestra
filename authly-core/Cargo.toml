@@ -2,6 +2,11 @@
 name = "authly-core"
 version = "0.1.0"
 edition = "2021"
+description = "Core traits and types for the authly authentication framework"
+repository = "https://github.com/marcorichetta/authly-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["auth", "authentication", "oauth2", "oidc"]
+categories = ["authentication"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

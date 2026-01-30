@@ -2,6 +2,11 @@
 name = "authly-token"
 version = "0.1.0"
 edition = "2021"
+description = "JWT token handling for the authly framework"
+repository = "https://github.com/marcorichetta/authly-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["auth", "jwt", "token", "authentication"]
+categories = ["authentication"]
 
 [dependencies]
 authly-core = { path = "../authly-core" }
@@ -9,3 +14,8 @@ jsonwebtoken = "9.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+paseto = "2.0"
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.0", features = ["full"] }
+thiserror = "1.0"
+arc-swap = "1.6"
