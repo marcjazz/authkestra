@@ -2,6 +2,12 @@ use authly_core::{
     AuthError, CredentialsProvider, Identity, OAuthProvider, OAuthToken, UserMapper,
 };
 
+pub mod client_credentials_flow;
+pub mod device_flow;
+
+pub use client_credentials_flow::ClientCredentialsFlow;
+pub use device_flow::{DeviceAuthorizationResponse, DeviceFlow};
+
 /// Orchestrates the Authorization Code flow.
 pub struct OAuth2Flow<P: OAuthProvider, M: UserMapper = ()> {
     provider: P,
