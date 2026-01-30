@@ -1,6 +1,8 @@
 # authly-session
 
-Session management and persistence for `authly-rs`.
+Session management and persistence for [authly-rs](https://github.com/marcorichetta/authly-rs).
+
+This crate provides a flexible session persistence layer with support for multiple backends including SQL (Postgres, MySQL, SQLite) and Redis.
 
 ## Features
 
@@ -11,21 +13,29 @@ Session management and persistence for `authly-rs`.
 
 ## Usage
 
-### SQL Store
-
-Enable the desired backend feature in your `Cargo.toml`:
+Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authly-session = { version = "0.1", features = ["postgres"] }
+authly-session = { version = "0.1.0", features = ["sqlite"] }
 ```
 
-Then initialize the store:
+### Example: SQLite Session Store
 
 ```rust
 use authly_session::SqlSessionStore;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 
-let pool = PgPool::connect("postgres://...").await?;
-let store = SqlSessionStore::new(pool);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = SqlitePool::connect("sqlite::memory:").await?;
+    let store = SqlSessionStore::new(pool);
+    
+    // Use the store...
+    Ok(())
+}
 ```
+
+## Part of authly-rs
+
+This crate is part of the [authly-rs](https://github.com/marcorichetta/authly-rs) workspace.
