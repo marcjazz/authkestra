@@ -26,8 +26,7 @@ impl DiscordProvider {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_test_urls(
+    pub fn with_test_urls(
         mut self,
         token_url: String,
         user_url: String,
@@ -220,27 +219,27 @@ impl OAuthProvider for DiscordProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockito::Server;
+    use wiremock::{MockServer, Mock, ResponseTemplate};
+    use wiremock::matchers::{method, path};
 
     #[tokio::test]
     async fn test_exchange_code_for_identity() {
-        let mut server = Server::new_async().await;
-        let token_url = format!("{}/api/oauth2/token", server.url());
-        let user_url = format!("{}/api/users/@me", server.url());
+        let server = MockServer::start().await;
+        let token_url = format!("{}/api/oauth2/token", server.uri());
+        let user_url = format!("{}/api/users/@me", server.uri());
 
-        let _token_mock = server
-            .mock("POST", "/api/oauth2/token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"access_token": "test_token", "token_type": "Bearer"}"#)
-            .create_async()
+        Mock::given(method("POST"))
+            .and(path("/api/oauth2/token"))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"access_token": "test_token", "token_type": "Bearer"})))
+            .mount(&server)
             .await;
 
-        let _user_mock = server.mock("GET", "/api/users/@me")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"id": "123456789", "username": "testuser", "discriminator": "0001", "email": "test@example.com"}"#)
-            .create_async()
+        Mock::given(method("GET"))
+            .and(path("/api/users/@me"))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"id": "123456789", "username": "testuser", "discriminator": "0001", "email": "test@example.com"})))
+            .mount(&server)
             .await;
 
         let provider = DiscordProvider::new(
@@ -251,7 +250,7 @@ mod tests {
         .with_test_urls(
             token_url,
             user_url,
-            "http://localhost/api/oauth2/token/revoke".to_string(),
+            format!("{}/api/oauth2/token/revoke", server.uri()),
         );
 
         let (identity, token) = provider

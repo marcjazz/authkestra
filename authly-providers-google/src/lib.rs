@@ -28,8 +28,7 @@ impl GoogleProvider {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_test_urls(
+    pub fn with_test_urls(
         mut self,
         auth_url: String,
         token_url: String,
@@ -227,37 +226,35 @@ impl OAuthProvider for GoogleProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockito::Server;
+    use wiremock::{MockServer, Mock, ResponseTemplate};
+    use wiremock::matchers::{method, path};
 
     #[tokio::test]
     async fn test_exchange_code_for_identity() {
-        let mut server = Server::new_async().await;
-        let auth_url = format!("{}/auth", server.url());
-        let token_url = format!("{}/token", server.url());
-        let userinfo_url = format!("{}/userinfo", server.url());
+        let server = MockServer::start().await;
+        let auth_url = format!("{}/auth", server.uri());
+        let token_url = format!("{}/token", server.uri());
+        let userinfo_url = format!("{}/userinfo", server.uri());
 
-        let _token_mock = server.mock("POST", "/token")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"access_token": "test_token", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "test_refresh_token"}"#)
-            .create_async()
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"access_token": "test_token", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "test_refresh_token"})))
+            .mount(&server)
             .await;
 
-        let _user_mock = server
-            .mock("GET", "/userinfo")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"{
-                "sub": "google-123",
-                "email": "test@google.com",
-                "name": "Google User",
-                "picture": "http://picture",
-                "email_verified": true,
-                "locale": "en"
-            }"#,
-            )
-            .create_async()
+        Mock::given(method("GET"))
+            .and(path("/userinfo"))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({
+                    "sub": "google-123",
+                    "email": "test@google.com",
+                    "name": "Google User",
+                    "picture": "http://picture",
+                    "email_verified": true,
+                    "locale": "en"
+                })))
+            .mount(&server)
             .await;
 
         let provider = GoogleProvider::new(
@@ -269,7 +266,7 @@ mod tests {
             auth_url,
             token_url,
             userinfo_url,
-            "http://localhost/revoke".to_string(),
+            format!("{}/revoke", server.uri()),
         );
 
         let (identity, token) = provider
