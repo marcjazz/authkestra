@@ -1,7 +1,7 @@
-use wiremock::{MockServer, Mock, ResponseTemplate};
-use wiremock::matchers::{method, path, header, body_string_contains};
+use authly_core::{Identity, OAuthProvider, OAuthToken};
 use authly_providers_github::GithubProvider;
-use authly_core::{OAuthProvider, OAuthToken, Identity};
+use wiremock::matchers::{body_string_contains, header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn test_github_oauth_flow() {
@@ -13,12 +13,14 @@ async fn test_github_oauth_flow() {
         .and(path("/login/oauth/access_token"))
         .and(header("Accept", "application/json"))
         .and(body_string_contains("code=test_code"))
-        .respond_with(ResponseTemplate::new(200)
-            .append_header("content-type", "application/json")
-            .set_body_json(serde_json::json!({
-                "access_token": "test_access_token",
-                "token_type": "bearer"
-            })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("content-type", "application/json")
+                .set_body_json(serde_json::json!({
+                    "access_token": "test_access_token",
+                    "token_type": "bearer"
+                })),
+        )
         .mount(&server)
         .await;
 
@@ -26,13 +28,15 @@ async fn test_github_oauth_flow() {
     Mock::given(method("GET"))
         .and(path("/user"))
         .and(header("Authorization", "Bearer test_access_token"))
-        .respond_with(ResponseTemplate::new(200)
-            .append_header("content-type", "application/json")
-            .set_body_json(serde_json::json!({
-                "id": 123,
-                "login": "test_user",
-                "email": "test@example.com"
-            })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("content-type", "application/json")
+                .set_body_json(serde_json::json!({
+                    "id": 123,
+                    "login": "test_user",
+                    "email": "test@example.com"
+                })),
+        )
         .mount(&server)
         .await;
 
@@ -40,7 +44,8 @@ async fn test_github_oauth_flow() {
         "test_client_id".to_string(),
         "test_client_secret".to_string(),
         format!("{}/callback", server.uri()),
-    ).with_test_urls(
+    )
+    .with_test_urls(
         format!("{}/login/oauth/authorize", server.uri()),
         format!("{}/login/oauth/access_token", server.uri()),
         format!("{}/user", server.uri()),
@@ -56,8 +61,11 @@ async fn test_github_oauth_flow() {
     // For testing, we'll directly use the mocked code.
     let code = "test_code";
 
-    let (identity, token_response): (Identity, OAuthToken) = provider.exchange_code_for_identity(code, None).await.expect("Failed to exchange code");
-    
+    let (identity, token_response): (Identity, OAuthToken) = provider
+        .exchange_code_for_identity(code, None)
+        .await
+        .expect("Failed to exchange code");
+
     assert_eq!(token_response.access_token, "test_access_token");
     assert_eq!(identity.external_id, "123");
     assert_eq!(identity.username, Some("test_user".to_string()));

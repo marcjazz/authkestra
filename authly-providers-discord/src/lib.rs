@@ -219,8 +219,8 @@ impl OAuthProvider for DiscordProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
     use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_exchange_code_for_identity() {
@@ -230,8 +230,9 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/oauth2/token"))
-            .respond_with(ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({"access_token": "test_token", "token_type": "Bearer"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"access_token": "test_token", "token_type": "Bearer"}),
+            ))
             .mount(&server)
             .await;
 

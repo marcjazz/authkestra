@@ -26,7 +26,12 @@ impl GithubProvider {
         }
     }
 
-    pub fn with_test_urls(mut self, authorization_url: String, token_url: String, user_url: String) -> Self {
+    pub fn with_test_urls(
+        mut self,
+        authorization_url: String,
+        token_url: String,
+        user_url: String,
+    ) -> Self {
         self.authorization_url = authorization_url;
         self.token_url = token_url;
         self.user_url = user_url;
@@ -77,8 +82,7 @@ impl OAuthProvider for GithubProvider {
 
         format!(
             "{}?client_id={}&redirect_uri={}&state={}&scope={}",
-            self.authorization_url,
-            self.client_id, self.redirect_uri, state, scope_param
+            self.authorization_url, self.client_id, self.redirect_uri, state, scope_param
         )
     }
 
@@ -204,5 +208,3 @@ impl OAuthProvider for GithubProvider {
         }
     }
 }
-
-

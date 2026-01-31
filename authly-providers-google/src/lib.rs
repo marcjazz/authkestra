@@ -226,8 +226,8 @@ impl OAuthProvider for GoogleProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
     use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_exchange_code_for_identity() {
@@ -245,15 +245,14 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/userinfo"))
-            .respond_with(ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({
-                    "sub": "google-123",
-                    "email": "test@google.com",
-                    "name": "Google User",
-                    "picture": "http://picture",
-                    "email_verified": true,
-                    "locale": "en"
-                })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "sub": "google-123",
+                "email": "test@google.com",
+                "name": "Google User",
+                "picture": "http://picture",
+                "email_verified": true,
+                "locale": "en"
+            })))
             .mount(&server)
             .await;
 
