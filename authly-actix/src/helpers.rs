@@ -53,7 +53,11 @@ impl SessionConfig {
 /// Helper to initiate the OAuth2 login flow.
 ///
 /// This generates the authorization URL and sets a CSRF state cookie.
-pub fn initiate_oauth_login<P, M>(flow: &OAuth2Flow<P, M>, scopes: &[&str]) -> HttpResponse
+pub fn initiate_oauth_login<P, M>(
+    flow: &OAuth2Flow<P, M>,
+    session_config: &SessionConfig,
+    scopes: &[&str],
+) -> HttpResponse
 where
     P: OAuthProvider,
     M: authly_core::UserMapper,
@@ -67,7 +71,7 @@ where
         .path("/")
         .http_only(true)
         .same_site(actix_web::cookie::SameSite::Lax)
-        .secure(true)
+        .secure(session_config.secure)
         .max_age(actix_web::cookie::time::Duration::minutes(15))
         .finish();
 
@@ -142,7 +146,7 @@ where
     // Remove the flow cookie
     let remove_cookie = Cookie::build(cookie_name, "")
         .path("/")
-        .secure(true)
+        .secure(config.secure)
         .max_age(actix_web::cookie::time::Duration::ZERO)
         .finish();
 

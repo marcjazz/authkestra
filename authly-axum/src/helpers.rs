@@ -60,6 +60,7 @@ impl SessionConfig {
 /// This generates the authorization URL and sets a CSRF state cookie.
 pub fn initiate_oauth_login<P, M>(
     flow: &OAuth2Flow<P, M>,
+    session_config: &SessionConfig,
     cookies: &Cookies,
     scopes: &[&str],
 ) -> Redirect
@@ -76,7 +77,7 @@ where
     cookie.set_path("/");
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Lax);
-    cookie.set_secure(true);
+    cookie.set_secure(session_config.secure);
     // Set a reasonable expiry for the flow (e.g., 15 minutes)
     cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::minutes(15)));
 
@@ -88,6 +89,7 @@ where
 /// Internal helper to finalize the OAuth flow by validating state and exchanging the code.
 async fn finalize_callback<P, M>(
     flow: &OAuth2Flow<P, M>,
+    session_config: &SessionConfig,
     cookies: &Cookies,
     params: &OAuthCallbackParams,
 ) -> Result<(Identity, OAuthToken), (StatusCode, String)>
@@ -110,7 +112,7 @@ where
     // Remove cookie after use
     let mut remove_cookie = Cookie::new(cookie_name, "");
     remove_cookie.set_path("/");
-    remove_cookie.set_secure(true);
+    remove_cookie.set_secure(session_config.secure);
     cookies.remove(remove_cookie);
 
     let (identity, token, _local_user) = flow
@@ -144,7 +146,7 @@ where
     P: OAuthProvider + Send + Sync,
     M: authly_core::UserMapper + Send + Sync,
 {
-    let (mut identity, token) = finalize_callback(flow, &cookies, &params).await?;
+    let (mut identity, token) = finalize_callback(flow, &config, &cookies, &params).await?;
 
     // Store tokens in identity attributes for convenience
     identity
@@ -189,12 +191,13 @@ pub async fn handle_oauth_callback_jwt<P, M>(
     params: OAuthCallbackParams,
     token_manager: Arc<TokenManager>,
     expires_in_secs: u64,
+    config: &SessionConfig,
 ) -> Result<impl IntoResponse, (StatusCode, String)>
 where
     P: OAuthProvider + Send + Sync,
     M: authly_core::UserMapper + Send + Sync,
 {
-    let (identity, _token) = finalize_callback(flow, &cookies, &params).await?;
+    let (identity, _token) = finalize_callback(flow, config, &cookies, &params).await?;
 
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None)
