@@ -1,6 +1,6 @@
 # authly-flow
 
-High-level authentication flows for [authly-rs](https://github.com/marcorichetta/authly-rs).
+High-level authentication flows for [authly-rs](https://github.com/marcjazz/authly-rs).
 
 This crate orchestrates authentication flows such as OAuth2 and credentials-based auth, providing a high-level API that is independent of web frameworks.
 
@@ -35,4 +35,4 @@ let (auth_url, _csrf_state) = flow.initiate_auth(None);
 
 ## Part of authly-rs
 
-This crate is part of the [authly-rs](https://github.com/marcorichetta/authly-rs) workspace.
+This crate is part of the [authly-rs](https://github.com/marcjazz/authly-rs) workspace.

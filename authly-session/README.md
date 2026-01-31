@@ -1,6 +1,6 @@
 # authly-session
 
-Session management and persistence for [authly-rs](https://github.com/marcorichetta/authly-rs).
+Session management and persistence for [authly-rs](https://github.com/marcjazz/authly-rs).
 
 This crate provides a flexible session persistence layer with support for multiple backends including SQL (Postgres, MySQL, SQLite) and Redis.
 
@@ -38,4 +38,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Part of authly-rs
 
-This crate is part of the [authly-rs](https://github.com/marcorichetta/authly-rs) workspace.
+This crate is part of the [authly-rs](https://github.com/marcjazz/authly-rs) workspace.

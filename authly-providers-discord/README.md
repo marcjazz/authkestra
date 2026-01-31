@@ -1,6 +1,6 @@
 # authly-providers-discord
 
-Discord OAuth2 provider for [authly-rs](https://github.com/marcorichetta/authly-rs).
+Discord OAuth2 provider for [authly-rs](https://github.com/marcjazz/authly-rs).
 
 This crate provides a concrete implementation of the `OAuthProvider` trait for Discord, allowing easy integration of Discord authentication into your application.
 
@@ -32,4 +32,4 @@ let provider = DiscordProvider::new(
 
 ## Part of authly-rs
 
-This crate is part of the [authly-rs](https://github.com/marcorichetta/authly-rs) workspace.
+This crate is part of the [authly-rs](https://github.com/marcjazz/authly-rs) workspace.

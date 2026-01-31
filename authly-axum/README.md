@@ -1,6 +1,6 @@
 # authly-axum
 
-Axum integration for [authly-rs](https://github.com/marcorichetta/authly-rs).
+Axum integration for [authly-rs](https://github.com/marcjazz/authly-rs).
 
 This crate provides Axum-specific extractors and helpers to easily integrate the `authly` authentication framework into Axum applications.
 
@@ -37,4 +37,4 @@ fn app() -> Router {
 
 ## Part of authly-rs
 
-This crate is part of the [authly-rs](https://github.com/marcorichetta/authly-rs) workspace.
+This crate is part of the [authly-rs](https://github.com/marcjazz/authly-rs) workspace.
