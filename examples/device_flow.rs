@@ -1,5 +1,4 @@
 use authly_flow::DeviceFlow;
-use std::io::{self, Write};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
