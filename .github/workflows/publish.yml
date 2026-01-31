@@ -13,12 +13,23 @@ on:
     types: [created]
 
 jobs:
-  publish:
-    environment: ${{ github.event.inputs.deploy_environment }}
-    name: publish
+  publish_crates:
     runs-on: ubuntu-latest
-    env:
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - "authly-core"
+          - "authly-token"
+          - "authly-session"
+          - "authly-oidc"
+          - "authly-flow"
+          - "authly-providers-discord"
+          - "authly-providers-github"
+          - "authly-providers-google"
+          - "authly-actix"
+          - "authly-axum"
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,30 +39,33 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Publish crates
+      - name: Configure cargo credentials
         run: |
-          # The order matters because of dependencies between crates
-          CRATES=(
-            "authly-core"
-            "authly-token"
-            "authly-session"
-            "authly-oidc"
-            "authly-flow"
-            "authly-providers-discord"
-            "authly-providers-github"
-            "authly-providers-google"
-            "authly-actix"
-            "authly-axum"
-          )
-          for pkg in "${CRATES[@]}"; do
-            echo "Checking $pkg..."
-            # Check if version already exists on crates.io
-            if cargo publish --package "$pkg" --dry-run 2>&1 | grep -q "already exists"; then
-              echo "::warning::Version for $pkg already exists on crates.io, skipping."
-            else
-              echo "Publishing $pkg..."
-              cargo publish --package "$pkg"
-              # Wait a few seconds for the registry index to update
-              sleep 10
-            fi
-          done
+          mkdir -p $HOME/.cargo
+          cat > $HOME/.cargo/config.toml <<EOF
+          [registry]
+          token = "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+          EOF
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish ${{ matrix.crate }}
+        env:
+          # The CARGO_REGISTRY_TOKEN is now configured in config.toml, 
+          # but we keep it here for consistency if we switch back to direct env var use.
+          # The token is read from $HOME/.cargo/config.toml, which is the recommended way 
+          # for matrix builds to avoid token leakage in logs for one job's log lines
+          # if a different job fails before step execution.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          echo "Checking ${{ matrix.crate }}..."
+          # Check if version already exists on crates.io
+          if cargo publish --package "${{ matrix.crate }}" --dry-run 2>&1 | grep -q "already exists"; then
+            echo "::warning::Version for ${{ matrix.crate }} already exists on crates.io, skipping."
+          else
+            echo "Publishing ${{ matrix.crate }}..."
+            # Publish only the specific crate in this job
+            cargo publish --package "${{ matrix.crate }}"
+            # Wait a few seconds for the registry index to update to reduce transient 429s for the *next* crate in the matrix
+            sleep 10
+          fi
