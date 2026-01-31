@@ -28,32 +28,13 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Publish authly-core
-        run: cargo publish --package authly-core
-
-      - name: Publish authly-token
-        run: cargo publish --package authly-token
-
-      - name: Publish authly-session
-        run: cargo publish --package authly-session
-
-      - name: Publish authly-oidc
-        run: cargo publish --package authly-oidc
-
-      - name: Publish authly-flow
-        run: cargo publish --package authly-flow
-
-      - name: Publish authly-actix
-        run: cargo publish --package authly-actix
-
-      - name: Publish authly-axum
-        run: cargo publish --package authly-axum
-
-      - name: Publish authly-providers-discord
-        run: cargo publish --package authly-providers-discord
-
-      - name: Publish authly-providers-github
-        run: cargo publish --package authly-providers-github
-
-      - name: Publish authly-providers-google
-        run: cargo publish --package authly-providers-google
+      - name: Publish crates
+        run: |
+          for pkg in authly-core authly-token authly-session authly-oidc authly-flow authly-actix authly-axum authly-providers-discord authly-providers-github authly-providers-google; do
+            echo "Checking $pkg..."
+            if cargo publish --package "$pkg" --dry-run 2>&1 | grep -q "already exists"; then
+              echo "::warning::Version for $pkg already exists on crates.io, skipping."
+            else
+              cargo publish --package "$pkg"
+            fi
+          done
