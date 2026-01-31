@@ -6,11 +6,13 @@ This crate provides the foundational types and traits used across the `authly` f
 
 ## Features
 
-- `Identity` structure for unified user information.
-- `OAuthProvider` trait for implementing new OAuth2 providers.
-- `CredentialsProvider` trait for password-based auth.
-- `UserMapper` trait for mapping identities to local database users.
-- Standard `AuthError` types.
+- `Identity` structure for unified user information across different providers.
+- `OAuthToken` structure for standard OAuth2 token responses.
+- `OAuthProvider` trait for implementing OAuth2-compatible authentication providers.
+- `CredentialsProvider` trait for password-based or custom credential authentication.
+- `UserMapper` trait for mapping provider identities to local application users.
+- `pkce` module for Proof Key for Code Exchange support.
+- Standard `AuthError` enum for consistent error handling.
 
 ## Usage
 
@@ -19,6 +21,60 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 authly-core = "0.1.0"
+```
+
+### Core Traits
+
+#### OAuthProvider
+
+The `OAuthProvider` trait defines the interface for OAuth2 providers. It includes methods for generating authorization URLs and exchanging codes for identities.
+
+```rust
+#[async_trait]
+pub trait OAuthProvider: Send + Sync {
+    fn get_authorization_url(
+        &self,
+        state: &str,
+        scopes: &[&str],
+        code_challenge: Option<&str>,
+    ) -> String;
+
+    async fn exchange_code_for_identity(
+        &self,
+        code: &str,
+        code_verifier: Option<&str>,
+    ) -> Result<(Identity, OAuthToken), AuthError>;
+    
+    // Optional methods for token management
+    async fn refresh_token(&self, refresh_token: &str) -> Result<OAuthToken, AuthError>;
+    async fn revoke_token(&self, token: &str) -> Result<(), AuthError>;
+}
+```
+
+#### CredentialsProvider
+
+The `CredentialsProvider` trait is used for non-OAuth authentication methods, such as email/password.
+
+```rust
+#[async_trait]
+pub trait CredentialsProvider: Send + Sync {
+    type Credentials;
+
+    async fn authenticate(&self, creds: Self::Credentials) -> Result<Identity, AuthError>;
+}
+```
+
+#### UserMapper
+
+The `UserMapper` trait allows you to bridge the gap between a provider's `Identity` and your application's local user model.
+
+```rust
+#[async_trait]
+pub trait UserMapper: Send + Sync {
+    type LocalUser: Send + Sync;
+
+    async fn map_user(&self, identity: &Identity) -> Result<Self::LocalUser, AuthError>;
+}
 ```
 
 ## Part of authly-rs
