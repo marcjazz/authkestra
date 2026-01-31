@@ -1,6 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
+use rand::{Rng, distr::Alphanumeric, rng};
 use sha2::{Digest, Sha256};
 
 /// Proof Key for Code Exchange (PKCE) parameters.
@@ -15,7 +14,7 @@ pub struct Pkce {
 impl Pkce {
     /// Generates a new PKCE verifier and challenge.
     pub fn new() -> Self {
-        let code_verifier: String = thread_rng()
+        let code_verifier: String = rng()
             .sample_iter(&Alphanumeric)
             .take(64)
             .map(char::from)
