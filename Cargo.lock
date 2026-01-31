@@ -305,7 +305,6 @@ name = "authly-actix"
 version = "0.1.0"
 dependencies = [
  "actix-rt",
- "actix-utils",
  "actix-web",
  "authly-core",
  "authly-flow",
@@ -316,10 +315,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "serde",
- "serde_json",
  "sqlx",
- "thiserror 2.0.18",
- "tracing",
  "uuid",
 ]
 
@@ -340,7 +336,6 @@ dependencies = [
  "axum-extra",
  "chrono",
  "dotenvy",
- "http 1.4.0",
  "serde",
  "serde_json",
  "sqlx",
@@ -366,7 +361,6 @@ dependencies = [
 name = "authly-flow"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "authly-core",
  "reqwest",
  "serde",

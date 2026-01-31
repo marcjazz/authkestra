@@ -1,7 +1,7 @@
 use authly_core::{AuthError, OAuthToken};
 use serde::{Deserialize, Serialize};
+use std::thread::sleep;
 use std::time::Duration;
-use tokio::time::sleep;
 
 /// Represents the response from the device authorization endpoint.
 /// Defined in RFC 8628 Section 3.2.
@@ -142,7 +142,7 @@ impl DeviceFlow {
                 }
             }
 
-            sleep(Duration::from_secs(current_interval)).await;
+            sleep(Duration::from_secs(current_interval));
         }
     }
 }

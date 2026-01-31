@@ -10,25 +10,27 @@ categories = ["authentication", "web-programming::http-server"]
 
 [dependencies]
 authly-core = { version = "0.1.0", path = "../authly-core" }
-authly-session = { version = "0.1.0", path = "../authly-session", features = ["store-redis", "store-sqlx", "sqlite"] }
+authly-session = { version = "0.1.0", path = "../authly-session" }
 authly-flow = { version = "0.1.0", path = "../authly-flow" }
+authly-token = { version = "0.1.0", path = "../authly-token" }
+axum = "0.8.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tower-cookies = "0.11.0"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+axum-extra = { version = "0.12.5", features = ["cookie"] }
+dotenvy = "0.15"
+authly-session = { version = "0.1.0", path = "../authly-session", features = ['sqlite', 'store-redis'] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+authly-oidc = { version = "0.1.0", path = "../authly-oidc" }
 authly-providers-github = { version = "0.1.0", path = "../authly-providers-github" }
 authly-providers-google = { version = "0.1.0", path = "../authly-providers-google" }
 authly-providers-discord = { version = "0.1.0", path = "../authly-providers-discord" }
-authly-oidc = { version = "0.1.0", path = "../authly-oidc" }
-authly-token = { version = "0.1.0", path = "../authly-token" }
-axum = "0.8.8"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-async-trait = "0.1"
-serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", features = ["full"] }
-uuid = { version = "1.0", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
-tower-cookies = "0.11.0"
-axum-extra = { version = "0.12.5", features = ["cookie"] }
-http = "1.0"
-dotenvy = "0.15"
-serde_json = "1.0"
 
 [[example]]
 name = "axum_oauth"

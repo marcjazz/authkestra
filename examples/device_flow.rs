@@ -17,9 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Initiating device authorization flow...");
 
     // 1. Request device authorization
-    let device_resp = flow
-        .initiate_device_authorization(&["user", "repo"])
-        .await?;
+    let device_resp = flow.initiate_device_authorization(&["user", "repo"]).await?;
 
     println!(
         "\n1. Open your browser and go to: {}",
@@ -34,10 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nWaiting for authorization...");
 
     // 2. Poll for the token
-    match flow
-        .poll_for_token(&device_resp.device_code, device_resp.interval)
-        .await
-    {
+    match flow.poll_for_token(&device_resp.device_code, device_resp.interval).await {
         Ok(token) => {
             println!("\nAuthorization successful!");
             println!("Access Token: {}", token.access_token);
