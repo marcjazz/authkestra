@@ -9,14 +9,14 @@ keywords = ["auth", "axum", "web", "middleware"]
 categories = ["authentication", "web-programming::http-server"]
 
 [dependencies]
-authly-core = { path = "../authly-core" }
-authly-session = { path = "../authly-session", features = ["store-redis", "store-sqlx", "sqlite"] }
-authly-flow = { path = "../authly-flow" }
-authly-providers-github = { path = "../authly-providers-github" }
-authly-providers-google = { path = "../authly-providers-google" }
-authly-providers-discord = { path = "../authly-providers-discord" }
-authly-oidc = { path = "../authly-oidc" }
-authly-token = { path = "../authly-token" }
+authly-core = { version = "0.1.0", path = "../authly-core" }
+authly-session = { version = "0.1.0", path = "../authly-session", features = ["store-redis", "store-sqlx", "sqlite"] }
+authly-flow = { version = "0.1.0", path = "../authly-flow" }
+authly-providers-github = { version = "0.1.0", path = "../authly-providers-github" }
+authly-providers-google = { version = "0.1.0", path = "../authly-providers-google" }
+authly-providers-discord = { version = "0.1.0", path = "../authly-providers-discord" }
+authly-oidc = { version = "0.1.0", path = "../authly-oidc" }
+authly-token = { version = "0.1.0", path = "../authly-token" }
 axum = "0.8.8"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 async-trait = "0.1"
