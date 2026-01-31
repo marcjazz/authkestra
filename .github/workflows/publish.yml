@@ -30,11 +30,28 @@ jobs:
 
       - name: Publish crates
         run: |
-          for pkg in authly-core authly-token authly-session authly-oidc authly-flow authly-actix authly-axum authly-providers-discord authly-providers-github authly-providers-google; do
+          # The order matters because of dependencies between crates
+          CRATES=(
+            "authly-core"
+            "authly-token"
+            "authly-session"
+            "authly-oidc"
+            "authly-flow"
+            "authly-providers-discord"
+            "authly-providers-github"
+            "authly-providers-google"
+            "authly-actix"
+            "authly-axum"
+          )
+          for pkg in "${CRATES[@]}"; do
             echo "Checking $pkg..."
+            # Check if version already exists on crates.io
             if cargo publish --package "$pkg" --dry-run 2>&1 | grep -q "already exists"; then
               echo "::warning::Version for $pkg already exists on crates.io, skipping."
             else
+              echo "Publishing $pkg..."
               cargo publish --package "$pkg"
+              # Wait a few seconds for the registry index to update
+              sleep 5
             fi
           done
