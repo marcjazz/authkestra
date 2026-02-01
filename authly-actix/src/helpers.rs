@@ -1,7 +1,6 @@
-use actix_web::{cookie::Cookie, http::header, HttpRequest, HttpResponse};
-use authly_core::{pkce::Pkce, OAuthProvider};
-use authly_flow::OAuth2Flow;
-use authly_session::{Session, SessionStore};
+use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
+use authly_core::{pkce::Pkce, OAuthProvider, Session, SessionStore, SessionConfig};
+use authly_flow::{Authly, OAuth2Flow, ErasedOAuthFlow};
 use std::sync::Arc;
 
 #[derive(serde::Deserialize)]
@@ -10,44 +9,27 @@ pub struct OAuthCallbackParams {
     pub state: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct SessionConfig {
-    pub cookie_name: String,
-    pub secure: bool,
-    pub http_only: bool,
-    pub same_site: actix_web::cookie::SameSite,
-    pub path: String,
-    pub max_age: Option<chrono::Duration>,
-}
-
-impl Default for SessionConfig {
-    fn default() -> Self {
-        Self {
-            cookie_name: "authly_session".to_string(),
-            secure: true,
-            http_only: true,
-            same_site: actix_web::cookie::SameSite::Lax,
-            path: "/".to_string(),
-            max_age: Some(chrono::Duration::hours(24)),
-        }
+pub fn to_actix_same_site(ss: authly_core::SameSite) -> actix_web::cookie::SameSite {
+    match ss {
+        authly_core::SameSite::Lax => actix_web::cookie::SameSite::Lax,
+        authly_core::SameSite::Strict => actix_web::cookie::SameSite::Strict,
+        authly_core::SameSite::None => actix_web::cookie::SameSite::None,
     }
 }
 
-impl SessionConfig {
-    pub fn create_cookie<'a>(&self, value: String) -> Cookie<'a> {
-        let mut builder = Cookie::build(self.cookie_name.clone(), value)
-            .path(self.path.clone())
-            .secure(self.secure)
-            .http_only(self.http_only)
-            .same_site(self.same_site);
+pub fn create_actix_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<'a> {
+    let mut builder = Cookie::build(config.cookie_name.clone(), value)
+        .path(config.path.clone())
+        .secure(config.secure)
+        .http_only(config.http_only)
+        .same_site(to_actix_same_site(config.same_site));
 
-        if let Some(max_age) = self.max_age {
-            builder = builder.max_age(actix_web::cookie::time::Duration::seconds(
-                max_age.num_seconds(),
-            ));
-        }
-        builder.finish()
+    if let Some(max_age) = config.max_age {
+        builder = builder.max_age(actix_web::cookie::time::Duration::seconds(
+            max_age.num_seconds(),
+        ));
     }
+    builder.finish()
 }
 
 /// Helper to initiate the OAuth2 login flow.
@@ -62,6 +44,14 @@ where
     P: OAuthProvider,
     M: authly_core::UserMapper,
 {
+    initiate_oauth_login_erased(flow, session_config, scopes)
+}
+
+pub fn initiate_oauth_login_erased(
+    flow: &dyn ErasedOAuthFlow,
+    session_config: &SessionConfig,
+    scopes: &[&str],
+) -> HttpResponse {
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
@@ -94,6 +84,17 @@ where
     P: OAuthProvider + Send + Sync,
     M: authly_core::UserMapper + Send + Sync,
 {
+    handle_oauth_callback_erased(req, flow, params, store, config, success_url).await
+}
+
+pub async fn handle_oauth_callback_erased(
+    req: HttpRequest,
+    flow: &dyn ErasedOAuthFlow,
+    params: OAuthCallbackParams,
+    store: Arc<dyn SessionStore>,
+    config: SessionConfig,
+    success_url: &str,
+) -> Result<HttpResponse, actix_web::Error> {
     let cookie_name = format!("authly_flow_{}", params.state);
     let pkce_verifier = req
         .cookie(&cookie_name)
@@ -103,7 +104,7 @@ where
         })?;
 
     // Exchange code
-    let (mut identity, token, _local_user) = flow
+    let (mut identity, token) = flow
         .finalize_login(
             &params.code,
             &params.state,
@@ -141,7 +142,7 @@ where
         actix_web::error::ErrorInternalServerError(format!("Failed to save session: {}", e))
     })?;
 
-    let cookie = config.create_cookie(session.id);
+    let cookie = create_actix_cookie(&config, session.id);
 
     // Remove the flow cookie
     let remove_cookie = Cookie::build(cookie_name, "")
@@ -155,6 +156,55 @@ where
         .cookie(cookie)
         .cookie(remove_cookie)
         .finish())
+}
+
+pub async fn actix_login_handler(
+    path: web::Path<String>,
+    authly: web::Data<Authly>,
+) -> impl actix_web::Responder {
+    let provider = path.into_inner();
+    let flow = match authly.providers.get(&provider) {
+        Some(f) => f,
+        None => return HttpResponse::NotFound().body(format!("Provider {} not found", provider)),
+    };
+
+    initiate_oauth_login_erased(flow.as_ref(), &authly.session_config, &[])
+}
+
+pub async fn actix_callback_handler(
+    req: HttpRequest,
+    path: web::Path<String>,
+    authly: web::Data<Authly>,
+    params: web::Query<OAuthCallbackParams>,
+) -> actix_web::Result<impl actix_web::Responder> {
+    let provider = path.into_inner();
+    let flow = match authly.providers.get(&provider) {
+        Some(f) => f,
+        None => return Ok(HttpResponse::NotFound().body(format!("Provider {} not found", provider))),
+    };
+
+    handle_oauth_callback_erased(
+        req,
+        flow.as_ref(),
+        params.into_inner(),
+        authly.session_store.clone(),
+        authly.session_config.clone(),
+        "/",
+    )
+    .await
+}
+
+pub async fn actix_logout_handler(
+    req: HttpRequest,
+    authly: web::Data<Authly>,
+) -> actix_web::Result<impl actix_web::Responder> {
+    logout(
+        req,
+        authly.session_store.clone(),
+        authly.session_config.clone(),
+        "/",
+    )
+    .await
 }
 
 /// Helper to handle logout by deleting the session from the store and clearing the cookie.
@@ -175,8 +225,7 @@ pub async fn logout(
             .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
     }
 
-    let mut remove_cookie = config.create_cookie("".to_string());
-    remove_cookie.set_max_age(Some(actix_web::cookie::time::Duration::ZERO));
+    let remove_cookie = create_actix_cookie(&config, "".to_string());
 
     Ok(HttpResponse::Found()
         .insert_header((header::LOCATION, redirect_to))
