@@ -1,8 +1,9 @@
-use authly_core::{pkce::Pkce, Identity, OAuthProvider, OAuthToken};
-use authly_flow::OAuth2Flow;
-use authly_session::{Session, SessionStore};
+use authly_core::{pkce::Pkce, Identity, OAuthProvider, OAuthToken, Session, SessionStore};
+pub use authly_core::SessionConfig;
+use authly_flow::{Authly, ErasedOAuthFlow, OAuth2Flow};
 use authly_token::TokenManager;
 use axum::{
+    extract::{FromRef, Path, Query, State},
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Redirect},
     Json,
@@ -16,43 +17,32 @@ pub struct OAuthCallbackParams {
     pub state: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct SessionConfig {
-    pub cookie_name: String,
-    pub secure: bool,
-    pub http_only: bool,
-    pub same_site: SameSite,
-    pub path: String,
-    pub max_age: Option<chrono::Duration>,
+#[derive(serde::Deserialize)]
+pub struct OAuthLoginParams {
+    pub scope: Option<String>,
+    pub success_url: Option<String>,
 }
 
-impl Default for SessionConfig {
-    fn default() -> Self {
-        Self {
-            cookie_name: "authly_session".to_string(),
-            secure: true,
-            http_only: true,
-            same_site: SameSite::Lax,
-            path: "/".to_string(),
-            max_age: Some(chrono::Duration::hours(24)),
-        }
+pub fn to_axum_same_site(ss: authly_core::SameSite) -> SameSite {
+    match ss {
+        authly_core::SameSite::Lax => SameSite::Lax,
+        authly_core::SameSite::Strict => SameSite::Strict,
+        authly_core::SameSite::None => SameSite::None,
     }
 }
 
-impl SessionConfig {
-    pub fn create_cookie<'a>(&self, value: String) -> Cookie<'a> {
-        let mut cookie = Cookie::new(self.cookie_name.clone(), value);
-        cookie.set_path(self.path.clone());
-        cookie.set_secure(self.secure);
-        cookie.set_http_only(self.http_only);
-        cookie.set_same_site(self.same_site);
-        if let Some(max_age) = self.max_age {
-            cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::seconds(
-                max_age.num_seconds(),
-            )));
-        }
-        cookie
+pub fn create_axum_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<'a> {
+    let mut cookie = Cookie::new(config.cookie_name.clone(), value);
+    cookie.set_path(config.path.clone());
+    cookie.set_secure(config.secure);
+    cookie.set_http_only(config.http_only);
+    cookie.set_same_site(to_axum_same_site(config.same_site));
+    if let Some(max_age) = config.max_age {
+        cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::seconds(
+            max_age.num_seconds(),
+        )));
     }
+    cookie
 }
 
 /// Helper to initiate the OAuth2 login flow.
@@ -87,16 +77,12 @@ where
 }
 
 /// Internal helper to finalize the OAuth flow by validating state and exchanging the code.
-async fn finalize_callback<P, M>(
-    flow: &OAuth2Flow<P, M>,
+async fn finalize_callback_erased(
+    flow: &dyn ErasedOAuthFlow,
     session_config: &SessionConfig,
     cookies: &Cookies,
     params: &OAuthCallbackParams,
-) -> Result<(Identity, OAuthToken), (StatusCode, String)>
-where
-    P: OAuthProvider + Send + Sync,
-    M: authly_core::UserMapper + Send + Sync,
-{
+) -> Result<(Identity, OAuthToken), (StatusCode, String)> {
     let cookie_name = format!("authly_flow_{}", params.state);
 
     let pkce_verifier = cookies
@@ -115,7 +101,7 @@ where
     remove_cookie.set_secure(session_config.secure);
     cookies.remove(remove_cookie);
 
-    let (identity, token, _local_user) = flow
+    let (identity, token) = flow
         .finalize_login(
             &params.code,
             &params.state,
@@ -133,20 +119,30 @@ where
     Ok((identity, token))
 }
 
-/// Helper to handle the OAuth2 callback and create a server-side session.
-pub async fn handle_oauth_callback<P, M>(
+/// Internal helper to finalize the OAuth flow by validating state and exchanging the code.
+async fn finalize_callback<P, M>(
     flow: &OAuth2Flow<P, M>,
+    session_config: &SessionConfig,
+    cookies: &Cookies,
+    params: &OAuthCallbackParams,
+) -> Result<(Identity, OAuthToken), (StatusCode, String)>
+where
+    P: OAuthProvider + Send + Sync,
+    M: authly_core::UserMapper + Send + Sync,
+{
+    finalize_callback_erased(flow, session_config, cookies, params).await
+}
+
+/// Helper to handle the OAuth2 callback and create a server-side session.
+pub async fn handle_oauth_callback_erased(
+    flow: &dyn ErasedOAuthFlow,
     cookies: Cookies,
     params: OAuthCallbackParams,
     store: Arc<dyn SessionStore>,
     config: SessionConfig,
     success_url: &str,
-) -> Result<impl IntoResponse, (StatusCode, String)>
-where
-    P: OAuthProvider + Send + Sync,
-    M: authly_core::UserMapper + Send + Sync,
-{
-    let (mut identity, token) = finalize_callback(flow, &config, &cookies, &params).await?;
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let (mut identity, token) = finalize_callback_erased(flow, &config, &cookies, &params).await?;
 
     // Store tokens in identity attributes for convenience
     identity
@@ -178,10 +174,26 @@ where
         )
     })?;
 
-    let cookie = config.create_cookie(session.id);
+    let cookie = create_axum_cookie(&config, session.id);
     cookies.add(cookie);
 
     Ok(Redirect::to(success_url).into_response())
+}
+
+/// Helper to handle the OAuth2 callback and create a server-side session.
+pub async fn handle_oauth_callback<P, M>(
+    flow: &OAuth2Flow<P, M>,
+    cookies: Cookies,
+    params: OAuthCallbackParams,
+    store: Arc<dyn SessionStore>,
+    config: SessionConfig,
+    success_url: &str,
+) -> Result<impl IntoResponse, (StatusCode, String)>
+where
+    P: OAuthProvider + Send + Sync,
+    M: authly_core::UserMapper + Send + Sync,
+{
+    handle_oauth_callback_erased(flow, cookies, params, store, config, success_url).await
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
@@ -235,11 +247,119 @@ pub async fn logout(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
-    let mut cookie = config.create_cookie("".to_string());
+    let mut cookie = create_axum_cookie(&config, "".to_string());
     cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::ZERO));
     cookies.remove(cookie);
 
     Ok(Redirect::to(redirect_to))
+}
+
+pub async fn axum_login_handler<S>(
+    Path(provider): Path<String>,
+    State(state): State<S>,
+    Query(params): Query<OAuthLoginParams>,
+    cookies: Cookies,
+) -> impl IntoResponse
+where
+    S: Clone + Send + Sync + 'static,
+    Authly: axum::extract::FromRef<S>,
+    SessionConfig: axum::extract::FromRef<S>,
+{
+    let authly = Authly::from_ref(&state);
+    let session_config = SessionConfig::from_ref(&state);
+    let flow: &Arc<dyn ErasedOAuthFlow> = match authly.providers.get(&provider) {
+        Some(f) => f,
+        None => return (StatusCode::NOT_FOUND, "Provider not found").into_response(),
+    };
+
+    let scopes_str = params.scope.unwrap_or_default();
+    let scopes: Vec<&str> = scopes_str.split_whitespace().collect();
+
+    let pkce = Pkce::new();
+    let (url, csrf_state) = flow.initiate_login(&scopes, Some(&pkce.code_challenge));
+
+    let cookie_name = format!("authly_flow_{}", csrf_state);
+
+    let mut cookie = Cookie::new(cookie_name, pkce.code_verifier);
+    cookie.set_path("/");
+    cookie.set_http_only(true);
+    cookie.set_same_site(SameSite::Lax);
+    cookie.set_secure(session_config.secure);
+    cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::minutes(15)));
+
+    cookies.add(cookie);
+
+    if let Some(success_url) = params.success_url {
+        let mut cookie = Cookie::new(format!("authly_success_{}", csrf_state), success_url);
+        cookie.set_path("/");
+        cookie.set_http_only(true);
+        cookie.set_secure(session_config.secure);
+        cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::minutes(15)));
+        cookies.add(cookie);
+    }
+
+    Redirect::to(&url).into_response()
+}
+
+pub async fn axum_callback_handler<S>(
+    Path(provider): Path<String>,
+    State(state): State<S>,
+    Query(params): Query<OAuthCallbackParams>,
+    cookies: Cookies,
+) -> impl IntoResponse
+where
+    S: Clone + Send + Sync + 'static,
+    Authly: axum::extract::FromRef<S>,
+    SessionConfig: axum::extract::FromRef<S>,
+    Arc<dyn SessionStore>: axum::extract::FromRef<S>,
+{
+    let authly = Authly::from_ref(&state);
+    let session_config = SessionConfig::from_ref(&state);
+    let session_store = Arc::<dyn SessionStore>::from_ref(&state);
+
+    let flow: &Arc<dyn ErasedOAuthFlow> = match authly.providers.get(&provider) {
+        Some(f) => f,
+        None => return (StatusCode::NOT_FOUND, "Provider not found").into_response(),
+    };
+
+    let success_url_cookie_name = format!("authly_success_{}", params.state);
+    let success_url = cookies
+        .get(&success_url_cookie_name)
+        .map(|c| c.value().to_string())
+        .unwrap_or_else(|| "/".to_string());
+
+    if let Some(cookie) = cookies.get(&success_url_cookie_name) {
+        let mut remove_cookie = Cookie::new(success_url_cookie_name, "");
+        remove_cookie.set_path("/");
+        remove_cookie.set_secure(session_config.secure);
+        cookies.remove(remove_cookie);
+    }
+
+    handle_oauth_callback_erased(
+        flow.as_ref(),
+        cookies,
+        params,
+        session_store,
+        session_config,
+        &success_url,
+    )
+    .await
+    .into_response()
+}
+
+pub async fn axum_logout_handler<S>(
+    State(state): State<S>,
+    cookies: Cookies,
+) -> impl IntoResponse
+where
+    S: Clone + Send + Sync + 'static,
+    SessionConfig: axum::extract::FromRef<S>,
+    Arc<dyn SessionStore>: axum::extract::FromRef<S>,
+{
+    let session_config = SessionConfig::from_ref(&state);
+    let session_store = Arc::<dyn SessionStore>::from_ref(&state);
+
+    logout(cookies, session_store, session_config, "/").await
 }
 
 #[derive(Debug)]

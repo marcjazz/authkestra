@@ -1,4 +1,5 @@
-use authly_session::{Session, SessionStore};
+pub use authly_core::{Session, SessionConfig, SessionStore};
+pub use authly_flow::Authly;
 use authly_token::TokenManager;
 use axum::{
     extract::{FromRef, FromRequestParts},
@@ -15,26 +16,36 @@ pub use helpers::*;
 
 #[derive(Clone)]
 pub struct AuthlyState {
-    pub store: Arc<dyn SessionStore>,
-    pub config: SessionConfig,
-    pub token_manager: Arc<TokenManager>,
+    pub authly: Authly,
+}
+
+impl From<Authly> for AuthlyState {
+    fn from(authly: Authly) -> Self {
+        Self { authly }
+    }
+}
+
+impl FromRef<AuthlyState> for Authly {
+    fn from_ref(state: &AuthlyState) -> Self {
+        state.authly.clone()
+    }
 }
 
 impl FromRef<AuthlyState> for Arc<dyn SessionStore> {
     fn from_ref(state: &AuthlyState) -> Self {
-        state.store.clone()
+        state.authly.session_store.clone()
     }
 }
 
 impl FromRef<AuthlyState> for SessionConfig {
     fn from_ref(state: &AuthlyState) -> Self {
-        state.config.clone()
+        state.authly.session_config.clone()
     }
 }
 
 impl FromRef<AuthlyState> for Arc<TokenManager> {
     fn from_ref(state: &AuthlyState) -> Self {
-        state.token_manager.clone()
+        state.authly.token_manager.clone()
     }
 }
 
@@ -78,5 +89,33 @@ where
         let token_manager = Arc::<TokenManager>::from_ref(state);
         let token = helpers::get_token(parts, &token_manager).await?;
         Ok(AuthToken(token))
+    }
+}
+
+pub trait AuthlyAxumExt {
+    fn axum_router<S>(&self) -> axum::Router<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        Authly: FromRef<S>,
+        SessionConfig: FromRef<S>,
+        Arc<dyn SessionStore>: FromRef<S>;
+}
+
+impl AuthlyAxumExt for Authly {
+    fn axum_router<S>(&self) -> axum::Router<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        Authly: FromRef<S>,
+        SessionConfig: FromRef<S>,
+        Arc<dyn SessionStore>: FromRef<S>,
+    {
+        use axum::routing::get;
+        axum::Router::new()
+            .route("/auth/:provider", get(helpers::axum_login_handler::<S>))
+            .route(
+                "/auth/:provider/callback",
+                get(helpers::axum_callback_handler::<S>),
+            )
+            .route("/auth/logout", get(helpers::axum_logout_handler::<S>))
     }
 }
