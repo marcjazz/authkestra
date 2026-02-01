@@ -1,5 +1,5 @@
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use authly_actix::{AuthlyActixExt, AuthSession};
+use authly_actix::{AuthSession, AuthlyActixExt};
 use authly_core::{SessionConfig, SessionStore};
 use authly_flow::{Authly, OAuth2Flow};
 use authly_providers_github::GithubProvider;
@@ -73,9 +73,7 @@ async fn main() -> std::io::Result<()> {
         .session_store(session_store.clone())
         .build();
 
-    let app_state = web::Data::new(AppState {
-        authly,
-    });
+    let app_state = web::Data::new(AppState { authly });
 
     // We also need to register the store and config separately for the extractor
     let store_data: web::Data<Arc<dyn SessionStore>> = web::Data::new(session_store.clone());

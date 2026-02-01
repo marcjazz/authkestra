@@ -1,12 +1,8 @@
-use authly_axum::{Authly, AuthlyAxumExt, AuthlyState, AuthSession};
+use authly_axum::{AuthSession, Authly, AuthlyAxumExt, AuthlyState};
 use authly_core::SessionStore;
 use authly_flow::OAuth2Flow;
 use authly_oidc::OidcProvider;
-use axum::{
-    response::IntoResponse,
-    routing::get,
-    Router,
-};
+use axum::{response::IntoResponse, routing::get, Router};
 use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 
@@ -54,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Demonstrate initialization/discovery
     let provider = OidcProvider::discover(client_id, client_secret, redirect_uri, &issuer).await?;
-    
+
     // Use Redis if REDIS_URL is set, otherwise fallback to MemoryStore
     let session_store: Arc<dyn SessionStore> = if let Ok(redis_url) = std::env::var("REDIS_URL") {
         println!("Using RedisStore at {}", redis_url);

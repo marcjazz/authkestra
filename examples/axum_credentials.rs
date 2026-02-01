@@ -1,5 +1,5 @@
-use authly_axum::{Authly, AuthlyState, AuthSession, SessionConfig};
-use authly_core::{AuthError, CredentialsProvider, Identity, UserMapper, Session, SessionStore};
+use authly_axum::{AuthSession, Authly, AuthlyState, SessionConfig};
+use authly_core::{AuthError, CredentialsProvider, Identity, Session, SessionStore, UserMapper};
 use authly_flow::CredentialsFlow;
 use axum::{
     extract::{Form, State},
@@ -106,9 +106,7 @@ async fn main() {
 
     let session_store = Arc::new(authly_core::MemoryStore::default());
 
-    let authly = Authly::builder()
-        .session_store(session_store)
-        .build();
+    let authly = Authly::builder().session_store(session_store).build();
 
     let state = AppState {
         auth_flow,
@@ -169,7 +167,10 @@ async fn login(
         .await
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let cookie = authly_axum::helpers::create_axum_cookie(&state.authly_state.authly.session_config, session.id);
+    let cookie = authly_axum::helpers::create_axum_cookie(
+        &state.authly_state.authly.session_config,
+        session.id,
+    );
     cookies.add(cookie);
 
     Ok(Redirect::to("/protected"))

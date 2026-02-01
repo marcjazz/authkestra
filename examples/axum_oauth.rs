@@ -1,4 +1,4 @@
-use authly_axum::{Authly, AuthlyAxumExt, AuthlyState, AuthSession, SessionConfig};
+use authly_axum::{AuthSession, Authly, AuthlyAxumExt, AuthlyState, SessionConfig};
 use authly_flow::OAuth2Flow;
 use authly_providers_discord::DiscordProvider;
 use authly_providers_github::GithubProvider;
