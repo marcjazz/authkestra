@@ -1,4 +1,4 @@
-use authly_flow::DeviceFlow;
+use authkestra_flow::DeviceFlow;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,4 +1,4 @@
-use authly_token::offline_validation::{validate_jwt, JwksCache};
+use authkestra_token::offline_validation::{validate_jwt, JwksCache};
 use jsonwebtoken::{Algorithm, Validation};
 use std::time::Duration;
 

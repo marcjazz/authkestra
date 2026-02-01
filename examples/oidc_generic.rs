@@ -1,37 +1,37 @@
-use authly_axum::{AuthSession, Authly, AuthlyAxumExt, AuthlyState};
-use authly_core::SessionStore;
-use authly_flow::OAuth2Flow;
-use authly_oidc::OidcProvider;
+use authkestra_axum::{AuthSession, Authkestra, AuthkestraAxumExt, AuthkestraState};
+use authkestra_core::SessionStore;
+use authkestra_flow::OAuth2Flow;
+use authkestra_oidc::OidcProvider;
 use axum::{response::IntoResponse, routing::get, Router};
 use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 
 #[derive(Clone)]
 struct AppState {
-    authly_state: AuthlyState,
+    authkestra_state: AuthkestraState,
 }
 
-impl axum::extract::FromRef<AppState> for AuthlyState {
+impl axum::extract::FromRef<AppState> for AuthkestraState {
     fn from_ref(state: &AppState) -> Self {
-        state.authly_state.clone()
+        state.authkestra_state.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for Authly {
+impl axum::extract::FromRef<AppState> for Authkestra {
     fn from_ref(state: &AppState) -> Self {
-        state.authly_state.authly.clone()
+        state.authkestra_state.authkestra.clone()
     }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<dyn SessionStore> {
     fn from_ref(state: &AppState) -> Self {
-        state.authly_state.authly.session_store.clone()
+        state.authkestra_state.authkestra.session_store.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for authly_core::SessionConfig {
+impl axum::extract::FromRef<AppState> for authkestra_core::SessionConfig {
     fn from_ref(state: &AppState) -> Self {
-        state.authly_state.authly.session_config.clone()
+        state.authkestra_state.authkestra.session_config.clone()
     }
 }
 
@@ -54,24 +54,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use Redis if REDIS_URL is set, otherwise fallback to MemoryStore
     let session_store: Arc<dyn SessionStore> = if let Ok(redis_url) = std::env::var("REDIS_URL") {
         println!("Using RedisStore at {}", redis_url);
-        Arc::new(authly_session::RedisStore::new(&redis_url, "authly".into()).unwrap())
+        Arc::new(authkestra_session::RedisStore::new(&redis_url, "authkestra".into()).unwrap())
     } else {
         println!("Using MemoryStore");
-        Arc::new(authly_core::MemoryStore::default())
+        Arc::new(authkestra_core::MemoryStore::default())
     };
 
-    let authly = Authly::builder()
+    let authkestra = Authkestra::builder()
         .provider(OAuth2Flow::new(provider))
         .session_store(session_store)
         .build();
 
     let state = AppState {
-        authly_state: AuthlyState { authly },
+        authkestra_state: AuthkestraState { authkestra },
     };
 
     let app = Router::new()
         .route("/", get(index))
-        .merge(state.authly_state.authly.axum_router())
+        .merge(state.authkestra_state.authkestra.axum_router())
         .route("/protected", get(protected))
         .layer(CookieManagerLayer::new())
         .with_state(state);

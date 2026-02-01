@@ -1,6 +1,6 @@
-use authly_axum::{AuthSession, Authly, AuthlyState, SessionConfig};
-use authly_core::{AuthError, CredentialsProvider, Identity, Session, SessionStore, UserMapper};
-use authly_flow::CredentialsFlow;
+use authkestra_axum::{AuthSession, Authkestra, AuthkestraState, SessionConfig};
+use authkestra_core::{AuthError, CredentialsProvider, Identity, Session, SessionStore, UserMapper};
+use authkestra_flow::CredentialsFlow;
 use axum::{
     extract::{Form, State},
     response::{IntoResponse, Redirect},
@@ -77,24 +77,24 @@ impl UserMapper for SqlxUserMapper {
 #[derive(Clone)]
 struct AppState {
     auth_flow: Arc<CredentialsFlow<MyCredentialsProvider, SqlxUserMapper>>,
-    authly_state: AuthlyState,
+    authkestra_state: AuthkestraState,
 }
 
-impl axum::extract::FromRef<AppState> for AuthlyState {
+impl axum::extract::FromRef<AppState> for AuthkestraState {
     fn from_ref(state: &AppState) -> Self {
-        state.authly_state.clone()
+        state.authkestra_state.clone()
     }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<dyn SessionStore> {
     fn from_ref(state: &AppState) -> Self {
-        state.authly_state.authly.session_store.clone()
+        state.authkestra_state.authkestra.session_store.clone()
     }
 }
 
 impl axum::extract::FromRef<AppState> for SessionConfig {
     fn from_ref(state: &AppState) -> Self {
-        state.authly_state.authly.session_config.clone()
+        state.authkestra_state.authkestra.session_config.clone()
     }
 }
 
@@ -104,13 +104,13 @@ async fn main() {
     let mapper = SqlxUserMapper {};
     let auth_flow = Arc::new(CredentialsFlow::with_mapper(provider, mapper));
 
-    let session_store = Arc::new(authly_core::MemoryStore::default());
+    let session_store = Arc::new(authkestra_core::MemoryStore::default());
 
-    let authly = Authly::builder().session_store(session_store).build();
+    let authkestra = Authkestra::builder().session_store(session_store).build();
 
     let state = AppState {
         auth_flow,
-        authly_state: AuthlyState { authly },
+        authkestra_state: AuthkestraState { authkestra },
     };
 
     let app = Router::new()
@@ -160,15 +160,15 @@ async fn login(
     };
 
     state
-        .authly_state
-        .authly
+        .authkestra_state
+        .authkestra
         .session_store
         .save_session(&session)
         .await
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let cookie = authly_axum::helpers::create_axum_cookie(
-        &state.authly_state.authly.session_config,
+    let cookie = authkestra_axum::helpers::create_axum_cookie(
+        &state.authkestra_state.authkestra.session_config,
         session.id,
     );
     cookies.add(cookie);
