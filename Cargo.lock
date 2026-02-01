@@ -361,7 +361,9 @@ dependencies = [
 name = "authly-flow"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "authly-core",
+ "authly-token",
  "reqwest",
  "serde",
  "serde_json",

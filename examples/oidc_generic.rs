@@ -1,35 +1,41 @@
-use authly_axum::{
-    handle_oauth_callback, initiate_oauth_login, AuthSession, OAuthCallbackParams, SessionConfig,
-};
+use authly_axum::{Authly, AuthlyAxumExt, AuthlyState, AuthSession};
+use authly_core::SessionStore;
 use authly_flow::OAuth2Flow;
 use authly_oidc::OidcProvider;
-use authly_session::SessionStore;
 use axum::{
-    extract::{Query, State},
     response::IntoResponse,
     routing::get,
     Router,
 };
 use std::sync::Arc;
-use tower_cookies::{CookieManagerLayer, Cookies};
+use tower_cookies::CookieManagerLayer;
 
 #[derive(Clone)]
 struct AppState {
-    oidc_flow: Arc<OAuth2Flow<OidcProvider>>,
-    session_store: Arc<dyn SessionStore>,
-    session_config: SessionConfig,
+    authly_state: AuthlyState,
 }
 
-// Implement FromRef for Axum
-impl axum::extract::FromRef<AppState> for Arc<dyn SessionStore> {
+impl axum::extract::FromRef<AppState> for AuthlyState {
     fn from_ref(state: &AppState) -> Self {
-        state.session_store.clone()
+        state.authly_state.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for SessionConfig {
+impl axum::extract::FromRef<AppState> for Authly {
     fn from_ref(state: &AppState) -> Self {
-        state.session_config.clone()
+        state.authly_state.authly.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<dyn SessionStore> {
+    fn from_ref(state: &AppState) -> Self {
+        state.authly_state.authly.session_store.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for authly_core::SessionConfig {
+    fn from_ref(state: &AppState) -> Self {
+        state.authly_state.authly.session_config.clone()
     }
 }
 
@@ -48,27 +54,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Demonstrate initialization/discovery
     let provider = OidcProvider::discover(client_id, client_secret, redirect_uri, &issuer).await?;
-    let oidc_flow = Arc::new(OAuth2Flow::new(provider));
-
+    
     // Use Redis if REDIS_URL is set, otherwise fallback to MemoryStore
     let session_store: Arc<dyn SessionStore> = if let Ok(redis_url) = std::env::var("REDIS_URL") {
         println!("Using RedisStore at {}", redis_url);
         Arc::new(authly_session::RedisStore::new(&redis_url, "authly".into()).unwrap())
     } else {
         println!("Using MemoryStore");
-        Arc::new(authly_session::MemoryStore::default())
+        Arc::new(authly_core::MemoryStore::default())
     };
 
+    let authly = Authly::builder()
+        .provider(OAuth2Flow::new(provider))
+        .session_store(session_store)
+        .build();
+
     let state = AppState {
-        oidc_flow,
-        session_store,
-        session_config: SessionConfig::default(),
+        authly_state: AuthlyState { authly },
     };
 
     let app = Router::new()
         .route("/", get(index))
-        .route("/auth/oidc", get(oidc_login))
-        .route("/auth/oidc/callback", get(oidc_callback))
+        .merge(state.authly_state.authly.axum_router())
         .route("/protected", get(protected))
         .layer(CookieManagerLayer::new())
         .with_state(state);
@@ -82,38 +89,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn index() -> impl IntoResponse {
     "Welcome! Go to /auth/oidc to login."
-}
-
-async fn oidc_login(State(state): State<AppState>, cookies: Cookies) -> impl IntoResponse {
-    // Note: Some providers have specific scope requirements.
-    // For example, Discord does not support the standard 'profile' scope and requires 'identify' instead.
-    // If using Discord OIDC, you should use: &["openid", "email", "identify"]
-    let scopes =
-        std::env::var("OIDC_SCOPES").unwrap_or_else(|_| "openid email profile".to_string());
-    let scope_list: Vec<&str> = scopes.split_whitespace().collect();
-
-    initiate_oauth_login(
-        &state.oidc_flow,
-        &state.session_config,
-        &cookies,
-        &scope_list,
-    )
-}
-
-async fn oidc_callback(
-    State(state): State<AppState>,
-    cookies: Cookies,
-    Query(params): Query<OAuthCallbackParams>,
-) -> impl IntoResponse {
-    handle_oauth_callback(
-        &state.oidc_flow,
-        cookies,
-        params,
-        state.session_store.clone(),
-        state.session_config.clone(),
-        "/protected",
-    )
-    .await
 }
 
 async fn protected(AuthSession(session): AuthSession) -> impl IntoResponse {

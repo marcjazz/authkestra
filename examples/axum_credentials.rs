@@ -1,7 +1,6 @@
-use authly_axum::{AuthSession, SessionConfig};
-use authly_core::{AuthError, CredentialsProvider, Identity, UserMapper};
+use authly_axum::{Authly, AuthlyState, AuthSession, SessionConfig};
+use authly_core::{AuthError, CredentialsProvider, Identity, UserMapper, Session, SessionStore};
 use authly_flow::CredentialsFlow;
-use authly_session::{Session, SessionStore};
 use axum::{
     extract::{Form, State},
     response::{IntoResponse, Redirect},
@@ -78,19 +77,24 @@ impl UserMapper for SqlxUserMapper {
 #[derive(Clone)]
 struct AppState {
     auth_flow: Arc<CredentialsFlow<MyCredentialsProvider, SqlxUserMapper>>,
-    session_store: Arc<dyn SessionStore>,
-    session_config: SessionConfig,
+    authly_state: AuthlyState,
+}
+
+impl axum::extract::FromRef<AppState> for AuthlyState {
+    fn from_ref(state: &AppState) -> Self {
+        state.authly_state.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Arc<dyn SessionStore> {
     fn from_ref(state: &AppState) -> Self {
-        state.session_store.clone()
+        state.authly_state.authly.session_store.clone()
     }
 }
 
 impl axum::extract::FromRef<AppState> for SessionConfig {
     fn from_ref(state: &AppState) -> Self {
-        state.session_config.clone()
+        state.authly_state.authly.session_config.clone()
     }
 }
 
@@ -100,12 +104,15 @@ async fn main() {
     let mapper = SqlxUserMapper {};
     let auth_flow = Arc::new(CredentialsFlow::with_mapper(provider, mapper));
 
-    let session_store = Arc::new(authly_session::MemoryStore::default());
+    let session_store = Arc::new(authly_core::MemoryStore::default());
+
+    let authly = Authly::builder()
+        .session_store(session_store)
+        .build();
 
     let state = AppState {
         auth_flow,
-        session_store,
-        session_config: SessionConfig::default(),
+        authly_state: AuthlyState { authly },
     };
 
     let app = Router::new()
@@ -155,12 +162,14 @@ async fn login(
     };
 
     state
+        .authly_state
+        .authly
         .session_store
         .save_session(&session)
         .await
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let cookie = state.session_config.create_cookie(session.id);
+    let cookie = authly_axum::helpers::create_axum_cookie(&state.authly_state.authly.session_config, session.id);
     cookies.add(cookie);
 
     Ok(Redirect::to("/protected"))

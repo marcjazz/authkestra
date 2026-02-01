@@ -1,59 +1,19 @@
-use actix_web::{get, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use authly_actix::{
-    handle_oauth_callback, initiate_oauth_login, logout, AuthSession, OAuthCallbackParams,
-    SessionConfig,
-};
-use authly_flow::OAuth2Flow;
+use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use authly_actix::{AuthlyActixExt, AuthSession};
+use authly_core::{SessionConfig, SessionStore};
+use authly_flow::{Authly, OAuth2Flow};
 use authly_providers_github::GithubProvider;
-use authly_session::{SessionStore, SqlStore};
+use authly_session::SqlStore;
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
 
 struct AppState {
-    github_flow: Arc<OAuth2Flow<GithubProvider>>,
-    session_store: Arc<dyn SessionStore>,
-    session_config: SessionConfig,
+    authly: Authly,
 }
 
 #[get("/")]
 async fn index() -> impl Responder {
     HttpResponse::Ok().body("Welcome! Go to /auth/github to login (Session mode).")
-}
-
-#[get("/auth/github")]
-async fn github_login(data: web::Data<AppState>) -> impl Responder {
-    initiate_oauth_login(&data.github_flow, &data.session_config, &["user:email"])
-}
-
-#[get("/auth/github/callback")]
-async fn github_callback(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-    params: web::Query<OAuthCallbackParams>,
-) -> actix_web::Result<impl Responder> {
-    handle_oauth_callback(
-        req,
-        &data.github_flow,
-        params.into_inner(),
-        data.session_store.clone(),
-        data.session_config.clone(),
-        "/protected",
-    )
-    .await
-}
-
-#[get("/auth/logout")]
-async fn github_logout(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-) -> actix_web::Result<impl Responder> {
-    logout(
-        req,
-        data.session_store.clone(),
-        data.session_config.clone(),
-        "/",
-    )
-    .await
 }
 
 #[get("/protected")]
@@ -83,7 +43,6 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or_else(|_| "http://localhost:8080/auth/github/callback".to_string());
 
     let provider = GithubProvider::new(client_id, client_secret, redirect_uri);
-    let github_flow = Arc::new(OAuth2Flow::new(provider));
 
     // For this example, we'll use SQLite for session persistence.
     let db_url = "sqlite::memory:";
@@ -108,17 +67,20 @@ async fn main() -> std::io::Result<()> {
     .expect("Failed to create sessions table");
 
     let session_store: Arc<dyn SessionStore> = Arc::new(SqlStore::new(pool));
-    let session_config = SessionConfig::default();
+
+    let authly = Authly::builder()
+        .provider(OAuth2Flow::new(provider))
+        .session_store(session_store.clone())
+        .build();
 
     let app_state = web::Data::new(AppState {
-        github_flow,
-        session_store: session_store.clone(),
-        session_config: session_config.clone(),
+        authly,
     });
 
     // We also need to register the store and config separately for the extractor
     let store_data: web::Data<Arc<dyn SessionStore>> = web::Data::new(session_store.clone());
-    let config_data: web::Data<SessionConfig> = web::Data::new(session_config.clone());
+    let config_data: web::Data<SessionConfig> = web::Data::new(SessionConfig::default());
+    let authly_data = web::Data::new(app_state.authly.clone());
 
     println!("Starting server on http://localhost:3000");
     HttpServer::new(move || {
@@ -126,10 +88,9 @@ async fn main() -> std::io::Result<()> {
             .app_data(app_state.clone())
             .app_data(store_data.clone())
             .app_data(config_data.clone())
+            .app_data(authly_data.clone())
             .service(index)
-            .service(github_login)
-            .service(github_callback)
-            .service(github_logout)
+            .service(app_state.authly.actix_scope())
             .service(protected)
     })
     .bind(("0.0.0.0", 3000))?
