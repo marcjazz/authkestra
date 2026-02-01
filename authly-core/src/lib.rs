@@ -1,8 +1,53 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub mod pkce;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SameSite {
+    Lax,
+    Strict,
+    None,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionConfig {
+    pub cookie_name: String,
+    pub secure: bool,
+    pub http_only: bool,
+    pub same_site: SameSite,
+    pub path: String,
+    pub max_age: Option<chrono::Duration>,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            cookie_name: "authly_session".to_string(),
+            secure: true,
+            http_only: true,
+            same_site: SameSite::Lax,
+            path: "/".to_string(),
+            max_age: Some(chrono::Duration::hours(24)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Session {
+    pub id: String,
+    pub identity: Identity,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[async_trait]
+pub trait SessionStore: Send + Sync + 'static {
+    async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError>;
+    async fn save_session(&self, session: &Session) -> Result<(), AuthError>;
+    async fn delete_session(&self, id: &str) -> Result<(), AuthError>;
+}
 
 /// A unified identity structure returned by all providers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +110,9 @@ pub enum AuthError {
 /// Trait for an OAuth2-compatible provider.
 #[async_trait]
 pub trait OAuthProvider: Send + Sync {
+    /// Get the provider identifier.
+    fn provider_id(&self) -> &str;
+
     /// Helper to get the authorization URL.
     fn get_authorization_url(
         &self,
@@ -118,6 +166,35 @@ pub trait UserMapper: Send + Sync {
 impl UserMapper for () {
     type LocalUser = ();
     async fn map_user(&self, _identity: &Identity) -> Result<Self::LocalUser, AuthError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+pub struct MemoryStore {
+    sessions: std::sync::Mutex<HashMap<String, Session>>,
+}
+
+impl MemoryStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl SessionStore for MemoryStore {
+    async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
+        Ok(self.sessions.lock().unwrap().get(id).cloned())
+    }
+    async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session.id.clone(), session.clone());
+        Ok(())
+    }
+    async fn delete_session(&self, id: &str) -> Result<(), AuthError> {
+        self.sessions.lock().unwrap().remove(id);
         Ok(())
     }
 }

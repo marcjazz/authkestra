@@ -59,6 +59,10 @@ struct DiscordUserResponse {
 
 #[async_trait]
 impl OAuthProvider for DiscordProvider {
+    fn provider_id(&self) -> &str {
+        "discord"
+    }
+
     fn get_authorization_url(
         &self,
         state: &str,

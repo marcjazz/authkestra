@@ -65,6 +65,10 @@ struct GoogleUserResponse {
 
 #[async_trait]
 impl OAuthProvider for GoogleProvider {
+    fn provider_id(&self) -> &str {
+        "google"
+    }
+
     fn get_authorization_url(
         &self,
         state: &str,

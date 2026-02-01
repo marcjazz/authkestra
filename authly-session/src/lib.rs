@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use authly_core::{AuthError, Identity};
-use serde::{Deserialize, Serialize};
+pub use authly_core::{AuthError, Identity, Session, SessionStore};
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -17,48 +16,7 @@ pub mod redis_store;
 #[cfg(feature = "store-redis")]
 pub use redis_store::RedisStore;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Session {
-    pub id: String,
-    pub identity: Identity,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[async_trait]
-pub trait SessionStore: Send + Sync + 'static {
-    async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError>;
-    async fn save_session(&self, session: &Session) -> Result<(), AuthError>;
-    async fn delete_session(&self, id: &str) -> Result<(), AuthError>;
-}
-
-#[derive(Default)]
-pub struct MemoryStore {
-    sessions: Mutex<HashMap<String, Session>>,
-}
-
-impl MemoryStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[async_trait]
-impl SessionStore for MemoryStore {
-    async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
-        Ok(self.sessions.lock().unwrap().get(id).cloned())
-    }
-    async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .insert(session.id.clone(), session.clone());
-        Ok(())
-    }
-    async fn delete_session(&self, id: &str) -> Result<(), AuthError> {
-        self.sessions.lock().unwrap().remove(id);
-        Ok(())
-    }
-}
+pub use authly_core::MemoryStore;
 
 #[cfg(test)]
 mod tests {

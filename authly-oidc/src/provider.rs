@@ -62,6 +62,10 @@ impl OidcProvider {
 
 #[async_trait]
 impl OAuthProvider for OidcProvider {
+    fn provider_id(&self) -> &str {
+        "oidc"
+    }
+
     fn get_authorization_url(
         &self,
         state: &str,

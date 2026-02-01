@@ -68,6 +68,10 @@ struct GithubUserResponse {
 
 #[async_trait]
 impl OAuthProvider for GithubProvider {
+    fn provider_id(&self) -> &str {
+        "github"
+    }
+
     fn get_authorization_url(
         &self,
         state: &str,
