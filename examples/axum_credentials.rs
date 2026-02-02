@@ -1,5 +1,7 @@
 use authkestra_axum::{AuthSession, Authkestra, AuthkestraState, SessionConfig};
-use authkestra_core::{AuthError, CredentialsProvider, Identity, Session, SessionStore, UserMapper};
+use authkestra_core::{
+    AuthError, CredentialsProvider, Identity, Session, SessionStore, UserMapper,
+};
 use authkestra_flow::CredentialsFlow;
 use axum::{
     extract::{Form, State},

@@ -1,4 +1,6 @@
-use authkestra::axum::{AuthSession, Authkestra, AuthkestraAxumExt, AuthkestraState, SessionConfig};
+use authkestra::axum::{
+    AuthSession, Authkestra, AuthkestraAxumExt, AuthkestraState, SessionConfig,
+};
 use authkestra::flow::OAuth2Flow;
 use authkestra::providers::github::GithubProvider;
 use authkestra::session::SessionStore;
@@ -14,13 +16,16 @@ use tower_cookies::CookieManagerLayer;
 async fn main() {
     // In a real app, you'd use dotenvy::dotenv().ok();
     // For this demo, we'll use dummy values if env vars are missing
-    let client_id = std::env::var("AUTHKESTRA_GITHUB_CLIENT_ID").unwrap_or_else(|_| "dummy_id".to_string());
-    let client_secret = std::env::var("AUTHKESTRA_GITHUB_CLIENT_SECRET").unwrap_or_else(|_| "dummy_secret".to_string());
+    let client_id =
+        std::env::var("AUTHKESTRA_GITHUB_CLIENT_ID").unwrap_or_else(|_| "dummy_id".to_string());
+    let client_secret = std::env::var("AUTHKESTRA_GITHUB_CLIENT_SECRET")
+        .unwrap_or_else(|_| "dummy_secret".to_string());
     let redirect_uri = "http://localhost:3000/auth/github/callback".to_string();
 
     let provider = GithubProvider::new(client_id, client_secret, redirect_uri);
-    
-    let session_store: Arc<dyn SessionStore> = Arc::new(authkestra::session::MemoryStore::default());
+
+    let session_store: Arc<dyn SessionStore> =
+        Arc::new(authkestra::session::MemoryStore::default());
 
     let authkestra = Authkestra::builder()
         .provider(OAuth2Flow::new(provider))
@@ -44,7 +49,7 @@ async fn main() {
 
     println!("Authkestra Demo running on http://localhost:3000");
     println!("This demo uses the 'authkestra' crate instead of individual sub-crates.");
-    
+
     // We won't actually start the server in a non-interactive environment if we want to just verify compilation
     // but for a real example file, this is what it would look like.
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -52,13 +57,15 @@ async fn main() {
 }
 
 async fn index() -> impl IntoResponse {
-    Html(r#"
+    Html(
+        r#"
         <h1>Authkestra Demo</h1>
         <p>This example demonstrates using the <code>authkestra</code> crate.</p>
         <ul>
             <li><a href="/auth/github?success_url=/protected">Login with GitHub</a></li>
         </ul>
-    "#)
+    "#,
+    )
 }
 
 async fn protected(AuthSession(session): AuthSession) -> impl IntoResponse {

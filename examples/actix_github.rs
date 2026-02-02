@@ -35,8 +35,8 @@ async fn protected(session: AuthSession) -> impl Responder {
 async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
 
-    let client_id =
-        std::env::var("AUTHKESTRA_GITHUB_CLIENT_ID").expect("AUTHKESTRA_GITHUB_CLIENT_ID must be set");
+    let client_id = std::env::var("AUTHKESTRA_GITHUB_CLIENT_ID")
+        .expect("AUTHKESTRA_GITHUB_CLIENT_ID must be set");
     let client_secret = std::env::var("AUTHKESTRA_GITHUB_CLIENT_SECRET")
         .expect("AUTHKESTRA_GITHUB_CLIENT_SECRET must be set");
     let redirect_uri = std::env::var("AUTHKESTRA_GITHUB_REDIRECT_URI")
