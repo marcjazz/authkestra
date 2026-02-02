@@ -1,4 +1,4 @@
-# Authkestra: Explicit, Modular Authentication for Rust
+# Authkestra
 
 `authkestra` is a modular, framework-agnostic authentication orchestration system designed to be idiomatic to Rust, emphasizing **explicit control flow, strong typing, and composability** over dynamic middleware strategies common in other ecosystems.
 
