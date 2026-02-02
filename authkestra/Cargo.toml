@@ -1,0 +1,40 @@
+[package]
+name = "authkestra"
+version = "0.1.0"
+edition = "2021"
+description = "A modular authentication framework for Rust"
+repository = "https://github.com/marcjazz/authkestra-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["auth", "authentication", "oauth2", "oidc"]
+categories = ["authentication"]
+
+[dependencies]
+authkestra-core = { version = "0.1.0", path = "../authkestra-core" }
+authkestra-flow = { version = "0.1.0", path = "../authkestra-flow", optional = true }
+authkestra-session = { version = "0.1.0", path = "../authkestra-session", optional = true }
+authkestra-token = { version = "0.1.0", path = "../authkestra-token", optional = true }
+authkestra-oidc = { version = "0.1.0", path = "../authkestra-oidc", optional = true }
+authkestra-axum = { version = "0.1.0", path = "../authkestra-axum", optional = true }
+authkestra-actix = { version = "0.1.0", path = "../authkestra-actix", optional = true }
+authkestra-providers-github = { version = "0.1.0", path = "../authkestra-providers-github", optional = true }
+authkestra-providers-google = { version = "0.1.0", path = "../authkestra-providers-google", optional = true }
+authkestra-providers-discord = { version = "0.1.0", path = "../authkestra-providers-discord", optional = true }
+
+[features]
+default = []
+full = ["flow", "session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
+
+# Core features
+flow = ["dep:authkestra-flow"]
+session = ["dep:authkestra-session"]
+token = ["dep:authkestra-token"]
+oidc = ["dep:authkestra-oidc"]
+
+# Web frameworks
+axum = ["dep:authkestra-axum"]
+actix = ["dep:authkestra-actix"]
+
+# Providers
+github = ["dep:authkestra-providers-github"]
+google = ["dep:authkestra-providers-google"]
+discord = ["dep:authkestra-providers-discord"]
