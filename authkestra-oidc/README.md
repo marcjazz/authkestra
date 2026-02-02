@@ -1,6 +1,6 @@
 # authkestra-oidc
 
-OpenID Connect (OIDC) implementation for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+OpenID Connect (OIDC) implementation for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate provides OIDC support for the `authkestra` framework, including automatic provider discovery, JWKS handling, and ID token validation. It implements the `OAuthProvider` trait from `authkestra-core`, making it easy to integrate any OIDC-compliant provider into your application.
 
@@ -54,6 +54,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

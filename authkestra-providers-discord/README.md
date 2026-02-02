@@ -1,6 +1,6 @@
 # authkestra-providers-discord
 
-Discord OAuth2 provider for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+Discord OAuth2 provider for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate provides a concrete implementation of the `OAuthProvider` trait for Discord, allowing easy integration of Discord authentication into your application.
 
@@ -44,6 +44,6 @@ async fn main() {
 }
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

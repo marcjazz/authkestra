@@ -1,6 +1,6 @@
 # authkestra-axum
 
-Axum integration for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+Axum integration for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate provides Axum-specific extractors and helpers to easily integrate the `authkestra` authentication framework into Axum applications.
 
@@ -83,6 +83,6 @@ async fn api_handler(AuthToken(claims): AuthToken) -> String {
 }
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

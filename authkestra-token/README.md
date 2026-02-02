@@ -1,6 +1,6 @@
 # authkestra-token
 
-JWT and token utilities for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+JWT and token utilities for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate provides JWT signing, verification, and token abstraction for use within the `authkestra` framework. It supports both symmetric (HS256) token management and asynchronous offline validation using JWKS.
 
@@ -63,6 +63,6 @@ async fn main() {
 }
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

@@ -1,6 +1,6 @@
 # authkestra-flow
 
-High-level authentication flows for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+High-level authentication flows for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate orchestrates authentication flows such as OAuth2, Device Flow, Client Credentials, and direct credentials-based auth, providing a high-level API that is independent of web frameworks.
 
@@ -82,6 +82,6 @@ let flow = CredentialsFlow::new(my_credentials_provider);
 let (identity, local_user) = flow.authenticate(my_credentials).await?;
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

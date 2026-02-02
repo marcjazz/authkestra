@@ -1,6 +1,6 @@
 # authkestra-session
 
-Session management and persistence for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+Session management and persistence for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate provides a flexible session persistence layer with support for multiple backends including SQL (Postgres, MySQL, SQLite) and Redis.
 
@@ -112,6 +112,6 @@ async fn manage_session<S: SessionStore>(store: S) -> Result<(), Box<dyn std::er
 }
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

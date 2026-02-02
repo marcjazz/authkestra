@@ -1,6 +1,6 @@
 # authkestra-providers-google
 
-Google OAuth2 provider for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+Google OAuth2 provider for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate provides a concrete implementation of the `OAuthProvider` trait for Google, allowing easy integration of Google authentication into your application.
 
@@ -85,6 +85,6 @@ let provider = GoogleProvider::new(id, secret, redirect)
     );
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

@@ -1,6 +1,6 @@
 # authkestra-actix
 
-Actix-web integration for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+Actix-web integration for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate provides Actix-web specific extractors and utilities to integrate the `authkestra` authentication framework into Actix applications.
 
@@ -129,6 +129,6 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

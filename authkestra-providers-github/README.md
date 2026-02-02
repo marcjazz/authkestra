@@ -1,6 +1,6 @@
 # authkestra-providers-github
 
-GitHub OAuth2 provider for [authkestra-rs](https://github.com/marcjazz/authkestra-rs).
+GitHub OAuth2 provider for [authkestra](https://github.com/marcjazz/authkestra).
 
 This crate provides a concrete implementation of the `OAuthProvider` trait for GitHub, allowing easy integration of GitHub authentication into your application.
 
@@ -53,6 +53,6 @@ let provider = GithubProvider::new(client_id, client_secret, redirect_uri)
     .with_authorization_url("https://github.com/login/oauth/authorize".to_string());
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.

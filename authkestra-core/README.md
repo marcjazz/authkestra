@@ -1,6 +1,6 @@
 # authkestra-core
 
-Core traits and data structures for the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) ecosystem.
+Core traits and data structures for the [authkestra](https://github.com/marcjazz/authkestra) ecosystem.
 
 This crate provides the foundational types and traits used across the `authkestra` framework, ensuring a consistent API for authentication providers, session stores, and identity management.
 
@@ -77,6 +77,6 @@ pub trait UserMapper: Send + Sync {
 }
 ```
 
-## Part of authkestra-rs
+## Part of authkestra
 
-This crate is part of the [authkestra-rs](https://github.com/marcjazz/authkestra-rs) workspace. `authkestra` is a modular, framework-agnostic authentication orchestration system for Rust.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace. `authkestra` is a modular, framework-agnostic authentication orchestration system for Rust.
