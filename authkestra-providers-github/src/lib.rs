@@ -121,7 +121,7 @@ impl OAuthProvider for GithubProvider {
                 "Authorization",
                 format!("Bearer {}", token_response.access_token),
             )
-            .header("User-Agent", "authkestra-rs")
+            .header("User-Agent", "authkestra")
             .send()
             .await
             .map_err(|_| AuthError::Network)?
@@ -190,7 +190,7 @@ impl OAuthProvider for GithubProvider {
                 self.client_id
             ))
             .basic_auth(&self.client_id, Some(&self.client_secret))
-            .header("User-Agent", "authkestra-rs")
+            .header("User-Agent", "authkestra")
             .json(&serde_json::json!({
                 "access_token": token
             }))
