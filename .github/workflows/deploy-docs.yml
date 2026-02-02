@@ -1,32 +1,39 @@
 name: Deploy Documentation
-
+ 
 on:
   push:
     branches:
       - master
-
+ 
 permissions:
   contents: write
-
+ 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+ 
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
-
+ 
       - name: Cache cargo registry and build
         uses: swatinem/rust-cache@v2
-
+ 
       - name: Build docs
         run: cargo doc --workspace --no-deps
-
+ 
+      - name: Create root index.html redirect
+        run: |
+          mkdir -p target/doc
+          printf '%s\n' '<!DOCTYPE html>' '<html>' '<head>' '  <meta charset="utf-8">' '  <meta http-equiv="refresh" content="0; url=authkestra/index.html">' '</head>' '</html>' > target/doc/index.html
+      - name: Remove source folder
+        run: rm -rf target/doc/src
+ 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
