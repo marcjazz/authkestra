@@ -9,4 +9,5 @@ members = [
     "authkestra-providers-google",
     "authkestra-providers-discord",
     "authkestra-axum", "authkestra-oidc", "authkestra-actix",
+    "authkestra",
 ]
