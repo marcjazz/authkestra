@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["client_credentials_flow","device_flow"],"struct":["Authkestra","AuthkestraBuilder","CredentialsFlow","OAuth2Flow"],"trait":["ErasedOAuthFlow"]};

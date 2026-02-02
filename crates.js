@@ -1,0 +1,2 @@
+window.ALL_CRATES = ["authkestra","authkestra_actix","authkestra_axum","authkestra_core","authkestra_flow","authkestra_oidc","authkestra_providers_discord","authkestra_providers_github","authkestra_providers_google","authkestra_session","authkestra_token"];
+//{"start":21,"fragment_lengths":[12,19,18,18,18,18,31,30,30,21,19]}

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AuthError","SameSite"],"mod":["pkce"],"struct":["Identity","MemoryStore","OAuthToken","Session","SessionConfig"],"trait":["CredentialsProvider","OAuthProvider","SessionStore","UserMapper"]};

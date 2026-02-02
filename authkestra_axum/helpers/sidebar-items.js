@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AuthkestraAxumError"],"fn":["axum_callback_handler","axum_login_handler","axum_logout_handler","create_axum_cookie","get_session","get_token","handle_oauth_callback","handle_oauth_callback_erased","handle_oauth_callback_jwt","initiate_oauth_login","logout","to_axum_same_site"],"struct":["OAuthCallbackParams","OAuthLoginParams","SessionConfig"]};

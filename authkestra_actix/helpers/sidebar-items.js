@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["actix_callback_handler","actix_login_handler","actix_logout_handler","create_actix_cookie","handle_oauth_callback","handle_oauth_callback_erased","initiate_oauth_login","initiate_oauth_login_erased","logout","to_actix_same_site"],"struct":["OAuthCallbackParams"]};
