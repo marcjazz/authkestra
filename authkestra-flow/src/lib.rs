@@ -69,7 +69,8 @@ impl<P: OAuthProvider, M: UserMapper> ErasedOAuthFlow for OAuth2Flow<P, M> {
         received_state: &str,
         expected_state: &str,
         pkce_verifier: Option<&str>,
-    ) -> Result<(authkestra_core::Identity, authkestra_core::OAuthToken), authkestra_core::AuthError> {
+    ) -> Result<(authkestra_core::Identity, authkestra_core::OAuthToken), authkestra_core::AuthError>
+    {
         let (identity, token, _) = self
             .finalize_login(code, received_state, expected_state, pkce_verifier)
             .await?;
