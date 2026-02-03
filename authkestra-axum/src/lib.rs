@@ -106,7 +106,10 @@ where
 {
     type Rejection = AuthkestraAxumError;
 
-    async fn from_request_parts(parts: &mut axum::http::request::Parts, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
         let cache = Arc::<authkestra_token::offline_validation::JwksCache>::from_ref(state);
         let validation = jsonwebtoken::Validation::from_ref(state);
 
@@ -114,10 +117,14 @@ where
             .headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| AuthkestraAxumError::Unauthorized("Missing Authorization header".to_string()))?;
+            .ok_or_else(|| {
+                AuthkestraAxumError::Unauthorized("Missing Authorization header".to_string())
+            })?;
 
         if !auth_header.starts_with("Bearer ") {
-            return Err(AuthkestraAxumError::Unauthorized("Invalid Authorization header".to_string()));
+            return Err(AuthkestraAxumError::Unauthorized(
+                "Invalid Authorization header".to_string(),
+            ));
         }
 
         let token = &auth_header[7..];

@@ -195,7 +195,12 @@ async fn login_handler(State(state): State<AppState>, cookies: Cookies) -> impl 
     let flow = &state.authkestra.providers["github"];
 
     // We request 'user:email' scope
-    initiate_oauth_login(flow, &state.authkestra.session_config, &cookies, &["user:email"])
+    initiate_oauth_login(
+        flow,
+        &state.authkestra.session_config,
+        &cookies,
+        &["user:email"],
+    )
 }
 
 async fn logout_handler() -> impl IntoResponse {

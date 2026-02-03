@@ -1,9 +1,9 @@
+use async_trait::async_trait;
 use authkestra_axum::{AuthSession, Authkestra, AuthkestraState, SessionConfig};
 use authkestra_core::{
     AuthError, CredentialsProvider, Identity, Session, SessionStore, UserMapper,
 };
 use authkestra_flow::CredentialsFlow;
-use async_trait::async_trait;
 use axum::{
     extract::{Form, State},
     response::{IntoResponse, Redirect},

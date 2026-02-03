@@ -10,13 +10,12 @@
 /// 7. The frontend stores the JWT (e.g., in localStorage) and uses it for subsequent API calls.
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra_actix::{
-    AuthToken, OAuthCallbackParams, handle_oauth_callback_jwt_erased, initiate_oauth_login_erased
+    handle_oauth_callback_jwt_erased, initiate_oauth_login_erased, AuthToken, OAuthCallbackParams,
 };
 use authkestra_flow::{Authkestra, OAuth2Flow};
 use authkestra_providers_github::GithubProvider;
 use authkestra_token::TokenManager;
 use std::sync::Arc;
-
 
 struct AppState {
     authkestra: Authkestra,

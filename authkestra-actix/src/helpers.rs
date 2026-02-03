@@ -300,13 +300,6 @@ where
     P: OAuthProvider + Send + Sync,
     M: authkestra_core::UserMapper + Send + Sync,
 {
-    handle_oauth_callback_jwt_erased(
-        flow,
-        req,
-        params,
-        token_manager,
-        expires_in_secs,
-        config,
-    )
-    .await
+    handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs, config)
+        .await
 }

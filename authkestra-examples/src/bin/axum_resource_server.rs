@@ -1,11 +1,6 @@
 use authkestra_axum::Jwt;
 use authkestra_token::offline_validation::JwksCache;
-use axum::{
-    extract::FromRef,
-    response::IntoResponse,
-    routing::get,
-    Router,
-};
+use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
 use std::sync::Arc;

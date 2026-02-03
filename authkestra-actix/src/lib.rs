@@ -141,7 +141,9 @@ where
                 actix_web::error::ErrorInternalServerError("JwksCache not configured")
             })?;
             let validation = validation.ok_or_else(|| {
-                actix_web::error::ErrorInternalServerError("jsonwebtoken::Validation not configured")
+                actix_web::error::ErrorInternalServerError(
+                    "jsonwebtoken::Validation not configured",
+                )
             })?;
             let auth_header = auth_header.ok_or_else(|| {
                 actix_web::error::ErrorUnauthorized("Missing Authorization header")
