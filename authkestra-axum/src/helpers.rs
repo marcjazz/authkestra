@@ -48,16 +48,12 @@ pub fn create_axum_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<'
 /// Helper to initiate the OAuth2 login flow.
 ///
 /// This generates the authorization URL and sets a CSRF state cookie.
-pub fn initiate_oauth_login<P, M>(
-    flow: &OAuth2Flow<P, M>,
+pub fn initiate_oauth_login(
+    flow: &dyn ErasedOAuthFlow,
     session_config: &SessionConfig,
     cookies: &Cookies,
     scopes: &[&str],
-) -> Redirect
-where
-    P: OAuthProvider,
-    M: authkestra_core::UserMapper,
-{
+) -> Redirect {
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
@@ -120,19 +116,6 @@ async fn finalize_callback_erased(
 }
 
 /// Internal helper to finalize the OAuth flow by validating state and exchanging the code.
-async fn finalize_callback<P, M>(
-    flow: &OAuth2Flow<P, M>,
-    session_config: &SessionConfig,
-    cookies: &Cookies,
-    params: &OAuthCallbackParams,
-) -> Result<(Identity, OAuthToken), (StatusCode, String)>
-where
-    P: OAuthProvider + Send + Sync,
-    M: authkestra_core::UserMapper + Send + Sync,
-{
-    finalize_callback_erased(flow, session_config, cookies, params).await
-}
-
 /// Helper to handle the OAuth2 callback and create a server-side session.
 pub async fn handle_oauth_callback_erased(
     flow: &dyn ErasedOAuthFlow,
@@ -197,19 +180,15 @@ where
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
-pub async fn handle_oauth_callback_jwt<P, M>(
-    flow: &OAuth2Flow<P, M>,
+pub async fn handle_oauth_callback_jwt_erased(
+    flow: &dyn ErasedOAuthFlow,
     cookies: Cookies,
     params: OAuthCallbackParams,
     token_manager: Arc<TokenManager>,
     expires_in_secs: u64,
     config: &SessionConfig,
-) -> Result<impl IntoResponse, (StatusCode, String)>
-where
-    P: OAuthProvider + Send + Sync,
-    M: authkestra_core::UserMapper + Send + Sync,
-{
-    let (identity, _token) = finalize_callback(flow, config, &cookies, &params).await?;
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let (identity, _token) = finalize_callback_erased(flow, config, &cookies, &params).await?;
 
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None)
@@ -225,6 +204,30 @@ where
         "token_type": "Bearer",
         "expires_in": expires_in_secs
     })))
+}
+
+/// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
+pub async fn handle_oauth_callback_jwt<P, M>(
+    flow: &OAuth2Flow<P, M>,
+    cookies: Cookies,
+    params: OAuthCallbackParams,
+    token_manager: Arc<TokenManager>,
+    expires_in_secs: u64,
+    config: &SessionConfig,
+) -> Result<impl IntoResponse, (StatusCode, String)>
+where
+    P: OAuthProvider + Send + Sync,
+    M: authkestra_core::UserMapper + Send + Sync,
+{
+    handle_oauth_callback_jwt_erased(
+        flow,
+        cookies,
+        params,
+        token_manager,
+        expires_in_secs,
+        config,
+    )
+    .await
 }
 
 /// Helper to handle logout by deleting the session from the store and clearing the cookie.

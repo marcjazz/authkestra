@@ -1,12 +1,12 @@
 use authkestra_axum::{
-    helpers::{handle_oauth_callback_jwt, initiate_oauth_login, OAuthCallbackParams},
-    Authkestra, SessionConfig,
+    helpers::{handle_oauth_callback_jwt_erased, initiate_oauth_login, OAuthCallbackParams},
+    AuthToken, Authkestra, SessionConfig,
 };
 use authkestra_flow::OAuth2Flow;
 use authkestra_providers_github::GithubProvider;
 use authkestra_token::TokenManager;
 use axum::{
-    extract::{Query, State},
+    extract::{FromRef, Query, State},
     response::{Html, IntoResponse},
     routing::get,
     Router,
@@ -28,8 +28,12 @@ use tower_cookies::{CookieManagerLayer, Cookies};
 #[derive(Clone)]
 struct AppState {
     authkestra: Authkestra,
-    session_config: SessionConfig,
-    github_flow: Arc<OAuth2Flow<GithubProvider>>,
+}
+
+impl FromRef<AppState> for Arc<TokenManager> {
+    fn from_ref(state: &AppState) -> Self {
+        state.authkestra.token_manager.clone()
+    }
 }
 
 #[tokio::main]
@@ -47,12 +51,6 @@ async fn main() {
     let redirect_uri = std::env::var("AUTHKESTRA_GITHUB_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/".to_string());
 
-    let github_flow = Arc::new(OAuth2Flow::new(GithubProvider::new(
-        client_id.clone(),
-        client_secret.clone(),
-        redirect_uri.clone(),
-    )));
-
     // 2. Setup Authkestra and TokenManager
     let token_manager = Arc::new(TokenManager::new(
         b"a-very-secret-key-that-is-at-least-32-bytes-long!!",
@@ -67,28 +65,37 @@ async fn main() {
         .token_manager(token_manager)
         .build();
 
-    let session_config = SessionConfig {
+    let _session_config = SessionConfig {
         secure: false, // Set to true in production
         ..Default::default()
     };
 
-    let state = AppState {
-        authkestra,
-        session_config,
-        github_flow,
-    };
+    let state = AppState { authkestra };
 
     // 3. Build Axum Router
     let app = Router::new()
         .route("/", get(frontend))
         .route("/auth/login", get(login_handler))
+        .route("/auth/logout", get(logout_handler))
         .route("/api/callback", get(callback_handler))
+        .route("/api/protected", get(protected_resource))
         .layer(CookieManagerLayer::new())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("🚀 SPA Example running at http://localhost:3000");
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn protected_resource(AuthToken(claims): AuthToken) -> impl IntoResponse {
+    let identity = claims.identity.unwrap();
+    format!(
+        "Hello, {}! Your ID is {}. Your email is {:?}. Provider: {}. <br><a href=\"/auth/logout\">Logout</a>",
+        identity.username.unwrap_or_default(),
+        identity.external_id,
+        identity.email,
+        identity.provider_id,
+    )
 }
 
 /// Serves a simple SPA frontend.
@@ -185,10 +192,14 @@ async fn frontend() -> impl IntoResponse {
 /// Initiates the OAuth login flow.
 /// This endpoint is called by the frontend to start the process.
 async fn login_handler(State(state): State<AppState>, cookies: Cookies) -> impl IntoResponse {
-    let flow = &state.github_flow;
+    let flow = &state.authkestra.providers["github"];
 
     // We request 'user:email' scope
-    initiate_oauth_login(flow, &state.session_config, &cookies, &["user:email"])
+    initiate_oauth_login(flow, &state.authkestra.session_config, &cookies, &["user:email"])
+}
+
+async fn logout_handler() -> impl IntoResponse {
+    Html("Logged out. <a href=\"/\">Go back</a>")
 }
 
 /// Backend API endpoint that exchanges the OAuth code for a JWT.
@@ -198,7 +209,7 @@ async fn callback_handler(
     cookies: Cookies,
     Query(params): Query<OAuthCallbackParams>,
 ) -> impl IntoResponse {
-    let flow = &state.github_flow;
+    let flow = &state.authkestra.providers["github"];
 
     // handle_oauth_callback_jwt:
     // 1. Validates the CSRF state from the cookie.
@@ -206,13 +217,20 @@ async fn callback_handler(
     // 3. Fetches user info from GitHub.
     // 4. Issues a JWT signed by our TokenManager.
     // 5. Returns the JWT as JSON.
-    handle_oauth_callback_jwt(
+    let res = handle_oauth_callback_jwt_erased(
         flow,
         cookies,
         params,
-        state.authkestra.token_manager,
+        state.authkestra.token_manager.clone(),
         3600, // JWT expires in 1 hour
-        &state.session_config,
+        &state.authkestra.session_config,
     )
-    .await
+    .await;
+
+    match &res {
+        Ok(_) => println!("DEBUG: callback_handler succeeded"),
+        Err((status, msg)) => println!("DEBUG: callback_handler failed: {} - {}", status, msg),
+    }
+
+    res
 }

@@ -205,6 +205,69 @@ impl UserMapper for () {
     }
 }
 
+/// Orchestrates the Authorization Code flow.
+#[async_trait]
+pub trait ErasedOAuthFlow: Send + Sync {
+    /// Get the provider identifier.
+    fn provider_id(&self) -> String;
+    /// Generates the redirect URL and CSRF state.
+    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, String);
+    /// Completes the flow by exchanging the code.
+    async fn finalize_login(
+        &self,
+        code: &str,
+        received_state: &str,
+        expected_state: &str,
+        pkce_verifier: Option<&str>,
+    ) -> Result<(Identity, OAuthToken), AuthError>;
+}
+
+#[async_trait]
+impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for std::sync::Arc<T> {
+    fn provider_id(&self) -> String {
+        (**self).provider_id()
+    }
+
+    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, String) {
+        (**self).initiate_login(scopes, pkce_challenge)
+    }
+
+    async fn finalize_login(
+        &self,
+        code: &str,
+        received_state: &str,
+        expected_state: &str,
+        pkce_verifier: Option<&str>,
+    ) -> Result<(Identity, OAuthToken), AuthError> {
+        (**self)
+            .finalize_login(code, received_state, expected_state, pkce_verifier)
+            .await
+    }
+}
+
+#[async_trait]
+impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for Box<T> {
+    fn provider_id(&self) -> String {
+        (**self).provider_id()
+    }
+
+    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, String) {
+        (**self).initiate_login(scopes, pkce_challenge)
+    }
+
+    async fn finalize_login(
+        &self,
+        code: &str,
+        received_state: &str,
+        expected_state: &str,
+        pkce_verifier: Option<&str>,
+    ) -> Result<(Identity, OAuthToken), AuthError> {
+        (**self)
+            .finalize_login(code, received_state, expected_state, pkce_verifier)
+            .await
+    }
+}
+
 /// An in-memory implementation of [`SessionStore`].
 ///
 /// **Note**: This store is not persistent and will be cleared when the application restarts.
