@@ -47,3 +47,4 @@ tower-cookies = "0.11.0"
 [[example]]
 name = "get_started"
 path = "../examples/get_started.rs"
+required-features = ["axum", "flow", "github", "session"]
