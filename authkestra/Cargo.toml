@@ -38,3 +38,12 @@ actix = ["dep:authkestra-actix"]
 github = ["dep:authkestra-providers-github"]
 google = ["dep:authkestra-providers-google"]
 discord = ["dep:authkestra-providers-discord"]
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+axum = "0.8.8"
+tower-cookies = "0.11.0"
+
+[[example]]
+name = "get_started"
+path = "../examples/get_started.rs"

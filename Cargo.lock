@@ -314,6 +314,9 @@ dependencies = [
  "authkestra-providers-google",
  "authkestra-session",
  "authkestra-token",
+ "axum",
+ "tokio",
+ "tower-cookies",
 ]
 
 [[package]]
@@ -340,7 +343,6 @@ name = "authkestra-axum"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "authkestra",
  "authkestra-core",
  "authkestra-flow",
  "authkestra-oidc",

@@ -31,7 +31,6 @@ authkestra-oidc = { version = "0.1.0", path = "../authkestra-oidc" }
 authkestra-providers-github = { version = "0.1.0", path = "../authkestra-providers-github" }
 authkestra-providers-google = { version = "0.1.0", path = "../authkestra-providers-google" }
 authkestra-providers-discord = { version = "0.1.0", path = "../authkestra-providers-discord" }
-authkestra = { version = "0.1.0", path = "../authkestra", features = ["axum", "github", "flow", "session"] }
 
 [[example]]
 name = "axum_oauth"
@@ -45,6 +44,3 @@ path = "../examples/axum_credentials.rs"
 name = "oidc_generic"
 path = "../examples/oidc_generic.rs"
 
-[[example]]
-name = "get_started"
-path = "../examples/get_started.rs"

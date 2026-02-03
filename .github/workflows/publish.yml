@@ -124,17 +124,6 @@ jobs:
             cargo publish --package "authkestra-flow"
             sleep 10
           fi
-      - name: Publish authkestra
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra..."
-          if cargo publish --package "authkestra" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra"
-            sleep 10
-          fi
       - name: Publish authkestra-axum
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -155,5 +144,16 @@ jobs:
             echo "::warning::Version for authkestra-actix already exists on crates.io, skipping."
           else
             cargo publish --package "authkestra-actix"
+            sleep 10
+          fi
+      - name: Publish authkestra
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          echo "Publishing authkestra..."
+          if cargo publish --package "authkestra" --dry-run 2>&1 | grep -q "already exists"; then
+            echo "::warning::Version for authkestra already exists on crates.io, skipping."
+          else
+            cargo publish --package "authkestra"
             sleep 10
           fi
