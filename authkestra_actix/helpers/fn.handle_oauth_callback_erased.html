@@ -2,7 +2,7 @@
     req: HttpRequest,
     flow: &amp;dyn ErasedOAuthFlow,
     params: <a class="struct" href="struct.OAuthCallbackParams.html" title="struct authkestra_actix::helpers::OAuthCallbackParams">OAuthCallbackParams</a>,
-    store: <a class="struct" href="https://doc.rust-lang.org/1.93.0/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;dyn SessionStore&gt;,
-    config: SessionConfig,
+    store: <a class="struct" href="https://doc.rust-lang.org/1.93.0/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;dyn <a class="trait" href="../../authkestra_core/trait.SessionStore.html" title="trait authkestra_core::SessionStore">SessionStore</a>&gt;,
+    config: <a class="struct" href="../../authkestra_core/struct.SessionConfig.html" title="struct authkestra_core::SessionConfig">SessionConfig</a>,
     success_url: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.93.0/std/primitive.str.html">str</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.93.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;HttpResponse, Error&gt;</code></pre></section></div></main></body></html>
