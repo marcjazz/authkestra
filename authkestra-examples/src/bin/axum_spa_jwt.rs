@@ -21,7 +21,8 @@ use tower_cookies::{CookieManagerLayer, Cookies};
 /// 2. The user clicks "Login with GitHub", which redirects them to the backend `/auth/login`.
 /// 3. The backend initiates the OAuth flow and redirects the user to GitHub.
 /// 4. After authorization, GitHub redirects the user back to the frontend callback page (e.g., `/?code=...&state=...`).
-/// 5. The frontend extracts the `code` and `state` from the URL and calls the backend API `/api/callback`.
+///    IMPORTANT: In SPA use cases, the redirect URI should point to a frontend route, not a backend callback.
+/// 5. The frontend extracts the `code` and `state` from the URL and performs a request (e.g., POST) to the backend API `/api/callback`.
 /// 6. The backend uses `handle_oauth_callback_jwt` to exchange the code for a JWT and returns it to the frontend.
 /// 7. The frontend stores the JWT (e.g., in localStorage) and uses it for subsequent API calls.
 
@@ -77,7 +78,7 @@ async fn main() {
         .route("/", get(frontend))
         .route("/auth/login", get(login_handler))
         .route("/auth/logout", get(logout_handler))
-        .route("/api/callback", get(callback_handler))
+        .route("/api/callback", get(callback_handler).post(callback_handler))
         .route("/api/protected", get(protected_resource))
         .layer(CookieManagerLayer::new())
         .with_state(state);
@@ -149,7 +150,8 @@ async fn frontend() -> impl IntoResponse {
             statusEl.innerText = 'Exchanging code for token...';
             
             // 2. Call backend to exchange code for JWT
-            fetch(`/api/callback?code=${code}&state=${state}`)
+            // In a real SPA, this should ideally be a POST request to avoid leaking code/state in logs
+            fetch(`/api/callback?code=${code}&state=${state}`, { method: 'POST' })
                 .then(res => {
                     if (!res.ok) throw new Error('Failed to exchange code');
                     return res.json();

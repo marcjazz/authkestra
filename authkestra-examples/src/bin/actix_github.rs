@@ -17,9 +17,8 @@ async fn index() -> impl Responder {
 }
 
 #[get("/protected")]
-async fn protected(session: AuthSession) -> impl Responder {
+async fn protected(AuthSession(session): AuthSession) -> impl Responder {
     let name = session
-        .0
         .identity
         .username
         .clone()
@@ -27,7 +26,7 @@ async fn protected(session: AuthSession) -> impl Responder {
 
     HttpResponse::Ok().body(format!(
         "Hello, {}! Your ID is {}. You are authenticated via the new AuthSession extractor.",
-        name, session.0.identity.external_id
+        name, session.identity.external_id
     ))
 }
 

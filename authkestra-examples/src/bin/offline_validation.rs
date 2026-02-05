@@ -1,6 +1,5 @@
 use authkestra_token::offline_validation::{validate_jwt, JwksCache};
 use jsonwebtoken::{Algorithm, Validation};
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -9,22 +8,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // For this example, we'll use a placeholder or a mock if we were testing,
     // but here we show the structure.
     let jwks_uri = "https://www.googleapis.com/oauth2/v3/certs".to_string();
-    let refresh_interval = Duration::from_secs(3600); // 1 hour
+    let client = reqwest::Client::new();
 
     println!("Initializing JWKS cache for: {}", jwks_uri);
 
-    // Note: This will actually attempt to fetch the JWKS from the URI.
-    // If you are offline or the URI is invalid, this will fail.
-    let cache = match JwksCache::new(jwks_uri, refresh_interval).await {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!(
-                "Failed to initialize JWKS cache: {}. (Expected if no network or invalid URI)",
-                e
-            );
-            return Ok(());
-        }
-    };
+    // JwksCache::new is synchronous, but fetching JWKS happens lazily or via .refresh()
+    let cache = JwksCache::new(jwks_uri, client);
 
     println!("JWKS cache initialized successfully.");
 

@@ -4,7 +4,6 @@ use authkestra_token::offline_validation::JwksCache;
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// This example demonstrates an Actix resource server that protects its endpoints
 /// using JWTs validated against an external OIDC provider's JWKS.
@@ -42,13 +41,8 @@ async fn main() -> std::io::Result<()> {
     println!("🔑 Using JWKS URI: {}", jwks_uri);
 
     // 2. Initialize the JWKS Cache
-    let cache = match JwksCache::new(jwks_uri, Duration::from_secs(3600)).await {
-        Ok(c) => Arc::new(c),
-        Err(e) => {
-            eprintln!("Failed to initialize JWKS cache: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let http_client = reqwest::Client::new();
+    let cache = Arc::new(JwksCache::new(jwks_uri, http_client));
 
     // 3. Configure JWT Validation
     let mut validation = Validation::new(Algorithm::RS256);

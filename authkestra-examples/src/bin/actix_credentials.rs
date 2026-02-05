@@ -111,12 +111,12 @@ async fn login(data: web::Data<AppState>, creds: web::Form<LoginCredentials>) ->
 }
 
 #[get("/protected")]
-async fn protected(session: AuthSession) -> impl Responder {
+async fn protected(AuthSession(session): AuthSession) -> impl Responder {
     HttpResponse::Ok().body(format!(
         "Hello, {}! Your ID is {}. Session ID: {}",
-        session.0.identity.username.clone().unwrap_or_default(),
-        session.0.identity.external_id,
-        session.0.id
+        session.identity.username.clone().unwrap_or_default(),
+        session.identity.external_id,
+        session.id
     ))
 }
 
