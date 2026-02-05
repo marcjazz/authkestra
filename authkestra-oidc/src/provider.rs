@@ -1,10 +1,12 @@
-use authkestra_core::ProviderMetadata;
 use crate::error::OidcError;
 use async_trait::async_trait;
-use authkestra_core::{AuthError, Identity, OAuthProvider, OAuthToken};
-use authkestra_token::offline_validation::OidcValidator;
+use authkestra_core::{
+    discovery::ProviderMetadata, AuthError, Identity, OAuthProvider, OAuthToken,
+};
+use authkestra_token::{validate_jwt_generic, JwksCache};
+use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 pub struct OidcProvider {
     client_id: String,
@@ -12,7 +14,7 @@ pub struct OidcProvider {
     redirect_uri: String,
     metadata: ProviderMetadata,
     http_client: reqwest::Client,
-    validator: OidcValidator,
+    cache: JwksCache,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,27 +44,24 @@ impl OidcProvider {
         client_id: String,
         client_secret: String,
         redirect_uri: String,
-        issuer_url: &str,
+        issuer_url: &str
     ) -> Result<Self, OidcError> {
         let client = reqwest::Client::new();
-        let metadata = ProviderMetadata::discover(issuer_url, &client).await?;
-        let validator = OidcValidator::discover(issuer_url).await?;
+        let metadata = ProviderMetadata::discover(issuer_url, client.clone()).await?;
+        let cache = authkestra_token::JwksCache::new(metadata.jwks_uri.clone(), Duration::from_secs(3600));
+
         Ok(Self {
             client_id,
             client_secret,
             redirect_uri,
             metadata,
             http_client: client,
-            validator,
+            cache,
         })
     }
 
     pub fn metadata(&self) -> &ProviderMetadata {
         &self.metadata
-    }
-
-    pub fn validator(&self) -> &OidcValidator {
-        &self.validator
     }
 }
 
@@ -137,9 +136,7 @@ impl OAuthProvider for OidcProvider {
             .ok_or_else(|| AuthError::Token("Missing id_token in response".to_string()))?;
 
         // 2. Validate ID Token using the validator
-        let claims = self
-            .validator
-            .validate_id_token::<Claims>(&id_token, &self.client_id)
+        let claims = validate_jwt_generic::<Claims>(&id_token, &self.cache, &Validation::default())
             .await
             .map_err(OidcError::from)
             .map_err(AuthError::from)?;
