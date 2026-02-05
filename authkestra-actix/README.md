@@ -33,8 +33,7 @@ use authkestra_actix::AuthSession;
 use actix_web::{get, HttpResponse};
 
 #[get("/profile")]
-async fn profile(auth: AuthSession) -> HttpResponse {
-    let session = auth.0;
+async fn profile(AuthSession(session): AuthSession) -> HttpResponse {
     HttpResponse::Ok().json(session.identity)
 }
 ```
@@ -48,8 +47,30 @@ use authkestra_actix::AuthToken;
 use actix_web::{get, HttpResponse};
 
 #[get("/api/data")]
-async fn protected_api(token: AuthToken) -> HttpResponse {
-    let claims = token.0;
+async fn protected_api(AuthToken(claims): AuthToken) -> HttpResponse {
+    HttpResponse::Ok().json(claims)
+}
+```
+
+#### `Jwt<T>` (Offline Validation)
+
+Extracts and validates a JWT against a remote JWKS (e.g., Google, Auth0). Requires `Arc<JwksCache>` and `jsonwebtoken::Validation` to be registered in `app_data`.
+
+```rust
+use authkestra_actix::Jwt;
+use authkestra_token::offline_validation::JwksCache;
+use actix_web::{get, HttpResponse, web};
+use serde::Deserialize;
+use std::sync::Arc;
+
+#[derive(Deserialize)]
+struct MyClaims {
+    sub: String,
+    // ...
+}
+
+#[get("/api/external")]
+async fn external_api(Jwt(claims): Jwt<MyClaims>) -> HttpResponse {
     HttpResponse::Ok().json(claims)
 }
 ```
@@ -57,6 +78,14 @@ async fn protected_api(token: AuthToken) -> HttpResponse {
 ### OAuth2 Helpers
 
 The crate provides helpers to manage the OAuth2 flow lifecycle.
+
+#### SPA vs Server-Side Rendering
+
+For **SPA (Single Page Application)** use cases where you want to receive a JWT on the frontend:
+1. The `redirect_uri` in your OAuth provider configuration should point to a **frontend route** (e.g., `https://myapp.com/callback`).
+2. Your frontend route should extract the `code` and `state` from the URL.
+3. The frontend then performs a **POST** (or GET) request to your backend's callback endpoint (e.g., `/api/auth/callback`) with these parameters.
+4. The backend uses `handle_oauth_callback_jwt` to exchange the code for a JWT and returns it to the frontend.
 
 ```rust
 use authkestra_actix::{initiate_oauth_login, handle_oauth_callback, logout, SessionConfig, OAuthCallbackParams};
@@ -69,7 +98,7 @@ async fn login(flow: web::Data<OAuth2Flow>, config: web::Data<SessionConfig>) ->
     initiate_oauth_login(&flow, &config, &["user:email"])
 }
 
-// 2. Handle Callback
+// 2. Handle Callback (Server-Side Session)
 #[get("/callback")]
 async fn callback(
     req: HttpRequest,

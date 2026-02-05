@@ -13,6 +13,8 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
   - `initiate_oauth_login`: Generates authorization URLs and handles CSRF protection.
   - `handle_oauth_callback`: Finalizes OAuth login and creates a server-side session.
   - `handle_oauth_callback_jwt`: Finalizes OAuth login and returns a JWT.
+- **Offline Validation**:
+  - `Jwt<T>`: Extractor for validating JWTs from external OIDC providers using JWKS.
 - **Session Management**:
   - `logout`: Clears the session cookie and removes it from the store.
   - `SessionConfig`: Customizable session settings (cookie name, secure, http_only, etc.).
@@ -82,6 +84,37 @@ async fn api_handler(AuthToken(claims): AuthToken) -> String {
     format!("Hello user with ID: {}", claims.sub)
 }
 ```
+
+### Offline Validation
+
+For validating tokens from external providers (like Google or Auth0) using their JWKS endpoint:
+
+```rust
+use authkestra_axum::Jwt;
+use authkestra_token::offline_validation::JwksCache;
+use jsonwebtoken::Validation;
+use std::sync::Arc;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct MyClaims {
+    sub: String,
+}
+
+// Ensure Arc<JwksCache> and Validation are available in your State via FromRef
+
+async fn external_api_handler(Jwt(claims): Jwt<MyClaims>) -> String {
+    format!("Hello external user: {}", claims.sub)
+}
+```
+
+### SPA vs Server-Side Rendering
+
+For **SPA (Single Page Application)** use cases where you want to receive a JWT on the frontend:
+1. The `redirect_uri` in your OAuth provider configuration should point to a **frontend route** (e.g., `https://myapp.com/callback`).
+2. Your frontend route should extract the `code` and `state` from the URL.
+3. The frontend then performs a **POST** (or GET) request to your backend's callback endpoint (e.g., `/api/auth/callback`) with these parameters.
+4. The backend uses `handle_oauth_callback_jwt` to exchange the code for a JWT and returns it to the frontend.
 
 ## Part of authkestra
 
