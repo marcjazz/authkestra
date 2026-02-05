@@ -51,7 +51,8 @@ use std::time::Duration;
 #[tokio::main]
 async fn main() {
     let jwks_uri = "https://www.googleapis.com/oauth2/v3/certs".to_string();
-    let cache = JwksCache::new(jwks_uri, Duration::from_secs(3600)).await.unwrap();
+    let http_client = reqwest::Client::new();
+    let cache = JwksCache::new(jwks_uri, http_client);
     
     let validation = Validation::default();
     let token = "your.jwt.token";

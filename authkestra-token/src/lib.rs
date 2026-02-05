@@ -1,5 +1,7 @@
 pub mod offline_validation;
 
+pub use offline_validation::{validate_jwt, validate_jwt_generic, JwksCache, OidcValidator};
+
 use authkestra_core::{AuthError, Identity};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
