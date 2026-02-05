@@ -1,9 +1,8 @@
-use crate::discovery::ProviderMetadata;
+use authkestra_core::ProviderMetadata;
 use crate::error::OidcError;
-use crate::jwks::Jwks;
 use async_trait::async_trait;
 use authkestra_core::{AuthError, Identity, OAuthProvider, OAuthToken};
-use jsonwebtoken::{decode, decode_header, Algorithm, Validation};
+use authkestra_token::offline_validation::OidcValidator;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -13,6 +12,7 @@ pub struct OidcProvider {
     redirect_uri: String,
     metadata: ProviderMetadata,
     http_client: reqwest::Client,
+    validator: OidcValidator,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,17 +46,23 @@ impl OidcProvider {
     ) -> Result<Self, OidcError> {
         let client = reqwest::Client::new();
         let metadata = ProviderMetadata::discover(issuer_url, &client).await?;
+        let validator = OidcValidator::discover(issuer_url).await?;
         Ok(Self {
             client_id,
             client_secret,
             redirect_uri,
             metadata,
             http_client: client,
+            validator,
         })
     }
 
     pub fn metadata(&self) -> &ProviderMetadata {
         &self.metadata
+    }
+
+    pub fn validator(&self) -> &OidcValidator {
+        &self.validator
     }
 }
 
@@ -104,16 +110,15 @@ impl OAuthProvider for OidcProvider {
         code_verifier: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError> {
         // 1. Exchange code for tokens
-        let mut params = vec![
-            ("grant_type", "authorization_code".to_string()),
-            ("code", code.to_string()),
-            ("redirect_uri", self.redirect_uri.clone()),
-            ("client_id", self.client_id.clone()),
-            ("client_secret", self.client_secret.clone()),
-        ];
+        let mut params = HashMap::new();
+        params.insert("grant_type", "authorization_code".to_string());
+        params.insert("code", code.to_string());
+        params.insert("redirect_uri", self.redirect_uri.clone());
+        params.insert("client_id", self.client_id.clone());
+        params.insert("client_secret", self.client_secret.clone());
 
         if let Some(verifier) = code_verifier {
-            params.push(("code_verifier", verifier.to_string()));
+            params.insert("code_verifier", verifier.to_string());
         }
 
         let token_response = self
@@ -131,29 +136,13 @@ impl OAuthProvider for OidcProvider {
             .id_token
             .ok_or_else(|| AuthError::Token("Missing id_token in response".to_string()))?;
 
-        // 2. Fetch JWKS
-        let jwks = Jwks::fetch(&self.metadata.jwks_uri, &self.http_client)
+        // 2. Validate ID Token using the validator
+        let claims = self
+            .validator
+            .validate_id_token::<Claims>(&id_token, &self.client_id)
             .await
+            .map_err(OidcError::from)
             .map_err(AuthError::from)?;
-
-        // 3. Decode and Validate ID Token
-        let header = decode_header(&id_token)
-            .map_err(|e| AuthError::Token(format!("Invalid ID Token header: {}", e)))?;
-
-        let jwk = jwks
-            .find_key(header.kid.as_deref())
-            .ok_or_else(|| AuthError::Token("No matching key found in JWKS".to_string()))?;
-
-        let decoding_key = jwk.to_decoding_key().map_err(AuthError::from)?;
-
-        let mut validation = Validation::new(Algorithm::RS256);
-        validation.set_issuer(std::slice::from_ref(&self.metadata.issuer));
-        validation.set_audience(std::slice::from_ref(&self.client_id));
-
-        let token_data = decode::<Claims>(&id_token, &decoding_key, &validation)
-            .map_err(|e| AuthError::Token(format!("ID Token validation failed: {}", e)))?;
-
-        let claims = token_data.claims;
 
         // 4. Construct Identity
         let mut attributes = HashMap::new();
