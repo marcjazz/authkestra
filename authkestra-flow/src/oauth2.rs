@@ -7,6 +7,8 @@ use authkestra_core::{
 pub struct OAuth2Flow<P: OAuthProvider, M: UserMapper = ()> {
     provider: P,
     mapper: Option<M>,
+    scopes: Vec<String>,
+    use_pkce: bool,
 }
 
 #[async_trait]
@@ -16,7 +18,28 @@ impl<P: OAuthProvider, M: UserMapper> ErasedOAuthFlow for OAuth2Flow<P, M> {
     }
 
     fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, String) {
-        self.initiate_login(scopes, pkce_challenge)
+        let effective_scopes = if !scopes.is_empty() {
+            scopes
+        } else {
+            &self
+                .scopes
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>()
+        };
+
+        let effective_pkce = if pkce_challenge.is_some() {
+            pkce_challenge
+        } else if self.use_pkce {
+            // This is a bit tricky because initiate_login in ErasedOAuthFlow is synchronous
+            // and doesn't return the verifier. Usually PKCE is handled by the caller
+            // who stores the verifier.
+            None
+        } else {
+            None
+        };
+
+        self.initiate_login(effective_scopes, effective_pkce)
     }
 
     async fn finalize_login(
@@ -39,6 +62,8 @@ impl<P: OAuthProvider> OAuth2Flow<P, ()> {
         Self {
             provider,
             mapper: None,
+            scopes: Vec::new(),
+            use_pkce: false,
         }
     }
 }
@@ -49,7 +74,21 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
         Self {
             provider,
             mapper: Some(mapper),
+            scopes: Vec::new(),
+            use_pkce: false,
         }
+    }
+
+    /// Set the scopes for the OAuth2 flow.
+    pub fn with_scopes(mut self, scopes: Vec<impl Into<String>>) -> Self {
+        self.scopes = scopes.into_iter().map(|s| s.into()).collect();
+        self
+    }
+
+    /// Enable or disable PKCE for the OAuth2 flow.
+    pub fn with_pkce(mut self, use_pkce: bool) -> Self {
+        self.use_pkce = use_pkce;
+        self
     }
 
     /// Generates the redirect URL and CSRF state.
@@ -59,9 +98,20 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
         pkce_challenge: Option<&str>,
     ) -> (String, String) {
         let state = uuid::Uuid::new_v4().to_string();
+
+        let effective_scopes = if !scopes.is_empty() {
+            scopes
+        } else {
+            &self
+                .scopes
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>()
+        };
+
         let url = self
             .provider
-            .get_authorization_url(&state, scopes, pkce_challenge);
+            .get_authorization_url(&state, effective_scopes, pkce_challenge);
         (url, state)
     }
 
