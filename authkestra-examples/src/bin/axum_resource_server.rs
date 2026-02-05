@@ -3,7 +3,7 @@ use authkestra_token::offline_validation::JwksCache;
 use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 /// This example demonstrates an Axum resource server that protects its endpoints
 /// using JWTs validated against an external OIDC provider's JWKS.
@@ -45,8 +45,7 @@ async fn main() {
     println!("🔑 Using JWKS URI: {}", jwks_uri);
 
     // 2. Initialize the JWKS Cache
-    let http_client = reqwest::Client::new();
-    let cache = Arc::new(JwksCache::new(jwks_uri, http_client));
+    let cache = Arc::new(JwksCache::new(jwks_uri, Duration::from_secs(3600)));
 
     // 3. Configure JWT Validation
     let mut validation = Validation::new(Algorithm::RS256);
