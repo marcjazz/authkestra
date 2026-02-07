@@ -129,7 +129,6 @@ pub async fn handle_oauth_callback_erased(
     if let Some(rt) = token.refresh_token {
         identity.attributes.insert("refresh_token".to_string(), rt);
     }
-    println!("Created identity: {:?}", identity);
 
     let session_duration = config.max_age.unwrap_or(chrono::Duration::hours(24));
     let session = Session {
