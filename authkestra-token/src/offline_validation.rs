@@ -1,4 +1,4 @@
-use authkestra_core::AuthError;
+use authkestra_core::error::AuthError;
 use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
