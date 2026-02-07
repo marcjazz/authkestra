@@ -1,7 +1,10 @@
 use crate::error::OidcError;
 use async_trait::async_trait;
 use authkestra_core::{
-    discovery::ProviderMetadata, AuthError, Identity, OAuthProvider, OAuthToken,
+    discovery::ProviderMetadata,
+    error::AuthError,
+    state::{Identity, OAuthToken},
+    OAuthProvider,
 };
 use authkestra_token::{validate_jwt_generic, JwksCache};
 use jsonwebtoken::Validation;
