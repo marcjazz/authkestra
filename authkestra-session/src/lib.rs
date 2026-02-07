@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use authkestra_core::SameSite;
-pub use authkestra_core::{AuthError, Identity};
+pub use authkestra_core::{error::AuthError, state::Identity};
 
 #[cfg(feature = "sqlx-store")]
 pub mod sql;
