@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-providers-discord"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Discord OAuth provider for the authkestra framework"
 repository = "https://github.com/marcjazz/authkestra"

@@ -1,4 +1,7 @@
-use authkestra_core::{Identity, OAuthProvider, OAuthToken};
+use authkestra_core::{
+    state::{Identity, OAuthToken},
+    OAuthProvider,
+};
 use authkestra_providers_discord::DiscordProvider;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
