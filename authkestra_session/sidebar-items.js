@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AuthError"],"mod":["redis_store","sql_store"],"struct":["Identity","MemoryStore","Session"],"trait":["SessionStore"]};
+window.SIDEBAR_ITEMS = {"enum":["AuthError"],"mod":["memory","redis","sql"],"struct":["Identity","Session","SessionConfig"],"trait":["SessionStore"]};

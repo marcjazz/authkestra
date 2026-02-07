@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SameSite"],"mod":["helpers"],"struct":["AuthSession","AuthToken","Authkestra","AuthkestraState","Cookie","Jwt","Session","SessionConfig"],"trait":["AuthkestraAxumExt","SessionStore"]};
+window.SIDEBAR_ITEMS = {"enum":["SameSite"],"mod":["helpers"],"struct":["AuthSession","AuthToken","AuthkestraState","Cookie","Jwt"],"trait":["AuthkestraAxumExt"]};

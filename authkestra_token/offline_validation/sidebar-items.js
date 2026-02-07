@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ValidationError"],"fn":["validate_jwt","validate_jwt_generic","validate_paseto"],"struct":["Claims","JwksCache"]};
+window.SIDEBAR_ITEMS = {"enum":["ValidationError"],"fn":["validate_jwt","validate_jwt_generic","validate_paseto"],"struct":["Claims","Jwk","Jwks","JwksCache"]};
