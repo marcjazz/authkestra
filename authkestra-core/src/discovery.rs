@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::AuthError;
+use crate::error::AuthError;
 
 /// Metadata for an OpenID Connect provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]

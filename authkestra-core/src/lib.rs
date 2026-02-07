@@ -1,23 +1,23 @@
 //! # Authkestra Core
 //!
 //! `authkestra-core` provides the foundational traits and types for the Authkestra authentication framework.
-//! It defines the core abstractions for identities, sessions, and providers that are used across the entire ecosystem.
-//!
-//! ## Key Components
-//!
-//! - **[`Identity`]**: A unified structure representing a user's identity across different providers.
-//! - **[`SessionStore`]**: A trait for implementing session persistence (e.g., in-memory, Redis, SQL).
-//! - **[`OAuthProvider`]**: A trait for implementing OAuth2 and OpenID Connect providers.
-//! - **[`AuthError`]**: A comprehensive error type for authentication-related issues.
+//! It defines the core abstractions for identities, authentication flows and providers that are used across the entire ecosystem.
 
 #![warn(missing_docs)]
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// PKCE (Proof Key for Code Exchange) utilities.
 pub mod pkce;
+
+/// Errors that can occur during the authentication process.
+pub mod error;
+use crate::error::AuthError;
+
+/// A unified identity structure returned by all providers.
+pub mod state;
+use crate::state::{Identity, OAuthToken};
 
 /// Discovery utilities for OAuth2 providers.
 pub mod discovery;
@@ -31,71 +31,6 @@ pub enum SameSite {
     Strict,
     /// The cookie is sent with all requests, including cross-site. Requires `Secure`.
     None,
-}
-
-/// A unified identity structure returned by all providers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Identity {
-    /// The provider identifier (e.g., "github", "google")
-    pub provider_id: String,
-    /// The unique ID of the user within the provider's system
-    pub external_id: String,
-    /// The user's email address, if available and authorized
-    pub email: Option<String>,
-    /// The user's username or display name, if available
-    pub username: Option<String>,
-    /// Additional provider-specific attributes
-    pub attributes: HashMap<String, String>,
-}
-
-/// Represents the tokens returned by an OAuth2 provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuthToken {
-    /// The access token used for API requests
-    pub access_token: String,
-    /// The type of token (usually "Bearer")
-    pub token_type: String,
-    /// Seconds until the access token expires
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_in: Option<u64>,
-    /// The refresh token used to obtain new access tokens
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_token: Option<String>,
-    /// The scopes granted by the user
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-    /// The OIDC ID Token
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id_token: Option<String>,
-}
-
-/// Errors that can occur during the authentication process.
-#[derive(Debug, thiserror::Error)]
-pub enum AuthError {
-    /// An error returned by the authentication provider
-    #[error("Provider error: {0}")]
-    Provider(String),
-    /// The provided credentials (email/password) are invalid
-    #[error("Invalid credentials")]
-    InvalidCredentials,
-    /// The authorization code is invalid or expired
-    #[error("Invalid code")]
-    InvalidCode,
-    /// A network error occurred during communication with the provider
-    #[error("Network error")]
-    Network,
-    /// An error occurred during session management
-    #[error("Session error: {0}")]
-    Session(String),
-    /// An error occurred during token processing
-    #[error("Token error: {0}")]
-    Token(String),
-    /// The CSRF state parameter does not match the expected value
-    #[error("CSRF state mismatch")]
-    CsrfMismatch,
-    /// An error occurred during OIDC discovery
-    #[error("Discovery error: {0}")]
-    Discovery(String),
 }
 
 /// Trait for an OAuth2-compatible provider.
@@ -155,14 +90,6 @@ pub trait UserMapper: Send + Sync {
     async fn map_user(&self, identity: &Identity) -> Result<Self::LocalUser, AuthError>;
 }
 
-#[async_trait]
-impl UserMapper for () {
-    type LocalUser = ();
-    async fn map_user(&self, _identity: &Identity) -> Result<Self::LocalUser, AuthError> {
-        Ok(())
-    }
-}
-
 /// Orchestrates the Authorization Code flow.
 #[async_trait]
 pub trait ErasedOAuthFlow: Send + Sync {
@@ -178,6 +105,14 @@ pub trait ErasedOAuthFlow: Send + Sync {
         expected_state: &str,
         pkce_verifier: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError>;
+}
+
+#[async_trait]
+impl UserMapper for () {
+    type LocalUser = ();
+    async fn map_user(&self, _identity: &Identity) -> Result<Self::LocalUser, AuthError> {
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -224,13 +159,4 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for Box<T> {
             .finalize_login(code, received_state, expected_state, pkce_verifier)
             .await
     }
-}
-
-/// Represents an error response from an OAuth2 provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuthErrorResponse {
-    /// The error code.
-    pub error: String,
-    /// A human-readable ASCII text description of the error.
-    pub error_description: Option<String>,
 }
