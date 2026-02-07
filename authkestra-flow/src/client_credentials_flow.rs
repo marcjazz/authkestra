@@ -1,4 +1,4 @@
-use authkestra_core::{AuthError, OAuthToken};
+use authkestra_core::{error::AuthError, state::OAuthToken};
 
 /// Orchestrates the Client Credentials Flow (RFC 6749 Section 4.4).
 ///

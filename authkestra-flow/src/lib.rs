@@ -14,7 +14,9 @@
 #![warn(missing_docs)]
 
 pub use authkestra_core::ErasedOAuthFlow;
-use authkestra_core::{AuthError, CredentialsProvider, Identity, OAuthProvider, UserMapper};
+use authkestra_core::{
+    error::AuthError, state::Identity, CredentialsProvider, OAuthProvider, UserMapper,
+};
 use authkestra_session::{MemoryStore, SessionConfig, SessionStore};
 use authkestra_token::TokenManager;
 use std::collections::HashMap;

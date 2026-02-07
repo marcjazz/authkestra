@@ -1,4 +1,7 @@
-use authkestra_core::{AuthError, OAuthErrorResponse, OAuthToken};
+use authkestra_core::{
+    error::{AuthError, OAuthErrorResponse},
+    state::OAuthToken,
+};
 use serde::{Deserialize, Serialize};
 use std::thread::sleep;
 use std::time::Duration;

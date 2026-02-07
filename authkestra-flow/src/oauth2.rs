@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use authkestra_core::{
-    AuthError, ErasedOAuthFlow, Identity, OAuthProvider, OAuthToken, UserMapper,
+    error::AuthError, state::Identity, state::OAuthToken, ErasedOAuthFlow, OAuthProvider,
+    UserMapper,
 };
 
 /// Orchestrates the standard OAuth2 Authorization Code flow.
