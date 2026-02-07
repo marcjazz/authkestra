@@ -108,12 +108,16 @@ pub struct OAuthToken {
     /// The type of token (usually "Bearer")
     pub token_type: String,
     /// Seconds until the access token expires
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_in: Option<u64>,
     /// The refresh token used to obtain new access tokens
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
     /// The scopes granted by the user
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
     /// The OIDC ID Token
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
 }
 
@@ -272,6 +276,15 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for Box<T> {
             .finalize_login(code, received_state, expected_state, pkce_verifier)
             .await
     }
+}
+
+/// Represents an error response from an OAuth2 provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthErrorResponse {
+    /// The error code.
+    pub error: String,
+    /// A human-readable ASCII text description of the error.
+    pub error_description: Option<String>,
 }
 
 /// An in-memory implementation of [`SessionStore`].

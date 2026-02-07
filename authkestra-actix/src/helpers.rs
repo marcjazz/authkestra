@@ -120,6 +120,7 @@ pub async fn handle_oauth_callback_erased(
     identity
         .attributes
         .insert("access_token".to_string(), token.access_token);
+
     if let Some(expires_in) = token.expires_in {
         let expires_at = chrono::Utc::now().timestamp() + expires_in as i64;
         identity

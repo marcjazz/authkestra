@@ -67,7 +67,7 @@ async fn test_discord_oauth_flow() {
         .await
         .expect("Failed to exchange code");
 
-    assert_eq!(token_response.access_token, "test_access_token");
+    assert_eq!(token_response.access_token, "test_access_token".to_string());
     assert_eq!(
         token_response.refresh_token,
         Some("test_refresh_token".to_string())

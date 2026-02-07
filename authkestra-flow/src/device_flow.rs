@@ -1,4 +1,4 @@
-use authkestra_core::{AuthError, OAuthToken};
+use authkestra_core::{AuthError, OAuthErrorResponse, OAuthToken};
 use serde::{Deserialize, Serialize};
 use std::thread::sleep;
 use std::time::Duration;
@@ -68,15 +68,21 @@ impl DeviceFlow {
             )));
         }
 
-        response
-            .json::<DeviceAuthorizationResponse>()
-            .await
-            .map_err(|e| {
-                AuthError::Provider(format!(
-                    "Failed to parse device authorization response: {}",
-                    e
-                ))
-            })
+        let response_text = response.text().await.map_err(|e| {
+            AuthError::Provider(format!(
+                "Failed to read device authorization response body: {}",
+                e
+            ))
+        })?;
+
+        println!("Raw device authorization response body: {}", response_text);
+
+        serde_json::from_str::<DeviceAuthorizationResponse>(&response_text).map_err(|e| {
+            AuthError::Provider(format!(
+                "Failed to parse device authorization response: {}",
+                e
+            ))
+        })
     }
 
     /// Polls the token endpoint until an access token is granted or an error occurs.
@@ -106,23 +112,17 @@ impl DeviceFlow {
                 .await
                 .map_err(|_| AuthError::Network)?;
 
-            let status = response.status();
+            let response_text = response.text().await.map_err(|e| {
+                AuthError::Provider(format!("Failed to read token response body: {}", e))
+            })?;
 
-            if status.is_success() {
-                return response.json::<OAuthToken>().await.map_err(|e| {
-                    AuthError::Provider(format!("Failed to parse token response: {}", e))
-                });
-            } else {
-                let error_resp: serde_json::Value = response
-                    .json()
-                    .await
-                    .map_err(|_| AuthError::Provider("Failed to parse error response".into()))?;
+            println!("Raw token response body: {}", response_text);
 
-                let error = error_resp["error"].as_str().unwrap_or("unknown_error");
-
-                match error {
+            // Attempt to deserialize as OAuthErrorResponse first
+            if let Ok(oauth_error) = serde_json::from_str::<OAuthErrorResponse>(&response_text) {
+                match oauth_error.error.as_str() {
                     "authorization_pending" => {
-                        // Keep polling
+                        // Continue polling
                     }
                     "slow_down" => {
                         current_interval += 5;
@@ -134,12 +134,24 @@ impl DeviceFlow {
                         return Err(AuthError::Provider("Device code expired".into()));
                     }
                     _ => {
+                        let error_description = oauth_error
+                            .error_description
+                            .unwrap_or_else(|| "No description provided".to_string());
                         return Err(AuthError::Provider(format!(
-                            "Token polling failed: {}",
-                            error
+                            "OAuth error: {} - {}",
+                            oauth_error.error, error_description
                         )));
                     }
                 }
+            } else if let Ok(oauth_token) = serde_json::from_str::<OAuthToken>(&response_text) {
+                // If OAuthErrorResponse deserialization fails, attempt OAuthToken
+                return Ok(oauth_token);
+            } else {
+                // If both deserialization attempts fail
+                return Err(AuthError::Provider(
+                    "Failed to parse token response as either OAuthToken or OAuthErrorResponse"
+                        .into(),
+                ));
             }
 
             sleep(Duration::from_secs(current_interval));

@@ -66,7 +66,7 @@ async fn test_github_oauth_flow() {
         .await
         .expect("Failed to exchange code");
 
-    assert_eq!(token_response.access_token, "test_access_token");
+    assert_eq!(token_response.access_token, "test_access_token".to_string());
     assert_eq!(identity.external_id, "123");
     assert_eq!(identity.username, Some("test_user".to_string()));
     assert_eq!(identity.email, Some("test@example.com".to_string()));

@@ -2,9 +2,11 @@ use authkestra_flow::DeviceFlow;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+
     // GitHub's Device Authorization Flow endpoints
     let client_id =
-        std::env::var("GITHUB_CLIENT_ID").unwrap_or_else(|_| "Iv1.your_client_id".to_string());
+        std::env::var("AUTHKESTRA_GITHUB_CLIENT_ID").unwrap_or_else(|_| "Iv1.your_client_id".to_string());
     let device_auth_url = "https://github.com/login/device/code";
     let token_url = "https://github.com/login/oauth/access_token";
 

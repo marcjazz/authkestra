@@ -184,9 +184,7 @@ impl OAuthProvider for DiscordProvider {
             access_token: token_response.access_token,
             token_type: token_response.token_type,
             expires_in: token_response.expires_in,
-            refresh_token: token_response
-                .refresh_token
-                .or_else(|| Some(refresh_token.to_string())),
+            refresh_token: token_response.refresh_token,
             scope: token_response.scope,
             id_token: token_response.id_token,
         })

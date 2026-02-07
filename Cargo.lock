@@ -383,6 +383,7 @@ dependencies = [
  "async-trait",
  "authkestra-core",
  "authkestra-token",
+ "log",
  "reqwest",
  "serde",
  "serde_json",

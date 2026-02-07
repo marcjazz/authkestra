@@ -47,16 +47,11 @@ impl GithubProvider {
 #[derive(Deserialize)]
 struct GithubAccessTokenResponse {
     access_token: String,
-    #[serde(default = "default_token_type")]
     token_type: String,
     expires_in: Option<u64>,
     refresh_token: Option<String>,
     scope: Option<String>,
     id_token: Option<String>,
-}
-
-fn default_token_type() -> String {
-    "Bearer".to_string()
 }
 
 #[derive(Deserialize)]

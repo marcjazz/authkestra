@@ -50,7 +50,62 @@ To see Authkestra in action, check out the [examples](examples/) directory:
 - [OIDC Generic Provider](examples/oidc_generic.rs)
 - [Device Flow](examples/device_flow.rs)
 
-## 🗺️ Technical Design Principles
+## 💡 Testing & Troubleshooting
+
+### 🔑 Environment Variable Configuration
+
+When implementing a resource server or using OAuth2 flows, ensure your `.env` file (or system environment) is correctly configured. Authkestra examples typically look for:
+
+- `OIDC_ISSUER`: The base URL of your OAuth2/OIDC provider (e.g., `https://accounts.google.com`).
+- `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET`: Credentials obtained from your provider's developer console.
+- `OIDC_REDIRECT_URI`: The callback URL registered with your provider (e.g., `http://localhost:3000/auth/oidc/callback`).
+- `OIDC_JWKS_URI`: The URI for the provider's Public Key Set (optional if discovery is used, but often explicitly set in resource server examples).
+
+> **Hint:** You can usually find these values in your provider's "Well-Known Configuration" endpoint (e.g., `https://<issuer>/.well-known/openid-configuration`).
+
+### 🏃 Running Resource Server Examples
+
+Authkestra provides ready-to-use resource server examples for both Axum and Actix. You can run them using:
+
+```bash
+# Run the Axum resource server
+cargo run --bin axum_resource_server
+
+# Run the Actix resource server
+cargo run --bin actix_resource_server
+```
+
+These servers listen on `http://localhost:3000` by default.
+
+### 🧪 Generating and Using Tokens for Testing
+
+To test protected endpoints like `/api/protected`, you need a valid OAuth2 access token.
+
+1.  **Obtain a Token**: Use an OAuth2 flow (like the Authorization Code flow in `axum_oauth.rs`) or a tool like `Postman` or `curl` against your provider's token endpoint to get an `access_token`.
+2.  **Authorize Your Request**: Include the token in the `Authorization` header when making requests:
+
+    ```bash
+    curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" http://localhost:3000/api/protected
+    ```
+
+### 🚦 Interpreting HTTP Status Codes
+
+When testing your resource server, you might encounter these common status codes:
+
+-   `200 OK`: Successful authorization. The token is valid, and you have access to the resource.
+-   `401 Unauthorized`: The token is missing, expired, or invalid. Check your `Authorization` header and token validity.
+-   `403 Forbidden`: The token is valid, but it lacks the required scopes or permissions for this specific resource.
+
+### 🔍 Troubleshooting Common Issues
+
+If the resource server is not behaving as expected:
+
+1.  **Check Server Logs**: Look at the terminal output for discovery failures, JWKS fetch errors, or JWT validation reasons (e.g., "ExpiredSignature").
+2.  **Verify Token Validity**: Use a tool like [jwt.io](https://jwt.io) to inspect your token's `iss` (issuer), `aud` (audience), and `exp` (expiry) claims. They must match your server's configuration.
+3.  **Ensure Correct Paths**: Double-check that you are hitting the correct endpoint path (e.g., `/api/protected` vs `/protected`).
+4.  **Network Access**: Ensure your server can reach the provider's JWKS URI for offline validation.
+
+## �️ Technical Design Principles
 
 The architecture favors compile-time guarantees over runtime flexibility:
 
