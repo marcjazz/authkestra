@@ -69,15 +69,17 @@ struct AppState {
 
 #[get("/")]
 async fn index() -> impl Responder {
-    HttpResponse::Ok().body(
-        r#"
-        <form action="/login" method="post">
-            <input type="text" name="username" placeholder="Username" />
-            <input type="password" name="password" placeholder="Password" />
-            <button type="submit">Login</button>
-        </form>
-    "#,
-    )
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(
+            r#"
+            <form action="/login" method="post">
+                <input type="text" name="username" placeholder="Username" />
+                <input type="password" name="password" placeholder="Password" />
+                <button type="submit">Login</button>
+            </form>
+        "#,
+        )
 }
 
 #[post("/login")]

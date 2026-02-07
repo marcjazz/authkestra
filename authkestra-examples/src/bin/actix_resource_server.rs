@@ -1,5 +1,6 @@
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra_actix::Jwt;
+use authkestra_core::discovery::ProviderMetadata;
 use authkestra_token::offline_validation::JwksCache;
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
@@ -32,10 +33,14 @@ async fn index() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
 
-    // 1. Configure the OIDC provider's JWKS URI
-    // For example, Google's JWKS URI: https://www.googleapis.com/oauth2/v3/certs
-    let jwks_uri = std::env::var("OIDC_JWKS_URI")
-        .unwrap_or_else(|_| "https://www.googleapis.com/oauth2/v3/certs".to_string());
+    // 1. Retrieve the OIDC provider's
+    // For example, Google's JWKS URI: 
+    let issuer = std::env::var("OIDC_ISSUER")
+        .unwrap_or_else(|_| "https://accounts.google.com".to_string());
+    let ProviderMetadata { jwks_uri, .. } =
+        ProviderMetadata::discover(&issuer, reqwest::Client::new())
+            .await
+            .expect("Provider metadata discovery failed!");
 
     println!("🚀 Starting Actix Resource Server...");
     println!("🔑 Using JWKS URI: {}", jwks_uri);
@@ -45,9 +50,7 @@ async fn main() -> std::io::Result<()> {
 
     // 3. Configure JWT Validation
     let mut validation = Validation::new(Algorithm::RS256);
-    if let Ok(issuer) = std::env::var("OIDC_ISSUER") {
-        validation.set_issuer(&[issuer]);
-    }
+    validation.set_issuer(&[issuer]);
     if let Ok(audience) = std::env::var("OIDC_AUDIENCE") {
         validation.set_audience(&[audience]);
     }
