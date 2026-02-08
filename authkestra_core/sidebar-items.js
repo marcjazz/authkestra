@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AuthError","SameSite"],"mod":["discovery","pkce"],"struct":["Identity","OAuthErrorResponse","OAuthToken"],"trait":["CredentialsProvider","ErasedOAuthFlow","OAuthProvider","UserMapper"]};
+window.SIDEBAR_ITEMS = {"enum":["SameSite"],"mod":["discovery","error","pkce","state"],"trait":["CredentialsProvider","ErasedOAuthFlow","OAuthProvider","UserMapper"]};

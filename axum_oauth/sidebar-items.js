@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["index","main","protected"]};
+window.SIDEBAR_ITEMS = {"fn":["index","main","protected"],"type":["AppState"]};
