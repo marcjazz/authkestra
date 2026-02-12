@@ -30,6 +30,7 @@ use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 
 /// 1. Implement `SessionProvider` for our `SessionStore`.
+/// 
 /// This bridges the gap between `authkestra-session` and `authkestra-core` strategies.
 struct MySessionProvider {
     store: Arc<dyn SessionStore>,
@@ -46,6 +47,7 @@ impl SessionProvider for MySessionProvider {
 }
 
 /// 2. Define our Application State.
+/// 
 /// It includes both `Authkestra` (for flows) and `AuthGuard` (for route protection).
 #[derive(Clone)]
 struct AppState {
