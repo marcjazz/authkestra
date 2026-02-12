@@ -1,7 +1,7 @@
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra_actix::Jwt;
 use authkestra_core::discovery::ProviderMetadata;
-use authkestra_token::offline_validation::JwksCache;
+use authkestra_guard::jwt::JwksCache;
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};

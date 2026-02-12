@@ -1,6 +1,6 @@
 use authkestra_axum::Jwt;
 use authkestra_core::discovery::ProviderMetadata;
-use authkestra_token::offline_validation::JwksCache;
+use authkestra_guard::jwt::JwksCache;
 use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
@@ -114,4 +114,3 @@ async fn protected(Jwt(claims): Jwt<MyClaims>) -> impl IntoResponse {
         claims.sub, claims.email, scope_msg
     )
 }
-

@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use authkestra_axum::Auth;
 use authkestra_core::error::AuthError;
-use authkestra_core::strategy::{AuthenticationStrategy, Authenticator, BasicAuthenticator, BasicStrategy};
+use authkestra_core::strategy::{AuthenticationStrategy, BasicAuthenticator, BasicStrategy};
+use authkestra_guard::AuthGuard;
 use axum::{http::request::Parts, routing::get, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -59,7 +60,11 @@ pub struct MyBasicAuthenticator;
 impl BasicAuthenticator for MyBasicAuthenticator {
     type Identity = User;
 
-    async fn authenticate(&self, username: &str, password: &str) -> Result<Option<Self::Identity>, AuthError> {
+    async fn authenticate(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<Option<Self::Identity>, AuthError> {
         if username == "admin" && password == "password" {
             Ok(Some(User {
                 id: "2".to_string(),
@@ -78,24 +83,24 @@ async fn protected_route(Auth(user): Auth<User>) -> String {
     format!("Hello, {}! Your ID is {}.", user.username, user.id)
 }
 
-fn app(authenticator: Arc<Authenticator<User>>) -> Router {
+fn app(guard: Arc<AuthGuard<User>>) -> Router {
     Router::new()
         .route("/protected", get(protected_route))
-        .with_state(authenticator)
+        .with_state(guard)
 }
 
 #[tokio::main]
 async fn main() {
-    // 2. Integrate with Authenticator
+    // 2. Integrate with Guard
     // We chain CustomHeaderStrategy and BasicStrategy to show flexibility.
-    let authenticator = Authenticator::<User>::builder()
-        .with_strategy(CustomHeaderStrategy::new("secret-api-key"))
-        .with_strategy(BasicStrategy::new(MyBasicAuthenticator))
+    let guard = AuthGuard::<User>::builder()
+        .strategy(CustomHeaderStrategy::new("secret-api-key"))
+        .strategy(BasicStrategy::new(MyBasicAuthenticator))
         .build();
 
-    let shared_authenticator = Arc::new(authenticator);
+    let shared_guard = Arc::new(guard);
 
-    let app = app(shared_authenticator);
+    let app = app(shared_guard);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("Listening on {}", listener.local_addr().unwrap());
@@ -105,19 +110,32 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use authkestra_core::strategy::TokenStrategy;
+    use authkestra_guard::{
+        jwt::{JwksCache, OfflineValidator},
+        AuthPolicy,
+    };
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use tower::ServiceExt;
     use base64::Engine;
+    use tower::ServiceExt;
 
     fn setup_app() -> Router {
-        let authenticator = Arc::new(
-            Authenticator::<User>::builder()
-                .with_strategy(CustomHeaderStrategy::new("secret-api-key"))
-                .with_strategy(BasicStrategy::new(MyBasicAuthenticator))
+        let guard = Arc::new(
+            AuthGuard::<User>::builder()
+                .strategy(CustomHeaderStrategy::new("secret-api-key"))
+                .strategy(BasicStrategy::new(MyBasicAuthenticator))
+                .strategy(TokenStrategy::new(OfflineValidator::new(
+                    JwksCache::new(
+                        "https://www.googleapis.com/oauth2/v3/certs".to_string(),
+                        std::time::Duration::from_secs(3600),
+                    ),
+                    jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256),
+                )))
+                .policy(AuthPolicy::FirstSuccess)
                 .build(),
         );
-        app(authenticator)
+        app(guard)
     }
 
     #[tokio::test]

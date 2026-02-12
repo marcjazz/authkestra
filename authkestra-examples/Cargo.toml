@@ -10,6 +10,7 @@ authkestra-core = { path = "../authkestra-core" }
 authkestra-flow = { path = "../authkestra-flow" }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session", features = ["sqlite", "redis-store"] }
 authkestra-token = { path = "../authkestra-token" }
+authkestra-guard = { path = "../authkestra-guard" }
 authkestra-oidc = { path = "../authkestra-oidc" }
 authkestra-axum = { path = "../authkestra-axum" }
 authkestra-actix = { path = "../authkestra-actix" }

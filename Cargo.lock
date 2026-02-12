@@ -231,15 +231,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arc-swap"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51d03449bb8ca2cc2ef70869af31463d1ae5ccc8fa3e334b307203fbf815207e"
-dependencies = [
- "rustversion",
-]
-
-[[package]]
 name = "arcstr"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -305,6 +296,7 @@ dependencies = [
  "actix-web",
  "authkestra-core",
  "authkestra-flow",
+ "authkestra-guard",
  "authkestra-session",
  "authkestra-token",
  "chrono",
@@ -321,6 +313,7 @@ version = "0.1.1"
 dependencies = [
  "authkestra-core",
  "authkestra-flow",
+ "authkestra-guard",
  "authkestra-session",
  "authkestra-token",
  "axum",
@@ -360,6 +353,7 @@ dependencies = [
  "authkestra-axum",
  "authkestra-core",
  "authkestra-flow",
+ "authkestra-guard",
  "authkestra-oidc",
  "authkestra-providers-discord",
  "authkestra-providers-github",
@@ -398,11 +392,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "authkestra-guard"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "authkestra-core",
+ "base64",
+ "http 1.4.0",
+ "jsonwebtoken",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "authkestra-oidc"
 version = "0.1.1"
 dependencies = [
  "async-trait",
  "authkestra-core",
+ "authkestra-guard",
  "authkestra-token",
  "base64",
  "jsonwebtoken",
@@ -473,18 +484,12 @@ dependencies = [
 name = "authkestra-token"
 version = "0.1.1"
 dependencies = [
- "arc-swap",
- "async-trait",
  "authkestra-core",
  "chrono",
  "jsonwebtoken",
- "reqwest",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tokio",
- "url",
- "urlencoding",
 ]
 
 [[package]]
