@@ -324,6 +324,7 @@ dependencies = [
  "authkestra-session",
  "authkestra-token",
  "axum",
+ "base64",
  "chrono",
  "jsonwebtoken",
  "serde",
@@ -366,13 +367,16 @@ dependencies = [
  "authkestra-session",
  "authkestra-token",
  "axum",
+ "base64",
  "chrono",
  "dotenvy",
  "jsonwebtoken",
  "reqwest",
  "serde",
+ "serde_json",
  "sqlx",
  "tokio",
+ "tower",
  "tower-cookies",
  "uuid",
 ]
@@ -470,6 +474,7 @@ name = "authkestra-token"
 version = "0.1.1"
 dependencies = [
  "arc-swap",
+ "async-trait",
  "authkestra-core",
  "chrono",
  "jsonwebtoken",
@@ -1374,6 +1379,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "hdrhistogram"
+version = "7.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "765c9198f173dd59ce26ff9f95ef0aafd0a0fe01fb9d72841bc5066a4c06511d"
+dependencies = [
+ "byteorder",
+ "num-traits",
 ]
 
 [[package]]
@@ -3246,9 +3261,13 @@ checksum = "ebe5ef63511595f1344e2d5cfa636d973292adc0eec1f0ad45fae9f0851ab1d4"
 dependencies = [
  "futures-core",
  "futures-util",
+ "hdrhistogram",
+ "indexmap",
  "pin-project-lite",
+ "slab",
  "sync_wrapper",
  "tokio",
+ "tokio-util",
  "tower-layer",
  "tower-service",
  "tracing",

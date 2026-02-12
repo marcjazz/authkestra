@@ -20,6 +20,7 @@ For advanced users, individual crates are still available and can be used indepe
 
 - **Modular Design**: Concerns are strictly separated into crates: `authkestra-core`, `authkestra-flow`, `authkestra-session`, `authkestra-token`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
 - **Explicit Flow Control**: Dependencies and authentication context are injected explicitly via **Extractors** (Axum/Actix) or constructor arguments, eliminating "magic" middleware.
+- **Flexible Chaining**: Use the `Authenticator` to chain multiple authentication strategies (Token, Session, Basic, Custom) in any order.
 - **Provider Agnostic**: Easily integrate new OAuth providers by implementing the `OAuthProvider` trait.
 - **Session Management**: Flexible session storage via the `SessionStore` trait, with built-in support for in-memory, Redis, and SQL via `sqlx`.
 - **Stateless Tokens**: Comprehensive JWT support via `authkestra-token`.
