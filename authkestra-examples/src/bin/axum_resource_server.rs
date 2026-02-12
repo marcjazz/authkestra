@@ -13,18 +13,18 @@ use std::{sync::Arc, time::Duration};
 struct MyClaims {
     sub: String,
     email: Option<String>,
-    // Add other claims you expect from your provider
+    scope: Option<String>,
 }
 
 #[derive(Clone)]
 struct AppState {
-    cache: Arc<JwksCache>,
+    jwks_cache: Arc<JwksCache>,
     validation: Validation,
 }
 
 impl FromRef<AppState> for Arc<JwksCache> {
     fn from_ref(state: &AppState) -> Self {
-        state.cache.clone()
+        state.jwks_cache.clone()
     }
 }
 
@@ -34,44 +34,68 @@ impl FromRef<AppState> for Validation {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    dotenvy::dotenv().ok();
+struct Config {
+    issuer: String,
+    audience: Option<String>,
+    port: u16,
+}
 
-    // 1. Configure the OIDC provider's JWKS URI
-    let issuer =
-        std::env::var("OIDC_ISSUER").unwrap_or_else(|_| "https://accounts.google.com".to_string());
-    let ProviderMetadata { jwks_uri, .. } =
-        ProviderMetadata::discover(&issuer, reqwest::Client::new())
-            .await
-            .expect("Provider metadata discovery failed!");
-
-    println!("🚀 Starting Axum Resource Server...");
-    println!("🔑 Using JWKS URI: {}", jwks_uri);
-
-    // 2. Initialize the JWKS Cache
-    let cache = Arc::new(JwksCache::new(jwks_uri, Duration::from_secs(3600)));
-
-    // 3. Configure JWT Validation
-    let mut validation = Validation::new(Algorithm::RS256);
-    if let Ok(issuer) = std::env::var("OIDC_ISSUER") {
-        validation.set_issuer(&[issuer]);
+impl Config {
+    fn from_env() -> Self {
+        Self {
+            issuer: std::env::var("OIDC_ISSUER")
+                .unwrap_or_else(|_| "https://accounts.google.com".to_string()),
+            audience: std::env::var("OIDC_AUDIENCE").ok(),
+            port: std::env::var("PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(3000),
+        }
     }
-    if let Ok(audience) = std::env::var("OIDC_AUDIENCE") {
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+    let config = Config::from_env();
+
+    // 1. Discover OIDC provider metadata
+    println!("🔍 Discovering provider metadata for: {}", config.issuer);
+    let provider_metadata =
+        ProviderMetadata::discover(&config.issuer, reqwest::Client::new()).await?;
+
+    println!("🔑 Using JWKS URI: {}", provider_metadata.jwks_uri);
+
+    // 2. Configure Offline Validation components
+    let jwks_cache = Arc::new(JwksCache::new(
+        provider_metadata.jwks_uri,
+        Duration::from_secs(3600),
+    ));
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&[config.issuer]);
+    if let Some(audience) = config.audience {
         validation.set_audience(&[audience]);
     }
 
-    let state = AppState { cache, validation };
+    let state = AppState {
+        jwks_cache,
+        validation,
+    };
 
-    // 4. Build Axum Router
+    // 3. Build Axum Router
     let app = Router::new()
         .route("/", get(index))
         .route("/api/protected", get(protected))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("📡 Listening on http://localhost:3000");
-    axum::serve(listener, app).await.unwrap();
+    let addr = format!("0.0.0.0:{}", config.port);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    println!("📡 Listening on http://{}", addr);
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }
 
 async fn index() -> impl IntoResponse {
@@ -79,8 +103,15 @@ async fn index() -> impl IntoResponse {
 }
 
 async fn protected(Jwt(claims): Jwt<MyClaims>) -> impl IntoResponse {
+    let scope_msg = claims
+        .scope
+        .as_ref()
+        .map(|s| format!(" Your scopes: {}", s))
+        .unwrap_or_default();
+
     format!(
-        "Hello, {}! Your email is {:?}. You have access to this protected resource.",
-        claims.sub, claims.email
+        "Hello, {}! Your email is {:?}.{} You have access to this protected resource.",
+        claims.sub, claims.email, scope_msg
     )
 }
+

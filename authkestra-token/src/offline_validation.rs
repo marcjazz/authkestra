@@ -1,5 +1,5 @@
 use authkestra_core::error::AuthError;
-use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
+use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -130,6 +130,105 @@ impl JwksCache {
         let jwks = Jwks::fetch(&self.jwks_uri).await?;
         *write_guard = Some((jwks.clone(), Instant::now()));
         Ok(jwks)
+    }
+}
+
+/// A builder for configuring offline JWT validation.
+pub struct OfflineValidationBuilder {
+    jwks_uri: String,
+    refresh_interval: Duration,
+    issuer: Option<String>,
+    audience: Option<String>,
+    algorithms: Vec<Algorithm>,
+}
+
+impl OfflineValidationBuilder {
+    /// Create a new builder with the given JWKS URI.
+    pub fn new(jwks_uri: impl Into<String>) -> Self {
+        Self {
+            jwks_uri: jwks_uri.into(),
+            refresh_interval: Duration::from_secs(3600),
+            issuer: None,
+            audience: None,
+            algorithms: vec![Algorithm::RS256],
+        }
+    }
+
+    /// Set the refresh interval for the JWKS cache.
+    pub fn refresh_interval(mut self, interval: Duration) -> Self {
+        self.refresh_interval = interval;
+        self
+    }
+
+    /// Set the expected issuer.
+    pub fn issuer(mut self, issuer: impl Into<String>) -> Self {
+        self.issuer = Some(issuer.into());
+        self
+    }
+
+    /// Set the expected audience.
+    pub fn audience(mut self, audience: impl Into<String>) -> Self {
+        self.audience = Some(audience.into());
+        self
+    }
+
+    /// Set the allowed algorithms.
+    pub fn algorithms(mut self, algorithms: Vec<Algorithm>) -> Self {
+        self.algorithms = algorithms;
+        self
+    }
+
+    /// Build an `OfflineValidator` that implements `TokenValidator`.
+    pub fn build<T>(self) -> OfflineValidator<T> {
+        let cache = JwksCache::new(self.jwks_uri, self.refresh_interval);
+        let mut validation = Validation::new(self.algorithms[0]);
+        validation.algorithms = self.algorithms;
+
+        if let Some(iss) = self.issuer {
+            validation.set_issuer(&[iss]);
+        }
+
+        if let Some(aud) = self.audience {
+            validation.set_audience(&[aud]);
+        }
+
+        OfflineValidator::new(cache, validation)
+    }
+}
+
+/// A validator that performs offline JWT validation using JWKS.
+pub struct OfflineValidator<I> {
+    cache: JwksCache,
+    validation: Validation,
+    _marker: std::marker::PhantomData<I>,
+}
+
+impl<I> OfflineValidator<I> {
+    pub fn new(cache: JwksCache, validation: Validation) -> Self {
+        Self {
+            cache,
+            validation,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<I> authkestra_core::strategy::TokenValidator for OfflineValidator<I>
+where
+    I: for<'de> Deserialize<'de> + Send + Sync + 'static,
+{
+    type Identity = I;
+
+    async fn validate(
+        &self,
+        token: &str,
+    ) -> Result<Option<Self::Identity>, authkestra_core::error::AuthError> {
+        match validate_jwt_generic::<I>(token, &self.cache, &self.validation).await {
+            Ok(claims) => Ok(Some(claims)),
+            Err(ValidationError::InvalidToken(_)) | Err(ValidationError::Jwt(_)) => Ok(None),
+            Err(e) => Err(AuthError::Token(e.to_string())),
+        }
     }
 }
 
