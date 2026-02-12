@@ -1,6 +1,6 @@
+use crate::error::AuthError;
 use async_trait::async_trait;
 use http::request::Parts;
-use crate::error::AuthError;
 use std::marker::PhantomData;
 
 /// Trait for an authentication strategy.
@@ -18,115 +18,17 @@ pub trait AuthenticationStrategy<I>: Send + Sync {
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError>;
 }
 
-/// Policy for controlling the behavior of chained authentication strategies.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum AuthPolicy {
-    /// Try strategies in order, return the first success.
-    /// If a strategy returns an error, the whole chain fails.
-    /// If all strategies return `None`, the chain returns `None`.
-    #[default]
-    FirstSuccess,
-    /// All strategies must succeed. If any fails or returns `None`, the whole chain fails.
-    /// Returns the identity from the last strategy.
-    AllSuccess,
-    /// If the first strategy fails or returns `None`, stop immediately.
-    FailFast,
-}
-
-/// A service that orchestrates multiple authentication strategies.
-pub struct Authenticator<I> {
-    strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
-    policy: AuthPolicy,
-}
-
-impl<I> Authenticator<I> {
-    /// Create a new builder for the Authenticator.
-    pub fn builder() -> AuthenticatorBuilder<I> {
-        AuthenticatorBuilder::default()
-    }
-
-    /// Attempt to authenticate the request using the configured strategies and policy.
-    pub async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
-        match self.policy {
-            AuthPolicy::FirstSuccess => {
-                for strategy in &self.strategies {
-                    match strategy.authenticate(parts).await {
-                        Ok(Some(identity)) => return Ok(Some(identity)),
-                        Ok(None) => continue,
-                        Err(e) => return Err(e),
-                    }
-                }
-                Ok(None)
-            }
-            AuthPolicy::AllSuccess => {
-                let mut last_identity = None;
-                for strategy in &self.strategies {
-                    match strategy.authenticate(parts).await {
-                        Ok(Some(identity)) => last_identity = Some(identity),
-                        Ok(None) => return Ok(None),
-                        Err(e) => return Err(e),
-                    }
-                }
-                Ok(last_identity)
-            }
-            AuthPolicy::FailFast => {
-                if let Some(strategy) = self.strategies.first() {
-                    strategy.authenticate(parts).await
-                } else {
-                    Ok(None)
-                }
-            }
-        }
-    }
-}
-
-/// Builder for the `Authenticator`.
-pub struct AuthenticatorBuilder<I> {
-    strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
-    policy: AuthPolicy,
-}
-
-impl<I> Default for AuthenticatorBuilder<I> {
-    fn default() -> Self {
-        Self {
-            strategies: Vec::new(),
-            policy: AuthPolicy::default(),
-        }
-    }
-}
-
-impl<I> AuthenticatorBuilder<I> {
-    /// Add an authentication strategy to the chain.
-    pub fn with_strategy<S>(mut self, strategy: S) -> Self
-    where
-        S: AuthenticationStrategy<I> + 'static,
-    {
-        self.strategies.push(Box::new(strategy));
-        self
-    }
-
-    /// Set the authentication policy.
-    pub fn policy(mut self, policy: AuthPolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
-    /// Build the `Authenticator`.
-    pub fn build(self) -> Authenticator<I> {
-        Authenticator {
-            strategies: self.strategies,
-            policy: self.policy,
-        }
-    }
-}
-
 /// Trait for a provider that validates username and password (Basic Auth).
 #[async_trait]
 pub trait BasicAuthenticator: Send + Sync {
     /// The type of identity returned by this authenticator.
     type Identity;
     /// Validate the credentials.
-    async fn authenticate(&self, username: &str, password: &str) -> Result<Option<Self::Identity>, AuthError>;
+    async fn authenticate(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<Option<Self::Identity>, AuthError>;
 }
 
 /// Strategy for Basic authentication.
@@ -279,7 +181,7 @@ where
 
 /// Utility functions for common authentication tasks.
 pub mod utils {
-    use http::header::{AUTHORIZATION, HeaderMap};
+    use http::header::{HeaderMap, AUTHORIZATION};
 
     /// Extract the Bearer token from the Authorization header.
     pub fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -298,10 +200,8 @@ pub mod utils {
             return None;
         }
         let encoded = auth_header.strip_prefix("Basic ")?.trim();
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            encoded,
-        ).ok()?;
+        let decoded =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded).ok()?;
         let decoded_str = String::from_utf8(decoded).ok()?;
         let mut parts = decoded_str.splitn(2, ':');
         let username = parts.next()?.to_string();
@@ -323,4 +223,3 @@ pub mod utils {
         None
     }
 }
-

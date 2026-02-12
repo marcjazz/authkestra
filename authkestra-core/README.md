@@ -10,7 +10,7 @@ This crate provides the foundational types and traits used across the `authkestr
 - `OAuthToken` structure for standard OAuth2 token responses.
 - `OAuthProvider` trait for implementing OAuth2-compatible authentication providers.
 - `CredentialsProvider` trait for password-based or custom credential authentication.
-- `AuthenticationStrategy` trait and `Authenticator` service for flexible, chained authentication.
+- `AuthenticationStrategy` trait for implementing modular authentication strategies.
 - `UserMapper` trait for mapping provider identities to local application users.
 - `pkce` module for Proof Key for Code Exchange support.
 - Standard `AuthError` enum for consistent error handling.
@@ -45,7 +45,7 @@ pub trait OAuthProvider: Send + Sync {
         code: &str,
         code_verifier: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError>;
-    
+
     // Optional methods for token management
     async fn refresh_token(&self, refresh_token: &str) -> Result<OAuthToken, AuthError>;
     async fn revoke_token(&self, token: &str) -> Result<(), AuthError>;
@@ -65,22 +65,20 @@ pub trait CredentialsProvider: Send + Sync {
 }
 ```
 
-### Chained Authentication Strategies
+### Authentication Strategies
 
-The `strategy` module provides a way to chain multiple authentication methods (e.g., Token, Session, Basic) and try them in order.
+The `strategy` module provides the `AuthenticationStrategy` trait, which allows for implementing modular authentication methods (e.g., Token, Session, Basic).
 
-```rust
-use authkestra_core::strategy::{Authenticator, TokenStrategy, SessionStrategy};
+While `authkestra-flow` handles the high-level login flows (OAuth2, OIDC), `AuthGuard` (from `authkestra-guard`) is used to protect your API routes by validating incoming requests against one or more strategies.
 
-// Define your strategies
-let authenticator = Authenticator::builder()
-    .with_strategy(TokenStrategy::new(jwt_validator))
-    .with_strategy(SessionStrategy::new(session_store, "my_session_cookie"))
-    .build();
+#### Relationship with `Authkestra`
 
-// Use the authenticator to validate a request
-let identity = authenticator.authenticate(&request_parts).await?;
-```
+`AuthGuard` (from `authkestra-guard`) and `Authkestra` (from `authkestra-flow`) are designed to be used together but remain decoupled:
+
+- **`Authkestra`**: Manages the **Login Flow** (e.g., redirecting to GitHub, handling the callback, creating a session).
+- **`AuthGuard`**: Manages **Access Control** (e.g., checking if a request has a valid session cookie or API key).
+
+By keeping them separate, you can use `Authkestra` to log users in via OAuth2, and then use `AuthGuard` to protect your API using both those sessions AND static API keys or JWTs.
 
 #### UserMapper
 
