@@ -7,6 +7,7 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
 ## Features
 
 - **Extractors**:
+  - `Auth<I>`: Unified extractor that uses a configured `Authenticator` to validate the request.
   - `AuthSession`: Extracts a validated session from cookies.
   - `AuthToken`: Extracts and validates a JWT from the `Authorization: Bearer` header.
 - **OAuth Helpers**:
@@ -27,6 +28,50 @@ Add this to your `Cargo.toml`:
 [dependencies]
 authkestra-axum = "0.1.1"
 tower-cookies = "0.10" # Required for session support
+```
+
+### Example: Unified Authentication (Chained Strategies)
+
+The `Auth<I>` extractor allows you to use a central `Authenticator` that can try multiple authentication methods in order.
+
+```rust
+use axum::{routing::get, Router, extract::FromRef};
+use authkestra_axum::Auth;
+use authkestra_core::strategy::{Authenticator, TokenStrategy, SessionStrategy};
+use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+struct User { id: String }
+
+#[derive(Clone)]
+struct AppState {
+    authenticator: Arc<Authenticator<User>>,
+}
+
+impl FromRef<AppState> for Arc<Authenticator<User>> {
+    fn from_ref(state: &AppState) -> Self {
+        state.authenticator.clone()
+    }
+}
+
+async fn protected_handler(Auth(user): Auth<User>) -> String {
+    format!("Welcome, user {}!", user.id)
+}
+
+fn app() -> Router {
+    let authenticator = Authenticator::builder()
+        .with_strategy(TokenStrategy::new(jwt_validator))
+        .with_strategy(SessionStrategy::new(session_store, "session_cookie"))
+        .build();
+
+    let state = AppState {
+        authenticator: Arc::new(authenticator),
+    };
+
+    Router::new()
+        .route("/protected", get(protected_handler))
+        .with_state(state)
+}
 ```
 
 ### Example: Session-based Authentication

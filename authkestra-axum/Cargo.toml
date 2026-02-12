@@ -18,5 +18,6 @@ jsonwebtoken = "10.3.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tower-cookies = "0.11.0"
+base64 = "0.22.1"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }

@@ -10,6 +10,7 @@ This crate provides the foundational types and traits used across the `authkestr
 - `OAuthToken` structure for standard OAuth2 token responses.
 - `OAuthProvider` trait for implementing OAuth2-compatible authentication providers.
 - `CredentialsProvider` trait for password-based or custom credential authentication.
+- `AuthenticationStrategy` trait and `Authenticator` service for flexible, chained authentication.
 - `UserMapper` trait for mapping provider identities to local application users.
 - `pkce` module for Proof Key for Code Exchange support.
 - Standard `AuthError` enum for consistent error handling.
@@ -62,6 +63,23 @@ pub trait CredentialsProvider: Send + Sync {
 
     async fn authenticate(&self, creds: Self::Credentials) -> Result<Identity, AuthError>;
 }
+```
+
+### Chained Authentication Strategies
+
+The `strategy` module provides a way to chain multiple authentication methods (e.g., Token, Session, Basic) and try them in order.
+
+```rust
+use authkestra_core::strategy::{Authenticator, TokenStrategy, SessionStrategy};
+
+// Define your strategies
+let authenticator = Authenticator::builder()
+    .with_strategy(TokenStrategy::new(jwt_validator))
+    .with_strategy(SessionStrategy::new(session_store, "my_session_cookie"))
+    .build();
+
+// Use the authenticator to validate a request
+let identity = authenticator.authenticate(&request_parts).await?;
 ```
 
 #### UserMapper
