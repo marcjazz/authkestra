@@ -1,39 +1,69 @@
+use async_trait::async_trait;
 use authkestra_axum::Auth;
 use authkestra_core::error::AuthError;
-use authkestra_core::strategy::{
-    AuthPolicy, Authenticator, BasicAuthenticator, BasicStrategy, TokenStrategy, TokenValidator,
-};
-use authkestra_token::offline_validation::OfflineValidationBuilder;
-use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
+use authkestra_core::strategy::{AuthenticationStrategy, Authenticator, BasicAuthenticator, BasicStrategy};
+use axum::{http::request::Parts, routing::get, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-// --- Custom Identity ---
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// A simple user identity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct User {
     pub id: String,
-    pub method: String,
+    pub username: String,
 }
 
-// --- Mock Credentials Provider ---
+/// 1. Implement `CustomHeaderStrategy`
+///
+/// This strategy looks for an `X-API-Key` header and validates it.
+pub struct CustomHeaderStrategy {
+    api_key: String,
+}
 
-#[derive(Clone)]
-pub struct MyCredentialsProvider;
+impl CustomHeaderStrategy {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+        }
+    }
+}
 
-#[async_trait::async_trait]
-impl BasicAuthenticator for MyCredentialsProvider {
+#[async_trait]
+impl AuthenticationStrategy<User> for CustomHeaderStrategy {
+    async fn authenticate(&self, parts: &Parts) -> Result<Option<User>, AuthError> {
+        // Look for the X-API-Key header
+        if let Some(value) = parts.headers.get("X-API-Key") {
+            if let Ok(value_str) = value.to_str() {
+                // Validate the header value
+                if value_str == self.api_key {
+                    return Ok(Some(User {
+                        id: "1".to_string(),
+                        username: "api_user".to_string(),
+                    }));
+                } else {
+                    // If the header is present but invalid, we return an error
+                    return Err(AuthError::InvalidCredentials);
+                }
+            }
+        }
+
+        // If the header is missing, we return Ok(None) to allow other strategies in the chain to try
+        Ok(None)
+    }
+}
+
+/// A simple Basic Authenticator for demonstration.
+pub struct MyBasicAuthenticator;
+
+#[async_trait]
+impl BasicAuthenticator for MyBasicAuthenticator {
     type Identity = User;
 
-    async fn authenticate(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<Option<User>, AuthError> {
+    async fn authenticate(&self, username: &str, password: &str) -> Result<Option<Self::Identity>, AuthError> {
         if username == "admin" && password == "password" {
             Ok(Some(User {
-                id: username.to_string(),
-                method: "basic".to_string(),
+                id: "2".to_string(),
+                username: "admin".to_string(),
             }))
         } else {
             Ok(None)
@@ -41,127 +71,64 @@ impl BasicAuthenticator for MyCredentialsProvider {
     }
 }
 
-// --- Mock Token Validator (for Opaque Tokens) ---
-
-pub struct OpaqueTokenValidator;
-
-#[async_trait::async_trait]
-impl TokenValidator for OpaqueTokenValidator {
-    type Identity = User;
-
-    async fn validate(&self, token: &str) -> Result<Option<Self::Identity>, AuthError> {
-        if token == "opaque-token" {
-            Ok(Some(User {
-                id: "opaque-user".to_string(),
-                method: "opaque".to_string(),
-            }))
-        } else {
-            Ok(None)
-        }
-    }
+/// 3. Axum App
+///
+/// Protected route using `Auth<User>`.
+async fn protected_route(Auth(user): Auth<User>) -> String {
+    format!("Hello, {}! Your ID is {}.", user.username, user.id)
 }
 
-// --- App State ---
-
-#[derive(Clone)]
-struct AppState {
-    authenticator: Arc<Authenticator<User>>,
+fn app(authenticator: Arc<Authenticator<User>>) -> Router {
+    Router::new()
+        .route("/protected", get(protected_route))
+        .with_state(authenticator)
 }
-
-impl FromRef<AppState> for Arc<Authenticator<User>> {
-    fn from_ref(state: &AppState) -> Self {
-        state.authenticator.clone()
-    }
-}
-
-// --- Handlers ---
-
-async fn index() -> impl IntoResponse {
-    "Custom Auth Example v2. Try Basic Auth, JWT, or Opaque Token on /protected"
-}
-
-async fn protected(Auth(user): Auth<User>) -> impl IntoResponse {
-    format!("Welcome, {}! Authenticated via {}.", user.id, user.method)
-}
-
-// --- Main ---
 
 #[tokio::main]
 async fn main() {
-    // 1. Setup JWT Offline Validation
-    let jwt_validator =
-        OfflineValidationBuilder::new("https://www.googleapis.com/oauth2/v3/certs").build::<User>();
-
-    // 2. Setup Basic Auth
-    let basic_strategy = BasicStrategy::new(MyCredentialsProvider);
-
-    // 3. Setup Opaque Token Auth
-    let opaque_strategy = TokenStrategy::new(OpaqueTokenValidator);
-
-    // 4. Build Authenticator with FirstSuccess policy (default)
-    let authenticator = Authenticator::builder()
-        .policy(AuthPolicy::FirstSuccess)
-        .with_strategy(TokenStrategy::new(jwt_validator))
-        .with_strategy(opaque_strategy)
-        .with_strategy(basic_strategy)
+    // 2. Integrate with Authenticator
+    // We chain CustomHeaderStrategy and BasicStrategy to show flexibility.
+    let authenticator = Authenticator::<User>::builder()
+        .with_strategy(CustomHeaderStrategy::new("secret-api-key"))
+        .with_strategy(BasicStrategy::new(MyBasicAuthenticator))
         .build();
 
-    let state = AppState {
-        authenticator: Arc::new(authenticator),
-    };
+    let shared_authenticator = Arc::new(authenticator);
 
-    let app = Router::new()
-        .route("/", get(index))
-        .route("/protected", get(protected))
-        .with_state(state);
+    let app = app(shared_authenticator);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("📡 Listening on http://localhost:3000");
+    println!("Listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
-
-// --- Testing ---
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        body::Body,
-        http::{header::AUTHORIZATION, Request, StatusCode},
-    };
-    use base64::{engine::general_purpose, Engine as _};
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
-    
+    use base64::Engine;
 
-    async fn setup_app(policy: AuthPolicy) -> Router {
-        let jwt_validator = OfflineValidationBuilder::new("https://www.googleapis.com/oauth2/v3/certs")
-                .build::<User>();
-
-        let authenticator = Authenticator::builder()
-            .policy(policy)
-            .with_strategy(TokenStrategy::new(jwt_validator))
-            .with_strategy(TokenStrategy::new(OpaqueTokenValidator))
-            .with_strategy(BasicStrategy::new(MyCredentialsProvider))
-            .build();
-
-        let state = AppState {
-            authenticator: Arc::new(authenticator),
-        };
-
-        Router::new()
-            .route("/protected", get(protected))
-            .with_state(state)
+    fn setup_app() -> Router {
+        let authenticator = Arc::new(
+            Authenticator::<User>::builder()
+                .with_strategy(CustomHeaderStrategy::new("secret-api-key"))
+                .with_strategy(BasicStrategy::new(MyBasicAuthenticator))
+                .build(),
+        );
+        app(authenticator)
     }
 
     #[tokio::test]
-    async fn test_first_success_policy() {
-        let app = setup_app(AuthPolicy::FirstSuccess).await;
-        let auth = general_purpose::STANDARD.encode("admin:password");
+    async fn test_valid_api_key() {
+        let app = setup_app();
+
         let response = app
             .oneshot(
                 Request::builder()
                     .uri("/protected")
-                    .header(AUTHORIZATION, format!("Basic {}", auth))
+                    .header("X-API-Key", "secret-api-key")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -172,38 +139,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_success_policy_fails_if_one_missing() {
-        // AllSuccess requires ALL strategies to return Some(identity)
-        // In our setup, we have JWT, Opaque, and Basic.
-        // If we only provide Basic, the others will return None, so AllSuccess should fail.
-        let app = setup_app(AuthPolicy::AllSuccess).await;
-        let auth = general_purpose::STANDARD.encode("admin:password");
+    async fn test_valid_basic_auth() {
+        let app = setup_app();
+
+        let auth = base64::engine::general_purpose::STANDARD.encode("admin:password");
         let response = app
             .oneshot(
                 Request::builder()
                     .uri("/protected")
-                    .header(AUTHORIZATION, format!("Basic {}", auth))
+                    .header("Authorization", format!("Basic {}", auth))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        // It returns UNAUTHORIZED because one of the strategies (JWT) returned Ok(None)
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn test_fail_fast_policy() {
-        let app = setup_app(AuthPolicy::FailFast).await;
-        // FailFast only tries the first strategy (JWT in our setup)
-        // Providing Basic Auth should fail because it doesn't even try it.
-        let auth = general_purpose::STANDARD.encode("admin:password");
+    async fn test_invalid_api_key() {
+        let app = setup_app();
+
         let response = app
             .oneshot(
                 Request::builder()
                     .uri("/protected")
-                    .header(AUTHORIZATION, format!("Basic {}", auth))
+                    .header("X-API-Key", "wrong-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_missing_header() {
+        let app = setup_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
                     .body(Body::empty())
                     .unwrap(),
             )
