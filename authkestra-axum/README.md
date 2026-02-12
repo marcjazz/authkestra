@@ -7,7 +7,7 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
 ## Features
 
 - **Extractors**:
-  - `Auth<I>`: Unified extractor that uses a configured `Authenticator` to validate the request.
+  - `Auth<I>`: Unified extractor that uses a configured `AuthGuard` to validate the request.
   - `AuthSession`: Extracts a validated session from cookies.
   - `AuthToken`: Extracts and validates a JWT from the `Authorization: Bearer` header.
 - **OAuth Helpers**:
@@ -15,7 +15,7 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
   - `handle_oauth_callback`: Finalizes OAuth login and creates a server-side session.
   - `handle_oauth_callback_jwt`: Finalizes OAuth login and returns a JWT.
 - **Offline Validation**:
-  - `Jwt<T>`: Extractor for validating JWTs from external OIDC providers using JWKS.
+  - `Jwt<T>`: Extractor for validating JWTs from external OIDC providers using JWKS (via `authkestra-guard`).
 - **Session Management**:
   - `logout`: Clears the session cookie and removes it from the store.
   - `SessionConfig`: Customizable session settings (cookie name, secure, http_only, etc.).
@@ -32,12 +32,14 @@ tower-cookies = "0.10" # Required for session support
 
 ### Example: Unified Authentication (Chained Strategies)
 
-The `Auth<I>` extractor allows you to use a central `Authenticator` that can try multiple authentication methods in order.
+The `Auth<I>` extractor allows you to use a central `AuthGuard` that can try multiple authentication methods in order.
 
 ```rust
 use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::Auth;
-use authkestra_core::strategy::{Authenticator, TokenStrategy, SessionStrategy};
+use authkestra_guard::{AuthGuard, AuthPolicy};
+use authkestra_guard::jwt::JwtStrategy;
+use authkestra_session::SessionStrategy;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -45,12 +47,12 @@ struct User { id: String }
 
 #[derive(Clone)]
 struct AppState {
-    authenticator: Arc<Authenticator<User>>,
+    guard: Arc<AuthGuard<User>>,
 }
 
-impl FromRef<AppState> for Arc<Authenticator<User>> {
+impl FromRef<AppState> for Arc<AuthGuard<User>> {
     fn from_ref(state: &AppState) -> Self {
-        state.authenticator.clone()
+        state.guard.clone()
     }
 }
 
@@ -59,13 +61,14 @@ async fn protected_handler(Auth(user): Auth<User>) -> String {
 }
 
 fn app() -> Router {
-    let authenticator = Authenticator::builder()
-        .with_strategy(TokenStrategy::new(jwt_validator))
-        .with_strategy(SessionStrategy::new(session_store, "session_cookie"))
+    let guard = AuthGuard::builder()
+        .strategy(JwtStrategy::new(jwt_config))
+        .strategy(SessionStrategy::new(session_store, "session_cookie"))
+        .policy(AuthPolicy::FirstSuccess)
         .build();
 
     let state = AppState {
-        authenticator: Arc::new(authenticator),
+        guard: Arc::new(guard),
     };
 
     Router::new()
@@ -136,7 +139,7 @@ For validating tokens from external providers (like Google or Auth0) using their
 
 ```rust
 use authkestra_axum::Jwt;
-use authkestra_token::offline_validation::JwksCache;
+use authkestra_guard::jwt::JwksCache;
 use jsonwebtoken::Validation;
 use std::sync::Arc;
 use serde::Deserialize;
@@ -156,6 +159,7 @@ async fn external_api_handler(Jwt(claims): Jwt<MyClaims>) -> String {
 ### SPA vs Server-Side Rendering
 
 For **SPA (Single Page Application)** use cases where you want to receive a JWT on the frontend:
+
 1. The `redirect_uri` in your OAuth provider configuration should point to a **frontend route** (e.g., `https://myapp.com/callback`).
 2. Your frontend route should extract the `code` and `state` from the URL.
 3. The frontend then performs a **POST** (or GET) request to your backend's callback endpoint (e.g., `/api/auth/callback`) with these parameters.

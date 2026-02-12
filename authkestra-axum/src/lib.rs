@@ -1,5 +1,5 @@
-use authkestra_core::strategy::Authenticator;
 use authkestra_flow::{Authkestra, Missing};
+use authkestra_guard::AuthGuard;
 use authkestra_token::TokenManager;
 use axum::{
     extract::{FromRef, FromRequestParts},
@@ -106,7 +106,7 @@ pub struct Jwt<T>(pub T);
 impl<S, T> FromRequestParts<S> for Jwt<T>
 where
     S: Send + Sync,
-    Arc<authkestra_token::offline_validation::JwksCache>: FromRef<S>,
+    Arc<authkestra_guard::jwt::JwksCache>: FromRef<S>,
     jsonwebtoken::Validation: FromRef<S>,
     T: for<'de> serde::Deserialize<'de> + 'static,
 {
@@ -116,7 +116,7 @@ where
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let cache = Arc::<authkestra_token::offline_validation::JwksCache>::from_ref(state);
+        let cache = Arc::<authkestra_guard::jwt::JwksCache>::from_ref(state);
         let validation = jsonwebtoken::Validation::from_ref(state);
 
         let auth_header = parts
@@ -134,13 +134,9 @@ where
         }
 
         let token = &auth_header[7..];
-        let claims = authkestra_token::offline_validation::validate_jwt_generic::<T>(
-            token,
-            &cache,
-            &validation,
-        )
-        .await
-        .map_err(|e| AuthkestraAxumError::Unauthorized(format!("Invalid token: {}", e)))?;
+        let claims = authkestra_guard::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
+            .await
+            .map_err(|e| AuthkestraAxumError::Unauthorized(format!("Invalid token: {}", e)))?;
 
         Ok(Jwt(claims))
     }
@@ -148,22 +144,24 @@ where
 
 /// A unified extractor for authentication.
 ///
-/// It uses the `Authenticator` from the application state to validate the request.
+/// It uses the `AuthGuard` from the application state to validate the request.
 pub struct Auth<I>(pub I);
 
 impl<S, I> FromRequestParts<S> for Auth<I>
 where
     S: Send + Sync,
-    Arc<Authenticator<I>>: FromRef<S>,
+    Arc<AuthGuard<I>>: FromRef<S>,
     I: Send + Sync + 'static,
 {
     type Rejection = AuthkestraAxumError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let authenticator = Arc::<Authenticator<I>>::from_ref(state);
-        match authenticator.authenticate(parts).await {
+        let guard = Arc::<AuthGuard<I>>::from_ref(state);
+        match guard.authenticate(parts).await {
             Ok(Some(identity)) => Ok(Auth(identity)),
-            Ok(None) => Err(AuthkestraAxumError::Unauthorized("Authentication failed".to_string())),
+            Ok(None) => Err(AuthkestraAxumError::Unauthorized(
+                "Authentication failed".to_string(),
+            )),
             Err(e) => Err(AuthkestraAxumError::Internal(e.to_string())),
         }
     }

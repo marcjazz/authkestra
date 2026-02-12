@@ -43,34 +43,28 @@ impl From<AuthError> for OidcError {
     }
 }
 
-impl From<authkestra_token::offline_validation::ValidationError> for OidcError {
-    fn from(err: authkestra_token::offline_validation::ValidationError) -> Self {
+impl From<authkestra_guard::jwt::ValidationError> for OidcError {
+    fn from(err: authkestra_guard::jwt::ValidationError) -> Self {
         match err {
-            authkestra_token::offline_validation::ValidationError::Discovery(e) => match e {
+            authkestra_guard::jwt::ValidationError::Discovery(e) => match e {
                 AuthError::Discovery(msg) => OidcError::Discovery(msg),
                 _ => OidcError::Discovery(e.to_string()),
             },
-            authkestra_token::offline_validation::ValidationError::Http(e) => {
-                OidcError::Network(e.to_string())
-            }
-            authkestra_token::offline_validation::ValidationError::Jwt(e) => {
+            authkestra_guard::jwt::ValidationError::Http(e) => OidcError::Network(e.to_string()),
+            authkestra_guard::jwt::ValidationError::Jwt(e) => {
                 OidcError::ValidationError(e.to_string())
             }
-            authkestra_token::offline_validation::ValidationError::Serialization(e) => {
+            authkestra_guard::jwt::ValidationError::Serialization(e) => {
                 OidcError::Internal(e.to_string())
             }
-            authkestra_token::offline_validation::ValidationError::InvalidToken(e) => {
+            authkestra_guard::jwt::ValidationError::InvalidToken(e) => {
                 OidcError::ValidationError(e)
             }
-            authkestra_token::offline_validation::ValidationError::KeyNotFound => {
+            authkestra_guard::jwt::ValidationError::KeyNotFound => {
                 OidcError::ValidationError("Key not found".to_string())
             }
-            authkestra_token::offline_validation::ValidationError::Paseto(e) => {
-                OidcError::ValidationError(e)
-            }
-            authkestra_token::offline_validation::ValidationError::Validation(e) => {
-                OidcError::ValidationError(e)
-            }
+            authkestra_guard::jwt::ValidationError::Paseto(e) => OidcError::ValidationError(e),
+            authkestra_guard::jwt::ValidationError::Validation(e) => OidcError::ValidationError(e),
         }
     }
 }

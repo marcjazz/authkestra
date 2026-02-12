@@ -12,6 +12,7 @@ categories = ["authentication", "web-programming::http-server"]
 authkestra-core = { version = "0.1.1", path = "../authkestra-core" }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session" }
 authkestra-token = { version = "0.1.1", path = "../authkestra-token" }
+authkestra-guard = { version = "0.1.1", path = "../authkestra-guard" }
 authkestra-flow = { version = "0.1.1", path = "../authkestra-flow" }
 actix-web = "4"
 jsonwebtoken = "10.3.0"

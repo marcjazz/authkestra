@@ -13,6 +13,7 @@ authkestra-core = { version = "0.1.1", path = "../authkestra-core" }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session" }
 authkestra-flow = { version = "0.1.1", path = "../authkestra-flow" }
 authkestra-token = { version = "0.1.1", path = "../authkestra-token" }
+authkestra-guard = { version = "0.1.1", path = "../authkestra-guard" }
 axum = "0.8.8"
 jsonwebtoken = "10.3.0"
 serde = { version = "1.0", features = ["derive"] }
