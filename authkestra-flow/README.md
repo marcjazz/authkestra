@@ -21,6 +21,13 @@ Add this to your `Cargo.toml`:
 authkestra-flow = "0.1.1"
 ```
 
+### Relationship with `AuthGuard`
+
+`authkestra-flow` is responsible for the **Login Flow** (getting the user into the system). Once a user is logged in (e.g., a session is created), you use the **`AuthGuard`** (from `authkestra-guard`) to protect your API routes.
+
+- **`Authkestra`**: Orchestrates providers, session stores, and token managers to handle login/logout.
+- **`AuthGuard`**: Executes a chain of strategies (Session, Token, API Key) to authorize incoming requests.
+
 ### Example: OAuth2 Flow
 
 ```rust
