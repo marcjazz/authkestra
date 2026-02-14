@@ -1,4 +1,9 @@
-use authkestra_core::error::AuthError;
+use async_trait::async_trait;
+use authkestra_core::{
+    error::AuthError,
+    strategy::{utils, AuthenticationStrategy},
+};
+use http::request::Parts;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -134,29 +139,42 @@ impl JwksCache {
 }
 
 /// A builder for configuring offline JWT validation.
-pub struct OfflineValidationBuilder {
-    jwks_uri: String,
-    refresh_interval: Duration,
+/// Configuration for JWT validation.
+pub struct ValidationConfig {
+    pub jwks_url: String,
+    pub refresh_interval: Duration,
+    pub issuer: Option<String>,
+    pub audience: Option<String>,
+    pub algorithms: Vec<Algorithm>,
+}
+
+impl ValidationConfig {
+    /// Create a new builder for `ValidationConfig`.
+    pub fn builder() -> ValidationConfigBuilder {
+        ValidationConfigBuilder::default()
+    }
+}
+
+/// A builder for configuring JWT validation.
+#[derive(Default)]
+pub struct ValidationConfigBuilder {
+    jwks_url: Option<String>,
+    refresh_interval: Option<Duration>,
     issuer: Option<String>,
     audience: Option<String>,
     algorithms: Vec<Algorithm>,
 }
 
-impl OfflineValidationBuilder {
-    /// Create a new builder with the given JWKS URI.
-    pub fn new(jwks_uri: impl Into<String>) -> Self {
-        Self {
-            jwks_uri: jwks_uri.into(),
-            refresh_interval: Duration::from_secs(3600),
-            issuer: None,
-            audience: None,
-            algorithms: vec![Algorithm::RS256],
-        }
+impl ValidationConfigBuilder {
+    /// Set the JWKS URL.
+    pub fn jwks_url(mut self, jwks_url: impl Into<String>) -> Self {
+        self.jwks_url = Some(jwks_url.into());
+        self
     }
 
     /// Set the refresh interval for the JWKS cache.
     pub fn refresh_interval(mut self, interval: Duration) -> Self {
-        self.refresh_interval = interval;
+        self.refresh_interval = Some(interval);
         self
     }
 
@@ -178,33 +196,48 @@ impl OfflineValidationBuilder {
         self
     }
 
-    /// Build an `OfflineValidator` that implements `TokenValidator`.
-    pub fn build<T>(self) -> OfflineValidator<T> {
-        let cache = JwksCache::new(self.jwks_uri, self.refresh_interval);
-        let mut validation = Validation::new(self.algorithms[0]);
-        validation.algorithms = self.algorithms;
-
-        if let Some(iss) = self.issuer {
-            validation.set_issuer(&[iss]);
+    /// Build a `ValidationConfig`.
+    pub fn build(self) -> ValidationConfig {
+        ValidationConfig {
+            jwks_url: self
+                .jwks_url
+                .expect("JWKS URL must be set for ValidationConfig"),
+            refresh_interval: self
+                .refresh_interval
+                .unwrap_or_else(|| Duration::from_secs(3600)),
+            issuer: self.issuer,
+            audience: self.audience,
+            algorithms: if self.algorithms.is_empty() {
+                vec![Algorithm::RS256]
+            } else {
+                self.algorithms
+            },
         }
-
-        if let Some(aud) = self.audience {
-            validation.set_audience(&[aud]);
-        }
-
-        OfflineValidator::new(cache, validation)
     }
 }
 
-/// A validator that performs offline JWT validation using JWKS.
-pub struct OfflineValidator<I> {
+/// A JWT authentication strategy that performs offline JWT validation using JWKS.
+pub struct JwtStrategy<I> {
     cache: JwksCache,
     validation: Validation,
     _marker: std::marker::PhantomData<I>,
 }
 
-impl<I> OfflineValidator<I> {
-    pub fn new(cache: JwksCache, validation: Validation) -> Self {
+impl<I> JwtStrategy<I> {
+    /// Create a new `JwtStrategy` with the given `ValidationConfig`.
+    pub fn new(config: ValidationConfig) -> Self {
+        let cache = JwksCache::new(config.jwks_url, config.refresh_interval);
+        let mut validation = Validation::new(config.algorithms[0]);
+        validation.algorithms = config.algorithms;
+
+        if let Some(iss) = config.issuer {
+            validation.set_issuer(&[iss]);
+        }
+
+        if let Some(aud) = config.audience {
+            validation.set_audience(&[aud]);
+        }
+
         Self {
             cache,
             validation,
@@ -213,21 +246,20 @@ impl<I> OfflineValidator<I> {
     }
 }
 
-#[async_trait::async_trait]
-impl<I> authkestra_core::strategy::TokenValidator for OfflineValidator<I>
+#[async_trait]
+impl<I> AuthenticationStrategy<I> for JwtStrategy<I>
 where
     I: for<'de> Deserialize<'de> + Send + Sync + 'static,
 {
-    type Identity = I;
-
-    async fn validate(
-        &self,
-        token: &str,
-    ) -> Result<Option<Self::Identity>, authkestra_core::error::AuthError> {
-        match validate_jwt_generic::<I>(token, &self.cache, &self.validation).await {
-            Ok(claims) => Ok(Some(claims)),
-            Err(ValidationError::InvalidToken(_)) | Err(ValidationError::Jwt(_)) => Ok(None),
-            Err(e) => Err(AuthError::Token(e.to_string())),
+    async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
+        if let Some(token) = utils::extract_bearer_token(&parts.headers) {
+            match validate_jwt_generic::<I>(token, &self.cache, &self.validation).await {
+                Ok(claims) => Ok(Some(claims)),
+                Err(ValidationError::InvalidToken(_)) | Err(ValidationError::Jwt(_)) => Ok(None),
+                Err(e) => Err(AuthError::Token(e.to_string())),
+            }
+        } else {
+            Ok(None)
         }
     }
 }

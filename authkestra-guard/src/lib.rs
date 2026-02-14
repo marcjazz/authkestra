@@ -20,15 +20,15 @@ pub enum AuthPolicy {
 }
 
 /// A service that orchestrates multiple authentication strategies.
-pub struct AuthGuard<I> {
+pub struct AuthkestraGuard<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
 }
 
-impl<I> AuthGuard<I> {
+impl<I> AuthkestraGuard<I> {
     /// Create a new builder for the Guard.
-    pub fn builder() -> AuthGuardBuilder<I> {
-        AuthGuardBuilder::default()
+    pub fn builder() -> AuthkestraGuardBuilder<I> {
+        AuthkestraGuardBuilder::default()
     }
 
     /// Attempt to authenticate the request using the configured strategies and policy.
@@ -66,13 +66,13 @@ impl<I> AuthGuard<I> {
     }
 }
 
-/// Builder for the `AuthGuard`.
-pub struct AuthGuardBuilder<I> {
+/// Builder for the `AuthkestraGuard`.
+pub struct AuthkestraGuardBuilder<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
 }
 
-impl<I> Default for AuthGuardBuilder<I> {
+impl<I> Default for AuthkestraGuardBuilder<I> {
     fn default() -> Self {
         Self {
             strategies: Vec::new(),
@@ -81,7 +81,10 @@ impl<I> Default for AuthGuardBuilder<I> {
     }
 }
 
-impl<I> AuthGuardBuilder<I> {
+impl<I> AuthkestraGuardBuilder<I>
+where
+    I: Send + Sync + 'static,
+{
     /// Add an authentication strategy to the chain.
     pub fn strategy<S>(mut self, strategy: S) -> Self
     where
@@ -97,9 +100,9 @@ impl<I> AuthGuardBuilder<I> {
         self
     }
 
-    /// Build the `AuthGuard`.
-    pub fn build(self) -> AuthGuard<I> {
-        AuthGuard {
+    /// Build the `AuthkestraGuard`.
+    pub fn build(self) -> AuthkestraGuard<I> {
+        AuthkestraGuard {
             strategies: self.strategies,
             policy: self.policy,
         }

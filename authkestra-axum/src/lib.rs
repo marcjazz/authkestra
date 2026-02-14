@@ -1,5 +1,5 @@
 use authkestra_flow::{Authkestra, Missing};
-use authkestra_guard::AuthGuard;
+use authkestra_guard::AuthkestraGuard;
 use authkestra_token::TokenManager;
 use axum::{
     extract::{FromRef, FromRequestParts},
@@ -144,19 +144,19 @@ where
 
 /// A unified extractor for authentication.
 ///
-/// It uses the `AuthGuard` from the application state to validate the request.
+/// It uses the `AuthkestraGuard` from the application state to validate the request.
 pub struct Auth<I>(pub I);
 
 impl<S, I> FromRequestParts<S> for Auth<I>
 where
     S: Send + Sync,
-    Arc<AuthGuard<I>>: FromRef<S>,
+    Arc<AuthkestraGuard<I>>: FromRef<S>,
     I: Send + Sync + 'static,
 {
     type Rejection = AuthkestraAxumError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let guard = Arc::<AuthGuard<I>>::from_ref(state);
+        let guard = Arc::<AuthkestraGuard<I>>::from_ref(state);
         match guard.authenticate(parts).await {
             Ok(Some(identity)) => Ok(Auth(identity)),
             Ok(None) => Err(AuthkestraAxumError::Unauthorized(

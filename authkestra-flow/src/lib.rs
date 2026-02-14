@@ -77,6 +77,9 @@ pub struct Authkestra<S = Missing, T = Missing> {
     pub session_config: SessionConfig,
     /// Manager for JWT signing and verification.
     pub token_manager: T,
+    // Additional configuration options can be added here in the future.
+    // For example. rate limiting, logging, etc.
+    // pub config: AuthkestraConfig
 }
 
 impl Authkestra<Missing, Missing> {

@@ -1,13 +1,13 @@
 //! # Axum Combined Flow Example
 //!
-//! This example demonstrates how `Authkestra` and `AuthGuard` work together.
+//! This example demonstrates how `Authkestra` and `AuthkestraGuard` work together.
 //! - `Authkestra` handles the high-level OAuth2 login flow and session management.
-//! - `AuthGuard` provides a flexible way to protect routes using various strategies,
+//! - `AuthkestraGuard` provides a flexible way to protect routes using various strategies,
 //!   including the sessions created by `Authkestra`.
 //!
 //! This separation of concerns allows you to:
 //! 1. Use `Authkestra` for complex login flows (OAuth2, OIDC, etc.).
-//! 2. Use `AuthGuard` to protect your API with multiple methods (Sessions, API Keys, JWTs)
+//! 2. Use `AuthkestraGuard` to protect your API with multiple methods (Sessions, API Keys, JWTs)
 //!    in a unified way.
 
 use async_trait::async_trait;
@@ -17,7 +17,7 @@ use authkestra_core::error::AuthError;
 use authkestra_core::state::Identity;
 use authkestra_core::strategy::{SessionProvider, SessionStrategy};
 use authkestra_flow::{HasSessionStoreMarker, SessionStoreState};
-use authkestra_guard::AuthGuard;
+use authkestra_guard::AuthkestraGuard;
 use authkestra_providers_github::GithubProvider;
 use authkestra_session::{MemoryStore, SessionStore};
 use axum::{
@@ -30,7 +30,7 @@ use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 
 /// 1. Implement `SessionProvider` for our `SessionStore`.
-/// 
+///
 /// This bridges the gap between `authkestra-session` and `authkestra-core` strategies.
 struct MySessionProvider {
     store: Arc<dyn SessionStore>,
@@ -47,12 +47,12 @@ impl SessionProvider for MySessionProvider {
 }
 
 /// 2. Define our Application State.
-/// 
-/// It includes both `Authkestra` (for flows) and `AuthGuard` (for route protection).
+///
+/// It includes both `Authkestra` (for flows) and `AuthkestraGuard` (for route protection).
 #[derive(Clone)]
 struct AppState {
     authkestra: Authkestra<HasSessionStoreMarker>,
-    guard: Arc<AuthGuard<Identity>>,
+    guard: Arc<AuthkestraGuard<Identity>>,
 }
 
 // Implement FromRef for AuthkestraState compatibility if needed,
@@ -75,7 +75,7 @@ impl FromRef<AppState> for Result<Arc<dyn SessionStore>, authkestra_axum::Authke
     }
 }
 
-impl FromRef<AppState> for Arc<AuthGuard<Identity>> {
+impl FromRef<AppState> for Arc<AuthkestraGuard<Identity>> {
     fn from_ref(state: &AppState) -> Self {
         state.guard.clone()
     }
@@ -112,7 +112,7 @@ async fn main() {
 
     // 4. Configure Guard (The Access Guard)
     // We use a SessionStrategy that looks for the same cookie Authkestra uses.
-    let guard = AuthGuard::<Identity>::builder()
+    let guard = AuthkestraGuard::<Identity>::builder()
         .strategy(SessionStrategy::new(
             MySessionProvider {
                 store: session_store,
@@ -130,7 +130,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index))
         // Use the unified `Auth<Identity>` extractor provided by `authkestra-axum`.
-        // This extractor uses the `AuthGuard` in the state.
+        // This extractor uses the `AuthkestraGuard` in the state.
         .route("/protected", get(protected))
         // Merge Authkestra's login/callback/logout routes
         .merge(authkestra.axum_router())
@@ -160,7 +160,7 @@ async fn index(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Protected route using the unified `Auth` extractor.
-/// This route is protected by the `AuthGuard` we configured in `main`.
+/// This route is protected by the `AuthkestraGuard` we configured in `main`.
 async fn protected(Auth(identity): Auth<Identity>) -> impl IntoResponse {
     format!(
         "<h1>Protected Area</h1>\

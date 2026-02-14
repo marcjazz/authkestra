@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use authkestra_axum::Auth;
 use authkestra_core::error::AuthError;
 use authkestra_core::strategy::{AuthenticationStrategy, BasicAuthenticator, BasicStrategy};
-use authkestra_guard::AuthGuard;
+use authkestra_guard::AuthkestraGuard;
 use axum::{http::request::Parts, routing::get, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -83,7 +83,7 @@ async fn protected_route(Auth(user): Auth<User>) -> String {
     format!("Hello, {}! Your ID is {}.", user.username, user.id)
 }
 
-fn app(guard: Arc<AuthGuard<User>>) -> Router {
+fn app(guard: Arc<AuthkestraGuard<User>>) -> Router {
     Router::new()
         .route("/protected", get(protected_route))
         .with_state(guard)
@@ -91,9 +91,9 @@ fn app(guard: Arc<AuthGuard<User>>) -> Router {
 
 #[tokio::main]
 async fn main() {
-    // 2. Integrate with Guard
+    // 2. Integrate with AuthkestraGuard
     // We chain CustomHeaderStrategy and BasicStrategy to show flexibility.
-    let guard = AuthGuard::<User>::builder()
+    let guard = AuthkestraGuard::<User>::builder()
         .strategy(CustomHeaderStrategy::new("secret-api-key"))
         .strategy(BasicStrategy::new(MyBasicAuthenticator))
         .build();
@@ -110,9 +110,8 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use authkestra_core::strategy::TokenStrategy;
     use authkestra_guard::{
-        jwt::{JwksCache, OfflineValidator},
+        jwt::{JwtStrategy, ValidationConfig},
         AuthPolicy,
     };
     use axum::body::Body;
@@ -122,16 +121,16 @@ mod tests {
 
     fn setup_app() -> Router {
         let guard = Arc::new(
-            AuthGuard::<User>::builder()
+            AuthkestraGuard::<User>::builder()
                 .strategy(CustomHeaderStrategy::new("secret-api-key"))
                 .strategy(BasicStrategy::new(MyBasicAuthenticator))
-                .strategy(TokenStrategy::new(OfflineValidator::new(
-                    JwksCache::new(
-                        "https://www.googleapis.com/oauth2/v3/certs".to_string(),
-                        std::time::Duration::from_secs(3600),
-                    ),
-                    jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256),
-                )))
+                .strategy(JwtStrategy::new(
+                    ValidationConfig::builder()
+                        .issuer("https://example.com")
+                        .audience("my-app")
+                        .jwks_url("https://example.com/.well-known/jwks.json")
+                        .build(),
+                ))
                 .policy(AuthPolicy::FirstSuccess)
                 .build(),
         );
