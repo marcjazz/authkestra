@@ -7,7 +7,7 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
 ## Features
 
 - **Extractors**:
-  - `Auth<I>`: Unified extractor that uses a configured `AuthGuard` to validate the request.
+  - `Auth<I>`: Unified extractor that uses a configured `AuthkestraGuard` to validate the request.
   - `AuthSession`: Extracts a validated session from cookies.
   - `AuthToken`: Extracts and validates a JWT from the `Authorization: Bearer` header.
 - **OAuth Helpers**:
@@ -26,18 +26,18 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-axum = "0.1.1"
+authkestra-axum = "0.1.2"
 tower-cookies = "0.10" # Required for session support
 ```
 
 ### Example: Unified Authentication (Chained Strategies)
 
-The `Auth<I>` extractor allows you to use a central `AuthGuard` that can try multiple authentication methods in order.
+The `Auth<I>` extractor allows you to use a central `AuthkestraGuard` that can try multiple authentication methods in order.
 
 ```rust
 use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::Auth;
-use authkestra_guard::{AuthGuard, AuthPolicy};
+use authkestra_guard::{AuthkestraGuard, AuthPolicy};
 use authkestra_guard::jwt::JwtStrategy;
 use authkestra_session::SessionStrategy;
 use std::sync::Arc;
@@ -47,10 +47,10 @@ struct User { id: String }
 
 #[derive(Clone)]
 struct AppState {
-    guard: Arc<AuthGuard<User>>,
+    guard: Arc<AuthkestraGuard<User>>,
 }
 
-impl FromRef<AppState> for Arc<AuthGuard<User>> {
+impl FromRef<AppState> for Arc<AuthkestraGuard<User>> {
     fn from_ref(state: &AppState) -> Self {
         state.guard.clone()
     }
@@ -61,7 +61,7 @@ async fn protected_handler(Auth(user): Auth<User>) -> String {
 }
 
 fn app() -> Router {
-    let guard = AuthGuard::builder()
+    let guard = AuthkestraGuard::builder()
         .strategy(JwtStrategy::new(jwt_config))
         .strategy(SessionStrategy::new(session_store, "session_cookie"))
         .policy(AuthPolicy::FirstSuccess)

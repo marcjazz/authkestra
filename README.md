@@ -20,7 +20,7 @@ For advanced users, individual crates are still available and can be used indepe
 
 - **Modular Design**: Concerns are strictly separated into crates: `authkestra-core`, `authkestra-flow`, `authkestra-guard`, `authkestra-session`, `authkestra-token`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
 - **Explicit Flow Control**: Dependencies and authentication context are injected explicitly via **Extractors** (Axum/Actix) or constructor arguments, eliminating "magic" middleware.
-- **Flexible Chaining**: Use the `AuthGuard` to chain multiple authentication strategies (Token, Session, Basic, Custom) in any order.
+- **Flexible Chaining**: Use the `AuthkestraGuard` to chain multiple authentication strategies (Token, Session, Basic, Custom) in any order.
 - **Provider Agnostic**: Easily integrate new OAuth providers by implementing the `OAuthProvider` trait.
 - **Session Management**: Flexible session storage via the `SessionStore` trait, with built-in support for in-memory, Redis, and SQL via `sqlx`.
 - **Stateless Tokens**: Comprehensive JWT support and offline validation.
@@ -47,7 +47,7 @@ For advanced users, individual crates are still available and can be used indepe
 To see Authkestra in action, check out the [examples](examples/) directory:
 
 - [Get Started](authkestra-examples/src/bin/client_credentials_flow.rs)
-- [Axum Combined Flow (Authkestra + AuthGuard)](authkestra-examples/src/bin/axum_combined_flow.rs)
+- [Axum Combined Flow (Authkestra + AuthkestraGuard)](authkestra-examples/src/bin/axum_combined_flow.rs)
 - [Axum with GitHub OAuth](authkestra-examples/src/bin/axum_oauth.rs)
 - [Actix with GitHub OAuth](authkestra-examples/src/bin/actix_github.rs)
 - [OIDC Generic Provider](authkestra-examples/src/bin/oidc_generic.rs)

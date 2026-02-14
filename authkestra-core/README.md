@@ -21,7 +21,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-core = "0.1.1"
+authkestra-core = "0.1.2"
 ```
 
 ### Core Traits
@@ -69,16 +69,16 @@ pub trait CredentialsProvider: Send + Sync {
 
 The `strategy` module provides the `AuthenticationStrategy` trait, which allows for implementing modular authentication methods (e.g., Token, Session, Basic).
 
-While `authkestra-flow` handles the high-level login flows (OAuth2, OIDC), `AuthGuard` (from `authkestra-guard`) is used to protect your API routes by validating incoming requests against one or more strategies.
+While `authkestra-flow` handles the high-level login flows (OAuth2, OIDC), `AuthkestraGuard` (from `authkestra-guard`) is used to protect your API routes by validating incoming requests against one or more strategies.
 
 #### Relationship with `Authkestra`
 
-`AuthGuard` (from `authkestra-guard`) and `Authkestra` (from `authkestra-flow`) are designed to be used together but remain decoupled:
+`AuthkestraGuard` (from `authkestra-guard`) and `Authkestra` (from `authkestra-flow`) are designed to be used together but remain decoupled:
 
 - **`Authkestra`**: Manages the **Login Flow** (e.g., redirecting to GitHub, handling the callback, creating a session).
-- **`AuthGuard`**: Manages **Access Control** (e.g., checking if a request has a valid session cookie or API key).
+- **`AuthkestraGuard`**: Manages **Access Control** (e.g., checking if a request has a valid session cookie or API key).
 
-By keeping them separate, you can use `Authkestra` to log users in via OAuth2, and then use `AuthGuard` to protect your API using both those sessions AND static API keys or JWTs.
+By keeping them separate, you can use `Authkestra` to log users in via OAuth2, and then use `AuthkestraGuard` to protect your API using both those sessions AND static API keys or JWTs.
 
 #### UserMapper
 

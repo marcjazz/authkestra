@@ -2,24 +2,24 @@
 
 Authentication guard and strategies for the `authkestra` framework.
 
-This crate provides the `AuthGuard`, a flexible orchestrator for multiple authentication strategies, and built-in strategies like JWT offline validation.
+This crate provides the `AuthkestraGuard`, a flexible orchestrator for multiple authentication strategies, and built-in strategies like JWT offline validation.
 
 ## Features
 
-- `AuthGuard`: Orchestrate multiple authentication strategies with different policies (`FirstSuccess`, `AllSuccess`, `FailFast`).
+- `AuthkestraGuard`: Orchestrate multiple authentication strategies with different policies (`FirstSuccess`, `AllSuccess`, `FailFast`).
 - `JwtStrategy`: Offline validation of JWT tokens using JWKS or local keys.
 - Extensible: Implement the `AuthenticationStrategy` trait from `authkestra-core` to create custom strategies.
 
 ## Usage
 
-### Using AuthGuard
+### Using AuthkestraGuard
 
 ```rust
-use authkestra_guard::{AuthGuard, AuthPolicy};
+use authkestra_guard::{AuthkestraGuard, AuthPolicy};
 use authkestra_guard::jwt::JwtStrategy;
 
 // Create a guard with a JWT strategy
-let guard = AuthGuard::builder()
+let guard = AuthkestraGuard::builder()
     .strategy(JwtStrategy::new(validation_config))
     .policy(AuthPolicy::FirstSuccess)
     .build();
