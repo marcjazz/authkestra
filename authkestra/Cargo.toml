@@ -1,6 +1,6 @@
 [package]
 name = "authkestra"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "A modular authentication framework for Rust"
 repository = "https://github.com/marcjazz/authkestra"
@@ -9,13 +9,13 @@ keywords = ["auth", "authentication", "oauth2", "oidc"]
 categories = ["authentication"]
 
 [dependencies]
-authkestra-core = { version = "0.1.1", path = "../authkestra-core" }
-authkestra-flow = { version = "0.1.1", path = "../authkestra-flow", optional = true }
+authkestra-core = { version = "0.1.2", path = "../authkestra-core" }
+authkestra-flow = { version = "0.1.2", path = "../authkestra-flow", optional = true }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session", optional = true }
-authkestra-token = { version = "0.1.1", path = "../authkestra-token", optional = true }
-authkestra-oidc = { version = "0.1.1", path = "../authkestra-oidc", optional = true }
-authkestra-axum = { version = "0.1.1", path = "../authkestra-axum", optional = true }
-authkestra-actix = { version = "0.1.1", path = "../authkestra-actix", optional = true }
+authkestra-token = { version = "0.1.2", path = "../authkestra-token", optional = true }
+authkestra-oidc = { version = "0.1.2", path = "../authkestra-oidc", optional = true }
+authkestra-axum = { version = "0.1.2", path = "../authkestra-axum", optional = true }
+authkestra-actix = { version = "0.1.2", path = "../authkestra-actix", optional = true }
 authkestra-providers-github = { version = "0.1.1", path = "../authkestra-providers-github", optional = true }
 authkestra-providers-google = { version = "0.1.1", path = "../authkestra-providers-google", optional = true }
 authkestra-providers-discord = { version = "0.1.1", path = "../authkestra-providers-discord", optional = true }

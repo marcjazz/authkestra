@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-oidc"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "OpenID Connect (OIDC) implementation for the authkestra framework"
 repository = "https://github.com/marcjazz/authkestra"
@@ -9,9 +9,9 @@ keywords = ["auth", "oidc", "openid-connect"]
 categories = ["authentication"]
 
 [dependencies]
-authkestra-core = { version = "0.1.1", path = "../authkestra-core" }
-authkestra-token = { version = "0.1.1", path = "../authkestra-token" }
-authkestra-guard = { version = "0.1.1", path = "../authkestra-guard" }
+authkestra-core = { version = "0.1.2", path = "../authkestra-core" }
+authkestra-token = { version = "0.1.2", path = "../authkestra-token" }
+authkestra-guard = { version = "0.1.0", path = "../authkestra-guard" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.13.1", features = ["json", "form"] }

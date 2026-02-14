@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-token"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "JWT token handling for the authkestra framework"
 repository = "https://github.com/marcjazz/authkestra"
@@ -9,7 +9,7 @@ keywords = ["auth", "jwt", "token", "authentication"]
 categories = ["authentication"]
 
 [dependencies]
-authkestra-core = { version = "0.1.1", path = "../authkestra-core" }
+authkestra-core = { version = "0.1.2", path = "../authkestra-core" }
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
