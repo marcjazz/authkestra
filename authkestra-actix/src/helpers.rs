@@ -2,10 +2,10 @@
 use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
 #[cfg(feature = "flow")]
 use authkestra_core::pkce::Pkce;
-#[cfg(feature = "flow")]
-use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(all(feature = "flow", not(feature = "session")))]
 use authkestra_flow::SessionConfig;
+#[cfg(feature = "flow")]
+use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
 use std::sync::Arc;
@@ -356,10 +356,10 @@ pub async fn handle_oauth_callback_jwt_erased(
     res.cookie(remove_cookie);
 
     Ok(res.json(serde_json::json!({
-            "access_token": jwt,
-            "token_type": "Bearer",
-            "expires_in": expires_in_secs
-        })))
+        "access_token": jwt,
+        "token_type": "Bearer",
+        "expires_in": expires_in_secs
+    })))
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.

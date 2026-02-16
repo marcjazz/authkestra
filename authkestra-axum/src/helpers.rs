@@ -2,21 +2,21 @@ use authkestra_core::{
     pkce::Pkce,
     state::{Identity, OAuthToken},
 };
-#[cfg(feature = "flow")]
-use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(all(feature = "flow", not(feature = "session")))]
 use authkestra_flow::SessionConfig;
+#[cfg(feature = "flow")]
+use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "token")]
 use authkestra_token::TokenManager;
+#[cfg(feature = "token")]
+use axum::Json;
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
-#[cfg(feature = "token")]
-use axum::Json;
 use std::sync::Arc;
 #[cfg(any(feature = "flow", feature = "session"))]
 use tower_cookies::cookie::SameSite;

@@ -13,10 +13,10 @@
 use async_trait::async_trait;
 use authkestra::flow::{Authkestra, OAuth2Flow};
 use authkestra_axum::{Auth, AuthkestraAxumExt};
-use authkestra_flow::SessionConfig;
 use authkestra_core::error::AuthError;
 use authkestra_core::state::Identity;
 use authkestra_core::strategy::{SessionProvider, SessionStrategy};
+use authkestra_flow::SessionConfig;
 use authkestra_flow::{HasSessionStoreMarker, SessionStoreState};
 use authkestra_guard::AuthkestraGuard;
 use authkestra_providers_github::GithubProvider;
