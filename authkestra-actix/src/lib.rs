@@ -60,18 +60,7 @@ impl FromRequest for AuthSession {
             .app_data::<web::Data<Arc<dyn SessionStore>>>()
             .cloned()
             .or_else(|| {
-                req.app_data::<web::Data<Authkestra<Configured<Arc<dyn SessionStore>>, Missing>>>()
-                    .and_then(|a| {
-                        #[cfg(feature = "session")]
-                        {
-                            Some(web::Data::new(a.session_store.get_store()))
-                        }
-                        #[cfg(not(feature = "session"))]
-                        {
-                            let _ = a;
-                            None
-                        }
-                    })
+                req.app_data::<web::Data<Authkestra<Configured<Arc<dyn SessionStore>>, Missing>>>().map(|a| web::Data::new(a.session_store.get_store()))
             })
             .or_else(|| {
                 #[cfg(feature = "token")]
@@ -81,18 +70,7 @@ impl FromRequest for AuthSession {
                             Configured<Arc<dyn SessionStore>>,
                             Configured<Arc<TokenManager>>,
                         >,
-                    >>()
-                    .and_then(|a| {
-                        #[cfg(feature = "session")]
-                        {
-                            Some(web::Data::new(a.session_store.get_store()))
-                        }
-                        #[cfg(not(feature = "session"))]
-                        {
-                            let _ = a;
-                            None
-                        }
-                    })
+                    >>().map(|a| web::Data::new(a.session_store.get_store()))
                 }
                 #[cfg(not(feature = "token"))]
                 {
@@ -174,18 +152,7 @@ impl FromRequest for AuthToken {
             .app_data::<web::Data<Arc<TokenManager>>>()
             .cloned()
             .or_else(|| {
-                req.app_data::<web::Data<Authkestra<Missing, Configured<Arc<TokenManager>>>>>()
-                    .and_then(|a| {
-                        #[cfg(feature = "token")]
-                        {
-                            Some(web::Data::new(a.token_manager.get_manager()))
-                        }
-                        #[cfg(not(feature = "token"))]
-                        {
-                            let _ = a;
-                            None
-                        }
-                    })
+                req.app_data::<web::Data<Authkestra<Missing, Configured<Arc<TokenManager>>>>>().map(|a| web::Data::new(a.token_manager.get_manager()))
             })
             .or_else(|| {
                 #[cfg(feature = "session")]
@@ -195,18 +162,7 @@ impl FromRequest for AuthToken {
                             Configured<Arc<dyn SessionStore>>,
                             Configured<Arc<TokenManager>>,
                         >,
-                    >>()
-                    .and_then(|a| {
-                        #[cfg(feature = "token")]
-                        {
-                            Some(web::Data::new(a.token_manager.get_manager()))
-                        }
-                        #[cfg(not(feature = "token"))]
-                        {
-                            let _ = a;
-                            None
-                        }
-                    })
+                    >>().map(|a| web::Data::new(a.token_manager.get_manager()))
                 }
                 #[cfg(not(feature = "session"))]
                 {
