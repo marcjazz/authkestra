@@ -8,12 +8,16 @@ license = "MIT OR Apache-2.0"
 keywords = ["auth", "oauth2", "oidc", "flow"]
 categories = ["authentication"]
 
+[features]
+session = ["dep:authkestra-session"]
+token = ["dep:authkestra-token"]
+
 [dependencies]
 authkestra-core = { version = "0.1.2", path = "../authkestra-core" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
-authkestra-token = { version = "0.1.1", path = "../authkestra-token" }
-authkestra-session = { version = "0.1.1", path = "../authkestra-session" }
+authkestra-token = { version = "0.1.1", path = "../authkestra-token", optional = true}
+authkestra-session = { version = "0.1.1", path = "../authkestra-session", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 reqwest = { version = "0.13.1", features = ["json", "form"] }
 serde_json = "1.0"

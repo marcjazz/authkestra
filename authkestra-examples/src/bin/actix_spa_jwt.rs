@@ -115,7 +115,7 @@ async fn frontend() -> impl Responder {
 #[get("/auth/login")]
 async fn login_handler(data: web::Data<AppState>) -> impl Responder {
     let flow = &data.authkestra.providers["github"];
-    initiate_oauth_login_erased(flow, &data.authkestra.session_config, &["user:email"])
+    initiate_oauth_login_erased(flow, &["user:email"])
 }
 
 #[actix_web::route("/api/callback", method = "GET", method = "POST")]
@@ -132,7 +132,6 @@ async fn callback_handler(
         params.into_inner(),
         data.authkestra.token_manager(),
         3600,
-        &data.authkestra.session_config,
     )
     .await;
 

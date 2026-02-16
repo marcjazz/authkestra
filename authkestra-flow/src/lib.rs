@@ -17,33 +17,62 @@ pub use authkestra_core::ErasedOAuthFlow;
 use authkestra_core::{
     error::AuthError, state::Identity, CredentialsProvider, OAuthProvider, UserMapper,
 };
-use authkestra_session::{Session, SessionConfig, SessionStore};
+#[cfg(feature = "session")]
+pub use authkestra_session::{Session, SessionConfig, SessionStore};
+
+#[cfg(not(feature = "session"))]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// Configuration for the OAuth flow state cookies when sessions are disabled.
+pub struct SessionConfig {
+    /// Whether the cookie should only be sent over HTTPS.
+    pub secure: bool,
+    /// The maximum age of the state cookie.
+    pub max_age: Option<chrono::Duration>,
+}
+
+#[cfg(not(feature = "session"))]
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            secure: true,
+            max_age: Some(chrono::Duration::minutes(15)),
+        }
+    }
+}
+
 pub use chrono;
 
 /// Trait for components that can be used as a session store.
+#[cfg(feature = "session")]
 pub trait SessionStoreState: Send + Sync + 'static {
     /// Returns the session store if configured.
     fn get_store(&self) -> Arc<dyn SessionStore>;
 }
 
+#[cfg(feature = "session")]
 impl SessionStoreState for Configured<Arc<dyn SessionStore>> {
     fn get_store(&self) -> Arc<dyn SessionStore> {
         self.0.clone()
     }
 }
 
+#[cfg(feature = "token")]
+use authkestra_token::TokenManager;
+
+#[cfg(feature = "token")]
 /// Trait for components that can be used as a token manager.
 pub trait TokenManagerState: Send + Sync + 'static {
     /// Returns the token manager if configured.
     fn get_manager(&self) -> Arc<TokenManager>;
 }
 
+#[cfg(feature = "token")]
 impl TokenManagerState for Configured<Arc<TokenManager>> {
     fn get_manager(&self) -> Arc<TokenManager> {
         self.0.clone()
     }
 }
-use authkestra_token::TokenManager;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -67,19 +96,47 @@ pub struct Missing;
 pub struct Configured<T>(pub T);
 
 /// The unified Authkestra service.
-#[derive(Clone)]
 pub struct Authkestra<S = Missing, T = Missing> {
     /// Map of registered OAuth providers.
     pub providers: HashMap<String, Arc<dyn ErasedOAuthFlow>>,
     /// The session storage backend.
+    #[cfg(feature = "session")]
     pub session_store: S,
     /// Configuration for session cookies.
+    #[cfg(feature = "session")]
     pub session_config: SessionConfig,
     /// Manager for JWT signing and verification.
+    #[cfg(feature = "token")]
     pub token_manager: T,
-    // Additional configuration options can be added here in the future.
-    // For example. rate limiting, logging, etc.
-    // pub config: AuthkestraConfig
+    /// Phantom data to keep type parameters S and T when they are not used in fields.
+    #[cfg(all(not(feature = "session"), not(feature = "token")))]
+    pub _marker: std::marker::PhantomData<(S, T)>,
+    /// Phantom data to keep type parameter T when it's not used in fields.
+    #[cfg(all(feature = "session", not(feature = "token")))]
+    pub _marker: std::marker::PhantomData<T>,
+    /// Phantom data to keep type parameter S when it's not used in fields.
+    #[cfg(all(not(feature = "session"), feature = "token"))]
+    pub _marker: std::marker::PhantomData<S>,
+}
+
+impl<S, T> Clone for Authkestra<S, T>
+where
+    S: Clone,
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            providers: self.providers.clone(),
+            #[cfg(feature = "session")]
+            session_store: self.session_store.clone(),
+            #[cfg(feature = "session")]
+            session_config: self.session_config.clone(),
+            #[cfg(feature = "token")]
+            token_manager: self.token_manager.clone(),
+            #[cfg(any(not(feature = "session"), not(feature = "token")))]
+            _marker: std::marker::PhantomData,
+        }
+    }
 }
 
 impl Authkestra<Missing, Missing> {
@@ -89,6 +146,7 @@ impl Authkestra<Missing, Missing> {
     }
 }
 
+#[cfg(feature = "session")]
 impl<T> Authkestra<Configured<Arc<dyn SessionStore>>, T> {
     /// Create a new session for the given identity.
     pub async fn create_session(&self, identity: Identity) -> Result<Session, AuthError> {
@@ -112,6 +170,7 @@ impl<T> Authkestra<Configured<Arc<dyn SessionStore>>, T> {
     }
 }
 
+#[cfg(feature = "token")]
 impl<S> Authkestra<S, Configured<Arc<TokenManager>>> {
     /// Issue a JWT for the given identity.
     pub fn issue_token(
@@ -129,18 +188,35 @@ impl<S> Authkestra<S, Configured<Arc<TokenManager>>> {
 /// A builder for configuring and creating an [`Authkestra`] instance.
 pub struct AuthkestraBuilder<S, T> {
     providers: HashMap<String, Arc<dyn ErasedOAuthFlow>>,
+    #[cfg(feature = "session")]
     session_store: S,
+    #[cfg(feature = "session")]
     session_config: SessionConfig,
+    #[cfg(feature = "token")]
     token_manager: T,
+    /// Phantom data to keep type parameters S and T when they are not used in fields.
+    #[cfg(all(not(feature = "session"), not(feature = "token")))]
+    pub _marker: std::marker::PhantomData<(S, T)>,
+    /// Phantom data to keep type parameter T when it's not used in fields.
+    #[cfg(all(feature = "session", not(feature = "token")))]
+    pub _marker: std::marker::PhantomData<T>,
+    /// Phantom data to keep type parameter S when it's not used in fields.
+    #[cfg(all(not(feature = "session"), feature = "token"))]
+    pub _marker: std::marker::PhantomData<S>,
 }
 
 impl Default for AuthkestraBuilder<Missing, Missing> {
     fn default() -> Self {
         Self {
             providers: HashMap::new(),
+            #[cfg(feature = "session")]
             session_store: Missing,
+            #[cfg(feature = "session")]
             session_config: SessionConfig::default(),
+            #[cfg(feature = "token")]
             token_manager: Missing,
+            #[cfg(any(not(feature = "session"), not(feature = "token")))]
+            _marker: std::marker::PhantomData,
         }
     }
 }
@@ -158,6 +234,7 @@ impl<S, T> AuthkestraBuilder<S, T> {
     }
 
     /// Set the session store.
+    #[cfg(feature = "session")]
     pub fn session_store(
         self,
         store: Arc<dyn SessionStore>,
@@ -166,24 +243,33 @@ impl<S, T> AuthkestraBuilder<S, T> {
             providers: self.providers,
             session_store: Configured(store),
             session_config: self.session_config,
+            #[cfg(feature = "token")]
             token_manager: self.token_manager,
+            #[cfg(any(not(feature = "session"), not(feature = "token")))]
+            _marker: std::marker::PhantomData,
         }
     }
 
     /// Set the token manager.
+    #[cfg(feature = "token")]
     pub fn token_manager(
         self,
         manager: Arc<TokenManager>,
     ) -> AuthkestraBuilder<S, Configured<Arc<TokenManager>>> {
         AuthkestraBuilder {
             providers: self.providers,
+            #[cfg(feature = "session")]
             session_store: self.session_store,
+            #[cfg(feature = "session")]
             session_config: self.session_config,
             token_manager: Configured(manager),
+            #[cfg(any(not(feature = "session"), not(feature = "token")))]
+            _marker: std::marker::PhantomData,
         }
     }
 
     /// Set the JWT secret for the default token manager.
+    #[cfg(feature = "token")]
     pub fn jwt_secret(self, secret: &[u8]) -> AuthkestraBuilder<S, Configured<Arc<TokenManager>>> {
         self.token_manager(Arc::new(TokenManager::new(secret, None)))
     }
@@ -192,23 +278,28 @@ impl<S, T> AuthkestraBuilder<S, T> {
     pub fn build(self) -> Authkestra<S, T> {
         Authkestra {
             providers: self.providers,
+            #[cfg(feature = "session")]
             session_store: self.session_store,
+            #[cfg(feature = "session")]
             session_config: self.session_config,
+            #[cfg(feature = "token")]
             token_manager: self.token_manager,
+            #[cfg(any(not(feature = "session"), not(feature = "token")))]
+            _marker: std::marker::PhantomData,
         }
     }
 }
 
-impl<T> AuthkestraBuilder<Configured<Arc<dyn SessionStore>>, T> {
+#[cfg(feature = "session")]
+impl<S, T> AuthkestraBuilder<S, T> {
     /// Set the session configuration.
-    ///
-    /// This is only available if a session store is configured.
     pub fn session_config(mut self, config: SessionConfig) -> Self {
         self.session_config = config;
         self
     }
 }
 
+#[cfg(feature = "token")]
 impl<S> AuthkestraBuilder<S, Configured<Arc<TokenManager>>> {
     /// Set the JWT issuer for the token manager.
     ///
@@ -220,11 +311,13 @@ impl<S> AuthkestraBuilder<S, Configured<Arc<TokenManager>>> {
 }
 
 /// Trait for Authkestra instances that have a session store configured.
+#[cfg(feature = "session")]
 pub trait HasSessionStore {
     /// Returns the session store.
     fn session_store(&self) -> Arc<dyn SessionStore>;
 }
 
+#[cfg(feature = "session")]
 impl<T> HasSessionStore for Authkestra<Configured<Arc<dyn SessionStore>>, T> {
     fn session_store(&self) -> Arc<dyn SessionStore> {
         self.session_store.0.clone()
@@ -232,11 +325,13 @@ impl<T> HasSessionStore for Authkestra<Configured<Arc<dyn SessionStore>>, T> {
 }
 
 /// Trait for Authkestra instances that have a token manager configured.
+#[cfg(feature = "token")]
 pub trait HasTokenManager {
     /// Returns the token manager.
     fn token_manager(&self) -> Arc<TokenManager>;
 }
 
+#[cfg(feature = "token")]
 impl<S> HasTokenManager for Authkestra<S, Configured<Arc<TokenManager>>> {
     fn token_manager(&self) -> Arc<TokenManager> {
         self.token_manager.0.clone()
@@ -244,9 +339,12 @@ impl<S> HasTokenManager for Authkestra<S, Configured<Arc<TokenManager>>> {
 }
 
 /// Marker for a configured session store.
+#[cfg(feature = "session")]
 pub type HasSessionStoreMarker = Configured<Arc<dyn SessionStore>>;
 /// Marker for a missing session store.
 pub type NoSessionStoreMarker = Missing;
+
+#[cfg(feature = "token")]
 /// Marker for a configured token manager.
 pub type HasTokenManagerMarker = Configured<Arc<TokenManager>>;
 /// Marker for a missing token manager.
@@ -256,8 +354,10 @@ pub type NoTokenManagerMarker = Missing;
 ///
 /// This type is typically used in traditional web applications where the server
 /// manages user sessions.
+#[cfg(feature = "session")]
 pub type StatefullAuthkestra = Authkestra<HasSessionStoreMarker, NoTokenManagerMarker>;
 
+#[cfg(feature = "token")]
 /// Authkestra with token support only
 ///
 /// A Resource Server (API) that validates tokens.

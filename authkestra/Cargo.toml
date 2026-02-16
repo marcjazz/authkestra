@@ -28,14 +28,14 @@ default = []
 full = ["flow", "session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
 
 # Core features
-flow = ["dep:authkestra-flow"]
+flow = ["dep:authkestra-flow", "authkestra-flow/session"]
 session = ["dep:authkestra-session"]
 token = ["dep:authkestra-token"]
 oidc = ["dep:authkestra-oidc"]
 
 # Web frameworks
-axum = ["dep:authkestra-axum"]
-actix = ["dep:authkestra-actix"]
+axum = ["dep:authkestra-axum", "authkestra-axum/flow", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/guard"]
+actix = ["dep:authkestra-actix", "authkestra-actix/flow", "authkestra-actix/session", "authkestra-actix/token", "authkestra-actix/guard"]
 
 # Providers
 github = ["dep:authkestra-providers-github"]

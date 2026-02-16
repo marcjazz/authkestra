@@ -1,19 +1,27 @@
 use authkestra_core::{
     pkce::Pkce,
     state::{Identity, OAuthToken},
-    OAuthProvider,
 };
+#[cfg(feature = "flow")]
 use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
+#[cfg(all(feature = "flow", not(feature = "session")))]
+use authkestra_flow::SessionConfig;
+#[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
+#[cfg(feature = "token")]
 use authkestra_token::TokenManager;
 use axum::{
-    extract::{FromRef, Path, Query, State},
+    extract::{Path, Query},
     http::StatusCode,
     response::{IntoResponse, Redirect},
-    Json,
 };
+#[cfg(feature = "token")]
+use axum::Json;
 use std::sync::Arc;
-use tower_cookies::{cookie::SameSite, Cookie, Cookies};
+#[cfg(any(feature = "flow", feature = "session"))]
+use tower_cookies::cookie::SameSite;
+#[cfg(any(feature = "flow", feature = "session"))]
+use tower_cookies::{Cookie, Cookies};
 
 #[derive(serde::Deserialize)]
 pub struct OAuthCallbackParams {
@@ -27,6 +35,7 @@ pub struct OAuthLoginParams {
     pub success_url: Option<String>,
 }
 
+#[cfg(any(feature = "flow", feature = "session"))]
 pub fn to_axum_same_site(ss: authkestra_core::SameSite) -> SameSite {
     match ss {
         authkestra_core::SameSite::Lax => SameSite::Lax,
@@ -35,6 +44,7 @@ pub fn to_axum_same_site(ss: authkestra_core::SameSite) -> SameSite {
     }
 }
 
+#[cfg(feature = "session")]
 pub fn create_axum_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<'a> {
     let mut cookie = Cookie::new(config.cookie_name.clone(), value);
     cookie.set_path(config.path.clone());
@@ -52,9 +62,9 @@ pub fn create_axum_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<'
 /// Helper to initiate the OAuth2 login flow.
 ///
 /// This generates the authorization URL and sets a CSRF state cookie.
+#[cfg(feature = "flow")]
 pub fn initiate_oauth_login(
     flow: &dyn ErasedOAuthFlow,
-    session_config: &SessionConfig,
     cookies: &Cookies,
     scopes: &[&str],
 ) -> Redirect {
@@ -67,13 +77,8 @@ pub fn initiate_oauth_login(
     cookie.set_path("/");
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Lax);
-    cookie.set_secure(session_config.secure);
-    // Set a reasonable expiry for the flow (e.g., 15 minutes)
-    cookie.set_max_age(
-        session_config
-            .max_age
-            .map(|d| tower_cookies::cookie::time::Duration::seconds(d.num_seconds())),
-    );
+    cookie.set_secure(true);
+    cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::minutes(15)));
 
     cookies.add(cookie);
 
@@ -81,9 +86,9 @@ pub fn initiate_oauth_login(
 }
 
 /// Internal helper to finalize the OAuth flow by validating state and exchanging the code.
+#[cfg(feature = "flow")]
 async fn finalize_callback_erased(
     flow: &dyn ErasedOAuthFlow,
-    session_config: &SessionConfig,
     cookies: &Cookies,
     params: &OAuthCallbackParams,
 ) -> Result<(Identity, OAuthToken), (StatusCode, String)> {
@@ -102,7 +107,8 @@ async fn finalize_callback_erased(
     // Remove cookie after use
     let mut remove_cookie = Cookie::new(cookie_name, "");
     remove_cookie.set_path("/");
-    remove_cookie.set_secure(session_config.secure);
+    remove_cookie.set_secure(true);
+
     cookies.remove(remove_cookie);
 
     let (identity, token) = flow
@@ -123,8 +129,8 @@ async fn finalize_callback_erased(
     Ok((identity, token))
 }
 
-/// Internal helper to finalize the OAuth flow by validating state and exchanging the code.
 /// Helper to handle the OAuth2 callback and create a server-side session.
+#[cfg(all(feature = "flow", feature = "session"))]
 pub async fn handle_oauth_callback_erased(
     flow: &dyn ErasedOAuthFlow,
     cookies: Cookies,
@@ -133,7 +139,7 @@ pub async fn handle_oauth_callback_erased(
     config: SessionConfig,
     success_url: &str,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let (mut identity, token) = finalize_callback_erased(flow, &config, &cookies, &params).await?;
+    let (mut identity, token) = finalize_callback_erased(flow, &cookies, &params).await?;
 
     // Store tokens in identity attributes for convenience
     identity
@@ -172,6 +178,7 @@ pub async fn handle_oauth_callback_erased(
 }
 
 /// Helper to handle the OAuth2 callback and create a server-side session.
+#[cfg(all(feature = "flow", feature = "session"))]
 pub async fn handle_oauth_callback<P, M>(
     flow: &OAuth2Flow<P, M>,
     cookies: Cookies,
@@ -181,22 +188,22 @@ pub async fn handle_oauth_callback<P, M>(
     success_url: &str,
 ) -> Result<impl IntoResponse, (StatusCode, String)>
 where
-    P: OAuthProvider + Send + Sync,
+    P: authkestra_core::OAuthProvider + Send + Sync,
     M: authkestra_core::UserMapper + Send + Sync,
 {
     handle_oauth_callback_erased(flow, cookies, params, store, config, success_url).await
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
+#[cfg(all(feature = "flow", feature = "token"))]
 pub async fn handle_oauth_callback_jwt_erased(
     flow: &dyn ErasedOAuthFlow,
     cookies: Cookies,
     params: OAuthCallbackParams,
     token_manager: Arc<TokenManager>,
     expires_in_secs: u64,
-    config: &SessionConfig,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let (identity, _token) = finalize_callback_erased(flow, config, &cookies, &params).await?;
+    let (identity, _token) = finalize_callback_erased(flow, &cookies, &params).await?;
 
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None)
@@ -215,32 +222,25 @@ pub async fn handle_oauth_callback_jwt_erased(
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
+#[cfg(all(feature = "flow", feature = "token"))]
 pub async fn handle_oauth_callback_jwt<P, M>(
     flow: &OAuth2Flow<P, M>,
     cookies: Cookies,
     params: OAuthCallbackParams,
     token_manager: Arc<TokenManager>,
     expires_in_secs: u64,
-    config: &SessionConfig,
 ) -> Result<impl IntoResponse, (StatusCode, String)>
 where
-    P: OAuthProvider + Send + Sync,
+    P: authkestra_core::OAuthProvider + Send + Sync,
     M: authkestra_core::UserMapper + Send + Sync,
 {
-    handle_oauth_callback_jwt_erased(
-        flow,
-        cookies,
-        params,
-        token_manager,
-        expires_in_secs,
-        config,
-    )
-    .await
+    handle_oauth_callback_jwt_erased(flow, cookies, params, token_manager, expires_in_secs).await
 }
 
 /// Helper to handle logout by deleting the session from the store and clearing the cookie.
 ///
 /// Returns a redirect to the specified URL.
+#[cfg(feature = "session")]
 pub async fn logout(
     cookies: Cookies,
     store: Arc<dyn SessionStore>,
@@ -265,19 +265,20 @@ pub async fn logout(
     Ok(Redirect::to(redirect_to))
 }
 
+#[cfg(feature = "flow")]
 pub async fn axum_login_handler<AppState, S, T>(
     Path(provider): Path<String>,
-    State(state): State<AppState>,
+    axum::extract::State(state): axum::extract::State<AppState>,
     Query(params): Query<OAuthLoginParams>,
     cookies: Cookies,
 ) -> Result<impl IntoResponse, AuthkestraAxumError>
 where
     AppState: Clone + Send + Sync + 'static,
     Authkestra<S, T>: axum::extract::FromRef<AppState>,
-    SessionConfig: axum::extract::FromRef<AppState>,
 {
+    use axum::extract::FromRef;
     let authkestra = Authkestra::<S, T>::from_ref(&state);
-    let session_config = SessionConfig::from_ref(&state);
+
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
@@ -288,7 +289,6 @@ where
     };
 
     let scopes_str = params.scope.unwrap_or_default();
-    // Allow space or comma separated scopes
     let scopes: Vec<&str> = scopes_str
         .split(|c: char| [' ', ','].contains(&c))
         .filter(|s| !s.is_empty())
@@ -298,34 +298,32 @@ where
     let (url, csrf_state) = flow.initiate_login(&scopes, Some(&pkce.code_challenge));
 
     let cookie_name = format!("authkestra_flow_{}", csrf_state);
-    let cookie_max_age = session_config
-        .max_age
-        .map(|d| tower_cookies::cookie::time::Duration::seconds(d.num_seconds()));
-
     let mut cookie = Cookie::new(cookie_name, pkce.code_verifier);
     cookie.set_path("/");
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Lax);
-    cookie.set_secure(session_config.secure);
-    cookie.set_max_age(cookie_max_age);
-
+    cookie.set_secure(true);
+    cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::minutes(15)));
     cookies.add(cookie);
 
     if let Some(success_url) = params.success_url {
-        let mut cookie = Cookie::new(format!("authkestra_success_{}", csrf_state), success_url);
-        cookie.set_path("/");
-        cookie.set_http_only(true);
-        cookie.set_secure(session_config.secure);
-        cookie.set_max_age(cookie_max_age);
-        cookies.add(cookie);
+        let success_cookie_name = format!("authkestra_success_{}", csrf_state);
+        let mut success_cookie = Cookie::new(success_cookie_name, success_url);
+        success_cookie.set_path("/");
+        success_cookie.set_http_only(true);
+        success_cookie.set_same_site(SameSite::Lax);
+        success_cookie.set_secure(true);
+        success_cookie.set_max_age(Some(tower_cookies::cookie::time::Duration::minutes(15)));
+        cookies.add(success_cookie);
     }
 
-    Ok(Redirect::to(&url).into_response())
+    Ok(Redirect::to(&url))
 }
 
+#[cfg(all(feature = "flow", feature = "session"))]
 pub async fn axum_callback_handler<AppState, S, T>(
     Path(provider): Path<String>,
-    State(state): State<AppState>,
+    axum::extract::State(state): axum::extract::State<AppState>,
     Query(params): Query<OAuthCallbackParams>,
     cookies: Cookies,
 ) -> Result<impl IntoResponse, AuthkestraAxumError>
@@ -335,6 +333,7 @@ where
     SessionConfig: axum::extract::FromRef<AppState>,
     Result<Arc<dyn SessionStore>, AuthkestraAxumError>: axum::extract::FromRef<AppState>,
 {
+    use axum::extract::FromRef;
     let authkestra = Authkestra::<S, T>::from_ref(&state);
     let session_config = SessionConfig::from_ref(&state);
     let session_store = <Result<Arc<dyn SessionStore>, AuthkestraAxumError>>::from_ref(&state)?;
@@ -357,7 +356,7 @@ where
     if let Some(_cookie) = cookies.get(&success_url_cookie_name) {
         let mut remove_cookie = Cookie::new(success_url_cookie_name, "");
         remove_cookie.set_path("/");
-        remove_cookie.set_secure(session_config.secure);
+        remove_cookie.set_secure(true);
         cookies.remove(remove_cookie);
     }
 
@@ -379,8 +378,9 @@ where
     })
 }
 
+#[cfg(all(feature = "flow", feature = "session"))]
 pub async fn axum_logout_handler<AppState, S, T>(
-    State(state): State<AppState>,
+    axum::extract::State(state): axum::extract::State<AppState>,
     cookies: Cookies,
 ) -> Result<impl IntoResponse, AuthkestraAxumError>
 where
@@ -388,6 +388,7 @@ where
     SessionConfig: axum::extract::FromRef<AppState>,
     Result<Arc<dyn SessionStore>, AuthkestraAxumError>: axum::extract::FromRef<AppState>,
 {
+    use axum::extract::FromRef;
     let session_config = SessionConfig::from_ref(&state);
     let session_store = <Result<Arc<dyn SessionStore>, AuthkestraAxumError>>::from_ref(&state)?;
 
@@ -421,6 +422,7 @@ impl IntoResponse for AuthkestraAxumError {
     }
 }
 
+#[cfg(feature = "session")]
 pub async fn get_session(
     store: &Arc<dyn SessionStore>,
     config: &SessionConfig,
@@ -440,6 +442,7 @@ pub async fn get_session(
     Ok(session)
 }
 
+#[cfg(feature = "token")]
 pub async fn get_token(
     parts: &axum::http::request::Parts,
     token_manager: &TokenManager,
