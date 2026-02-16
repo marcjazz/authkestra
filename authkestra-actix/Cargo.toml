@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-actix"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Actix-web integration for the authkestra authentication framework"
 repository = "https://github.com/marcjazz/authkestra"
@@ -9,10 +9,11 @@ keywords = ["auth", "actix", "web", "middleware"]
 categories = ["authentication", "web-programming::http-server"]
 
 [dependencies]
-authkestra-core = { version = "0.1.1", path = "../authkestra-core" }
-authkestra-session = { version = "0.1.1", path = "../authkestra-session" }
-authkestra-token = { version = "0.1.1", path = "../authkestra-token" }
-authkestra-flow = { version = "0.1.1", path = "../authkestra-flow" }
+authkestra-core = { version = "0.1.2", path = "../authkestra-core" }
+authkestra-session = { version = "0.1.1", path = "../authkestra-session", optional = true }
+authkestra-token = { version = "0.1.2", path = "../authkestra-token", optional = true }
+authkestra-guard = { version = "0.1.0", path = "../authkestra-guard", optional = true }
+authkestra-flow = { version = "0.1.2", path = "../authkestra-flow", optional = true }
 actix-web = "4"
 jsonwebtoken = "10.3.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -20,3 +21,10 @@ futures = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
 serde_json = "1.0"
+
+[features]
+default = []
+session = ["dep:authkestra-session"]
+flow = ["dep:authkestra-flow", "authkestra-flow/session", "authkestra-flow/token"]
+token = ["dep:authkestra-token"]
+guard = ["dep:authkestra-guard"]

@@ -2,14 +2,14 @@
 
 JWT and token utilities for [authkestra](https://github.com/marcjazz/authkestra).
 
-This crate provides JWT signing, verification, and token abstraction for use within the `authkestra` framework. It supports both symmetric (HS256) token management and asynchronous offline validation using JWKS.
+This crate provides JWT signing and token abstraction for use within the `authkestra` framework. It focuses on symmetric (HS256) token management.
+
+> **Note**: Offline validation (JWKS) has been moved to [`authkestra-guard`](../authkestra-guard/README.md).
 
 ## Features
 
 - **Token Management**: Issue and validate user-centric or machine-to-machine (M2M) tokens using symmetric keys.
-- **Offline Validation**: Validate JWTs against remote JWK Sets (JWKS) with built-in caching and automatic refresh.
 - **Flexible Claims**: Standard OpenID Connect claims with support for custom fields and integrated `authkestra-core` Identity.
-- **Async Ready**: Offline validation is built on `tokio` and `reqwest`.
 
 ## Usage
 
@@ -39,29 +39,6 @@ let token = manager.issue_user_token(identity, 3600, None).unwrap();
 
 // Validate a token
 let claims = manager.validate_token(&token).unwrap();
-```
-
-### Offline Validation (JWKS)
-
-```rust
-use authkestra_token::offline_validation::{JwksCache, validate_jwt};
-use jsonwebtoken::Validation;
-use std::time::Duration;
-
-#[tokio::main]
-async fn main() {
-    let jwks_uri = "https://www.googleapis.com/oauth2/v3/certs".to_string();
-    let http_client = reqwest::Client::new();
-    let cache = JwksCache::new(jwks_uri, http_client);
-    
-    let validation = Validation::default();
-    let token = "your.jwt.token";
-    
-    match validate_jwt(token, &cache, &validation).await {
-        Ok(claims) => println!("Valid token for: {:?}", claims.sub),
-        Err(e) => eprintln!("Validation failed: {}", e),
-    }
-}
 ```
 
 ## Part of authkestra

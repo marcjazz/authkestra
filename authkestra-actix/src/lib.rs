@@ -1,36 +1,56 @@
+#[cfg(any(feature = "session", feature = "token", feature = "guard"))]
 use actix_web::{dev::Payload, http::header, web, Error, FromRequest, HttpRequest};
-use authkestra_flow::{Authkestra, Configured, Missing, SessionStoreState, TokenManagerState};
-use authkestra_session::{Session, SessionConfig, SessionStore};
-use authkestra_token::TokenManager;
+#[cfg(all(feature = "flow", feature = "session"))]
+pub use authkestra_flow::SessionStoreState;
+#[cfg(all(feature = "flow", feature = "token"))]
+pub use authkestra_flow::TokenManagerState;
+#[cfg(feature = "flow")]
+pub use authkestra_flow::{Authkestra, SessionConfig};
+#[cfg(all(feature = "flow", any(feature = "session", feature = "token")))]
+pub use authkestra_flow::{Configured, Missing};
+#[cfg(feature = "session")]
+pub use authkestra_session::{Session, SessionStore};
+#[cfg(feature = "token")]
+pub use authkestra_token::TokenManager;
+#[cfg(any(feature = "session", feature = "token", feature = "guard"))]
 use futures::future::LocalBoxFuture;
+#[cfg(any(feature = "session", feature = "token", feature = "guard"))]
 use std::sync::Arc;
 
 pub mod helpers;
 pub use helpers::*;
 
+#[cfg(feature = "flow")]
 pub trait AuthkestraActixExt<S, T> {
     fn actix_scope(&self) -> actix_web::Scope;
 }
 
+#[cfg(feature = "flow")]
+#[cfg(all(feature = "flow", feature = "session"))]
 impl<S, T> AuthkestraActixExt<S, T> for Authkestra<S, T>
 where
     S: Clone + SessionStoreState + 'static,
     T: Clone + 'static,
 {
     fn actix_scope(&self) -> actix_web::Scope {
-        web::scope("/auth")
-            .route("/{provider}", web::get().to(actix_login_handler::<S, T>))
-            .route(
-                "/{provider}/callback",
-                web::get().to(actix_callback_handler::<S, T>),
-            )
-            .route("/logout", web::get().to(actix_logout_handler::<S, T>))
+        let mut scope = web::scope("/auth");
+
+        scope = scope.route("/{provider}", web::get().to(actix_login_handler::<S, T>));
+        scope = scope.route(
+            "/{provider}/callback",
+            web::get().to(actix_callback_handler::<S, T>),
+        );
+        scope = scope.route("/logout", web::get().to(actix_logout_handler::<S, T>));
+
+        scope
     }
 }
 
 /// The extractor for a validated session.
+#[cfg(feature = "session")]
 pub struct AuthSession(pub Session);
 
+#[cfg(all(feature = "flow", feature = "session"))]
 impl FromRequest for AuthSession {
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
@@ -44,10 +64,20 @@ impl FromRequest for AuthSession {
                     .map(|a| web::Data::new(a.session_store.get_store()))
             })
             .or_else(|| {
-                req.app_data::<web::Data<
-                    Authkestra<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
-                >>()
-                .map(|a| web::Data::new(a.session_store.get_store()))
+                #[cfg(feature = "token")]
+                {
+                    req.app_data::<web::Data<
+                        Authkestra<
+                            Configured<Arc<dyn SessionStore>>,
+                            Configured<Arc<TokenManager>>,
+                        >,
+                    >>()
+                    .map(|a| web::Data::new(a.session_store.get_store()))
+                }
+                #[cfg(not(feature = "token"))]
+                {
+                    None
+                }
             });
 
         let config = req
@@ -60,10 +90,20 @@ impl FromRequest for AuthSession {
                 .map(|a| web::Data::new(a.session_config.clone()))
             })
             .or_else(|| {
-                req.app_data::<web::Data<
-                    Authkestra<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
-                >>()
-                .map(|a| web::Data::new(a.session_config.clone()))
+                #[cfg(feature = "token")]
+                {
+                    req.app_data::<web::Data<
+                        Authkestra<
+                            Configured<Arc<dyn SessionStore>>,
+                            Configured<Arc<TokenManager>>,
+                        >,
+                    >>()
+                    .map(|a| web::Data::new(a.session_config.clone()))
+                }
+                #[cfg(not(feature = "token"))]
+                {
+                    None
+                }
             });
 
         let session_id = req
@@ -101,8 +141,10 @@ impl FromRequest for AuthSession {
 /// The extractor for a validated JWT.
 ///
 /// Expects an `Authorization: Bearer <token>` header.
+#[cfg(feature = "token")]
 pub struct AuthToken(pub authkestra_token::Claims);
 
+#[cfg(all(feature = "flow", feature = "token"))]
 impl FromRequest for AuthToken {
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
@@ -116,10 +158,20 @@ impl FromRequest for AuthToken {
                     .map(|a| web::Data::new(a.token_manager.get_manager()))
             })
             .or_else(|| {
-                req.app_data::<web::Data<
-                    Authkestra<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
-                >>()
-                .map(|a| web::Data::new(a.token_manager.get_manager()))
+                #[cfg(feature = "session")]
+                {
+                    req.app_data::<web::Data<
+                        Authkestra<
+                            Configured<Arc<dyn SessionStore>>,
+                            Configured<Arc<TokenManager>>,
+                        >,
+                    >>()
+                    .map(|a| web::Data::new(a.token_manager.get_manager()))
+                }
+                #[cfg(not(feature = "session"))]
+                {
+                    None
+                }
             });
 
         let auth_header = req
@@ -155,8 +207,10 @@ impl FromRequest for AuthToken {
 /// A generic JWT extractor for resource server validation.
 ///
 /// Validates a Bearer token against a configured `JwksCache` and `jsonwebtoken::Validation`.
+#[cfg(feature = "guard")]
 pub struct Jwt<T>(pub T);
 
+#[cfg(feature = "guard")]
 impl<T> FromRequest for Jwt<T>
 where
     T: for<'de> serde::Deserialize<'de> + 'static,
@@ -166,7 +220,7 @@ where
 
     fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
         let cache = req
-            .app_data::<web::Data<Arc<authkestra_token::offline_validation::JwksCache>>>()
+            .app_data::<web::Data<Arc<authkestra_guard::jwt::JwksCache>>>()
             .cloned();
         let validation = req
             .app_data::<web::Data<jsonwebtoken::Validation>>()
@@ -198,13 +252,12 @@ where
             }
 
             let token = &auth_header[7..];
-            let claims = authkestra_token::offline_validation::validate_jwt_generic::<T>(
-                token,
-                &cache,
-                &validation,
-            )
-            .await
-            .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid token: {}", e)))?;
+            let claims =
+                authkestra_guard::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
+                    .await
+                    .map_err(|e| {
+                        actix_web::error::ErrorUnauthorized(format!("Invalid token: {}", e))
+                    })?;
 
             Ok(Jwt(claims))
         })

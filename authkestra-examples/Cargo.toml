@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-examples"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 publish = false
 
@@ -10,14 +10,17 @@ authkestra-core = { path = "../authkestra-core" }
 authkestra-flow = { path = "../authkestra-flow" }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session", features = ["sqlite", "redis-store"] }
 authkestra-token = { path = "../authkestra-token" }
+authkestra-guard = { path = "../authkestra-guard" }
 authkestra-oidc = { path = "../authkestra-oidc" }
-authkestra-axum = { path = "../authkestra-axum" }
-authkestra-actix = { path = "../authkestra-actix" }
+authkestra-axum = { path = "../authkestra-axum", features = ["session", "flow", "token", "guard"]}
+authkestra-actix = { path = "../authkestra-actix", features = ["session", "flow", "token", "guard"] }
 authkestra-providers-github = { path = "../authkestra-providers-github" }
 authkestra-providers-google = { path = "../authkestra-providers-google" }
 authkestra-providers-discord = { path = "../authkestra-providers-discord" }
 
 axum = "0.8.8"
+base64 = "0.22.1"
+serde_json = "1.0"
 actix-web = "4"
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -29,3 +32,6 @@ reqwest = { version = "0.13.1", features = ["json"] }
 async-trait = "0.1"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["full"] }

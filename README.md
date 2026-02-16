@@ -18,11 +18,12 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 🚀 Features
 
-- **Modular Design**: Concerns are strictly separated into crates: `authkestra-core`, `authkestra-flow`, `authkestra-session`, `authkestra-token`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
+- **Modular Design**: Concerns are strictly separated into crates: `authkestra-core`, `authkestra-flow`, `authkestra-guard`, `authkestra-session`, `authkestra-token`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
 - **Explicit Flow Control**: Dependencies and authentication context are injected explicitly via **Extractors** (Axum/Actix) or constructor arguments, eliminating "magic" middleware.
+- **Flexible Chaining**: Use the `AuthkestraGuard` to chain multiple authentication strategies (Token, Session, Basic, Custom) in any order.
 - **Provider Agnostic**: Easily integrate new OAuth providers by implementing the `OAuthProvider` trait.
 - **Session Management**: Flexible session storage via the `SessionStore` trait, with built-in support for in-memory, Redis, and SQL via `sqlx`.
-- **Stateless Tokens**: Comprehensive JWT support via `authkestra-token`.
+- **Stateless Tokens**: Comprehensive JWT support and offline validation.
 
 ## 📦 Workspace Crates
 
@@ -31,8 +32,9 @@ For advanced users, individual crates are still available and can be used indepe
 | [`authkestra`](authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
 | [`authkestra-core`](authkestra-core/README.md)                           | Foundational types, traits (`Identity`, `OAuthProvider`, `SessionStore`). |
 | [`authkestra-flow`](authkestra-flow/README.md)                           | Orchestrates OAuth2/OIDC flows (Authorization Code, PKCE).                |
+| [`authkestra-guard`](authkestra-guard/README.md)                         | Authentication guard and strategies (JWT offline validation, etc).        |
 | [`authkestra-session`](authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
-| [`authkestra-token`](authkestra-token/README.md)                         | JWT signing, verification, and token abstraction.                         |
+| [`authkestra-token`](authkestra-token/README.md)                         | JWT signing and token abstraction.                                        |
 | [`authkestra-providers-github`](authkestra-providers-github/README.md)   | Concrete implementation for GitHub OAuth.                                 |
 | [`authkestra-providers-google`](authkestra-providers-google/README.md)   | Concrete implementation for Google OAuth.                                 |
 | [`authkestra-providers-discord`](authkestra-providers-discord/README.md) | Concrete implementation for Discord OAuth.                                |
@@ -44,12 +46,12 @@ For advanced users, individual crates are still available and can be used indepe
 
 To see Authkestra in action, check out the [examples](examples/) directory:
 
-- [Get Started](examples/get_started.rs)
-- [Axum with GitHub OAuth](examples/axum_oauth.rs)
-- [Actix with GitHub OAuth](examples/actix_github.rs)
-- [OIDC Generic Provider](examples/oidc_generic.rs)
-- [Stateless OIDC Client](examples/oidc_stateless.rs)
-- [Device Flow](examples/device_flow.rs)
+- [Get Started](authkestra-examples/src/bin/client_credentials_flow.rs)
+- [Axum Combined Flow (Authkestra + AuthkestraGuard)](authkestra-examples/src/bin/axum_combined_flow.rs)
+- [Axum with GitHub OAuth](authkestra-examples/src/bin/axum_oauth.rs)
+- [Actix with GitHub OAuth](authkestra-examples/src/bin/actix_github.rs)
+- [OIDC Generic Provider](authkestra-examples/src/bin/oidc_generic.rs)
+- [Device Flow](authkestra-examples/src/bin/device_flow.rs)
 
 ## �️ Technical Design Principles
 

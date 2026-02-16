@@ -16,9 +16,9 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-actix = "0.1.1"
+authkestra-actix = "0.1.2"
 authkestra-session = "0.1.1"
-authkestra-token = "0.1.1"
+authkestra-token = "0.1.2"
 actix-web = "4"
 ```
 
@@ -58,7 +58,7 @@ Extracts and validates a JWT against a remote JWKS (e.g., Google, Auth0). Requir
 
 ```rust
 use authkestra_actix::Jwt;
-use authkestra_token::offline_validation::JwksCache;
+use authkestra_guard::jwt::JwksCache;
 use actix_web::{get, HttpResponse, web};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -82,6 +82,7 @@ The crate provides helpers to manage the OAuth2 flow lifecycle.
 #### SPA vs Server-Side Rendering
 
 For **SPA (Single Page Application)** use cases where you want to receive a JWT on the frontend:
+
 1. The `redirect_uri` in your OAuth provider configuration should point to a **frontend route** (e.g., `https://myapp.com/callback`).
 2. Your frontend route should extract the `code` and `state` from the URL.
 3. The frontend then performs a **POST** (or GET) request to your backend's callback endpoint (e.g., `/api/auth/callback`) with these parameters.

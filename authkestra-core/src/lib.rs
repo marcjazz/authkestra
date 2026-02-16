@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 /// PKCE (Proof Key for Code Exchange) utilities.
 pub mod pkce;
 
+/// Strategy-based authentication.
+pub mod strategy;
+
 /// Errors that can occur during the authentication process.
 pub mod error;
 use crate::error::AuthError;

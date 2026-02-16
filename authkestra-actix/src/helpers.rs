@@ -1,7 +1,13 @@
+#[cfg(any(feature = "flow", feature = "session", feature = "token"))]
 use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
-use authkestra_core::{pkce::Pkce, OAuthProvider};
+#[cfg(feature = "flow")]
+use authkestra_core::pkce::Pkce;
+#[cfg(all(feature = "flow", not(feature = "session")))]
+use authkestra_flow::SessionConfig;
+#[cfg(feature = "flow")]
 use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
-use authkestra_session::{Session, SessionConfig, SessionStore};
+#[cfg(feature = "session")]
+pub use authkestra_session::{Session, SessionConfig, SessionStore};
 use std::sync::Arc;
 
 #[derive(serde::Deserialize)]
@@ -10,6 +16,13 @@ pub struct OAuthCallbackParams {
     pub state: String,
 }
 
+#[derive(serde::Deserialize)]
+pub struct OAuthLoginParams {
+    pub scope: Option<String>,
+    pub success_url: Option<String>,
+}
+
+#[cfg(feature = "session")]
 pub fn to_actix_same_site(ss: authkestra_core::SameSite) -> actix_web::cookie::SameSite {
     match ss {
         authkestra_core::SameSite::Lax => actix_web::cookie::SameSite::Lax,
@@ -18,6 +31,7 @@ pub fn to_actix_same_site(ss: authkestra_core::SameSite) -> actix_web::cookie::S
     }
 }
 
+#[cfg(feature = "session")]
 pub fn create_actix_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<'a> {
     let mut builder = Cookie::build(config.cookie_name.clone(), value)
         .path(config.path.clone())
@@ -36,41 +50,29 @@ pub fn create_actix_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<
 /// Helper to initiate the OAuth2 login flow.
 ///
 /// This generates the authorization URL and sets a CSRF state cookie.
-pub fn initiate_oauth_login<P, M>(
-    flow: &OAuth2Flow<P, M>,
-    session_config: &SessionConfig,
-    scopes: &[&str],
-) -> HttpResponse
+#[cfg(feature = "flow")]
+pub fn initiate_oauth_login<P, M>(flow: &OAuth2Flow<P, M>, scopes: &[&str]) -> HttpResponse
 where
-    P: OAuthProvider,
+    P: authkestra_core::OAuthProvider,
     M: authkestra_core::UserMapper,
 {
-    initiate_oauth_login_erased(flow, session_config, scopes)
+    initiate_oauth_login_erased(flow, scopes)
 }
 
-pub fn initiate_oauth_login_erased(
-    flow: &dyn ErasedOAuthFlow,
-    session_config: &SessionConfig,
-    scopes: &[&str],
-) -> HttpResponse {
+#[cfg(feature = "flow")]
+pub fn initiate_oauth_login_erased(flow: &dyn ErasedOAuthFlow, scopes: &[&str]) -> HttpResponse {
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
     let cookie_name = format!("authkestra_flow_{}", csrf_state);
 
-    let mut builder = Cookie::build(cookie_name, pkce.code_verifier)
+    let cookie = Cookie::build(cookie_name, pkce.code_verifier)
         .path("/")
         .http_only(true)
         .same_site(actix_web::cookie::SameSite::Lax)
-        .secure(session_config.secure);
-
-    if let Some(max_age) = session_config.max_age {
-        builder = builder.max_age(actix_web::cookie::time::Duration::seconds(
-            max_age.num_seconds(),
-        ));
-    }
-
-    let cookie = builder.finish();
+        .secure(true)
+        .max_age(actix_web::cookie::time::Duration::minutes(15))
+        .finish();
 
     HttpResponse::Found()
         .insert_header((header::LOCATION, url))
@@ -79,6 +81,7 @@ pub fn initiate_oauth_login_erased(
 }
 
 /// Helper to handle the OAuth2 callback and create a server-side session.
+#[cfg(all(feature = "flow", feature = "session"))]
 pub async fn handle_oauth_callback<P, M>(
     req: HttpRequest,
     flow: &OAuth2Flow<P, M>,
@@ -88,12 +91,13 @@ pub async fn handle_oauth_callback<P, M>(
     success_url: &str,
 ) -> Result<HttpResponse, actix_web::Error>
 where
-    P: OAuthProvider + Send + Sync,
+    P: authkestra_core::OAuthProvider + Send + Sync,
     M: authkestra_core::UserMapper + Send + Sync,
 {
     handle_oauth_callback_erased(req, flow, params, store, config, success_url).await
 }
 
+#[cfg(all(feature = "flow", feature = "session"))]
 pub async fn handle_oauth_callback_erased(
     req: HttpRequest,
     flow: &dyn ErasedOAuthFlow,
@@ -154,7 +158,7 @@ pub async fn handle_oauth_callback_erased(
     // Remove the flow cookie
     let remove_cookie = Cookie::build(cookie_name, "")
         .path("/")
-        .secure(config.secure)
+        .secure(true)
         .max_age(actix_web::cookie::time::Duration::ZERO)
         .finish();
 
@@ -165,9 +169,11 @@ pub async fn handle_oauth_callback_erased(
         .finish())
 }
 
+#[cfg(feature = "flow")]
 pub async fn actix_login_handler<S, T>(
     path: web::Path<String>,
     authkestra: web::Data<Authkestra<S, T>>,
+    params: web::Query<OAuthLoginParams>,
 ) -> impl actix_web::Responder {
     let provider = path.into_inner();
     let flow = match authkestra.providers.get(&provider) {
@@ -177,9 +183,44 @@ pub async fn actix_login_handler<S, T>(
         }
     };
 
-    initiate_oauth_login_erased(flow.as_ref(), &authkestra.session_config, &[])
+    let scopes_str = params.scope.clone().unwrap_or_default();
+    let scopes: Vec<&str> = scopes_str
+        .split(|c: char| [' ', ','].contains(&c))
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let pkce = Pkce::new();
+    let (url, csrf_state) = flow.initiate_login(&scopes, Some(&pkce.code_challenge));
+
+    let cookie_name = format!("authkestra_flow_{}", csrf_state);
+    let cookie = Cookie::build(cookie_name, pkce.code_verifier)
+        .path("/")
+        .http_only(true)
+        .same_site(actix_web::cookie::SameSite::Lax)
+        .secure(true)
+        .max_age(actix_web::cookie::time::Duration::minutes(15))
+        .finish();
+
+    let mut res = HttpResponse::Found();
+    res.insert_header((header::LOCATION, url));
+    res.cookie(cookie);
+
+    if let Some(success_url) = &params.success_url {
+        let success_cookie_name = format!("authkestra_success_{}", csrf_state);
+        let success_cookie = Cookie::build(success_cookie_name, success_url.clone())
+            .path("/")
+            .http_only(true)
+            .same_site(actix_web::cookie::SameSite::Lax)
+            .secure(true)
+            .max_age(actix_web::cookie::time::Duration::minutes(15))
+            .finish();
+        res.cookie(success_cookie);
+    }
+
+    res.finish()
 }
 
+#[cfg(all(feature = "flow", feature = "session"))]
 pub async fn actix_callback_handler<S, T>(
     req: HttpRequest,
     path: web::Path<String>,
@@ -197,17 +238,34 @@ where
         }
     };
 
-    handle_oauth_callback_erased(
+    let callback_params = params.into_inner();
+    let success_url_cookie_name = format!("authkestra_success_{}", callback_params.state);
+    let success_url = req
+        .cookie(&success_url_cookie_name)
+        .map(|c| c.value().to_string())
+        .unwrap_or_else(|| "/".to_string());
+
+    let remove_cookie = Cookie::build(success_url_cookie_name, "")
+        .path("/")
+        .secure(true)
+        .max_age(actix_web::cookie::time::Duration::ZERO)
+        .finish();
+
+    let mut response = handle_oauth_callback_erased(
         req,
         flow.as_ref(),
-        params.into_inner(),
+        callback_params,
         authkestra.session_store.get_store(),
         authkestra.session_config.clone(),
-        "/",
+        &success_url,
     )
-    .await
+    .await?;
+
+    response.add_cookie(&remove_cookie)?;
+    Ok(response)
 }
 
+#[cfg(all(feature = "flow", feature = "session"))]
 pub async fn actix_logout_handler<S, T>(
     req: HttpRequest,
     authkestra: web::Data<Authkestra<S, T>>,
@@ -225,6 +283,7 @@ where
 }
 
 /// Helper to handle logout by deleting the session from the store and clearing the cookie.
+#[cfg(feature = "session")]
 pub async fn logout(
     req: HttpRequest,
     store: Arc<dyn SessionStore>,
@@ -251,15 +310,16 @@ pub async fn logout(
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
+#[cfg(all(feature = "flow", feature = "token"))]
 pub async fn handle_oauth_callback_jwt_erased(
     flow: &dyn ErasedOAuthFlow,
     req: &HttpRequest,
     params: OAuthCallbackParams,
     token_manager: Arc<authkestra_token::TokenManager>,
     expires_in_secs: u64,
-    config: &SessionConfig,
 ) -> Result<HttpResponse, actix_web::Error> {
     let cookie_name = format!("authkestra_flow_{}", params.state);
+
     let pkce_verifier = req
         .cookie(&cookie_name)
         .map(|c| c.value().to_string())
@@ -284,35 +344,36 @@ pub async fn handle_oauth_callback_jwt_erased(
         .issue_user_token(identity, expires_in_secs, None)
         .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Token error: {}", e)))?;
 
+    let mut res = HttpResponse::Ok();
+
     // Remove the flow cookie
     let remove_cookie = Cookie::build(cookie_name, "")
         .path("/")
-        .secure(config.secure)
         .max_age(actix_web::cookie::time::Duration::ZERO)
+        .secure(true)
         .finish();
 
-    Ok(HttpResponse::Ok()
-        .cookie(remove_cookie)
-        .json(serde_json::json!({
-            "access_token": jwt,
-            "token_type": "Bearer",
-            "expires_in": expires_in_secs
-        })))
+    res.cookie(remove_cookie);
+
+    Ok(res.json(serde_json::json!({
+        "access_token": jwt,
+        "token_type": "Bearer",
+        "expires_in": expires_in_secs
+    })))
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
+#[cfg(all(feature = "flow", feature = "token"))]
 pub async fn handle_oauth_callback_jwt<P, M>(
     flow: &OAuth2Flow<P, M>,
     req: &HttpRequest,
     params: OAuthCallbackParams,
     token_manager: Arc<authkestra_token::TokenManager>,
     expires_in_secs: u64,
-    config: &SessionConfig,
 ) -> Result<HttpResponse, actix_web::Error>
 where
-    P: OAuthProvider + Send + Sync,
+    P: authkestra_core::OAuthProvider + Send + Sync,
     M: authkestra_core::UserMapper + Send + Sync,
 {
-    handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs, config)
-        .await
+    handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs).await
 }

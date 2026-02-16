@@ -10,6 +10,7 @@ This crate provides the foundational types and traits used across the `authkestr
 - `OAuthToken` structure for standard OAuth2 token responses.
 - `OAuthProvider` trait for implementing OAuth2-compatible authentication providers.
 - `CredentialsProvider` trait for password-based or custom credential authentication.
+- `AuthenticationStrategy` trait for implementing modular authentication strategies.
 - `UserMapper` trait for mapping provider identities to local application users.
 - `pkce` module for Proof Key for Code Exchange support.
 - Standard `AuthError` enum for consistent error handling.
@@ -20,7 +21,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-core = "0.1.1"
+authkestra-core = "0.1.2"
 ```
 
 ### Core Traits
@@ -44,7 +45,7 @@ pub trait OAuthProvider: Send + Sync {
         code: &str,
         code_verifier: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError>;
-    
+
     // Optional methods for token management
     async fn refresh_token(&self, refresh_token: &str) -> Result<OAuthToken, AuthError>;
     async fn revoke_token(&self, token: &str) -> Result<(), AuthError>;
@@ -63,6 +64,21 @@ pub trait CredentialsProvider: Send + Sync {
     async fn authenticate(&self, creds: Self::Credentials) -> Result<Identity, AuthError>;
 }
 ```
+
+### Authentication Strategies
+
+The `strategy` module provides the `AuthenticationStrategy` trait, which allows for implementing modular authentication methods (e.g., Token, Session, Basic).
+
+While `authkestra-flow` handles the high-level login flows (OAuth2, OIDC), `AuthkestraGuard` (from `authkestra-guard`) is used to protect your API routes by validating incoming requests against one or more strategies.
+
+#### Relationship with `Authkestra`
+
+`AuthkestraGuard` (from `authkestra-guard`) and `Authkestra` (from `authkestra-flow`) are designed to be used together but remain decoupled:
+
+- **`Authkestra`**: Manages the **Login Flow** (e.g., redirecting to GitHub, handling the callback, creating a session).
+- **`AuthkestraGuard`**: Manages **Access Control** (e.g., checking if a request has a valid session cookie or API key).
+
+By keeping them separate, you can use `Authkestra` to log users in via OAuth2, and then use `AuthkestraGuard` to protect your API using both those sessions AND static API keys or JWTs.
 
 #### UserMapper
 

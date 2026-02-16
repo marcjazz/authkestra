@@ -6,7 +6,7 @@ use authkestra_core::{
     state::{Identity, OAuthToken},
     OAuthProvider,
 };
-use authkestra_token::{validate_jwt_generic, JwksCache};
+use authkestra_guard::jwt::{validate_jwt_generic, JwksCache};
 use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};
@@ -51,8 +51,7 @@ impl OidcProvider {
     ) -> Result<Self, OidcError> {
         let client = reqwest::Client::new();
         let metadata = ProviderMetadata::discover(issuer_url, client.clone()).await?;
-        let cache =
-            authkestra_token::JwksCache::new(metadata.jwks_uri.clone(), Duration::from_secs(3600));
+        let cache = JwksCache::new(metadata.jwks_uri.clone(), Duration::from_secs(3600));
 
         Ok(Self {
             client_id,
