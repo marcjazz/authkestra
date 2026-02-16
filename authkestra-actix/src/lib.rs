@@ -60,7 +60,8 @@ impl FromRequest for AuthSession {
             .app_data::<web::Data<Arc<dyn SessionStore>>>()
             .cloned()
             .or_else(|| {
-                req.app_data::<web::Data<Authkestra<Configured<Arc<dyn SessionStore>>, Missing>>>().map(|a| web::Data::new(a.session_store.get_store()))
+                req.app_data::<web::Data<Authkestra<Configured<Arc<dyn SessionStore>>, Missing>>>()
+                    .map(|a| web::Data::new(a.session_store.get_store()))
             })
             .or_else(|| {
                 #[cfg(feature = "token")]
@@ -70,7 +71,8 @@ impl FromRequest for AuthSession {
                             Configured<Arc<dyn SessionStore>>,
                             Configured<Arc<TokenManager>>,
                         >,
-                    >>().map(|a| web::Data::new(a.session_store.get_store()))
+                    >>()
+                    .map(|a| web::Data::new(a.session_store.get_store()))
                 }
                 #[cfg(not(feature = "token"))]
                 {
@@ -152,7 +154,8 @@ impl FromRequest for AuthToken {
             .app_data::<web::Data<Arc<TokenManager>>>()
             .cloned()
             .or_else(|| {
-                req.app_data::<web::Data<Authkestra<Missing, Configured<Arc<TokenManager>>>>>().map(|a| web::Data::new(a.token_manager.get_manager()))
+                req.app_data::<web::Data<Authkestra<Missing, Configured<Arc<TokenManager>>>>>()
+                    .map(|a| web::Data::new(a.token_manager.get_manager()))
             })
             .or_else(|| {
                 #[cfg(feature = "session")]
@@ -162,7 +165,8 @@ impl FromRequest for AuthToken {
                             Configured<Arc<dyn SessionStore>>,
                             Configured<Arc<TokenManager>>,
                         >,
-                    >>().map(|a| web::Data::new(a.token_manager.get_manager()))
+                    >>()
+                    .map(|a| web::Data::new(a.token_manager.get_manager()))
                 }
                 #[cfg(not(feature = "session"))]
                 {
