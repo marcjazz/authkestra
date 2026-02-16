@@ -6,7 +6,6 @@ on:
       deploy_environment:
         description: "Deployment Environment"
         required: true
-        default: "pre-prod"
         type: string
 
   release:
@@ -15,7 +14,7 @@ on:
 jobs:
   publish_crates:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.deploy_environment}}
+    environment: ${{ inputs.deploy_environment || 'pre-prod' }}
 
     steps:
       - name: Checkout repository
@@ -67,6 +66,17 @@ jobs:
             echo "::warning::Version for authkestra-session already exists on crates.io, skipping."
           else
             cargo publish --package "authkestra-session"
+            sleep 10
+          fi
+      - name: Publish authkestra-guard
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          echo "Publishing authkestra-guard..."
+          if cargo publish --package "authkestra-guard" --dry-run 2>&1 | grep -q "already exists"; then
+            echo "::warning::Version for authkestra-guard already exists on crates.io, skipping."
+          else
+            cargo publish --package "authkestra-guard"
             sleep 10
           fi
       - name: Publish authkestra-oidc
