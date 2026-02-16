@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["authkestra_core",[]],["authkestra_guard",[["impl&lt;I&gt; <a class=\"trait\" href=\"authkestra_core/strategy/trait.AuthenticationStrategy.html\" title=\"trait authkestra_core::strategy::AuthenticationStrategy\">AuthenticationStrategy</a>&lt;I&gt; for <a class=\"struct\" href=\"authkestra_guard/jwt/struct.JwtStrategy.html\" title=\"struct authkestra_guard::jwt::JwtStrategy\">JwtStrategy</a>&lt;I&gt;<div class=\"where\">where\n    I: for&lt;'de&gt; <a class=\"trait\" href=\"https://docs.rs/serde_core/1.0.228/serde_core/de/trait.Deserialize.html\" title=\"trait serde_core::de::Deserialize\">Deserialize</a>&lt;'de&gt; + <a class=\"trait\" href=\"https://doc.rust-lang.org/1.93.1/core/marker/trait.Send.html\" title=\"trait core::marker::Send\">Send</a> + <a class=\"trait\" href=\"https://doc.rust-lang.org/1.93.1/core/marker/trait.Sync.html\" title=\"trait core::marker::Sync\">Sync</a> + 'static,</div>"]]],["axum_auth_strategy",[["impl <a class=\"trait\" href=\"authkestra_core/strategy/trait.AuthenticationStrategy.html\" title=\"trait authkestra_core::strategy::AuthenticationStrategy\">AuthenticationStrategy</a>&lt;<a class=\"struct\" href=\"axum_auth_strategy/struct.User.html\" title=\"struct axum_auth_strategy::User\">User</a>&gt; for <a class=\"struct\" href=\"axum_auth_strategy/struct.CustomHeaderStrategy.html\" title=\"struct axum_auth_strategy::CustomHeaderStrategy\">CustomHeaderStrategy</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[22,892,505]}

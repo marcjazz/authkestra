@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["error","jwks","provider"]};
+window.SIDEBAR_ITEMS = {"mod":["error","provider"]};

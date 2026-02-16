@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["index","main","protected"],"struct":["AppState","MyClaims"]};
+window.SIDEBAR_ITEMS = {"fn":["index","main","protected"],"struct":["AppState","Config","MyClaims"]};

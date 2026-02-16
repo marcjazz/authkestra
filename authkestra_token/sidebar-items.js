@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["offline_validation"],"struct":["Claims","TokenManager"]};
+window.SIDEBAR_ITEMS = {"struct":["Claims","TokenManager"]};

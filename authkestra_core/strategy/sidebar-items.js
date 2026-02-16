@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["utils"],"struct":["BasicStrategy","HeaderStrategy","SessionStrategy","TokenStrategy"],"trait":["AuthenticationStrategy","BasicAuthenticator","SessionProvider","TokenValidator"]};
