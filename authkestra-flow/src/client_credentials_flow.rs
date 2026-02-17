@@ -62,14 +62,13 @@ impl ClientCredentialsFlow {
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AuthError::Provider(format!(
-                "Token request failed: {}",
-                error_text
+                "Token request failed: {error_text}"
             )));
         }
 
         response
             .json::<OAuthToken>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {}", e)))
+            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {e}")))
     }
 }

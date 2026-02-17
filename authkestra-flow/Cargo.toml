@@ -16,7 +16,7 @@ token = ["dep:authkestra-token"]
 authkestra-core = { version = "0.1.2", path = "../authkestra-core" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
-authkestra-token = { version = "0.1.1", path = "../authkestra-token", optional = true}
+authkestra-token = { version = "0.1.2", path = "../authkestra-token", optional = true }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 reqwest = { version = "0.13.1", features = ["json", "form"] }

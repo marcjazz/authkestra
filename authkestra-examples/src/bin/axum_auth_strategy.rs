@@ -164,7 +164,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/protected")
-                    .header("Authorization", format!("Basic {}", auth))
+                    .header("Authorization", format!("Basic {auth}"))
                     .body(Body::empty())
                     .unwrap(),
             )

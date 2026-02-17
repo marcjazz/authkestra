@@ -1,0 +1,25 @@
+[package]
+name = "authkestra-macros"
+version = "0.1.0"
+edition = "2021"
+authors = ["Authkestra Contributors"]
+license = "MIT OR Apache-2.0"
+description = "Procedural macros for authkestra framework integrations"
+repository = "https://github.com/marcjazz/authkestra"
+keywords = ["auth", "oauth", "macros"]
+categories = ["web-programming", "authentication"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+
+[features]
+default = []
+axum = []
+
+[dev-dependencies]
+trybuild = "1.0"

@@ -19,6 +19,8 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
 - **Session Management**:
   - `logout`: Clears the session cookie and removes it from the store.
   - `SessionConfig`: Customizable session settings (cookie name, secure, http_only, etc.).
+- **Macros**:
+  - `AuthkestraFromRef`: Automatically generate `FromRef` implementations for your application state.
 
 ## Usage
 
@@ -26,8 +28,70 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-axum = "0.1.2"
+authkestra-axum = { version = "0.1.2", features = ["macros"] }
 tower-cookies = "0.10" # Required for session support
+```
+
+### Quick Start with AuthkestraFromRef (Recommended)
+
+The easiest way to integrate Authkestra with custom Axum state is using the `AuthkestraFromRef` macro:
+
+```rust
+use axum::{routing::get, Router};
+use authkestra_axum::{AuthSession, AuthkestraFromRef};
+use authkestra::flow::Authkestra;
+use authkestra_flow::{Configured, Missing};
+use authkestra_session::SessionStore;
+use tower_cookies::CookieManagerLayer;
+use std::sync::Arc;
+
+#[derive(Clone, AuthkestraFromRef)]
+struct AppState {
+    #[authkestra]
+    auth: Authkestra<Configured<Arc<dyn SessionStore>>, Missing>,
+    // other fields...
+}
+
+async fn protected_handler(AuthSession(session): AuthSession) -> String {
+    format!("Welcome back, {}!", session.identity.username.unwrap_or_default())
+}
+
+fn app(state: AppState) -> Router {
+    Router::new()
+        .route("/protected", get(protected_handler))
+        .layer(CookieManagerLayer::new())
+        .with_state(state)
+}
+```
+
+### Manual Integration
+
+If you prefer not to use the macro or need more control, you can manually implement the required traits:
+
+```rust
+use axum::{routing::get, Router, extract::FromRef};
+use authkestra_axum::{AuthSession, SessionConfig, AuthkestraAxumError};
+use authkestra_session::SessionStore;
+use tower_cookies::CookieManagerLayer;
+use std::sync::Arc;
+
+#[derive(Clone)]
+struct AppState {
+    session_store: Arc<dyn SessionStore>,
+    session_config: SessionConfig,
+}
+
+impl FromRef<AppState> for Arc<dyn SessionStore> {
+    fn from_ref(state: &AppState) -> Self {
+        state.session_store.clone()
+    }
+}
+
+impl FromRef<AppState> for SessionConfig {
+    fn from_ref(state: &AppState) -> Self {
+        state.session_config.clone()
+    }
+}
 ```
 
 ### Example: Unified Authentication (Chained Strategies)
@@ -59,111 +123,7 @@ impl FromRef<AppState> for Arc<AuthkestraGuard<User>> {
 async fn protected_handler(Auth(user): Auth<User>) -> String {
     format!("Welcome, user {}!", user.id)
 }
-
-fn app() -> Router {
-    let guard = AuthkestraGuard::builder()
-        .strategy(JwtStrategy::new(jwt_config))
-        .strategy(SessionStrategy::new(session_store, "session_cookie"))
-        .policy(AuthPolicy::FirstSuccess)
-        .build();
-
-    let state = AppState {
-        guard: Arc::new(guard),
-    };
-
-    Router::new()
-        .route("/protected", get(protected_handler))
-        .with_state(state)
-}
 ```
-
-### Example: Session-based Authentication
-
-```rust
-use axum::{routing::get, Router, extract::State};
-use authkestra_axum::{AuthSession, SessionConfig, initiate_oauth_login, handle_oauth_callback};
-use authkestra_session::SessionStore;
-use tower_cookies::CookieManagerLayer;
-use std::sync::Arc;
-
-#[derive(Clone)]
-struct AppState {
-    session_store: Arc<dyn SessionStore>,
-    session_config: SessionConfig,
-    // ... other state like OAuth flows
-}
-
-// Implement FromRef for the extractors to work
-impl axum::extract::FromRef<AppState> for Arc<dyn SessionStore> {
-    fn from_ref(state: &AppState) -> Self {
-        state.session_store.clone()
-    }
-}
-
-impl axum::extract::FromRef<AppState> for SessionConfig {
-    fn from_ref(state: &AppState) -> Self {
-        state.session_config.clone()
-    }
-}
-
-async fn protected_handler(AuthSession(session): AuthSession) -> String {
-    format!("Welcome back, {}!", session.identity.username.unwrap_or_default())
-}
-
-fn app(state: AppState) -> Router {
-    Router::new()
-        .route("/protected", get(protected_handler))
-        // The CookieManagerLayer is required for AuthSession and OAuth helpers
-        .layer(CookieManagerLayer::new())
-        .with_state(state)
-}
-```
-
-### Example: JWT-based Authentication
-
-```rust
-use authkestra_axum::AuthToken;
-use authkestra_token::TokenManager;
-use std::sync::Arc;
-
-// Ensure Arc<TokenManager> is available in your State via FromRef
-
-async fn api_handler(AuthToken(claims): AuthToken) -> String {
-    format!("Hello user with ID: {}", claims.sub)
-}
-```
-
-### Offline Validation
-
-For validating tokens from external providers (like Google or Auth0) using their JWKS endpoint:
-
-```rust
-use authkestra_axum::Jwt;
-use authkestra_guard::jwt::JwksCache;
-use jsonwebtoken::Validation;
-use std::sync::Arc;
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-struct MyClaims {
-    sub: String,
-}
-
-// Ensure Arc<JwksCache> and Validation are available in your State via FromRef
-
-async fn external_api_handler(Jwt(claims): Jwt<MyClaims>) -> String {
-    format!("Hello external user: {}", claims.sub)
-}
-```
-
-### SPA vs Server-Side Rendering
-
-For **SPA (Single Page Application)** use cases where you want to receive a JWT on the frontend:
-
-1. The `redirect_uri` in your OAuth provider configuration should point to a **frontend route** (e.g., `https://myapp.com/callback`).
-2. Your frontend route should extract the `code` and `state` from the URL.
-3. The frontend then performs a **POST** (or GET) request to your backend's callback endpoint (e.g., `/api/auth/callback`) with these parameters.
-4. The backend uses `handle_oauth_callback_jwt` to exchange the code for a JWT and returns it to the frontend.
 
 ## Part of authkestra
 

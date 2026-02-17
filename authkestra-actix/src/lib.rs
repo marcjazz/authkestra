@@ -196,7 +196,7 @@ impl FromRequest for AuthToken {
 
             let token = &auth_header[7..];
             let claims = token_manager.get_ref().validate_token(token).map_err(|e| {
-                actix_web::error::ErrorUnauthorized(format!("Invalid token: {}", e))
+                actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}"))
             })?;
 
             Ok(AuthToken(claims))
@@ -256,7 +256,7 @@ where
                 authkestra_guard::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
                     .await
                     .map_err(|e| {
-                        actix_web::error::ErrorUnauthorized(format!("Invalid token: {}", e))
+                        actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}"))
                     })?;
 
             Ok(Jwt(claims))

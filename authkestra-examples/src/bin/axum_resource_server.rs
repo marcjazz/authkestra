@@ -60,11 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env();
 
     // 1. Discover OIDC provider metadata
-    println!("🔍 Discovering provider metadata for: {}", config.issuer);
+    println!("🔍 Discovering provider metadata for: {issuer}", issuer = config.issuer);
     let provider_metadata =
         ProviderMetadata::discover(&config.issuer, reqwest::Client::new()).await?;
 
-    println!("🔑 Using JWKS URI: {}", provider_metadata.jwks_uri);
+    println!("🔑 Using JWKS URI: {jwks_uri}", jwks_uri = provider_metadata.jwks_uri);
 
     // 2. Configure Offline Validation components
     let jwks_cache = Arc::new(JwksCache::new(
@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = format!("0.0.0.0:{}", config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("📡 Listening on http://{}", addr);
+    println!("📡 Listening on http://{addr}");
 
     axum::serve(listener, app).await?;
 
@@ -106,7 +106,7 @@ async fn protected(Jwt(claims): Jwt<MyClaims>) -> impl IntoResponse {
     let scope_msg = claims
         .scope
         .as_ref()
-        .map(|s| format!(" Your scopes: {}", s))
+        .map(|s| format!(" Your scopes: {s}"))
         .unwrap_or_default();
 
     format!(
