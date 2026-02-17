@@ -14,55 +14,25 @@ pub mod helpers;
 
 pub use helpers::*;
 
-#[cfg(feature = "flow")]
-#[derive(Clone)]
+#[cfg(feature = "macros")]
+extern crate self as authkestra_axum;
+
+#[cfg(feature = "macros")]
+pub use authkestra_macros::AuthkestraFromRef;
+
+#[derive(Clone, AuthkestraFromRef)]
 pub struct AuthkestraState<S = Missing, T = Missing> {
+    #[authkestra]
     pub authkestra: Authkestra<S, T>,
 }
 
-#[cfg(feature = "flow")]
 impl<S, T> From<Authkestra<S, T>> for AuthkestraState<S, T> {
     fn from(authkestra: Authkestra<S, T>) -> Self {
         Self { authkestra }
     }
 }
 
-#[cfg(feature = "flow")]
-impl<S: Clone, T: Clone> FromRef<AuthkestraState<S, T>> for Authkestra<S, T> {
-    fn from_ref(state: &AuthkestraState<S, T>) -> Self {
-        state.authkestra.clone()
-    }
-}
-
-#[cfg(all(feature = "flow", feature = "session"))]
-impl<S, T> FromRef<AuthkestraState<S, T>> for Result<Arc<dyn SessionStore>, AuthkestraAxumError>
-where
-    S: authkestra_flow::SessionStoreState,
-{
-    fn from_ref(state: &AuthkestraState<S, T>) -> Self {
-        Ok(state.authkestra.session_store.get_store())
-    }
-}
-
-#[cfg(feature = "flow")]
-impl<S, T> FromRef<AuthkestraState<S, T>> for SessionConfig {
-    fn from_ref(state: &AuthkestraState<S, T>) -> Self {
-        state.authkestra.session_config.clone()
-    }
-}
-
-#[cfg(all(feature = "flow", feature = "token"))]
-impl<S, T> FromRef<AuthkestraState<S, T>> for Result<Arc<TokenManager>, AuthkestraAxumError>
-where
-    T: authkestra_flow::TokenManagerState,
-{
-    fn from_ref(state: &AuthkestraState<S, T>) -> Self {
-        Ok(state.authkestra.token_manager.get_manager())
-    }
-}
-
 /// The extractor for a validated session.
-#[cfg(feature = "session")]
 pub struct AuthSession(pub Session);
 
 #[cfg(feature = "session")]
@@ -155,7 +125,7 @@ where
         let token = &auth_header[7..];
         let claims = authkestra_guard::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
             .await
-            .map_err(|e| AuthkestraAxumError::Unauthorized(format!("Invalid token: {}", e)))?;
+            .map_err(|e| AuthkestraAxumError::Unauthorized(format!("Invalid token: {e}")))?;
 
         Ok(Jwt(claims))
     }

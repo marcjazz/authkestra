@@ -71,7 +71,7 @@ pub fn initiate_oauth_login(
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_flow_{}", csrf_state);
+    let cookie_name = format!("authkestra_flow_{csrf_state}");
 
     let mut cookie = Cookie::new(cookie_name, pkce.code_verifier);
     cookie.set_path("/");
@@ -92,7 +92,8 @@ async fn finalize_callback_erased(
     cookies: &Cookies,
     params: &OAuthCallbackParams,
 ) -> Result<(Identity, OAuthToken), (StatusCode, String)> {
-    let cookie_name = format!("authkestra_flow_{}", params.state);
+    let state = &params.state;
+    let cookie_name = format!("authkestra_flow_{state}");
 
     let pkce_verifier = cookies
         .get(&cookie_name)
@@ -122,7 +123,7 @@ async fn finalize_callback_erased(
         .map_err(|e| {
             (
                 StatusCode::UNAUTHORIZED,
-                format!("Authentication failed: {}", e),
+                format!("Authentication failed: {e}"),
             )
         })?;
 
@@ -167,7 +168,7 @@ pub async fn handle_oauth_callback_erased(
     store.save_session(&session).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to save session: {}", e),
+            format!("Failed to save session: {e}"),
         )
     })?;
 
@@ -210,7 +211,7 @@ pub async fn handle_oauth_callback_jwt_erased(
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Token error: {}", e),
+                format!("Token error: {e}"),
             )
         })?;
 
@@ -297,7 +298,7 @@ where
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(&scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_flow_{}", csrf_state);
+    let cookie_name = format!("authkestra_flow_{csrf_state}");
     let mut cookie = Cookie::new(cookie_name, pkce.code_verifier);
     cookie.set_path("/");
     cookie.set_http_only(true);
@@ -307,7 +308,7 @@ where
     cookies.add(cookie);
 
     if let Some(success_url) = params.success_url {
-        let success_cookie_name = format!("authkestra_success_{}", csrf_state);
+        let success_cookie_name = format!("authkestra_success_{csrf_state}");
         let mut success_cookie = Cookie::new(success_cookie_name, success_url);
         success_cookie.set_path("/");
         success_cookie.set_http_only(true);
@@ -347,7 +348,8 @@ where
         }
     };
 
-    let success_url_cookie_name = format!("authkestra_success_{}", params.state);
+    let state = &params.state;
+    let success_url_cookie_name = format!("authkestra_success_{state}");
     let success_url = cookies
         .get(&success_url_cookie_name)
         .map(|c| c.value().to_string())
@@ -464,7 +466,7 @@ pub async fn get_token(
     let token = &auth_header[7..];
     let claims = token_manager
         .validate_token(token)
-        .map_err(|e| AuthkestraAxumError::Unauthorized(format!("Invalid token: {}", e)))?;
+        .map_err(|e| AuthkestraAxumError::Unauthorized(format!("Invalid token: {e}")))?;
 
     Ok(claims)
 }

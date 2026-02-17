@@ -64,7 +64,7 @@ pub fn initiate_oauth_login_erased(flow: &dyn ErasedOAuthFlow, scopes: &[&str]) 
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_flow_{}", csrf_state);
+    let cookie_name = format!("authkestra_flow_{csrf_state}");
 
     let cookie = Cookie::build(cookie_name, pkce.code_verifier)
         .path("/")
@@ -124,7 +124,7 @@ pub async fn handle_oauth_callback_erased(
         )
         .await
         .map_err(|e| {
-            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {}", e))
+            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
         })?;
 
     // Store tokens in identity attributes for convenience
@@ -150,7 +150,7 @@ pub async fn handle_oauth_callback_erased(
     };
 
     store.save_session(&session).await.map_err(|e| {
-        actix_web::error::ErrorInternalServerError(format!("Failed to save session: {}", e))
+        actix_web::error::ErrorInternalServerError(format!("Failed to save session: {e}"))
     })?;
 
     let cookie = create_actix_cookie(&config, session.id);
@@ -179,7 +179,7 @@ pub async fn actix_login_handler<S, T>(
     let flow = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return HttpResponse::NotFound().body(format!("Provider {} not found", provider));
+            return HttpResponse::NotFound().body(format!("Provider {provider} not found"));
         }
     };
 
@@ -192,7 +192,7 @@ pub async fn actix_login_handler<S, T>(
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(&scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_flow_{}", csrf_state);
+    let cookie_name = format!("authkestra_flow_{csrf_state}");
     let cookie = Cookie::build(cookie_name, pkce.code_verifier)
         .path("/")
         .http_only(true)
@@ -206,7 +206,7 @@ pub async fn actix_login_handler<S, T>(
     res.cookie(cookie);
 
     if let Some(success_url) = &params.success_url {
-        let success_cookie_name = format!("authkestra_success_{}", csrf_state);
+        let success_cookie_name = format!("authkestra_success_{csrf_state}");
         let success_cookie = Cookie::build(success_cookie_name, success_url.clone())
             .path("/")
             .http_only(true)
@@ -234,7 +234,7 @@ where
     let flow = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Ok(HttpResponse::NotFound().body(format!("Provider {} not found", provider)));
+            return Ok(HttpResponse::NotFound().body(format!("Provider {provider} not found")));
         }
     };
 
@@ -337,12 +337,12 @@ pub async fn handle_oauth_callback_jwt_erased(
         )
         .await
         .map_err(|e| {
-            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {}", e))
+            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
         })?;
 
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None)
-        .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Token error: {}", e)))?;
+        .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Token error: {e}")))?;
 
     let mut res = HttpResponse::Ok();
 

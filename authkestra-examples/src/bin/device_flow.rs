@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("2. Enter the code: {}", device_resp.user_code);
 
     if let Some(complete_uri) = &device_resp.verification_uri_complete {
-        println!("\nOR just open this URL directly: {}", complete_uri);
+        println!("\nOR just open this URL directly: {complete_uri}");
     }
 
     println!("\nWaiting for authorization...");
@@ -44,11 +44,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nAuthorization successful!");
             println!("Access Token: {}", token.access_token);
             if let Some(scope) = token.scope {
-                println!("Scopes: {}", scope);
+                println!("Scopes: {scope}");
             }
         }
         Err(e) => {
-            eprintln!("\nAuthorization failed: {}", e);
+            eprintln!("\nAuthorization failed: {e}");
         }
     }
 

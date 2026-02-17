@@ -93,7 +93,7 @@ async fn login(
     };
 
     if let Some(user) = &local_user {
-        println!("Logged in as local user: {:?}", user);
+        println!("Logged in as local user: {user:?}");
     }
 
     let session = match data.authkestra.create_session(identity).await {

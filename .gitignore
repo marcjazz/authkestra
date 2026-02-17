@@ -1,3 +1,4 @@
 /target
 .env
 act_output.log
+.agent.zencoder/

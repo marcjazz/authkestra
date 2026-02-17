@@ -72,7 +72,7 @@ async fn main() {
 
     // Session Store
     let session_store: Arc<dyn SessionStore> = if let Ok(redis_url) = std::env::var("REDIS_URL") {
-        println!("Using RedisStore at {}", redis_url);
+        println!("Using RedisStore at {redis_url}");
         Arc::new(authkestra_session::RedisStore::new(&redis_url, "authkestra".into()).unwrap())
     } else {
         println!("Using MemoryStore");
