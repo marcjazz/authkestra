@@ -1,20 +1,40 @@
 # authkestra-axum
 
-Axum integration for the [authkestra](https://github.com/marcjazz/authkestra) authentication framework.
+Axum integration for [authkestra](https://github.com/marcjazz/authkestra).
 
-## 📦 Installation
+This crate provides Axum-specific extractors and helpers to easily integrate the `authkestra` authentication framework into Axum applications.
+
+## Features
+
+- **Extractors**:
+  - `Auth<I>`: Unified extractor that uses a configured `AuthkestraGuard` to validate the request.
+  - `AuthSession`: Extracts a validated session from cookies.
+  - `AuthToken`: Extracts and validates a JWT from the `Authorization: Bearer` header.
+- **OAuth Helpers**:
+  - `initiate_oauth_login`: Generates authorization URLs and handles CSRF protection.
+  - `handle_oauth_callback`: Finalizes OAuth login and creates a server-side session.
+  - `handle_oauth_callback_jwt`: Finalizes OAuth login and returns a JWT.
+- **Offline Validation**:
+  - `Jwt<T>`: Extractor for validating JWTs from external OIDC providers using JWKS (via `authkestra-guard`).
+- **Session Management**:
+  - `logout`: Clears the session cookie and removes it from the store.
+  - `SessionConfig`: Customizable session settings (cookie name, secure, http_only, etc.).
+- **Macros**:
+  - `AuthkestraFromRef`: Automatically generate `FromRef` implementations for your application state.
+
+## Usage
 
 Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.1.1", features = ["macros"] }
-tower-cookies = "0.11" # Required for session support
+authkestra-axum = { version = "0.1.2", features = ["macros"] }
+tower-cookies = "0.10" # Required for session support
 ```
 
-### Quick Start with Derive Macro (Recommended)
+### Quick Start with AuthkestraFromRef (Recommended)
 
-The easiest way to integrate Authkestra with custom Axum state is using the `#[derive(AuthkestraFromRef)]` macro:
+The easiest way to integrate Authkestra with custom Axum state is using the `AuthkestraFromRef` macro:
 
 ```rust
 use axum::{routing::get, Router};
@@ -24,14 +44,12 @@ use authkestra_flow::{Configured, Missing};
 use authkestra_session::SessionStore;
 use tower_cookies::CookieManagerLayer;
 use std::sync::Arc;
-use sqlx::PgPool; // Assuming you use sqlx for database access
 
 #[derive(Clone, AuthkestraFromRef)]
 struct AppState {
     #[authkestra]
     auth: Authkestra<Configured<Arc<dyn SessionStore>>, Missing>,
-    db_pool: Arc<PgPool>,
-    // ... other application state
+    // other fields...
 }
 
 async fn protected_handler(AuthSession(session): AuthSession) -> String {
@@ -46,14 +64,12 @@ fn app(state: AppState) -> Router {
 }
 ```
 
-The macro automatically generates all required `FromRef` implementations, eliminating approximately 30 lines of boilerplate code.
-
-### Manual Integration (Advanced)
+### Manual Integration
 
 If you prefer not to use the macro or need more control, you can manually implement the required traits:
 
 ```rust
-use axum::{routing::get, Router, extract::State};
+use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::{AuthSession, SessionConfig, AuthkestraAxumError};
 use authkestra_session::SessionStore;
 use tower_cookies::CookieManagerLayer;
@@ -63,40 +79,52 @@ use std::sync::Arc;
 struct AppState {
     session_store: Arc<dyn SessionStore>,
     session_config: SessionConfig,
-    // ... other state
 }
 
-// Implement FromRef for the extractors to work
-impl axum::extract::FromRef<AppState> for Result<Arc<dyn SessionStore>, AuthkestraAxumError> {
+impl FromRef<AppState> for Arc<dyn SessionStore> {
     fn from_ref(state: &AppState) -> Self {
-        Ok(state.session_store.clone())
+        state.session_store.clone()
     }
 }
 
-impl axum::extract::FromRef<AppState> for SessionConfig {
+impl FromRef<AppState> for SessionConfig {
     fn from_ref(state: &AppState) -> Self {
         state.session_config.clone()
     }
 }
+```
 
-async fn protected_handler(AuthSession(session): AuthSession) -> String {
-    format!("Welcome back, {}!", session.identity.username.unwrap_or_default())
+### Example: Unified Authentication (Chained Strategies)
+
+The `Auth<I>` extractor allows you to use a central `AuthkestraGuard` that can try multiple authentication methods in order.
+
+```rust
+use axum::{routing::get, Router, extract::FromRef};
+use authkestra_axum::Auth;
+use authkestra_guard::{AuthkestraGuard, AuthPolicy};
+use authkestra_guard::jwt::JwtStrategy;
+use authkestra_session::SessionStrategy;
+use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+struct User { id: String }
+
+#[derive(Clone)]
+struct AppState {
+    guard: Arc<AuthkestraGuard<User>>,
+}
+
+impl FromRef<AppState> for Arc<AuthkestraGuard<User>> {
+    fn from_ref(state: &AppState) -> Self {
+        state.guard.clone()
+    }
+}
+
+async fn protected_handler(Auth(user): Auth<User>) -> String {
+    format!("Welcome, user {}!", user.id)
 }
 ```
 
-## 🚀 Features
+## Part of authkestra
 
-- **Session Extractor**: Easily access the current user's session via `AuthSession(session)`.
-- **JWT Extractor**: Validate and extract JWT claims with `AuthToken(claims)`.
-- **Unified Auth Extractor**: Use `Auth(identity)` to support multiple authentication strategies (Session, JWT, etc.) via `AuthkestraGuard`.
-- **OAuth Helpers**: Simplified handlers for initiating OAuth flows and handling callbacks.
-- **Framework Native**: Built on top of Axum's `FromRequestParts` for idiomatic integration.
-
-## 📜 License
-
-This project is dual-licensed under either:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
-
-at your option.
+This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.
