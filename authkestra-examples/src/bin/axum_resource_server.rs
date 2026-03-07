@@ -60,11 +60,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env();
 
     // 1. Discover OIDC provider metadata
-    println!("🔍 Discovering provider metadata for: {issuer}", issuer = config.issuer);
+    println!(
+        "🔍 Discovering provider metadata for: {issuer}",
+        issuer = config.issuer
+    );
     let provider_metadata =
         ProviderMetadata::discover(&config.issuer, reqwest::Client::new()).await?;
 
-    println!("🔑 Using JWKS URI: {jwks_uri}", jwks_uri = provider_metadata.jwks_uri);
+    println!(
+        "🔑 Using JWKS URI: {jwks_uri}",
+        jwks_uri = provider_metadata.jwks_uri
+    );
 
     // 2. Configure Offline Validation components
     let jwks_cache = Arc::new(JwksCache::new(

@@ -195,9 +195,10 @@ impl FromRequest for AuthToken {
             }
 
             let token = &auth_header[7..];
-            let claims = token_manager.get_ref().validate_token(token).map_err(|e| {
-                actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}"))
-            })?;
+            let claims = token_manager
+                .get_ref()
+                .validate_token(token)
+                .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}")))?;
 
             Ok(AuthToken(claims))
         })

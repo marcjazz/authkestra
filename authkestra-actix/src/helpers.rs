@@ -123,9 +123,7 @@ pub async fn handle_oauth_callback_erased(
             Some(&pkce_verifier),
         )
         .await
-        .map_err(|e| {
-            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
-        })?;
+        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
 
     // Store tokens in identity attributes for convenience
     identity
@@ -336,9 +334,7 @@ pub async fn handle_oauth_callback_jwt_erased(
             Some(&pkce_verifier),
         )
         .await
-        .map_err(|e| {
-            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
-        })?;
+        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
 
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None)
