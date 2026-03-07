@@ -80,8 +80,10 @@ impl OAuthProvider for GithubProvider {
         };
 
         format!(
-            "{}?client_id={}&redirect_uri={}&state={}&scope={}",
-            self.authorization_url, self.client_id, self.redirect_uri, state, scope_param
+            "{auth_url}?client_id={client_id}&redirect_uri={redirect_uri}&state={state}&scope={scope_param}",
+            auth_url = self.authorization_url,
+            client_id = self.client_id,
+            redirect_uri = self.redirect_uri
         )
     }
 
@@ -106,7 +108,7 @@ impl OAuthProvider for GithubProvider {
             .map_err(|_| AuthError::Network)?
             .json::<GithubAccessTokenResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {}", e)))?;
+            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {e}")))?;
 
         // 2. Get user information
         let user_response = self
@@ -114,7 +116,7 @@ impl OAuthProvider for GithubProvider {
             .get(&self.user_url)
             .header(
                 "Authorization",
-                format!("Bearer {}", token_response.access_token),
+                format!("Bearer {token}", token = token_response.access_token),
             )
             .header("User-Agent", "authkestra")
             .send()
@@ -122,7 +124,7 @@ impl OAuthProvider for GithubProvider {
             .map_err(|_| AuthError::Network)?
             .json::<GithubUserResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse user response: {}", e)))?;
+            .map_err(|e| AuthError::Provider(format!("Failed to parse user response: {e}")))?;
 
         // 3. Map to Identity
         let identity = Identity {
@@ -162,7 +164,7 @@ impl OAuthProvider for GithubProvider {
             .json::<GithubAccessTokenResponse>()
             .await
             .map_err(|e| {
-                AuthError::Provider(format!("Failed to parse refresh token response: {}", e))
+                AuthError::Provider(format!("Failed to parse refresh token response: {e}"))
             })?;
 
         Ok(OAuthToken {
@@ -201,8 +203,7 @@ impl OAuthProvider for GithubProvider {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             Err(AuthError::Provider(format!(
-                "Failed to revoke token: {}",
-                error_text
+                "Failed to revoke token: {error_text}"
             )))
         }
     }

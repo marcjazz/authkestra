@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let redirect_uri = std::env::var("OIDC_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/auth/oidc/callback".to_string());
 
-    println!("Initializing OIDC provider with issuer: {}", issuer);
+    println!("Initializing OIDC provider with issuer: {issuer}");
 
     // Demonstrate initialization/discovery
     let provider = OidcProvider::discover(client_id, client_secret, redirect_uri, &issuer).await?;
@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Use Redis if REDIS_URL is set
     if let Ok(redis_url) = std::env::var("REDIS_URL") {
-        println!("Using RedisStore at {}", redis_url);
+        println!("Using RedisStore at {redis_url}");
         let redis_store = Arc::new(RedisStore::new(&redis_url, "authkestra".into()).unwrap());
         builder = builder.session_store(redis_store);
     } else {

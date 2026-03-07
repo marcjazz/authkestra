@@ -27,7 +27,7 @@ impl ProviderMetadata {
     /// Fetches metadata from the issuer URL (appends /.well-known/openid-configuration)
     pub async fn discover(issuer_url: &str, client: reqwest::Client) -> Result<Self, AuthError> {
         let mut url = url::Url::parse(issuer_url)
-            .map_err(|e| AuthError::Discovery(format!("Invalid issuer URL: {}", e)))?;
+            .map_err(|e| AuthError::Discovery(format!("Invalid issuer URL: {e}")))?;
 
         {
             let mut path = url
@@ -44,7 +44,7 @@ impl ProviderMetadata {
             .map_err(|_| AuthError::Network)?
             .json::<ProviderMetadata>()
             .await
-            .map_err(|e| AuthError::Discovery(format!("Failed to parse metadata: {}", e)))?;
+            .map_err(|e| AuthError::Discovery(format!("Failed to parse metadata: {e}")))?;
 
         Ok(metadata)
     }

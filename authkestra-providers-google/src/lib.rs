@@ -86,14 +86,15 @@ impl OAuthProvider for GoogleProvider {
         };
 
         let mut url = format!(
-            "{}?client_id={}&redirect_uri={}&state={}&scope={}&response_type=code&access_type=offline&prompt=consent",
-            self.auth_url, self.client_id, self.redirect_uri, state, scope_param
+            "{auth_url}?client_id={client_id}&redirect_uri={redirect_uri}&state={state}&scope={scope_param}&response_type=code&access_type=offline&prompt=consent",
+            auth_url = self.auth_url,
+            client_id = self.client_id,
+            redirect_uri = self.redirect_uri
         );
 
         if let Some(challenge) = code_challenge {
             url.push_str(&format!(
-                "&code_challenge={}&code_challenge_method=S256",
-                challenge
+                "&code_challenge={challenge}&code_challenge_method=S256"
             ));
         }
 
@@ -127,7 +128,7 @@ impl OAuthProvider for GoogleProvider {
             .map_err(|_| AuthError::Network)?
             .json::<GoogleTokenResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {}", e)))?;
+            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {e}")))?;
 
         // 2. Get user information
         let user_response = self
@@ -135,14 +136,14 @@ impl OAuthProvider for GoogleProvider {
             .get(&self.userinfo_url)
             .header(
                 "Authorization",
-                format!("Bearer {}", token_response.access_token),
+                format!("Bearer {token}", token = token_response.access_token),
             )
             .send()
             .await
             .map_err(|_| AuthError::Network)?
             .json::<GoogleUserResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse user response: {}", e)))?;
+            .map_err(|e| AuthError::Provider(format!("Failed to parse user response: {e}")))?;
 
         // 3. Map to Identity
         let mut attributes = HashMap::new();
@@ -192,7 +193,7 @@ impl OAuthProvider for GoogleProvider {
             .json::<GoogleTokenResponse>()
             .await
             .map_err(|e| {
-                AuthError::Provider(format!("Failed to parse refresh token response: {}", e))
+                AuthError::Provider(format!("Failed to parse refresh token response: {e}"))
             })?;
 
         Ok(OAuthToken {
@@ -222,8 +223,7 @@ impl OAuthProvider for GoogleProvider {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             Err(AuthError::Provider(format!(
-                "Failed to revoke token: {}",
-                error_text
+                "Failed to revoke token: {error_text}"
             )))
         }
     }
@@ -238,9 +238,9 @@ mod tests {
     #[tokio::test]
     async fn test_exchange_code_for_identity() {
         let server = MockServer::start().await;
-        let auth_url = format!("{}/auth", server.uri());
-        let token_url = format!("{}/token", server.uri());
-        let userinfo_url = format!("{}/userinfo", server.uri());
+        let auth_url = format!("{uri}/auth", uri = server.uri());
+        let token_url = format!("{uri}/token", uri = server.uri());
+        let userinfo_url = format!("{uri}/userinfo", uri = server.uri());
 
         Mock::given(method("POST"))
             .and(path("/token"))

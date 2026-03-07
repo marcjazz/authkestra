@@ -66,8 +66,7 @@ impl DeviceFlow {
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AuthError::Provider(format!(
-                "Device authorization request failed: {}",
-                error_text
+                "Device authorization request failed: {error_text}"
             )));
         }
 

@@ -43,7 +43,7 @@ async fn main() -> std::io::Result<()> {
             .expect("Provider metadata discovery failed!");
 
     println!("🚀 Starting Actix Resource Server...");
-    println!("🔑 Using JWKS URI: {}", jwks_uri);
+    println!("🔑 Using JWKS URI: {jwks_uri}");
 
     // 2. Initialize the JWKS Cache
     let cache = Arc::new(JwksCache::new(jwks_uri, Duration::from_secs(3600)));

@@ -80,14 +80,15 @@ impl OAuthProvider for DiscordProvider {
         };
 
         let mut url = format!(
-            "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&state={}&scope={}",
-            self.client_id, urlencoding::encode(&self.redirect_uri), state, urlencoding::encode(&scope_param)
+            "https://discord.com/api/oauth2/authorize?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&state={state}&scope={scope_param}",
+            client_id = self.client_id,
+            redirect_uri = urlencoding::encode(&self.redirect_uri),
+            scope_param = urlencoding::encode(&scope_param)
         );
 
         if let Some(challenge) = code_challenge {
             url.push_str(&format!(
-                "&code_challenge={}&code_challenge_method=S256",
-                challenge
+                "&code_challenge={challenge}&code_challenge_method=S256"
             ));
         }
 
@@ -121,7 +122,7 @@ impl OAuthProvider for DiscordProvider {
             .map_err(|_| AuthError::Network)?
             .json::<DiscordAccessTokenResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {}", e)))?;
+            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {e}")))?;
 
         // 2. Get user information
         let user_response = self
@@ -129,14 +130,14 @@ impl OAuthProvider for DiscordProvider {
             .get(&self.user_url)
             .header(
                 "Authorization",
-                format!("Bearer {}", token_response.access_token),
+                format!("Bearer {token}", token = token_response.access_token),
             )
             .send()
             .await
             .map_err(|_| AuthError::Network)?
             .json::<DiscordUserResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse user response: {}", e)))?;
+            .map_err(|e| AuthError::Provider(format!("Failed to parse user response: {e}")))?;
 
         // 3. Map to Identity
         let username = if user_response.discriminator == "0" {
@@ -181,7 +182,7 @@ impl OAuthProvider for DiscordProvider {
             .json::<DiscordAccessTokenResponse>()
             .await
             .map_err(|e| {
-                AuthError::Provider(format!("Failed to parse refresh token response: {}", e))
+                AuthError::Provider(format!("Failed to parse refresh token response: {e}"))
             })?;
 
         Ok(OAuthToken {
@@ -215,8 +216,7 @@ impl OAuthProvider for DiscordProvider {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             Err(AuthError::Provider(format!(
-                "Failed to revoke token: {}",
-                error_text
+                "Failed to revoke token: {error_text}"
             )))
         }
     }
@@ -231,8 +231,8 @@ mod tests {
     #[tokio::test]
     async fn test_exchange_code_for_identity() {
         let server = MockServer::start().await;
-        let token_url = format!("{}/api/oauth2/token", server.uri());
-        let user_url = format!("{}/api/users/@me", server.uri());
+        let token_url = format!("{uri}/api/oauth2/token", uri = server.uri());
+        let user_url = format!("{uri}/api/users/@me", uri = server.uri());
 
         Mock::given(method("POST"))
             .and(path("/api/oauth2/token"))

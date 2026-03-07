@@ -52,13 +52,13 @@ impl SessionStore for SqlSessionStore<sqlx::Postgres> {
             .bind(now)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("Postgres load_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Postgres load_session error: {e}")))?;
 
         match row {
             Some(model) => {
                 let claims: HashMap<String, String> =
                     serde_json::from_str(&model.claims).map_err(|e| {
-                        AuthError::Session(format!("Claims deserialization error: {}", e))
+                        AuthError::Session(format!("Claims deserialization error: {e}"))
                     })?;
 
                 let session = Session {
@@ -87,7 +87,7 @@ impl SessionStore for SqlSessionStore<sqlx::Postgres> {
             self.table_name
         );
         let claims_json = serde_json::to_string(&session.identity.attributes)
-            .map_err(|e| AuthError::Session(format!("Claims serialization error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Claims serialization error: {e}")))?;
 
         sqlx::query(&query)
             .bind(&session.id)
@@ -99,7 +99,7 @@ impl SessionStore for SqlSessionStore<sqlx::Postgres> {
             .bind(session.expires_at)
             .execute(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("Postgres save_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Postgres save_session error: {e}")))?;
 
         Ok(())
     }
@@ -110,7 +110,7 @@ impl SessionStore for SqlSessionStore<sqlx::Postgres> {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("Postgres delete_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Postgres delete_session error: {e}")))?;
         Ok(())
     }
 }
@@ -130,13 +130,13 @@ impl SessionStore for SqlSessionStore<sqlx::Sqlite> {
             .bind(now)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("Sqlite load_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Sqlite load_session error: {e}")))?;
 
         match row {
             Some(model) => {
                 let claims: HashMap<String, String> =
                     serde_json::from_str(&model.claims).map_err(|e| {
-                        AuthError::Session(format!("Claims deserialization error: {}", e))
+                        AuthError::Session(format!("Claims deserialization error: {e}"))
                     })?;
 
                 let session = Session {
@@ -165,7 +165,7 @@ impl SessionStore for SqlSessionStore<sqlx::Sqlite> {
             self.table_name
         );
         let claims_json = serde_json::to_string(&session.identity.attributes)
-            .map_err(|e| AuthError::Session(format!("Claims serialization error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Claims serialization error: {e}")))?;
 
         sqlx::query(&query)
             .bind(&session.id)
@@ -177,7 +177,7 @@ impl SessionStore for SqlSessionStore<sqlx::Sqlite> {
             .bind(session.expires_at)
             .execute(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("Sqlite save_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Sqlite save_session error: {e}")))?;
 
         Ok(())
     }
@@ -188,7 +188,7 @@ impl SessionStore for SqlSessionStore<sqlx::Sqlite> {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("Sqlite delete_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Sqlite delete_session error: {e}")))?;
         Ok(())
     }
 }
@@ -208,13 +208,13 @@ impl SessionStore for SqlSessionStore<sqlx::MySql> {
             .bind(now)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("MySql load_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("MySql load_session error: {e}")))?;
 
         match row {
             Some(model) => {
                 let claims: HashMap<String, String> =
                     serde_json::from_str(&model.claims).map_err(|e| {
-                        AuthError::Session(format!("Claims deserialization error: {}", e))
+                        AuthError::Session(format!("Claims deserialization error: {e}"))
                     })?;
 
                 let session = Session {
@@ -248,7 +248,7 @@ impl SessionStore for SqlSessionStore<sqlx::MySql> {
             self.table_name
         );
         let claims_json = serde_json::to_string(&session.identity.attributes)
-            .map_err(|e| AuthError::Session(format!("Claims serialization error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Claims serialization error: {e}")))?;
 
         sqlx::query(&query)
             .bind(&session.id)
@@ -260,7 +260,7 @@ impl SessionStore for SqlSessionStore<sqlx::MySql> {
             .bind(session.expires_at)
             .execute(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("MySql save_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("MySql save_session error: {e}")))?;
 
         Ok(())
     }
@@ -271,7 +271,7 @@ impl SessionStore for SqlSessionStore<sqlx::MySql> {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| AuthError::Session(format!("MySql delete_session error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("MySql delete_session error: {e}")))?;
         Ok(())
     }
 }

@@ -12,12 +12,12 @@ pub struct RedisStore {
 impl RedisStore {
     pub fn new(redis_url: &str, prefix: String) -> Result<Self, AuthError> {
         let client = redis::Client::open(redis_url)
-            .map_err(|e| AuthError::Session(format!("Failed to open redis client: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Failed to open redis client: {e}")))?;
         Ok(Self { client, prefix })
     }
 
     fn key(&self, id: &str) -> String {
-        format!("{}:{}", self.prefix, id)
+        format!("{prefix}:{id}", prefix = self.prefix)
     }
 }
 
@@ -28,17 +28,17 @@ impl SessionStore for RedisStore {
             .client
             .get_multiplexed_async_connection()
             .await
-            .map_err(|e| AuthError::Session(format!("Redis connection error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Redis connection error: {e}")))?;
 
         let data: Option<String> = conn
             .get(self.key(id))
             .await
-            .map_err(|e| AuthError::Session(format!("Redis get error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Redis get error: {e}")))?;
 
         match data {
             Some(json) => {
                 let session: Session = serde_json::from_str(&json).map_err(|e| {
-                    AuthError::Session(format!("Session deserialization error: {}", e))
+                    AuthError::Session(format!("Session deserialization error: {e}"))
                 })?;
                 Ok(Some(session))
             }
@@ -51,10 +51,10 @@ impl SessionStore for RedisStore {
             .client
             .get_multiplexed_async_connection()
             .await
-            .map_err(|e| AuthError::Session(format!("Redis connection error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Redis connection error: {e}")))?;
 
         let json = serde_json::to_string(session)
-            .map_err(|e| AuthError::Session(format!("Session serialization error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Session serialization error: {e}")))?;
 
         let ttl = (session.expires_at - chrono::Utc::now()).num_seconds();
         if ttl <= 0 {
@@ -64,7 +64,7 @@ impl SessionStore for RedisStore {
         let _: () = conn
             .set_ex(self.key(&session.id), json, ttl as u64)
             .await
-            .map_err(|e| AuthError::Session(format!("Redis set error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Redis set error: {e}")))?;
 
         Ok(())
     }
@@ -74,12 +74,12 @@ impl SessionStore for RedisStore {
             .client
             .get_multiplexed_async_connection()
             .await
-            .map_err(|e| AuthError::Session(format!("Redis connection error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Redis connection error: {e}")))?;
 
         let _: () = conn
             .del(self.key(id))
             .await
-            .map_err(|e| AuthError::Session(format!("Redis del error: {}", e)))?;
+            .map_err(|e| AuthError::Session(format!("Redis del error: {e}")))?;
 
         Ok(())
     }

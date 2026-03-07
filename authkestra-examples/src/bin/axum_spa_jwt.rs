@@ -219,7 +219,7 @@ async fn callback_handler(
 
     match &res {
         Ok(_) => println!("DEBUG: callback_handler succeeded"),
-        Err((status, msg)) => println!("DEBUG: callback_handler failed: {} - {}", status, msg),
+        Err((status, msg)) => println!("DEBUG: callback_handler failed: {status} - {msg}"),
     }
 
     res

@@ -98,8 +98,7 @@ impl OAuthProvider for OidcProvider {
 
         if let Some(challenge) = code_challenge {
             url.push_str(&format!(
-                "&code_challenge={}&code_challenge_method=S256",
-                challenge
+                "&code_challenge={challenge}&code_challenge_method=S256"
             ));
         }
 
@@ -132,7 +131,7 @@ impl OAuthProvider for OidcProvider {
             .map_err(|_| AuthError::Network)?
             .json::<OidcTokenResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {}", e)))?;
+            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {e}")))?;
 
         let id_token = token_response
             .id_token

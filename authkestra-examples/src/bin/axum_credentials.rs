@@ -1,12 +1,11 @@
 use async_trait::async_trait;
 use authkestra::flow::{Authkestra, CredentialsFlow};
-use authkestra_axum::{AuthSession, AuthkestraAxumError};
+use authkestra_axum::AuthSession;
 use authkestra_core::{error::AuthError, state::Identity, CredentialsProvider, UserMapper};
 use authkestra_flow::{Configured, Missing};
-use authkestra_session::{MemoryStore, SessionConfig, SessionStore};
-use authkestra_token::TokenManager;
+use authkestra_session::{MemoryStore, SessionStore};
 use axum::{
-    extract::{Form, FromRef, State},
+    extract::{Form, State},
     response::{IntoResponse, Redirect},
     routing::{get, post},
     Router,
@@ -78,40 +77,13 @@ impl UserMapper for SqlxUserMapper {
 }
 
 // 4. App State
-#[derive(Clone)]
+use authkestra_axum::AuthkestraFromRef;
+
+#[derive(Clone, AuthkestraFromRef)]
 struct AppState<S = Missing, T = Missing> {
     auth_flow: Arc<CredentialsFlow<MyCredentialsProvider, SqlxUserMapper>>,
+    #[authkestra]
     authkestra: Authkestra<S, T>,
-}
-
-impl<S: Clone, T: Clone> FromRef<AppState<S, T>> for Authkestra<S, T> {
-    fn from_ref(state: &AppState<S, T>) -> Self {
-        state.authkestra.clone()
-    }
-}
-
-impl<S, T> FromRef<AppState<S, T>> for Result<Arc<dyn SessionStore>, AuthkestraAxumError>
-where
-    S: authkestra_flow::SessionStoreState,
-{
-    fn from_ref(state: &AppState<S, T>) -> Self {
-        Ok(state.authkestra.session_store.get_store())
-    }
-}
-
-impl<S, T> FromRef<AppState<S, T>> for SessionConfig {
-    fn from_ref(state: &AppState<S, T>) -> Self {
-        state.authkestra.session_config.clone()
-    }
-}
-
-impl<S, T> FromRef<AppState<S, T>> for Result<Arc<TokenManager>, AuthkestraAxumError>
-where
-    T: authkestra_flow::TokenManagerState,
-{
-    fn from_ref(state: &AppState<S, T>) -> Self {
-        Ok(state.authkestra.token_manager.get_manager())
-    }
 }
 
 #[tokio::main]
@@ -167,7 +139,7 @@ async fn login(
 
     // local_user is Some(LocalUser { ... }) because we used with_mapper
     if let Some(user) = &local_user {
-        println!("Logged in as local user: {:?}", user);
+        println!("Logged in as local user: {user:?}");
     }
 
     println!("Creating session for identity: {:?}", identity.external_id);

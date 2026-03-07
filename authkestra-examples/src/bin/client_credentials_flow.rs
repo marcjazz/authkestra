@@ -21,14 +21,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Successfully obtained access token!");
             println!("Access Token: {}", token.access_token);
             if let Some(expires_in) = token.expires_in {
-                println!("Expires in: {} seconds", expires_in);
+                println!("Expires in: {expires_in} seconds");
             }
             if let Some(scope) = token.scope {
-                println!("Scopes: {}", scope);
+                println!("Scopes: {scope}");
             }
         }
         Err(e) => {
-            eprintln!("Failed to obtain access token: {}", e);
+            eprintln!("Failed to obtain access token: {e}");
             println!("\nTip: Set CLIENT_ID, CLIENT_SECRET, and TOKEN_URL environment variables to test with a real provider.");
         }
     }
