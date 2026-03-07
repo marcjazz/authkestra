@@ -1,9 +1,8 @@
+#[cfg(any(feature = "flow", feature = "session", feature = "token"))]
 use authkestra_core::{
     pkce::Pkce,
     state::{Identity, OAuthToken},
 };
-#[cfg(all(feature = "flow", not(feature = "session")))]
-use authkestra_flow::SessionConfig;
 #[cfg(feature = "flow")]
 use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
