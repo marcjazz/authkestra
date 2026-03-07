@@ -8,25 +8,27 @@ if [ -z "$CRATE" ]; then
   exit 1
 fi
 
-echo "Preparing publish for $CRATE"
-
-# Validate packaging first
-cargo publish --dry-run -p "$CRATE"
+echo "Preparing publish check for $CRATE"
 
 set +e
-PUBLISH_OUTPUT=$(cargo publish -p "$CRATE" 2>&1)
-PUBLISH_EXIT=$?
+DRY_RUN_OUTPUT=$(cargo publish --dry-run -p "$CRATE" 2>&1)
+DRY_RUN_EXIT=$?
 set -e
 
-if [ $PUBLISH_EXIT -ne 0 ]; then
-  if echo "$PUBLISH_OUTPUT" | grep -q "already exists on crates.io index"; then
-    echo "⚠️  $CRATE already published. Skipping."
+if [ $DRY_RUN_EXIT -ne 0 ]; then
+  if echo "$DRY_RUN_OUTPUT" | grep -q "already exists on crates.io index"; then
+    echo "⚠️  Crate version already exists. Skipping publish."
     exit 0
   fi
 
-  echo "$PUBLISH_OUTPUT"
-  exit $PUBLISH_EXIT
+  echo "❌ Dry-run failed:"
+  echo "$DRY_RUN_OUTPUT"
+  exit $DRY_RUN_EXIT
 fi
 
-echo "⏳ Waiting for index propagation"
+echo "Dry-run successful. Publishing $CRATE..."
+
+cargo publish -p "$CRATE"
+
+echo "⏳ Waiting for registry index propagation"
 sleep 20
