@@ -120,6 +120,23 @@ impl FromRef<AppState> for Arc<AuthkestraGuard<User>> {
     }
 }
 
+fn app() -> Router {
+    let guard = AuthkestraGuard::builder()
+        .strategy(JwtStrategy::new(jwt_config))
+        .strategy(SessionStrategy::new(session_store, "session_cookie"))
+        .policy(AuthPolicy::FirstSuccess)
+        .build();
+
+    let state = AppState {
+        guard: Arc::new(guard),
+    };
+
+    Router::new()
+        .route("/protected", get(protected_handler))
+        .layer(CookieManagerLayer::new())
+        .with_state(state)
+}
+
 async fn protected_handler(Auth(user): Auth<User>) -> String {
     format!("Welcome, user {}!", user.id)
 }

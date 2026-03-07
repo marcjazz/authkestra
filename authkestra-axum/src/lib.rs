@@ -26,6 +26,7 @@ pub struct AuthkestraState<S = Missing, T = Missing> {
     pub authkestra: Authkestra<S, T>,
 }
 
+#[cfg(feature = "flow")]
 impl<S, T> From<Authkestra<S, T>> for AuthkestraState<S, T> {
     fn from(authkestra: Authkestra<S, T>) -> Self {
         Self { authkestra }
@@ -33,6 +34,7 @@ impl<S, T> From<Authkestra<S, T>> for AuthkestraState<S, T> {
 }
 
 /// The extractor for a validated session.
+#[cfg(feature = "session")]
 pub struct AuthSession(pub Session);
 
 #[cfg(feature = "session")]
