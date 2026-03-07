@@ -1,169 +1,104 @@
-name: Publish Rust Crates to crates.io
+name: Publish Rust Crates
 
 on:
   workflow_dispatch:
     inputs:
       deploy_environment:
-        description: "Deployment Environment"
-        required: true
+        description: Deployment environment
+        required: false
+        default: pre-prod
         type: string
 
   release:
     types: [created]
 
 jobs:
-  publish_crates:
+  publish:
+    name: Publish / ${{ matrix.crate }}
     runs-on: ubuntu-latest
-    environment: ${{ inputs.deploy_environment || 'pre-prod' }}
+    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        phase: [foundation, core, frameworks, root]
+        include:
+          # foundation layer
+          - phase: foundation
+            crate: authkestra-core
+          - phase: foundation
+            crate: authkestra-macros
+
+          # core dependents
+          - phase: core
+            crate: authkestra-token
+          - phase: core
+            crate: authkestra-session
+          - phase: core
+            crate: authkestra-guard
+          - phase: core
+            crate: authkestra-flow
+          - phase: core
+            crate: authkestra-providers-github
+          - phase: core
+            crate: authkestra-providers-google
+          - phase: core
+            crate: authkestra-providers-discord
+          - phase: core
+            crate: authkestra-oidc
+
+          # framework adapters
+          - phase: frameworks
+            crate: authkestra-axum
+          - phase: frameworks
+            crate: authkestra-actix
+
+          # final crate
+          - phase: root
+            crate: authkestra
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
 
-      - name: Configure cargo credentials
+      - name: Publish crate
         run: |
-          mkdir -p $HOME/.cargo
-          cat > $HOME/.cargo/config.toml <<EOF
-          [registry]
-          token = "${{ secrets.CARGO_REGISTRY_TOKEN }}"
-          EOF
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CRATE="${{ matrix.crate }}"
 
-      - name: Publish authkestra-core
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-core..."
-          if cargo publish --package "authkestra-core" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-core already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-core"
-            sleep 10
+          echo "Publishing $CRATE"
+
+          VERSION=$(cargo metadata --no-deps --format-version=1 \
+            | jq -r ".packages[] | select(.name==\"$CRATE\") | .version")
+
+          if [ -z "$VERSION" ]; then
+            echo "❌ Failed to determine version for $CRATE"
+            exit 1
           fi
-      - name: Publish authkestra-token
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-token..."
-          if cargo publish --package "authkestra-token" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-token already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-token"
-            sleep 10
+
+          echo "Detected version: $VERSION"
+
+          # Check if crate exists in registry
+          SEARCH_RESULT=$(cargo search "$CRATE" --limit 1 || true)
+
+          if echo "$SEARCH_RESULT" | grep -q "^$CRATE ="; then
+            # Extract published version
+            PUBLISHED_VERSION=$(echo "$SEARCH_RESULT" \
+              | grep "^$CRATE =" \
+              | sed -E 's/^.*"([^"]+)".*/\1/')
+
+            if [ "$PUBLISHED_VERSION" = "$VERSION" ]; then
+              echo "⚠️  $CRATE $VERSION already exists on crates.io. Skipping."
+              exit 0
+            fi
           fi
-      - name: Publish authkestra-session
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-session..."
-          if cargo publish --package "authkestra-session" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-session already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-session"
-            sleep 10
-          fi
-      - name: Publish authkestra-guard
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-guard..."
-          if cargo publish --package "authkestra-guard" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-guard already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-guard"
-            sleep 10
-          fi
-      - name: Publish authkestra-oidc
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-oidc..."
-          if cargo publish --package "authkestra-oidc" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-oidc already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-oidc"
-            sleep 10
-          fi
-      - name: Publish authkestra-providers-github
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-providers-github..."
-          if cargo publish --package "authkestra-providers-github" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-providers-github already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-providers-github"
-            sleep 10
-          fi
-      - name: Publish authkestra-providers-google
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-providers-google..."
-          if cargo publish --package "authkestra-providers-google" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-providers-google already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-providers-google"
-            sleep 10
-          fi
-      - name: Publish authkestra-providers-discord
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-providers-discord..."
-          if cargo publish --package "authkestra-providers-discord" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-providers-discord already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-providers-discord"
-            sleep 10
-          fi
-      - name: Publish authkestra-flow
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-flow..."
-          if cargo publish --package "authkestra-flow" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-flow already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-flow"
-            sleep 10
-          fi
-      - name: Publish authkestra-axum
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-axum..."
-          if cargo publish --package "authkestra-axum" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-axum already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-axum"
-            sleep 10
-          fi
-      - name: Publish authkestra-actix
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra-actix..."
-          if cargo publish --package "authkestra-actix" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra-actix already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra-actix"
-            sleep 10
-          fi
-      - name: Publish authkestra
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "Publishing authkestra..."
-          if cargo publish --package "authkestra" --dry-run 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version for authkestra already exists on crates.io, skipping."
-          else
-            cargo publish --package "authkestra"
-            sleep 10
-          fi
+
+          cargo publish -p "$CRATE"
+
+          echo "⏳ Waiting for index propagation"
+          sleep 20
