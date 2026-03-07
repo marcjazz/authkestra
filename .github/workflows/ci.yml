@@ -3,24 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "README.md"
-      - "authkestra/**"
-      - "authkestra-*/**"
-      - ".github/workflows/ci.yml"
   pull_request:
     # Trigger on any pull request
     types: [opened, synchronize, reopened]
-
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "README.md"
-      - "authkestra/**"
-      - "authkestra-*/**"
-      - ".github/workflows/ci.yml"
 
 jobs:
   test:
