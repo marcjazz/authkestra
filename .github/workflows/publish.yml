@@ -70,19 +70,35 @@ jobs:
       - name: Publish crate
         run: |
           CRATE="${{ matrix.crate }}"
-          echo "Publishing $CRATE..."
+
+          echo "Publishing $CRATE"
 
           VERSION=$(cargo metadata --no-deps --format-version=1 \
             | jq -r ".packages[] | select(.name==\"$CRATE\") | .version")
 
-          RESPONSE=$(curl -s https://crates.io/api/v1/crates/$CRATE)
+          if [ -z "$VERSION" ]; then
+            echo "❌ Failed to determine version for $CRATE"
+            exit 1
+          fi
 
-          if echo "$RESPONSE" | jq -e '.versions' >/dev/null 2>&1; then
-            if echo "$RESPONSE" | jq -r '.versions[].num' | grep -q "$VERSION"; then
-              echo "::warning::$CRATE $VERSION already exists. Skipping."
+          echo "Detected version: $VERSION"
+
+          # Check if crate exists in registry
+          SEARCH_RESULT=$(cargo search "$CRATE" --limit 1 || true)
+
+          if echo "$SEARCH_RESULT" | grep -q "^$CRATE ="; then
+            # Extract published version
+            PUBLISHED_VERSION=$(echo "$SEARCH_RESULT" \
+              | grep "^$CRATE =" \
+              | sed -E 's/^.*"([^"]+)".*/\1/')
+
+            if [ "$PUBLISHED_VERSION" = "$VERSION" ]; then
+              echo "⚠️  $CRATE $VERSION already exists on crates.io. Skipping."
               exit 0
             fi
           fi
 
-          cargo publish -p ${{ matrix.crate }}
+          cargo publish -p "$CRATE"
+
+          echo "⏳ Waiting for index propagation"
           sleep 20

@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'README.md'
+      - 'authkestra/**'
+      - 'authkestra-*/**'
+      - '.github/workflows/deploy-docs.yml'
  
 permissions:
   contents: write
