@@ -1,9 +1,9 @@
 (function() {
-    var implementors = Object.fromEntries([["authkestra_flow",[]]]);
+    const implementors = Object.fromEntries([["authkestra_flow",[]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":57,"fragment_lengths":[22]}
+//{"start":59,"fragment_lengths":[22]}
