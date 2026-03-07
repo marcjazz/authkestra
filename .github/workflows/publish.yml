@@ -13,8 +13,8 @@ on:
     types: [created]
 
 jobs:
-  publish:
-    name: Publish / ${{ matrix.crate }}
+  publish-foundation:
+    name: Publish foundation / ${{ matrix.crate }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
     env:
@@ -22,43 +22,11 @@ jobs:
 
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 2
       matrix:
-        phase: [foundation, core, frameworks, root]
-        include:
-          # foundation layer
-          - phase: foundation
-            crate: authkestra-core
-          - phase: foundation
-            crate: authkestra-macros
-
-          # core dependents
-          - phase: core
-            crate: authkestra-token
-          - phase: core
-            crate: authkestra-session
-          - phase: core
-            crate: authkestra-guard
-          - phase: core
-            crate: authkestra-flow
-          - phase: core
-            crate: authkestra-providers-github
-          - phase: core
-            crate: authkestra-providers-google
-          - phase: core
-            crate: authkestra-providers-discord
-          - phase: core
-            crate: authkestra-oidc
-
-          # framework adapters
-          - phase: frameworks
-            crate: authkestra-axum
-          - phase: frameworks
-            crate: authkestra-actix
-
-          # final crate
-          - phase: root
-            crate: authkestra
+        crate:
+          - authkestra-core
+          - authkestra-macros
 
     steps:
       - name: Checkout repository
@@ -68,37 +36,87 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Publish crate
-        run: |
-          CRATE="${{ matrix.crate }}"
+        run: bash .github/scripts/publish-crate.sh "${{ matrix.crate }}"
 
-          echo "Publishing $CRATE"
+  publish-core:
+    name: Publish core / ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    needs: publish-foundation
+    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-          VERSION=$(cargo metadata --no-deps --format-version=1 \
-            | jq -r ".packages[] | select(.name==\"$CRATE\") | .version")
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        crate:
+          - authkestra-token
+          - authkestra-session
+          - authkestra-guard
+          - authkestra-flow
+          - authkestra-providers-github
+          - authkestra-providers-google
+          - authkestra-providers-discord
+          - authkestra-oidc
 
-          if [ -z "$VERSION" ]; then
-            echo "❌ Failed to determine version for $CRATE"
-            exit 1
-          fi
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-          echo "Detected version: $VERSION"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-          # Check if crate exists in registry
-          SEARCH_RESULT=$(cargo search "$CRATE" --limit 1 || true)
+      - name: Publish crate
+        run: bash .github/scripts/publish-crate.sh "${{ matrix.crate }}"
 
-          if echo "$SEARCH_RESULT" | grep -q "^$CRATE ="; then
-            # Extract published version
-            PUBLISHED_VERSION=$(echo "$SEARCH_RESULT" \
-              | grep "^$CRATE =" \
-              | sed -E 's/^.*"([^"]+)".*/\1/')
+  publish-frameworks:
+    name: Publish frameworks / ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    needs: publish-core
+    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-            if [ "$PUBLISHED_VERSION" = "$VERSION" ]; then
-              echo "⚠️  $CRATE $VERSION already exists on crates.io. Skipping."
-              exit 0
-            fi
-          fi
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        crate:
+          - authkestra-axum
+          - authkestra-actix
 
-          cargo publish -p "$CRATE"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-          echo "⏳ Waiting for index propagation"
-          sleep 20
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish crate
+        run: bash .github/scripts/publish-crate.sh "${{ matrix.crate }}"
+
+  publish-root:
+    name: Publish root / ${{ matrix.crate }}
+    runs-on: ubuntu-latest
+    needs: publish-frameworks
+    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        crate:
+          - authkestra
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish crate
+        run: bash .github/scripts/publish-crate.sh "${{ matrix.crate }}"
