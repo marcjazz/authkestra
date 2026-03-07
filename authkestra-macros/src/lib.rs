@@ -1,3 +1,4 @@
+#[cfg(feature = "axum")]
 use proc_macro::TokenStream;
 
 #[cfg(feature = "axum")]
