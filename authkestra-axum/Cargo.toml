@@ -9,10 +9,8 @@ keywords = ["auth", "axum", "web", "middleware"]
 categories = ["authentication", "web-programming::http-server"]
 
 [dependencies]
-authkestra-core = { version = "0.1.2", path = "../authkestra-core" }
+authkestra-engine = { version = "0.1.2", path = "../authkestra-engine" }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session", optional = true }
-authkestra-flow = { version = "0.1.2", path = "../authkestra-flow", optional = true }
-authkestra-token = { version = "0.1.2", path = "../authkestra-token", optional = true }
 authkestra-guard = { version = "0.1.0", path = "../authkestra-guard", optional = true }
 authkestra-macros = { version = "0.1.0", path = "../authkestra-macros", features = ["axum"], optional = true }
 axum = "0.8.8"
@@ -27,7 +25,7 @@ chrono = { version = "0.4", features = ["serde"] }
 [features]
 default = ["macros"]
 macros = ["authkestra-macros"]
-session = ["dep:authkestra-session"]
-flow = ["dep:authkestra-flow", "authkestra-flow/session", "authkestra-flow/token"]
-token = ["dep:authkestra-token"]
+session = ["dep:authkestra-session", "authkestra-engine/session"]
+flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engine/token"]
+token = ["authkestra-engine/token"]
 guard = ["dep:authkestra-guard"]

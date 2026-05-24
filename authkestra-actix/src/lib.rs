@@ -1,17 +1,17 @@
 #[cfg(any(feature = "session", feature = "token", feature = "guard"))]
 use actix_web::{dev::Payload, http::header, web, Error, FromRequest, HttpRequest};
 #[cfg(all(feature = "flow", feature = "session"))]
-pub use authkestra_flow::SessionStoreState;
+pub use authkestra_engine::SessionStoreState;
+#[cfg(feature = "token")]
+pub use authkestra_engine::TokenManager;
 #[cfg(all(feature = "flow", feature = "token"))]
-pub use authkestra_flow::TokenManagerState;
+pub use authkestra_engine::TokenManagerState;
 #[cfg(feature = "flow")]
-pub use authkestra_flow::{Authkestra, SessionConfig};
+pub use authkestra_engine::{Authkestra, SessionConfig};
 #[cfg(all(feature = "flow", any(feature = "session", feature = "token")))]
-pub use authkestra_flow::{Configured, Missing};
+pub use authkestra_engine::{Configured, Missing};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionStore};
-#[cfg(feature = "token")]
-pub use authkestra_token::TokenManager;
 #[cfg(any(feature = "session", feature = "token", feature = "guard"))]
 use futures::future::LocalBoxFuture;
 #[cfg(any(feature = "session", feature = "token", feature = "guard"))]
@@ -85,7 +85,7 @@ impl FromRequest for AuthSession {
             .cloned()
             .or_else(|| {
                 req.app_data::<web::Data<
-                    Authkestra<authkestra_flow::Configured<Arc<dyn SessionStore>>, Missing>,
+                    Authkestra<authkestra_engine::Configured<Arc<dyn SessionStore>>, Missing>,
                 >>()
                 .map(|a| web::Data::new(a.session_config.clone()))
             })
@@ -142,7 +142,7 @@ impl FromRequest for AuthSession {
 ///
 /// Expects an `Authorization: Bearer <token>` header.
 #[cfg(feature = "token")]
-pub struct AuthToken(pub authkestra_token::Claims);
+pub struct AuthToken(pub authkestra_engine::Claims);
 
 #[cfg(all(feature = "flow", feature = "token"))]
 impl FromRequest for AuthToken {

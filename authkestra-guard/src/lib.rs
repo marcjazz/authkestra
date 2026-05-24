@@ -1,5 +1,5 @@
-use authkestra_core::error::AuthError;
-use authkestra_core::strategy::AuthenticationStrategy;
+use authkestra_engine::error::AuthError;
+use authkestra_engine::strategy::AuthenticationStrategy;
 use http::request::Parts;
 
 pub mod jwt;

@@ -1,11 +1,11 @@
 #[cfg(any(feature = "flow", feature = "session", feature = "token"))]
 use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
 #[cfg(feature = "flow")]
-use authkestra_core::pkce::Pkce;
+use authkestra_engine::pkce::Pkce;
 #[cfg(all(feature = "flow", not(feature = "session")))]
-use authkestra_flow::SessionConfig;
+use authkestra_engine::SessionConfig;
 #[cfg(feature = "flow")]
-use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
+use authkestra_engine::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
 use std::sync::Arc;
@@ -23,11 +23,11 @@ pub struct OAuthLoginParams {
 }
 
 #[cfg(feature = "session")]
-pub fn to_actix_same_site(ss: authkestra_core::SameSite) -> actix_web::cookie::SameSite {
+pub fn to_actix_same_site(ss: authkestra_engine::SameSite) -> actix_web::cookie::SameSite {
     match ss {
-        authkestra_core::SameSite::Lax => actix_web::cookie::SameSite::Lax,
-        authkestra_core::SameSite::Strict => actix_web::cookie::SameSite::Strict,
-        authkestra_core::SameSite::None => actix_web::cookie::SameSite::None,
+        authkestra_engine::SameSite::Lax => actix_web::cookie::SameSite::Lax,
+        authkestra_engine::SameSite::Strict => actix_web::cookie::SameSite::Strict,
+        authkestra_engine::SameSite::None => actix_web::cookie::SameSite::None,
     }
 }
 
@@ -53,8 +53,8 @@ pub fn create_actix_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<
 #[cfg(feature = "flow")]
 pub fn initiate_oauth_login<P, M>(flow: &OAuth2Flow<P, M>, scopes: &[&str]) -> HttpResponse
 where
-    P: authkestra_core::OAuthProvider,
-    M: authkestra_core::UserMapper,
+    P: authkestra_engine::OAuthProvider + 'static,
+    M: authkestra_engine::UserMapper + 'static,
 {
     initiate_oauth_login_erased(flow, scopes)
 }
@@ -64,7 +64,7 @@ pub fn initiate_oauth_login_erased(flow: &dyn ErasedOAuthFlow, scopes: &[&str]) 
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_flow_{csrf_state}");
+    let cookie_name = format!("authkestra_engine_{csrf_state}");
 
     let cookie = Cookie::build(cookie_name, pkce.code_verifier)
         .path("/")
@@ -91,8 +91,8 @@ pub async fn handle_oauth_callback<P, M>(
     success_url: &str,
 ) -> Result<HttpResponse, actix_web::Error>
 where
-    P: authkestra_core::OAuthProvider + Send + Sync,
-    M: authkestra_core::UserMapper + Send + Sync,
+    P: authkestra_engine::OAuthProvider + Send + Sync + 'static,
+    M: authkestra_engine::UserMapper + Send + Sync + 'static,
 {
     handle_oauth_callback_erased(req, flow, params, store, config, success_url).await
 }
@@ -106,7 +106,7 @@ pub async fn handle_oauth_callback_erased(
     config: SessionConfig,
     success_url: &str,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let cookie_name = format!("authkestra_flow_{}", params.state);
+    let cookie_name = format!("authkestra_engine_{}", params.state);
     let pkce_verifier = req
         .cookie(&cookie_name)
         .map(|c| c.value().to_string())
@@ -190,7 +190,7 @@ pub async fn actix_login_handler<S, T>(
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(&scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_flow_{csrf_state}");
+    let cookie_name = format!("authkestra_engine_{csrf_state}");
     let cookie = Cookie::build(cookie_name, pkce.code_verifier)
         .path("/")
         .http_only(true)
@@ -226,7 +226,7 @@ pub async fn actix_callback_handler<S, T>(
     params: web::Query<OAuthCallbackParams>,
 ) -> actix_web::Result<impl actix_web::Responder>
 where
-    S: authkestra_flow::SessionStoreState,
+    S: authkestra_engine::SessionStoreState,
 {
     let provider = path.into_inner();
     let flow = match authkestra.providers.get(&provider) {
@@ -269,7 +269,7 @@ pub async fn actix_logout_handler<S, T>(
     authkestra: web::Data<Authkestra<S, T>>,
 ) -> actix_web::Result<impl actix_web::Responder>
 where
-    S: authkestra_flow::SessionStoreState,
+    S: authkestra_engine::SessionStoreState,
 {
     logout(
         req,
@@ -313,10 +313,10 @@ pub async fn handle_oauth_callback_jwt_erased(
     flow: &dyn ErasedOAuthFlow,
     req: &HttpRequest,
     params: OAuthCallbackParams,
-    token_manager: Arc<authkestra_token::TokenManager>,
+    token_manager: Arc<authkestra_engine::TokenManager>,
     expires_in_secs: u64,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let cookie_name = format!("authkestra_flow_{}", params.state);
+    let cookie_name = format!("authkestra_engine_{}", params.state);
 
     let pkce_verifier = req
         .cookie(&cookie_name)
@@ -364,12 +364,12 @@ pub async fn handle_oauth_callback_jwt<P, M>(
     flow: &OAuth2Flow<P, M>,
     req: &HttpRequest,
     params: OAuthCallbackParams,
-    token_manager: Arc<authkestra_token::TokenManager>,
+    token_manager: Arc<authkestra_engine::TokenManager>,
     expires_in_secs: u64,
 ) -> Result<HttpResponse, actix_web::Error>
 where
-    P: authkestra_core::OAuthProvider + Send + Sync,
-    M: authkestra_core::UserMapper + Send + Sync,
+    P: authkestra_engine::OAuthProvider + Send + Sync + 'static,
+    M: authkestra_engine::UserMapper + Send + Sync + 'static,
 {
     handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs).await
 }

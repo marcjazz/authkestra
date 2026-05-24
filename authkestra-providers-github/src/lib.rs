@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use authkestra_core::{error::AuthError, state::Identity, state::OAuthToken, OAuthProvider};
+use authkestra_engine::{error::AuthError, state::Identity, state::OAuthToken, OAuthProvider};
 use serde::Deserialize;
 use std::collections::HashMap;
 

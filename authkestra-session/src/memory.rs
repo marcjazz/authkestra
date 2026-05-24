@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use authkestra_core::error::AuthError;
+use authkestra_engine::error::AuthError;
 
 use crate::{Session, SessionStore};
 
@@ -43,7 +43,7 @@ impl SessionStore for MemoryStore {
 mod tests {
     use std::collections::HashMap;
 
-    use authkestra_core::state::Identity;
+    use authkestra_engine::state::Identity;
 
     use super::*;
 

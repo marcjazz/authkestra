@@ -1,9 +1,9 @@
+#[cfg(feature = "token")]
+pub use authkestra_engine::TokenManager;
 #[cfg(feature = "flow")]
-pub use authkestra_flow::{Authkestra, Missing, SessionConfig};
+pub use authkestra_engine::{Authkestra, Missing, SessionConfig};
 #[cfg(feature = "guard")]
 pub use authkestra_guard::AuthkestraGuard;
-#[cfg(feature = "token")]
-pub use authkestra_token::TokenManager;
 use axum::extract::FromRef;
 #[cfg(feature = "session")]
 use axum::extract::FromRequestParts;
@@ -68,7 +68,7 @@ where
 ///
 /// Expects an `Authorization: Bearer <token>` header.
 #[cfg(feature = "token")]
-pub struct AuthToken(pub authkestra_token::Claims);
+pub struct AuthToken(pub authkestra_engine::Claims);
 
 #[cfg(feature = "token")]
 impl<S> FromRequestParts<S> for AuthToken

@@ -1,5 +1,5 @@
 use authkestra_axum::Jwt;
-use authkestra_core::discovery::ProviderMetadata;
+use authkestra_engine::discovery::ProviderMetadata;
 use authkestra_guard::jwt::JwksCache;
 use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
 use jsonwebtoken::{Algorithm, Validation};

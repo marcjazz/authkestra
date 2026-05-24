@@ -3,16 +3,16 @@
 //! This crate serves as a facade, re-exporting functionality from other `authkestra-*` crates
 //! based on enabled features.
 
-pub use authkestra_core as core;
+pub use authkestra_engine as core;
 
 #[cfg(feature = "flow")]
-pub use authkestra_flow as flow;
+pub use authkestra_engine as flow;
 
 #[cfg(feature = "session")]
 pub use authkestra_session as session;
 
 #[cfg(feature = "token")]
-pub use authkestra_token as token;
+pub use authkestra_engine as token;
 
 #[cfg(feature = "oidc")]
 pub use authkestra_oidc as oidc;
