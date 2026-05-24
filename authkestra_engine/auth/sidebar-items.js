@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SameSite"],"mod":["discovery","error","pkce","session","state","strategy"],"trait":["CredentialsProvider","ErasedOAuthFlow","OAuthProvider","UserMapper"]};
