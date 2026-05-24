@@ -1,21 +1,25 @@
 # Chapter 4: Flows and Protocols
 
-Authentication is rarely a simple "check password" operation. It often involves multi-step flows, redirects, and state management. Our strategy defines flows not just as hardcoded functions, but as highly composable, declarative units within the `authkestra-engine`.
+Authentication and delegation in the 2020s require more than just simple redirects. Authkestra implements protocols that are secure-by-default and optimized for the autonomous machine economy.
 
-## Supported Protocols
+## 1. OAuth 2.1: The Modern Baseline
+Authkestra strictly adheres to the **OAuth 2.1** consolidation.
+- **Mandatory PKCE**: Proof Key for Code Exchange is required for all flows.
+- **No Implicit Grant**: Legacy insecure flows are deprecated.
+- **Sender-Constraint**: Native support for **DPoP** (Demonstrating Proof-of-Possession) ensuring tokens cannot be replayed if stolen.
 
-Authkestra aims to support out-of-the-box:
+## 2. GNAP (Grant Negotiation and Authorization Protocol)
+The **GNAP (RFC 9635)** implementation in `authkestra-engine` represents the future of delegation.
+- **Intent-Driven**: Clients negotiate specific access rights in a single JSON request.
+- **Dynamic Client Instances**: No more static `client_id` bottlenecks. Software instances negotiate keys on-the-fly.
+- **Decoupled Interaction**: Support for multiple interaction modes, including QR codes, device codes, and app-to-app redirects.
 
-- **OAuth2 / OIDC:** The standard for delegated authorization and identity.
-- **SAML 2.0:** Crucial for enterprise SSO integrations.
-- **Passkeys / WebAuthn:** Passwordless, biometric-based authentication.
-- **Magic Links / OTP:** Email or SMS based one-time passwords.
+## 3. Verifiable Presentations (OIDC4VP)
+As users transition to digital wallets (e.g., the EUDI Wallet), Authkestra provides the infrastructure to act as a **Verifier**.
+- **OIDC4VP Support**: Requesting verifiable credentials directly within an OpenID Connect flow.
+- **Privacy-Preserving Proofs**: Support for validating **BBS+** signatures and **SD-JWTs**, allowing for selective disclosure without tracking.
 
-## Managing Flow State
-
-Many protocols (like OAuth2's Authorization Code Flow) require maintaining state across multiple HTTP requests. Through the engine's `Flow` trait, we enforce consistent, secure lifecycle management for these intermediate phases.
-
-### Architectural Decisions & Future Direction
-
-- **State Storage:** For infinite horizontal scalability, intermediate flow state (like `state` and `nonce` parameters in OAuth) should be stored in **encrypted, short-lived cookies** (stateless), not in a database. Hitting a database twice just to validate an OAuth state token creates unnecessary bottlenecks under high load.
-- **OIDC Discovery:** Discovery documents must be fetched at startup and cached in memory. A background `tokio::spawn` task should refresh them periodically based on the `Cache-Control` headers. Fetching discovery documents per-request will destroy latency and rapidly hit rate limits at identity providers.
+## 4. WebAuthn & PQC
+Our WebAuthn implementation is being upgraded to handle **Post-Quantum Cryptography**.
+- **ML-DSA Support**: Preparing for the day when classical ECC and RSA are broken by quantum computers.
+- **Fragmented Payloads**: Specialized transport handling to manage the multi-kilobyte PQC signatures that exceed standard CTAP-HID limits.

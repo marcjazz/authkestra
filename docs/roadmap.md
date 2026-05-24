@@ -1,117 +1,70 @@
-# Authkestra Roadmap
+# Authkestra Roadmap (Next-Gen Identity Edition)
 
-This roadmap is designed for contributors and maintainers to guide Authkestra from its current state to a next-generation, community-driven authentication platform.
+This roadmap outlines the evolution of Authkestra into a next-generation identity platform, focusing on verifiable primitives, quantum resilience, and continuous trust.
 
 ---
 
 ## 0. North Star
 
-> **Authkestra = composable, verifiable auth primitives for humans and AI systems.**
+> **Authkestra = composable, verifiable, and quantum-resistant auth primitives for humans and AI systems.**
 
-- Embedded like better-auth
-- Deployable like Keycloak
-- Safer for AI-generated systems
+- **Verifiable by Design**: Built on W3C Verifiable Credentials and BBS+ Zero-Knowledge Proofs.
+- **Quantum-Safe**: Native support for Post-Quantum Cryptography (ML-DSA).
+- **Continuous Trust**: Real-time session attenuation via the Shared Signals Framework (SSF/CAEP).
+- **Modern Delegation**: Transitioning from OAuth 2.1 baseline to GNAP (OAuth 3.0) intent-driven authorization.
 
 ---
 
-## 1. Foundational Concepts
+## 1. Core Pillars (The "Next-Gen" Vision)
 
-Before contributing, review these:
-
-- [OAuth 2.0](https://oauth.net/2/)
-- [OpenID Connect](https://openid.net/specs/openid-connect-core-1_0.html)
-- [PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
-- [JWT](https://jwt.io/introduction)
-- [PASETO](https://paseto.io/)
-- [RBAC](https://auth0.com/docs/manage-users/access-control/rbac)
-- [ABAC](https://en.wikipedia.org/wiki/Attribute-based_access_control)
-- [WebAuthn Guide](https://webauthn.guide/)
+1.  **GNAP & OAuth 2.1**: Move beyond rigid redirects. Support dynamic client instances and intent-driven negotiation.
+2.  **Decentralized Identity**: Native integration for European Digital Identity Wallets (eIDAS 2.0), DIDs, and OIDC4VP.
+3.  **Privacy-Enhanced Crypto**: SD-JWT and BBS+ signatures for selective disclosure and unlinkable proofs.
+4.  **Continuous Access Evaluation (CAEP)**: Shifting from point-in-time auth to dynamic risk-based session management.
+5.  **Policy-as-Code (ReBAC/ABAC)**: Decoupling authorization logic into Zanzibar-style relationship graphs and declarative policy engines (AWS Cedar).
 
 ---
 
 ## 2. Architecture & Crate Structure
 
-**Target Zones:**
+**The Unified Engine:**
+- `authkestra-engine`: The central brain. Framework-agnostic. Implements the core orchestrator and traits.
 
-1. Engine (core logic, no frameworks)
-2. Extensions (providers, flows, storage)
-3. Adapters (axum, actix, etc.)
+**Extension Ecosystem:**
+- `authkestra-webauthn`: PQC-ready hardware-backed authentication.
+- `authkestra-vc`: Verifiable Credentials & OIDC4VP implementation.
+- `authkestra-policy`: Fine-grained ReBAC/ABAC enforcement.
+- `authkestra-ssf`: Shared Signals Framework receiver/transmitter.
+- `authkestra-session-*`: Pluggable storage backends (Redis, SQL, Memory).
 
-**Proposed Crates:**
-
-- `authkestra-engine` (core, flow, token merged)
-- `authkestra-token` (token creation)
-- `authkestra-resource` (validation, enforcement)
-- `authkestra-session` (traits only)
-- `authkestra-session-memory`, `-redis`, `-sql` (implementations)
-- `authkestra-oidc`, `authkestra-providers-*` (providers)
-- `authkestra-axum`, `authkestra-actix` (adapters)
-- `authkestra-macros` (optional)
-- `authkestra-examples` (integration tests, docs)
+**Adapters:**
+- `authkestra-axum` / `authkestra-actix`: Native web framework integrations.
 
 ---
 
 ## 3. Phased Roadmap
 
-### Phase 0 — Stabilize Core
+### Phase 1: Engine Consolidation & GNAP Prep
+- Merge `core`, `flow`, `token` into `authkestra-engine`.
+- Implement `AuthEngine` builder with Typestate pattern.
+- Update `Flow` trait for GNAP compatibility.
 
-- Normalize APIs
-- Define internal interfaces: `AuthMethod`, `Provider`, `PolicyEngine`
+### Phase 2: Quantum-Safe & Privacy-Preserving Auth
+- Support ML-DSA in WebAuthn.
+- Implement SD-JWT and BBS+ proof validation.
+- Standardize DID-based identity modeling.
 
-### Phase 1 — Modern Auth Baseline
+### Phase 3: Continuous Trust & Policy-as-Code
+- Implement SSF/CAEP for real-time revocation.
+- Launch ReBAC (Zanzibar) and ABAC (Cedar) policy engines.
+- Refocus `authkestra-resource` on dynamic policy enforcement.
 
-- Add WebAuthn, Magic Links, TOTP as plugins
-- Ensure plugin architecture for extensibility
-
-### Phase 2 — Advanced Authorization
-
-- Implement RBAC, then ABAC-lite
-- Plan for a policy DSL
-
-### Phase 3 — Developer Experience
-
-- Build CLI
-- TypeScript SDK
-- Local dev mode
-
-### Phase 4 — Deployment Duality
-
-- Embedded SDK (npm, minimal config)
-- Server mode (Docker, REST + Admin API, multi-tenant)
-
-### Phase 5 — AI-Native Workflows
-
-- Config → system generator
-- Validation engine (security checks)
-- AI hooks (audit, explain, generate)
+### Phase 4: Platform & AI-Native DX
+- CLI for rapid scaffolding.
+- Admin API & Next.js Identity Dashboard.
+- AI-driven risk scoring and anomaly detection.
 
 ---
 
-## 4. Admin & User Management
-
-- Admin APIs for user management
-- RBAC/ABAC policy management
-- User management dashboard (web UI)
-- Database adapters (Postgres, MySQL, SQLite, etc.)
-
----
-
-## 5. Community & Contribution
-
-- Pin the North Star in README, CONTRIBUTING, docs
-- Use GitHub Discussions for design debates
-- Label issues for onboarding (`good first issue`, `help wanted`)
-- Encourage RFCs for major changes
-
----
-
-## 6. Resources
-
-- [Keycloak Docs](https://www.keycloak.org/documentation)
-- [better-auth](https://github.com/epic-web-dev/better-auth)
-- [Rust async book](https://rust-lang.github.io/async-book/)
-- [Rust trait objects](https://doc.rust-lang.org/book/ch17-02-trait-objects.html)
-
----
-
-For the full vision and architectural review, see [conversion.md](../conversion.md).
+## 4. Community & Contribution
+We use RFCs for major architectural shifts. See `docs/rfc-002-next-gen-identity.md` (coming soon) for technical deep dives.

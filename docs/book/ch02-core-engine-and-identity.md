@@ -1,10 +1,10 @@
 # Chapter 2: Core Engine and Identity
 
-The `AuthEngine` is the heart of Authkestra. It orchestrates the various components (session stores, auth methods) and produces a unified `Identity` object. As part of the new architectural direction, we are consolidating `authkestra-core`, `authkestra-flow`, and `authkestra-token` into a single, unified `authkestra-engine` crate. This provides a clear, central "brain" for the auth runtime, allowing it to easily bridge the gap between an embedded library and a standalone service.
+The `AuthEngine` is the heart of Authkestra. It orchestrates the various components (session stores, auth methods) and produces a unified, verifiable `Identity`.
 
-## Draft Implementations
+## Identity and Verifiable Claims
 
-### Identity and Claims
+In the next-gen architecture, an `Identity` is more than a database ID. It represents a cryptographically verifiable subject, potentially backed by a Decentralized Identifier (DID).
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -12,67 +12,42 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
-    pub id: String,
+    /// The canonical subject identifier (could be a DID, email, or UUID)
+    pub sub: String,
+    /// Optional DID if the identity is decentralized
+    pub did: Option<String>,
+    /// The provider that established this identity context
     pub provider: String,
+    /// Verifiable claims associated with this session
     pub claims: Claims,
-    pub metadata: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
+    // Standard JWT/OIDC Claims
     pub iss: String,
     pub aud: String,
     pub exp: i64,
     pub iat: i64,
-    pub sub: String,
-    pub email: Option<String>,
-    // Generic storage for non-standard claims
+    
+    // Support for Selective Disclosure (SD-JWT)
+    pub _sd: Option<Vec<String>>,
+    
+    // Generic storage for non-standard or custom attributes
     pub extra: HashMap<String, serde_json::Value>,
 }
 ```
 
-### The AuthEngine and Builder
+## The AuthEngine (Orchestrator)
 
-```rust
-pub struct AuthEngine<S> {
-    session_store: S,
-    methods: HashMap<String, Box<dyn AuthMethod>>,
-}
+The `AuthEngine` uses the **Typestate Builder Pattern** to ensure that critical components (like a `SessionStore` or `TokenService`) are configured at compile-time before the engine can be used.
 
-pub struct AuthEngineBuilder<S> {
-    session_store: Option<S>,
-    methods: HashMap<String, Box<dyn AuthMethod>>,
-}
+### Quantum Readiness
 
-impl<S> AuthEngineBuilder<S> {
-    pub fn new() -> Self {
-        Self {
-            session_store: None,
-            methods: HashMap::new(),
-        }
-    }
+The `AuthEngine` is designed to be **PQC-ready**. This means the `TokenService` and `Authenticator` traits are defined to handle larger signature and key sizes associated with Module-Lattice-Based algorithms like **ML-DSA** (FIPS 204).
 
-    pub fn session_store(mut self, store: S) -> Self {
-        self.session_store = Some(store);
-        self
-    }
+## Architectural Decisions
 
-    pub fn add_method(mut self, name: &str, method: Box<dyn AuthMethod>) -> Self {
-        self.methods.insert(name.to_string(), method);
-        self
-    }
-
-    pub fn build(self) -> Result<AuthEngine<S>, String> {
-        Ok(AuthEngine {
-            session_store: self.session_store.ok_or("Session store missing")?,
-            methods: self.methods,
-        })
-    }
-}
-```
-
-### Architectural Decisions & Future Direction
-
-- **Standard vs. Custom Claims:** We enforce standard JWT fields (e.g., `iss`, `aud`, `exp`, `iat`) as strongly typed fields on the `Claims` struct. Authentication heavily relies on standardization. Leaving these to a loose `HashMap` invites runtime bugs and makes OIDC interoperability brittle. Custom claims belong in an `extra` map, but standards must be enforced at compile time.
-- **Multiple Linked Identities:** The `Identity` struct should be lightweight and represent the **current** authenticated context, not the entire database record. A bloated `Identity` struct degrades cache performance (e.g., in Redis). Linked accounts should be handled at the database level. The `Identity` contains the `user_id` and the `current_provider`, and the application can fetch linked accounts separately if needed.
-- **Trait Objects vs Generics:** We accept the use of `Box<dyn AuthMethod>`. Authentication is inherently I/O bound (database lookups, network requests to OAuth providers). The microscopic performance penalty of dynamic dispatch (vtable lookups) via `Box<dyn Trait>` is entirely negligible here. Using trait objects massively simplifies the developer experience (DX) and builder pattern. We prioritize DX and compilation times over nanosecond optimizations in I/O bound paths.
+- **DID Integration**: We treat DIDs as first-class citizens, allowing Authkestra to act as a bridge between traditional OAuth2/OIDC systems and the decentralized web.
+- **Selective Disclosure**: We prioritize privacy by supporting SD-JWTs, enabling users to prove specific attributes (e.g., "Over 18") without revealing their entire profile.
+- **Dynamic Key Binding**: Following the **GNAP** model, we support binding tokens to specific client instances using cryptographic proof-of-possession, mitigating token theft.

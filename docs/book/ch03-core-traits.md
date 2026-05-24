@@ -1,47 +1,54 @@
 # Chapter 3: Core Traits
 
-To keep Authkestra extensible, we rely heavily on traits. These traits define the boundaries between the core engine and external implementations (like a Redis session store or a GitHub OAuth provider). In our roadmap to building a "primitive factory", defining strict, normalized interfaces (`Authenticator`, `Provider`, `PolicyEngine`) is crucial to avoid "auth spaghetti" where plugins duplicate logic or create security holes.
+To keep Authkestra extensible and future-proof, we rely on strict, framework-agnostic traits. These define the "contracts" between the engine and its pluggable extensions.
 
-## Draft Implementations
+## Core Runtime Traits
 
-### AuthMethod
+### `AuthMethod`
+The base trait for any authentication mechanism (WebAuthn, Magic Link, Credentials).
 
 ```rust
-use async_trait::async_trait;
-
 #[async_trait]
 pub trait AuthMethod: Send + Sync {
-    /// Returns a unique identifier for this method (e.g., "oauth2", "credentials")
     fn id(&self) -> &str;
-
-    /// Process an incoming request and potentially yield an Identity
-    async fn authenticate(&self, context: &AuthContext) -> Result<Identity, AuthError>;
+    async fn authenticate(&self, input: AuthInput) -> Result<Identity, AuthError>;
 }
 ```
 
-### SessionStore
+### `Flow` (Protocol Orchestration)
+The `Flow` trait is designed to handle multi-step protocols like OAuth 2.1 and the next-gen **GNAP**. 
+
+Unlike legacy systems that assume a linear redirect-based flow, the `Flow` trait supports **intent-based negotiation** and asynchronous interaction modes (e.g., polling for device approval).
 
 ```rust
 #[async_trait]
-pub trait SessionStore: Send + Sync {
-    async fn save_session(&self, session_id: &str, identity: &Identity) -> Result<(), SessionError>;
-    async fn get_session(&self, session_id: &str) -> Result<Option<Identity>, SessionError>;
-    async fn destroy_session(&self, session_id: &str) -> Result<(), SessionError>;
+pub trait Flow: Send + Sync {
+    /// Execute a step in the protocol flow
+    async fn next_step(&self, context: FlowContext) -> Result<FlowResult, AuthError>;
 }
 ```
 
-### Provider
+## Future-Proofing for Cryptography
+
+### `TokenService`
+The `TokenService` trait must handle the transition to **Post-Quantum Cryptography (PQC)**. It is defined to accept arbitrary signature sizes, accommodating the multi-kilobyte signatures required by **ML-DSA**.
+
+```rust
+pub trait TokenService: Send + Sync {
+    fn issue(&self, identity: &Identity) -> Result<String, AuthError>;
+    fn verify(&self, token: &str) -> Result<Identity, AuthError>;
+}
+```
+
+## Continuous Trust Traits
+
+### `SignalReceiver` (SSF/CAEP)
+A new trait in the engine layer that allows Authkestra to ingest real-time security events via the **Shared Signals Framework**.
 
 ```rust
 #[async_trait]
-pub trait Provider: Send + Sync {
-    fn name(&self) -> &str;
-    async fn get_authorization_url(&self) -> String;
-    async fn exchange_code(&self, code: &str) -> Result<TokenSet, ProviderError>;
+pub trait SignalReceiver: Send + Sync {
+    /// Process an incoming Security Event Token (SET)
+    async fn handle_signal(&self, signal: SecurityEvent) -> Result<(), AuthError>;
 }
 ```
-
-### Architectural Decisions & Future Direction
-
-- **`async_trait` Dependency:** While native AFIT is stable, enforcing `Send` bounds (which web frameworks like Axum strictly require) in public traits without `async_trait` can lead to complex and ugly bounds (`impl Future<Output = ...> + Send`). For now, `#[async_trait]` provides a cleaner DX for contributors. We abstract this carefully so it can be migrated to native AFIT when the `Send` bound ergonomics improve in Rust.
-- **Context Object (`AuthContext`):** `AuthContext` must be absolutely framework-agnostic. It should wrap the standard `http::Request<()>` parts (headers, URI, query params). Coupling the core engine to Axum or Actix types immediately kills the modularity of the framework.
