@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use authkestra_axum::Auth;
-use authkestra_core::error::AuthError;
-use authkestra_core::strategy::{AuthenticationStrategy, BasicAuthenticator, BasicStrategy};
+use authkestra_engine::error::AuthError;
+use authkestra_engine::strategy::{AuthenticationStrategy, BasicAuthenticator, BasicStrategy};
 use authkestra_guard::AuthkestraGuard;
 use axum::{http::request::Parts, routing::get, Router};
 use serde::{Deserialize, Serialize};

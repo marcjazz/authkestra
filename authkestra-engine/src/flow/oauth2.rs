@@ -1,8 +1,8 @@
-use async_trait::async_trait;
-use authkestra_core::{
+use crate::auth::{
     error::AuthError, state::Identity, state::OAuthToken, ErasedOAuthFlow, OAuthProvider,
     UserMapper,
 };
+use async_trait::async_trait;
 
 /// Orchestrates the standard OAuth2 Authorization Code flow.
 pub struct OAuth2Flow<P: OAuthProvider, M: UserMapper = ()> {
@@ -13,7 +13,7 @@ pub struct OAuth2Flow<P: OAuthProvider, M: UserMapper = ()> {
 }
 
 #[async_trait]
-impl<P: OAuthProvider, M: UserMapper> ErasedOAuthFlow for OAuth2Flow<P, M> {
+impl<P: OAuthProvider + 'static, M: UserMapper + 'static> ErasedOAuthFlow for OAuth2Flow<P, M> {
     fn provider_id(&self) -> String {
         self.provider.provider_id().to_string()
     }

@@ -9,7 +9,7 @@ keywords = ["auth", "authentication", "guard", "middleware"]
 categories = ["authentication"]
 
 [dependencies]
-authkestra-core = { version = "0.1.2", path = "../authkestra-core" }
+authkestra-engine = { version = "0.1.2", path = "../authkestra-engine" }
 async-trait = "0.1"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 serde = { version = "1.0", features = ["derive"] }

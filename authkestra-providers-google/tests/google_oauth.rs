@@ -1,4 +1,4 @@
-use authkestra_core::{state::Identity, state::OAuthToken, OAuthProvider};
+use authkestra_engine::{state::Identity, state::OAuthToken, OAuthProvider};
 use authkestra_providers_google::GoogleProvider;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

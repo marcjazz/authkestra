@@ -1,4 +1,4 @@
-use authkestra_core::{
+use crate::auth::{
     error::{AuthError, OAuthErrorResponse},
     state::OAuthToken,
 };

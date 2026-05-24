@@ -13,32 +13,10 @@
 
 #![warn(missing_docs)]
 
-pub use authkestra_core::ErasedOAuthFlow;
-use authkestra_core::{
+use crate::auth::{
     error::AuthError, state::Identity, CredentialsProvider, OAuthProvider, UserMapper,
 };
-#[cfg(feature = "session")]
-pub use authkestra_session::{Session, SessionConfig, SessionStore};
-
-#[cfg(not(feature = "session"))]
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-/// Configuration for the OAuth flow state cookies when sessions are disabled.
-pub struct SessionConfig {
-    /// Whether the cookie should only be sent over HTTPS.
-    pub secure: bool,
-    /// The maximum age of the state cookie.
-    pub max_age: Option<chrono::Duration>,
-}
-
-#[cfg(not(feature = "session"))]
-impl Default for SessionConfig {
-    fn default() -> Self {
-        Self {
-            secure: true,
-            max_age: Some(chrono::Duration::minutes(15)),
-        }
-    }
-}
+pub use crate::auth::{ErasedOAuthFlow, Session, SessionConfig, SessionStore};
 
 pub use chrono;
 
@@ -57,7 +35,7 @@ impl SessionStoreState for Configured<Arc<dyn SessionStore>> {
 }
 
 #[cfg(feature = "token")]
-use authkestra_token::TokenManager;
+use crate::token::TokenManager;
 
 #[cfg(feature = "token")]
 /// Trait for components that can be used as a token manager.

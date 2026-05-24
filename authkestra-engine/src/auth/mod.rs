@@ -16,14 +16,18 @@ pub mod strategy;
 
 /// Errors that can occur during the authentication process.
 pub mod error;
-use crate::error::AuthError;
+pub use error::AuthError;
 
 /// A unified identity structure returned by all providers.
 pub mod state;
-use crate::state::{Identity, OAuthToken};
+pub use state::{Identity, OAuthToken};
 
 /// Discovery utilities for OAuth2 providers.
 pub mod discovery;
+
+/// Session management traits and types.
+pub mod session;
+pub use session::{Session, SessionConfig, SessionStore};
 
 /// Controls whether a cookie is sent with cross-site requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

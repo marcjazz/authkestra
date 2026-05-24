@@ -1,4 +1,4 @@
-use authkestra_flow::ClientCredentialsFlow;
+use authkestra_engine::ClientCredentialsFlow;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

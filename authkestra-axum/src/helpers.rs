@@ -1,14 +1,14 @@
+#[cfg(feature = "token")]
+use authkestra_engine::TokenManager;
 #[cfg(any(feature = "flow", feature = "session", feature = "token"))]
-use authkestra_core::{
+use authkestra_engine::{
     pkce::Pkce,
     state::{Identity, OAuthToken},
 };
 #[cfg(feature = "flow")]
-use authkestra_flow::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
+use authkestra_engine::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
-#[cfg(feature = "token")]
-use authkestra_token::TokenManager;
 #[cfg(feature = "token")]
 use axum::Json;
 use axum::{
@@ -35,11 +35,11 @@ pub struct OAuthLoginParams {
 }
 
 #[cfg(any(feature = "flow", feature = "session"))]
-pub fn to_axum_same_site(ss: authkestra_core::SameSite) -> SameSite {
+pub fn to_axum_same_site(ss: authkestra_engine::SameSite) -> SameSite {
     match ss {
-        authkestra_core::SameSite::Lax => SameSite::Lax,
-        authkestra_core::SameSite::Strict => SameSite::Strict,
-        authkestra_core::SameSite::None => SameSite::None,
+        authkestra_engine::SameSite::Lax => SameSite::Lax,
+        authkestra_engine::SameSite::Strict => SameSite::Strict,
+        authkestra_engine::SameSite::None => SameSite::None,
     }
 }
 
@@ -70,7 +70,7 @@ pub fn initiate_oauth_login(
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_flow_{csrf_state}");
+    let cookie_name = format!("authkestra_engine_{csrf_state}");
 
     let mut cookie = Cookie::new(cookie_name, pkce.code_verifier);
     cookie.set_path("/");
@@ -92,7 +92,7 @@ async fn finalize_callback_erased(
     params: &OAuthCallbackParams,
 ) -> Result<(Identity, OAuthToken), (StatusCode, String)> {
     let state = &params.state;
-    let cookie_name = format!("authkestra_flow_{state}");
+    let cookie_name = format!("authkestra_engine_{state}");
 
     let pkce_verifier = cookies
         .get(&cookie_name)
@@ -188,8 +188,8 @@ pub async fn handle_oauth_callback<P, M>(
     success_url: &str,
 ) -> Result<impl IntoResponse, (StatusCode, String)>
 where
-    P: authkestra_core::OAuthProvider + Send + Sync,
-    M: authkestra_core::UserMapper + Send + Sync,
+    P: authkestra_engine::OAuthProvider + Send + Sync + 'static,
+    M: authkestra_engine::UserMapper + Send + Sync + 'static,
 {
     handle_oauth_callback_erased(flow, cookies, params, store, config, success_url).await
 }
@@ -231,8 +231,8 @@ pub async fn handle_oauth_callback_jwt<P, M>(
     expires_in_secs: u64,
 ) -> Result<impl IntoResponse, (StatusCode, String)>
 where
-    P: authkestra_core::OAuthProvider + Send + Sync,
-    M: authkestra_core::UserMapper + Send + Sync,
+    P: authkestra_engine::OAuthProvider + Send + Sync + 'static,
+    M: authkestra_engine::UserMapper + Send + Sync + 'static,
 {
     handle_oauth_callback_jwt_erased(flow, cookies, params, token_manager, expires_in_secs).await
 }
@@ -297,7 +297,7 @@ where
     let pkce = Pkce::new();
     let (url, csrf_state) = flow.initiate_login(&scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_flow_{csrf_state}");
+    let cookie_name = format!("authkestra_engine_{csrf_state}");
     let mut cookie = Cookie::new(cookie_name, pkce.code_verifier);
     cookie.set_path("/");
     cookie.set_http_only(true);
@@ -447,7 +447,7 @@ pub async fn get_session(
 pub async fn get_token(
     parts: &axum::http::request::Parts,
     token_manager: &TokenManager,
-) -> Result<authkestra_token::Claims, AuthkestraAxumError> {
+) -> Result<authkestra_engine::Claims, AuthkestraAxumError> {
     let auth_header = parts
         .headers
         .get(axum::http::header::AUTHORIZATION)

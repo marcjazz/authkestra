@@ -1,4 +1,4 @@
-use authkestra_core::{
+use authkestra_engine::{
     state::{Identity, OAuthToken},
     OAuthProvider,
 };

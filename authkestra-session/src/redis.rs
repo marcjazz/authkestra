@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use authkestra_core::error::AuthError;
+use authkestra_engine::error::AuthError;
 use redis::AsyncCommands;
 
 use crate::{Session, SessionStore};

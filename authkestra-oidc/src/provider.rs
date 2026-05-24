@@ -1,6 +1,6 @@
 use crate::error::OidcError;
 use async_trait::async_trait;
-use authkestra_core::{
+use authkestra_engine::{
     discovery::ProviderMetadata,
     error::AuthError,
     state::{Identity, OAuthToken},

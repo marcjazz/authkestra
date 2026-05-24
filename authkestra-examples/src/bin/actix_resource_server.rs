@@ -1,6 +1,6 @@
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra_actix::Jwt;
-use authkestra_core::discovery::ProviderMetadata;
+use authkestra_engine::discovery::ProviderMetadata;
 use authkestra_guard::jwt::JwksCache;
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;

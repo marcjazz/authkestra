@@ -146,7 +146,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
     // Generate the 4 FromRef implementations
     let expanded = quote! {
         // 1. FromRef for Authkestra<S, T>
-        impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_flow::Authkestra<#s_param, #t_param>
+        impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::Authkestra<#s_param, #t_param>
         where
             #s_param: Clone,
             #t_param: Clone,
@@ -161,7 +161,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
         impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
             for ::std::result::Result<::std::sync::Arc<dyn authkestra_session::SessionStore>, authkestra_axum::AuthkestraAxumError>
         where
-            #s_param: authkestra_flow::SessionStoreState,
+            #s_param: authkestra_engine::SessionStoreState,
             #where_clause
         {
             fn from_ref(state: &#struct_name #ty_generics) -> Self {
@@ -180,9 +180,9 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
 
         // 4. FromRef for TokenManager (when T: TokenManagerState)
         impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-            for ::std::result::Result<::std::sync::Arc<authkestra_token::TokenManager>, authkestra_axum::AuthkestraAxumError>
+            for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::AuthkestraAxumError>
         where
-            #t_param: authkestra_flow::TokenManagerState,
+            #t_param: authkestra_engine::TokenManagerState,
             #where_clause
         {
             fn from_ref(state: &#struct_name #ty_generics) -> Self {

@@ -1,4 +1,4 @@
-use authkestra_core::error::AuthError;
+use authkestra_engine::error::AuthError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
