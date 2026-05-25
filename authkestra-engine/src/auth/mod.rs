@@ -29,6 +29,58 @@ pub mod discovery;
 pub mod session;
 pub use session::{Session, SessionConfig, SessionStore};
 
+/// Represents the input for an authentication method.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum AuthInput {
+    /// Password-based authentication.
+    Password {
+        /// The username or email.
+        identifier: String,
+        /// The secret password.
+        password: String,
+    },
+    /// OAuth2/OIDC authorization code.
+    OAuthCode {
+        /// The authorization code.
+        code: String,
+        /// Optional PKCE verifier.
+        code_verifier: Option<String>,
+    },
+    /// Token-based authentication (e.g., Bearer token).
+    Token(String),
+    /// Custom input for extensible methods.
+    Custom(serde_json::Value),
+}
+
+/// A mechanism used to authenticate a user.
+#[async_trait]
+pub trait AuthMethod: Send + Sync {
+    /// Returns the name of the authentication method.
+    fn name(&self) -> &str;
+
+    /// Authenticate a user with the given input.
+    async fn authenticate(&self, input: AuthInput) -> Result<Identity, AuthError>;
+}
+
+/// Configuration for an identity provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    /// The unique identifier for the provider.
+    pub id: String,
+    /// The display name of the provider.
+    pub name: String,
+    /// Additional configuration parameters.
+    pub extra: std::collections::HashMap<String, String>,
+}
+
+/// An external identity source (e.g., Google, GitHub).
+/// Providers should contain zero business logic—only configuration and mapping.
+pub trait Provider: Send + Sync {
+    /// Returns the provider configuration.
+    fn config(&self) -> ProviderConfig;
+}
+
 /// Controls whether a cookie is sent with cross-site requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SameSite {

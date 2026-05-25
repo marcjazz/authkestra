@@ -6,3 +6,6 @@ pub mod token;
 pub use auth::*;
 pub use flow::*;
 pub use token::*;
+
+#[cfg(test)]
+mod tests;

@@ -17,8 +17,40 @@ use crate::auth::{
     error::AuthError, state::Identity, CredentialsProvider, OAuthProvider, UserMapper,
 };
 pub use crate::auth::{ErasedOAuthFlow, Session, SessionConfig, SessionStore};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 pub use chrono;
+
+/// Context for an authentication flow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowContext {
+    /// The current state identifier.
+    pub state: String,
+    /// Parameters associated with the flow.
+    pub params: HashMap<String, String>,
+}
+
+/// Result of an authentication flow execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FlowResult {
+    /// The flow is complete and has returned an identity.
+    Complete(Identity),
+    /// The flow requires a redirect to another URL.
+    Redirect(String),
+    /// The flow is pending (e.g., waiting for user interaction).
+    Pending,
+}
+
+/// Orchestrates the steps of an authentication protocol (e.g., OAuth2, Device Flow).
+#[async_trait]
+pub trait Flow: Send + Sync {
+    /// Returns the unique identifier for the flow.
+    fn id(&self) -> &str;
+
+    /// Executes the flow with the given context.
+    async fn execute(&self, ctx: FlowContext) -> Result<FlowResult, AuthError>;
+}
 
 /// Trait for components that can be used as a session store.
 #[cfg(feature = "session")]
