@@ -4,6 +4,9 @@ use http::request::Parts;
 
 pub mod jwt;
 
+pub use AuthEngineGuard as AuthkestraGuard;
+pub use AuthEngineGuardBuilder as AuthkestraGuardBuilder;
+
 /// Policy for controlling the behavior of chained authentication strategies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AuthPolicy {
@@ -20,15 +23,15 @@ pub enum AuthPolicy {
 }
 
 /// A service that orchestrates multiple authentication strategies.
-pub struct AuthkestraGuard<I> {
+pub struct AuthEngineGuard<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
 }
 
-impl<I> AuthkestraGuard<I> {
+impl<I> AuthEngineGuard<I> {
     /// Create a new builder for the Guard.
-    pub fn builder() -> AuthkestraGuardBuilder<I> {
-        AuthkestraGuardBuilder::default()
+    pub fn builder() -> AuthEngineGuardBuilder<I> {
+        AuthEngineGuardBuilder::default()
     }
 
     /// Attempt to authenticate the request using the configured strategies and policy.
@@ -66,13 +69,13 @@ impl<I> AuthkestraGuard<I> {
     }
 }
 
-/// Builder for the `AuthkestraGuard`.
-pub struct AuthkestraGuardBuilder<I> {
+/// Builder for the `AuthEngineGuard`.
+pub struct AuthEngineGuardBuilder<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
 }
 
-impl<I> Default for AuthkestraGuardBuilder<I> {
+impl<I> Default for AuthEngineGuardBuilder<I> {
     fn default() -> Self {
         Self {
             strategies: Vec::new(),
@@ -81,7 +84,7 @@ impl<I> Default for AuthkestraGuardBuilder<I> {
     }
 }
 
-impl<I> AuthkestraGuardBuilder<I>
+impl<I> AuthEngineGuardBuilder<I>
 where
     I: Send + Sync + 'static,
 {
@@ -100,9 +103,9 @@ where
         self
     }
 
-    /// Build the `AuthkestraGuard`.
-    pub fn build(self) -> AuthkestraGuard<I> {
-        AuthkestraGuard {
+    /// Build the `AuthEngineGuard`.
+    pub fn build(self) -> AuthEngineGuard<I> {
+        AuthEngineGuard {
             strategies: self.strategies,
             policy: self.policy,
         }

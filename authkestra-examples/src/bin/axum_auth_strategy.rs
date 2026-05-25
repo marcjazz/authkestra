@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use authkestra_axum::Auth;
 use authkestra_engine::error::AuthError;
 use authkestra_engine::strategy::{AuthenticationStrategy, BasicAuthenticator, BasicStrategy};
-use authkestra_guard::AuthkestraGuard;
+use authkestra_guard::AuthEngineGuard;
 use axum::{http::request::Parts, routing::get, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -83,7 +83,7 @@ async fn protected_route(Auth(user): Auth<User>) -> String {
     format!("Hello, {}! Your ID is {}.", user.username, user.id)
 }
 
-fn app(guard: Arc<AuthkestraGuard<User>>) -> Router {
+fn app(guard: Arc<AuthEngineGuard<User>>) -> Router {
     Router::new()
         .route("/protected", get(protected_route))
         .with_state(guard)
@@ -91,9 +91,9 @@ fn app(guard: Arc<AuthkestraGuard<User>>) -> Router {
 
 #[tokio::main]
 async fn main() {
-    // 2. Integrate with AuthkestraGuard
+    // 2. Integrate with AuthEngineGuard
     // We chain CustomHeaderStrategy and BasicStrategy to show flexibility.
-    let guard = AuthkestraGuard::<User>::builder()
+    let guard = AuthEngineGuard::<User>::builder()
         .strategy(CustomHeaderStrategy::new("secret-api-key"))
         .strategy(BasicStrategy::new(MyBasicAuthenticator))
         .build();
@@ -121,7 +121,7 @@ mod tests {
 
     fn setup_app() -> Router {
         let guard = Arc::new(
-            AuthkestraGuard::<User>::builder()
+            AuthEngineGuard::<User>::builder()
                 .strategy(CustomHeaderStrategy::new("secret-api-key"))
                 .strategy(BasicStrategy::new(MyBasicAuthenticator))
                 .strategy(JwtStrategy::new(

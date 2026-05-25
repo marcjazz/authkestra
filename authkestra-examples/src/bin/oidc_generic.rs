@@ -1,68 +1,60 @@
-use authkestra::flow::{Authkestra, OAuth2Flow};
-use authkestra_axum::{AuthSession, AuthkestraAxumExt, AuthkestraState};
+use authkestra::flow::{AuthEngine, OAuth2Flow};
+use authkestra_axum::{AuthEngineAxumExt, AuthEngineState, AuthSession};
 use authkestra_oidc::OidcProvider;
-use authkestra_session::{MemoryStore, RedisStore};
-use axum::{response::IntoResponse, routing::get, Router};
+use authkestra_session::MemoryStore;
+use axum::{response::Html, routing::get, Router};
 use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 
+/// AuthEngine state with support for session only.
+type AppState =
+    AuthEngineState<authkestra_engine::Configured<Arc<dyn authkestra_session::SessionStore>>>;
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
     dotenvy::dotenv().ok();
 
-    let issuer = std::env::var("OIDC_ISSUER").expect("OIDC_ISSUER must be set");
-    let client_id = std::env::var("OIDC_CLIENT_ID").expect("OIDC_CLIENT_ID must be set");
+    let client_id = std::env::var("OIDC_CLIENT_ID").expect("OIDC_CLIENT_ID env var must be set");
     let client_secret =
-        std::env::var("OIDC_CLIENT_SECRET").expect("OIDC_CLIENT_SECRET must be set");
+        std::env::var("OIDC_CLIENT_SECRET").expect("OIDC_CLIENT_SECRET env var must be set");
+    let issuer_url = std::env::var("OIDC_ISSUER_URL").expect("OIDC_ISSUER_URL env var must be set");
     let redirect_uri = std::env::var("OIDC_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/auth/oidc/callback".to_string());
 
-    println!("Initializing OIDC provider with issuer: {issuer}");
+    let provider = OidcProvider::discover(client_id, client_secret, redirect_uri, &issuer_url)
+        .await
+        .expect("Failed to initialize OIDC provider");
 
-    // Demonstrate initialization/discovery
-    let provider = OidcProvider::discover(client_id, client_secret, redirect_uri, &issuer).await?;
+    let mut builder = AuthEngine::builder().session_store(Arc::new(MemoryStore::default()));
 
-    let mut builder = Authkestra::builder().session_store(Arc::new(MemoryStore::default()));
+    builder = builder.provider(OAuth2Flow::new(provider));
 
-    // Use Redis if REDIS_URL is set
-    if let Ok(redis_url) = std::env::var("REDIS_URL") {
-        println!("Using RedisStore at {redis_url}");
-        let redis_store = Arc::new(RedisStore::new(&redis_url, "authkestra".into()).unwrap());
-        builder = builder.session_store(redis_store);
-    } else {
-        println!("Using MemoryStore");
-    }
+    let auth_engine = builder.build();
 
-    let authkestra = builder.provider(OAuth2Flow::new(provider)).build();
+    let state = AppState::from(auth_engine.clone());
 
-    let state = AuthkestraState::from(authkestra);
-
-    let app = Router::new()
+    let app = Router::<AppState>::new()
         .route("/", get(index))
-        .merge(state.authkestra.axum_router())
         .route("/protected", get(protected))
+        .merge(auth_engine.axum_router())
         .layer(CookieManagerLayer::new())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Listening on http://0.0.0.0:3000");
+    println!("🚀 OIDC Example running on http://localhost:3000");
     axum::serve(listener, app).await.unwrap();
-
-    Ok(())
 }
 
-async fn index() -> impl IntoResponse {
-    "Welcome! Go to /auth/oidc to login."
+async fn index() -> Html<&'static str> {
+    Html(
+        r#"<h1>OIDC Example</h1><a href="/auth/oidc?scope=openid%20profile%20email&success_url=/protected">Login with OIDC</a>"#,
+    )
 }
 
-async fn protected(AuthSession(session): AuthSession) -> impl IntoResponse {
-    println!("Identity verified: {:?}", session.identity);
-
+async fn protected(AuthSession(session): AuthSession) -> String {
     format!(
-        "Hello, {}! Your ID is {}. Your email is {:?}. Attributes: {:?}",
+        "Hello, {}! Your ID is {}. Authenticated via OIDC.",
         session.identity.username.unwrap_or_default(),
-        session.identity.external_id,
-        session.identity.email,
-        session.identity.attributes
+        session.identity.external_id
     )
 }

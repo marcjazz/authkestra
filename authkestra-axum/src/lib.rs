@@ -1,9 +1,9 @@
 #[cfg(feature = "token")]
 pub use authkestra_engine::TokenManager;
 #[cfg(feature = "flow")]
-pub use authkestra_engine::{Authkestra, Missing, SessionConfig};
+pub use authkestra_engine::{AuthEngine, Missing, SessionConfig};
 #[cfg(feature = "guard")]
-pub use authkestra_guard::AuthkestraGuard;
+pub use authkestra_guard::AuthEngineGuard;
 use axum::extract::FromRef;
 #[cfg(feature = "session")]
 use axum::extract::FromRequestParts;
@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 pub mod helpers;
 
-pub use helpers::*;
+pub use helpers::{AuthEngineAxumError, Session, SessionStore};
+pub use AuthEngineAxumError as AuthkestraAxumError;
+pub use AuthEngineAxumExt as AuthkestraAxumExt;
+pub use AuthEngineState as AuthkestraState;
 
 #[cfg(feature = "macros")]
 extern crate self as authkestra_axum;
@@ -22,14 +25,14 @@ pub use authkestra_macros::AuthkestraFromRef;
 
 #[cfg(feature = "flow")]
 #[derive(Clone, AuthkestraFromRef)]
-pub struct AuthkestraState<S = Missing, T = Missing> {
+pub struct AuthEngineState<S = Missing, T = Missing> {
     #[authkestra]
-    pub authkestra: Authkestra<S, T>,
+    pub authkestra: AuthEngine<S, T>,
 }
 
 #[cfg(feature = "flow")]
-impl<S, T> From<Authkestra<S, T>> for AuthkestraState<S, T> {
-    fn from(authkestra: Authkestra<S, T>) -> Self {
+impl<S, T> From<AuthEngine<S, T>> for AuthEngineState<S, T> {
+    fn from(authkestra: AuthEngine<S, T>) -> Self {
         Self { authkestra }
     }
 }
@@ -42,21 +45,21 @@ pub struct AuthSession(pub Session);
 impl<S> FromRequestParts<S> for AuthSession
 where
     S: Send + Sync,
-    Result<Arc<dyn SessionStore>, AuthkestraAxumError>: FromRef<S>,
+    Result<Arc<dyn SessionStore>, AuthEngineAxumError>: FromRef<S>,
     SessionConfig: FromRef<S>,
 {
-    type Rejection = AuthkestraAxumError;
+    type Rejection = AuthEngineAxumError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
         use tower_cookies::Cookies;
-        let session_store = <Result<Arc<dyn SessionStore>, AuthkestraAxumError>>::from_ref(state)?;
+        let session_store = <Result<Arc<dyn SessionStore>, AuthEngineAxumError>>::from_ref(state)?;
         let session_config = SessionConfig::from_ref(state);
         let cookies = Cookies::from_request_parts(parts, state)
             .await
-            .map_err(|e| AuthkestraAxumError::Internal(e.1.to_string()))?;
+            .map_err(|e| AuthEngineAxumError::Internal(e.1.to_string()))?;
 
         let session = helpers::get_session(&session_store, &session_config, &cookies).await?;
 
@@ -74,15 +77,15 @@ pub struct AuthToken(pub authkestra_engine::Claims);
 impl<S> FromRequestParts<S> for AuthToken
 where
     S: Send + Sync,
-    Result<Arc<TokenManager>, AuthkestraAxumError>: FromRef<S>,
+    Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<S>,
 {
-    type Rejection = AuthkestraAxumError;
+    type Rejection = AuthEngineAxumError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let token_manager = <Result<Arc<TokenManager>, AuthkestraAxumError>>::from_ref(state)?;
+        let token_manager = <Result<Arc<TokenManager>, AuthEngineAxumError>>::from_ref(state)?;
         let token = helpers::get_token(parts, &token_manager).await?;
         Ok(AuthToken(token))
     }
@@ -102,7 +105,7 @@ where
     jsonwebtoken::Validation: FromRef<S>,
     T: for<'de> serde::Deserialize<'de> + 'static,
 {
-    type Rejection = AuthkestraAxumError;
+    type Rejection = AuthEngineAxumError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
@@ -116,11 +119,11 @@ where
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
             .ok_or_else(|| {
-                AuthkestraAxumError::Unauthorized("Missing Authorization header".to_string())
+                AuthEngineAxumError::Unauthorized("Missing Authorization header".to_string())
             })?;
 
         if !auth_header.starts_with("Bearer ") {
-            return Err(AuthkestraAxumError::Unauthorized(
+            return Err(AuthEngineAxumError::Unauthorized(
                 "Invalid Authorization header".to_string(),
             ));
         }
@@ -128,7 +131,7 @@ where
         let token = &auth_header[7..];
         let claims = authkestra_guard::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
             .await
-            .map_err(|e| AuthkestraAxumError::Unauthorized(format!("Invalid token: {e}")))?;
+            .map_err(|e| AuthEngineAxumError::Unauthorized(format!("Invalid token: {e}")))?;
 
         Ok(Jwt(claims))
     }
@@ -136,7 +139,7 @@ where
 
 /// A unified extractor for authentication.
 ///
-/// It uses the `AuthkestraGuard` from the application state to validate the request.
+/// It uses the `AuthEngineGuard` from the application state to validate the request.
 #[cfg(feature = "guard")]
 pub struct Auth<I>(pub I);
 
@@ -144,46 +147,46 @@ pub struct Auth<I>(pub I);
 impl<S, I> FromRequestParts<S> for Auth<I>
 where
     S: Send + Sync,
-    Arc<AuthkestraGuard<I>>: FromRef<S>,
+    Arc<authkestra_guard::AuthEngineGuard<I>>: FromRef<S>,
     I: Send + Sync + 'static,
 {
-    type Rejection = AuthkestraAxumError;
+    type Rejection = AuthEngineAxumError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let guard = Arc::<AuthkestraGuard<I>>::from_ref(state);
+        let guard = Arc::<authkestra_guard::AuthEngineGuard<I>>::from_ref(state);
         match guard.authenticate(parts).await {
             Ok(Some(identity)) => Ok(Auth(identity)),
-            Ok(None) => Err(AuthkestraAxumError::Unauthorized(
+            Ok(None) => Err(AuthEngineAxumError::Unauthorized(
                 "Authentication failed".to_string(),
             )),
-            Err(e) => Err(AuthkestraAxumError::Internal(e.to_string())),
+            Err(e) => Err(AuthEngineAxumError::Internal(e.to_string())),
         }
     }
 }
 
 #[cfg(all(feature = "flow", feature = "session"))]
-pub trait AuthkestraAxumExt<S, T> {
+pub trait AuthEngineAxumExt<S, T> {
     fn axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Authkestra<S, T>: FromRef<AppState>,
+        AuthEngine<S, T>: FromRef<AppState>,
         SessionConfig: FromRef<AppState>,
-        Result<Arc<dyn SessionStore>, AuthkestraAxumError>: FromRef<AppState>;
+        Result<Arc<dyn SessionStore>, AuthEngineAxumError>: FromRef<AppState>;
 }
 
 #[cfg(all(feature = "flow", feature = "session"))]
-impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AuthkestraAxumExt<S, T>
-    for Authkestra<S, T>
+impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AuthEngineAxumExt<S, T>
+    for AuthEngine<S, T>
 {
     fn axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Authkestra<S, T>: FromRef<AppState>,
+        AuthEngine<S, T>: FromRef<AppState>,
         SessionConfig: FromRef<AppState>,
-        Result<Arc<dyn SessionStore>, AuthkestraAxumError>: FromRef<AppState>,
+        Result<Arc<dyn SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
     {
         use axum::routing::get;
         axum::Router::new()

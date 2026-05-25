@@ -6,7 +6,7 @@ use authkestra_engine::{
     state::{Identity, OAuthToken},
 };
 #[cfg(feature = "flow")]
-use authkestra_engine::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
+use authkestra_engine::{AuthEngine, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "token")]
@@ -271,18 +271,18 @@ pub async fn axum_login_handler<AppState, S, T>(
     axum::extract::State(state): axum::extract::State<AppState>,
     Query(params): Query<OAuthLoginParams>,
     cookies: Cookies,
-) -> Result<impl IntoResponse, AuthkestraAxumError>
+) -> Result<impl IntoResponse, AuthEngineAxumError>
 where
     AppState: Clone + Send + Sync + 'static,
-    Authkestra<S, T>: axum::extract::FromRef<AppState>,
+    AuthEngine<S, T>: axum::extract::FromRef<AppState>,
 {
     use axum::extract::FromRef;
-    let authkestra = Authkestra::<S, T>::from_ref(&state);
+    let authkestra = AuthEngine::<S, T>::from_ref(&state);
 
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AuthkestraAxumError::Internal(
+            return Err(AuthEngineAxumError::Internal(
                 "Provider not found".to_string(),
             ));
         }
@@ -326,22 +326,22 @@ pub async fn axum_callback_handler<AppState, S, T>(
     axum::extract::State(state): axum::extract::State<AppState>,
     Query(params): Query<OAuthCallbackParams>,
     cookies: Cookies,
-) -> Result<impl IntoResponse, AuthkestraAxumError>
+) -> Result<impl IntoResponse, AuthEngineAxumError>
 where
     AppState: Clone + Send + Sync + 'static,
-    Authkestra<S, T>: axum::extract::FromRef<AppState>,
+    AuthEngine<S, T>: axum::extract::FromRef<AppState>,
     SessionConfig: axum::extract::FromRef<AppState>,
-    Result<Arc<dyn SessionStore>, AuthkestraAxumError>: axum::extract::FromRef<AppState>,
+    Result<Arc<dyn SessionStore>, AuthEngineAxumError>: axum::extract::FromRef<AppState>,
 {
     use axum::extract::FromRef;
-    let authkestra = Authkestra::<S, T>::from_ref(&state);
+    let authkestra = AuthEngine::<S, T>::from_ref(&state);
     let session_config = SessionConfig::from_ref(&state);
-    let session_store = <Result<Arc<dyn SessionStore>, AuthkestraAxumError>>::from_ref(&state)?;
+    let session_store = <Result<Arc<dyn SessionStore>, AuthEngineAxumError>>::from_ref(&state)?;
 
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AuthkestraAxumError::Internal(
+            return Err(AuthEngineAxumError::Internal(
                 "Provider not found".to_string(),
             ));
         }
@@ -372,9 +372,9 @@ where
     .await
     .map_err(|(status, msg)| {
         if status == StatusCode::UNAUTHORIZED {
-            AuthkestraAxumError::Unauthorized(msg)
+            AuthEngineAxumError::Unauthorized(msg)
         } else {
-            AuthkestraAxumError::Internal(msg)
+            AuthEngineAxumError::Internal(msg)
         }
     })
 }
@@ -383,41 +383,41 @@ where
 pub async fn axum_logout_handler<AppState, S, T>(
     axum::extract::State(state): axum::extract::State<AppState>,
     cookies: Cookies,
-) -> Result<impl IntoResponse, AuthkestraAxumError>
+) -> Result<impl IntoResponse, AuthEngineAxumError>
 where
     AppState: Clone + Send + Sync + 'static,
     SessionConfig: axum::extract::FromRef<AppState>,
-    Result<Arc<dyn SessionStore>, AuthkestraAxumError>: axum::extract::FromRef<AppState>,
+    Result<Arc<dyn SessionStore>, AuthEngineAxumError>: axum::extract::FromRef<AppState>,
 {
     use axum::extract::FromRef;
     let session_config = SessionConfig::from_ref(&state);
-    let session_store = <Result<Arc<dyn SessionStore>, AuthkestraAxumError>>::from_ref(&state)?;
+    let session_store = <Result<Arc<dyn SessionStore>, AuthEngineAxumError>>::from_ref(&state)?;
 
     logout(cookies, session_store, session_config, "/")
         .await
         .map_err(|(status, msg)| {
             if status == StatusCode::UNAUTHORIZED {
-                AuthkestraAxumError::Unauthorized(msg)
+                AuthEngineAxumError::Unauthorized(msg)
             } else {
-                AuthkestraAxumError::Internal(msg)
+                AuthEngineAxumError::Internal(msg)
             }
         })
 }
 
 #[derive(Debug)]
-pub enum AuthkestraAxumError {
+pub enum AuthEngineAxumError {
     Unauthorized(String),
     Internal(String),
     /// A required component (e.g., SessionManager, TokenManager) is missing
     ComponentMissing(String),
 }
 
-impl IntoResponse for AuthkestraAxumError {
+impl IntoResponse for AuthEngineAxumError {
     fn into_response(self) -> axum::response::Response {
         let (status, message) = match self {
-            AuthkestraAxumError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
-            AuthkestraAxumError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            AuthkestraAxumError::ComponentMissing(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            AuthEngineAxumError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            AuthEngineAxumError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            AuthEngineAxumError::ComponentMissing(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
         (status, message).into_response()
     }
@@ -428,17 +428,17 @@ pub async fn get_session(
     store: &Arc<dyn SessionStore>,
     config: &SessionConfig,
     cookies: &Cookies,
-) -> Result<Session, AuthkestraAxumError> {
+) -> Result<Session, AuthEngineAxumError> {
     let session_id = cookies
         .get(&config.cookie_name)
         .map(|c| c.value().to_string())
-        .ok_or_else(|| AuthkestraAxumError::Unauthorized("Missing session cookie".to_string()))?;
+        .ok_or_else(|| AuthEngineAxumError::Unauthorized("Missing session cookie".to_string()))?;
 
     let session = store
         .load_session(&session_id)
         .await
-        .map_err(|e| AuthkestraAxumError::Internal(e.to_string()))?
-        .ok_or_else(|| AuthkestraAxumError::Unauthorized("Invalid session".to_string()))?;
+        .map_err(|e| AuthEngineAxumError::Internal(e.to_string()))?
+        .ok_or_else(|| AuthEngineAxumError::Unauthorized("Invalid session".to_string()))?;
 
     Ok(session)
 }
@@ -447,17 +447,17 @@ pub async fn get_session(
 pub async fn get_token(
     parts: &axum::http::request::Parts,
     token_manager: &TokenManager,
-) -> Result<authkestra_engine::Claims, AuthkestraAxumError> {
+) -> Result<authkestra_engine::Claims, AuthEngineAxumError> {
     let auth_header = parts
         .headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| {
-            AuthkestraAxumError::Unauthorized("Missing Authorization header".to_string())
+            AuthEngineAxumError::Unauthorized("Missing Authorization header".to_string())
         })?;
 
     if !auth_header.starts_with("Bearer ") {
-        return Err(AuthkestraAxumError::Unauthorized(
+        return Err(AuthEngineAxumError::Unauthorized(
             "Invalid Authorization header".to_string(),
         ));
     }
@@ -465,7 +465,7 @@ pub async fn get_token(
     let token = &auth_header[7..];
     let claims = token_manager
         .validate_token(token)
-        .map_err(|e| AuthkestraAxumError::Unauthorized(format!("Invalid token: {e}")))?;
+        .map_err(|e| AuthEngineAxumError::Unauthorized(format!("Invalid token: {e}")))?;
 
     Ok(claims)
 }
