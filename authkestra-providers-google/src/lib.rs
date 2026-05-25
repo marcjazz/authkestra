@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use authkestra_engine::{
+    auth::{Provider, ProviderConfig},
     error::AuthError,
     state::{Identity, OAuthToken},
     OAuthProvider,
@@ -44,6 +45,16 @@ impl GoogleProvider {
         self.userinfo_url = userinfo_url;
         self.revoke_url = revoke_url;
         self
+    }
+}
+
+impl Provider for GoogleProvider {
+    fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            id: "google".to_string(),
+            name: "Google".to_string(),
+            extra: HashMap::new(),
+        }
     }
 }
 

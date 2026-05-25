@@ -1,5 +1,11 @@
 use async_trait::async_trait;
-use authkestra_engine::{error::AuthError, state::Identity, state::OAuthToken, OAuthProvider};
+use authkestra_engine::{
+    auth::{Provider, ProviderConfig},
+    error::AuthError,
+    state::Identity,
+    state::OAuthToken,
+    OAuthProvider,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -41,6 +47,16 @@ impl GithubProvider {
     pub fn with_authorization_url(mut self, authorization_url: String) -> Self {
         self.authorization_url = authorization_url;
         self
+    }
+}
+
+impl Provider for GithubProvider {
+    fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            id: "github".to_string(),
+            name: "GitHub".to_string(),
+            extra: HashMap::new(),
+        }
     }
 }
 

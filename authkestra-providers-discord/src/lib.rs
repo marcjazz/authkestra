@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use authkestra_engine::{
+    auth::{Provider, ProviderConfig},
     error::AuthError,
     state::{Identity, OAuthToken},
     OAuthProvider,
@@ -40,6 +41,16 @@ impl DiscordProvider {
         self.user_url = user_url;
         self.revoke_url = revoke_url;
         self
+    }
+}
+
+impl Provider for DiscordProvider {
+    fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            id: "discord".to_string(),
+            name: "Discord".to_string(),
+            extra: HashMap::new(),
+        }
     }
 }
 
