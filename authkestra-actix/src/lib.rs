@@ -42,9 +42,12 @@ where
     fn actix_scope(&self) -> actix_web::Scope {
         let mut scope = web::scope("/auth");
 
-        scope = scope.route("/{provider}", web::get().to(actix_login_handler::<S, T>));
         scope = scope.route(
-            "/{provider}/callback",
+            "/login/{provider}",
+            web::get().to(actix_login_handler::<S, T>),
+        );
+        scope = scope.route(
+            "/callback/{provider}",
             web::get().to(actix_callback_handler::<S, T>),
         );
         scope = scope.route("/logout", web::get().to(actix_logout_handler::<S, T>));

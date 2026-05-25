@@ -1,16 +1,14 @@
 use authkestra_axum::Jwt;
-use authkestra_engine::discovery::ProviderMetadata;
-use authkestra_resource::jwt::JwksCache;
+use authkestra_resource::jwt::{JwksCache, ValidationConfig};
 use axum::{
     extract::FromRef,
     response::{IntoResponse, Json},
     routing::get,
     Router,
 };
-use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
 use serde_json::json;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 /// This example demonstrates an Axum resource server that protects its endpoints
 /// using JWTs validated against an external OIDC provider's JWKS.
@@ -25,7 +23,7 @@ struct MyClaims {
 #[derive(Clone)]
 struct AppState {
     jwks_cache: Arc<JwksCache>,
-    validation: Validation,
+    validation: jsonwebtoken::Validation,
 }
 
 impl FromRef<AppState> for Arc<JwksCache> {
@@ -34,7 +32,7 @@ impl FromRef<AppState> for Arc<JwksCache> {
     }
 }
 
-impl FromRef<AppState> for Validation {
+impl FromRef<AppState> for jsonwebtoken::Validation {
     fn from_ref(state: &AppState) -> Self {
         state.validation.clone()
     }
@@ -65,29 +63,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let config = Config::from_env();
 
-    // 1. Discover OIDC provider metadata
-    println!(
-        "🔍 Discovering provider metadata for: {issuer}",
-        issuer = config.issuer
-    );
-    let provider_metadata =
-        ProviderMetadata::discover(&config.issuer, reqwest::Client::new()).await?;
+    // 1. Configure Offline Validation components using the builder
+    let validation_config = ValidationConfig::builder()
+        .jwks_url(format!("{}/.well-known/jwks.json", config.issuer)) // Simplified for the example
+        .issuer(&config.issuer)
+        .audience(config.audience.as_deref().unwrap_or_default())
+        .build();
 
-    println!(
-        "🔑 Using JWKS URI: {jwks_uri}",
-        jwks_uri = provider_metadata.jwks_uri
-    );
-
-    // 2. Configure Offline Validation components
     let jwks_cache = Arc::new(JwksCache::new(
-        provider_metadata.jwks_uri,
-        Duration::from_secs(3600),
+        validation_config.jwks_url,
+        validation_config.refresh_interval,
     ));
 
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&[config.issuer]);
-    if let Some(audience) = config.audience {
-        validation.set_audience(&[audience]);
+    let mut validation = jsonwebtoken::Validation::new(validation_config.algorithms[0]);
+    validation.algorithms = validation_config.algorithms;
+    if let Some(iss) = validation_config.issuer {
+        validation.set_issuer(&[iss]);
+    }
+    if let Some(aud) = config.audience.as_deref() {
+        validation.set_audience(&[aud]);
     }
 
     let state = AppState {
@@ -95,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         validation,
     };
 
-    // 3. Build Axum Router
+    // 2. Build Axum Router
     let app = Router::new()
         .route("/", get(index))
         .route("/api/protected", get(protected))

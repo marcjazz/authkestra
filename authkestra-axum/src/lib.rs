@@ -198,11 +198,11 @@ impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AuthEng
         use axum::routing::get;
         axum::Router::new()
             .route(
-                "/auth/{provider}",
+                "/auth/login/{provider}",
                 get(helpers::axum_login_handler::<AppState, S, T>),
             )
             .route(
-                "/auth/{provider}/callback",
+                "/auth/callback/{provider}",
                 get(helpers::axum_callback_handler::<AppState, S, T>),
             )
             .route(
