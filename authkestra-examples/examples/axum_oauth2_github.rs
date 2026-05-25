@@ -9,7 +9,7 @@
 use authkestra::flow::{AuthEngine, OAuth2Flow};
 use authkestra_axum::{AuthSession, AuthkestraAxumError, AuthkestraAxumExt, AuthkestraState};
 use authkestra_engine::{Configured, SessionConfig};
-use authkestra_providers_github::GithubProvider;
+use authkestra_providers::github::GithubProvider;
 use authkestra_session::SessionStore;
 use axum::{
     response::{IntoResponse, Json},

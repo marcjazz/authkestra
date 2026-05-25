@@ -312,9 +312,7 @@ dependencies = [
  "authkestra-axum",
  "authkestra-engine",
  "authkestra-oidc",
- "authkestra-providers-discord",
- "authkestra-providers-github",
- "authkestra-providers-google",
+ "authkestra-providers",
  "authkestra-session",
  "authkestra-session-memory",
  "tokio",
@@ -390,9 +388,7 @@ dependencies = [
  "authkestra-axum",
  "authkestra-engine",
  "authkestra-oidc",
- "authkestra-providers-discord",
- "authkestra-providers-github",
- "authkestra-providers-google",
+ "authkestra-providers",
  "authkestra-resource",
  "authkestra-session",
  "authkestra-session-memory",
@@ -445,7 +441,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "authkestra-providers-discord"
+name = "authkestra-providers"
 version = "0.1.1"
 dependencies = [
  "async-trait",
@@ -455,32 +451,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "urlencoding",
- "wiremock",
-]
-
-[[package]]
-name = "authkestra-providers-github"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "authkestra-engine",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "wiremock",
-]
-
-[[package]]
-name = "authkestra-providers-google"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "authkestra-engine",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
  "wiremock",
 ]
 

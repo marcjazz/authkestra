@@ -1,68 +1,67 @@
-use authkestra_engine::{state::Identity, state::OAuthToken, OAuthProvider};
-use authkestra_providers_google::GoogleProvider;
+use authkestra_engine::{
+    state::{Identity, OAuthToken},
+    OAuthProvider,
+};
+use authkestra_providers::github::GithubProvider;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-async fn test_google_oauth_flow() {
+async fn test_github_oauth_flow() {
     // Start a mock server
     let server = MockServer::start().await;
 
-    // Mock the Google token endpoint
+    // Mock the GitHub token endpoint
     Mock::given(method("POST"))
-        .and(path("/token"))
+        .and(path("/login/oauth/access_token"))
+        .and(header("Accept", "application/json"))
         .and(body_string_contains("code=test_code"))
         .respond_with(
             ResponseTemplate::new(200)
                 .append_header("content-type", "application/json")
                 .set_body_json(serde_json::json!({
                     "access_token": "test_access_token",
-                    "token_type": "Bearer",
-                    "expires_in": 3600,
-                    "refresh_token": "test_refresh_token",
-                    "scope": "openid email profile",
-                    "id_token": "test_id_token"
+                    "token_type": "bearer"
                 })),
         )
         .mount(&server)
         .await;
 
-    // Mock the Google user info endpoint
+    // Mock the GitHub user info endpoint
     Mock::given(method("GET"))
-        .and(path("/userinfo"))
+        .and(path("/user"))
         .and(header("Authorization", "Bearer test_access_token"))
         .respond_with(
             ResponseTemplate::new(200)
                 .append_header("content-type", "application/json")
                 .set_body_json(serde_json::json!({
-                    "sub": "google-123",
-                    "email": "test@example.com",
-                    "name": "Test User",
-                    "picture": "https://example.com/picture.png",
-                    "email_verified": true,
-                    "locale": "en"
+                    "id": 123,
+                    "login": "test_user",
+                    "email": "test@example.com"
                 })),
         )
         .mount(&server)
         .await;
 
-    let provider = GoogleProvider::new(
+    let provider = GithubProvider::new(
         "test_client_id".to_string(),
         "test_client_secret".to_string(),
         format!("{}/callback", server.uri()),
     )
     .with_test_urls(
-        format!("{}/auth", server.uri()),
-        format!("{}/token", server.uri()),
-        format!("{}/userinfo", server.uri()),
-        format!("{}/revoke", server.uri()),
+        format!("{}/login/oauth/authorize", server.uri()),
+        format!("{}/login/oauth/access_token", server.uri()),
+        format!("{}/user", server.uri()),
     );
 
     // Simulate the authorization URL generation
-    let authorize_url = provider.get_authorization_url("test_state", &["email", "profile"], None);
-    assert!(authorize_url.starts_with(&format!("{}/auth", server.uri())));
+    let authorize_url = provider.get_authorization_url("test_state", &["user:email"], None);
+    assert!(authorize_url.starts_with(&format!("{}/login/oauth/authorize", server.uri())));
     assert!(authorize_url.contains("state=test_state"));
 
+    // In a real scenario, the user would be redirected to GitHub, authorize the app,
+    // and then be redirected back to the callback URL with a code.
+    // For testing, we'll directly use the mocked code.
     let code = "test_code";
 
     let (identity, token_response): (Identity, OAuthToken) = provider
@@ -71,16 +70,7 @@ async fn test_google_oauth_flow() {
         .expect("Failed to exchange code");
 
     assert_eq!(token_response.access_token, "test_access_token".to_string());
-    assert_eq!(
-        token_response.refresh_token,
-        Some("test_refresh_token".to_string())
-    );
-
-    assert_eq!(identity.external_id, "google-123");
-    assert_eq!(identity.username, Some("Test User".to_string()));
+    assert_eq!(identity.external_id, "123");
+    assert_eq!(identity.username, Some("test_user".to_string()));
     assert_eq!(identity.email, Some("test@example.com".to_string()));
-    assert_eq!(
-        identity.attributes.get("locale").map(|v| v.as_str()),
-        Some("en")
-    );
 }

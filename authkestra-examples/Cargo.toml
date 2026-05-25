@@ -12,9 +12,7 @@ authkestra-session-memory = { version = "0.1.0", path = "../authkestra-session-m
 authkestra-session-redis = { version = "0.1.0", path = "../authkestra-session-redis" }
 authkestra-session-sql = { version = "0.1.0", path = "../authkestra-session-sql", features = ["sqlite"] }
 authkestra-resource = { path = "../authkestra-resource" }
-authkestra-providers-github = { path = "../authkestra-providers-github" }
-authkestra-providers-google = { path = "../authkestra-providers-google" }
-authkestra-providers-discord = { path = "../authkestra-providers-discord" }
+authkestra-providers = { path = "../authkestra-providers", features = ["github", "google", "discord"] }
 authkestra-actix = { path = "../authkestra-actix", features = ["flow", "session", "token"] }
 authkestra-axum = { path = "../authkestra-axum", features = ["flow", "session", "token"] }
 authkestra-oidc = { path = "../authkestra-oidc" }

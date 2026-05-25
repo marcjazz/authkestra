@@ -1,19 +1,16 @@
-use authkestra_engine::{
-    state::{Identity, OAuthToken},
-    OAuthProvider,
-};
-use authkestra_providers_discord::DiscordProvider;
+use authkestra_engine::{state::Identity, state::OAuthToken, OAuthProvider};
+use authkestra_providers::google::GoogleProvider;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-async fn test_discord_oauth_flow() {
+async fn test_google_oauth_flow() {
     // Start a mock server
     let server = MockServer::start().await;
 
-    // Mock the Discord token endpoint
+    // Mock the Google token endpoint
     Mock::given(method("POST"))
-        .and(path("/api/oauth2/token"))
+        .and(path("/token"))
         .and(body_string_contains("code=test_code"))
         .respond_with(
             ResponseTemplate::new(200)
@@ -21,47 +18,50 @@ async fn test_discord_oauth_flow() {
                 .set_body_json(serde_json::json!({
                     "access_token": "test_access_token",
                     "token_type": "Bearer",
-                    "expires_in": 604800,
+                    "expires_in": 3600,
                     "refresh_token": "test_refresh_token",
-                    "scope": "identify email"
+                    "scope": "openid email profile",
+                    "id_token": "test_id_token"
                 })),
         )
         .mount(&server)
         .await;
 
-    // Mock the Discord user info endpoint
+    // Mock the Google user info endpoint
     Mock::given(method("GET"))
-        .and(path("/api/users/@me"))
+        .and(path("/userinfo"))
         .and(header("Authorization", "Bearer test_access_token"))
         .respond_with(
             ResponseTemplate::new(200)
                 .append_header("content-type", "application/json")
                 .set_body_json(serde_json::json!({
-                    "id": "123456789",
-                    "username": "testuser",
-                    "discriminator": "0001",
+                    "sub": "google-123",
                     "email": "test@example.com",
-                    "verified": true
+                    "name": "Test User",
+                    "picture": "https://example.com/picture.png",
+                    "email_verified": true,
+                    "locale": "en"
                 })),
         )
         .mount(&server)
         .await;
 
-    let provider = DiscordProvider::new(
+    let provider = GoogleProvider::new(
         "test_client_id".to_string(),
         "test_client_secret".to_string(),
         format!("{}/callback", server.uri()),
     )
     .with_test_urls(
-        format!("{}/api/oauth2/token", server.uri()),
-        format!("{}/api/users/@me", server.uri()),
-        format!("{}/api/oauth2/token/revoke", server.uri()),
+        format!("{}/auth", server.uri()),
+        format!("{}/token", server.uri()),
+        format!("{}/userinfo", server.uri()),
+        format!("{}/revoke", server.uri()),
     );
 
     // Simulate the authorization URL generation
-    let authorize_url = provider.get_authorization_url("test_state", &["identify", "email"], None);
+    let authorize_url = provider.get_authorization_url("test_state", &["email", "profile"], None);
+    assert!(authorize_url.starts_with(&format!("{}/auth", server.uri())));
     assert!(authorize_url.contains("state=test_state"));
-    assert!(authorize_url.contains("client_id=test_client_id"));
 
     let code = "test_code";
 
@@ -76,7 +76,11 @@ async fn test_discord_oauth_flow() {
         Some("test_refresh_token".to_string())
     );
 
-    assert_eq!(identity.external_id, "123456789");
-    assert_eq!(identity.username, Some("testuser#0001".to_string()));
+    assert_eq!(identity.external_id, "google-123");
+    assert_eq!(identity.username, Some("Test User".to_string()));
     assert_eq!(identity.email, Some("test@example.com".to_string()));
+    assert_eq!(
+        identity.attributes.get("locale").map(|v| v.as_str()),
+        Some("en")
+    );
 }

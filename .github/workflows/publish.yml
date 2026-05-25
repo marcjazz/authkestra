@@ -55,9 +55,7 @@ jobs:
           - authkestra-session
           - authkestra-resource
           - authkestra-flow
-          - authkestra-providers-github
-          - authkestra-providers-google
-          - authkestra-providers-discord
+          - authkestra-providers
           - authkestra-oidc
 
     steps:
