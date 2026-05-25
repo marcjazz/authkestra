@@ -304,7 +304,7 @@ dependencies = [
  "actix-utils",
  "actix-web",
  "authkestra-engine",
- "authkestra-guard",
+ "authkestra-resource",
  "authkestra-session",
  "base64",
  "chrono",
@@ -321,8 +321,8 @@ name = "authkestra-axum"
 version = "0.1.3"
 dependencies = [
  "authkestra-engine",
- "authkestra-guard",
  "authkestra-macros",
+ "authkestra-resource",
  "authkestra-session",
  "axum",
  "base64",
@@ -365,11 +365,11 @@ dependencies = [
  "authkestra-actix",
  "authkestra-axum",
  "authkestra-engine",
- "authkestra-guard",
  "authkestra-oidc",
  "authkestra-providers-discord",
  "authkestra-providers-github",
  "authkestra-providers-google",
+ "authkestra-resource",
  "authkestra-session",
  "authkestra-session-memory",
  "authkestra-session-redis",
@@ -393,22 +393,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "authkestra-guard"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "authkestra-engine",
- "base64",
- "http 1.4.0",
- "jsonwebtoken",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "authkestra-macros"
 version = "0.1.0"
 dependencies = [
@@ -424,7 +408,7 @@ version = "0.1.2"
 dependencies = [
  "async-trait",
  "authkestra-engine",
- "authkestra-guard",
+ "authkestra-resource",
  "jsonwebtoken",
  "log",
  "reqwest",
@@ -473,6 +457,22 @@ dependencies = [
  "serde_json",
  "tokio",
  "wiremock",
+]
+
+[[package]]
+name = "authkestra-resource"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "authkestra-engine",
+ "base64",
+ "http 1.4.0",
+ "jsonwebtoken",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

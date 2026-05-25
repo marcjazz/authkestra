@@ -7,7 +7,7 @@ use authkestra_engine::{
     state::{Identity, OAuthToken},
     OAuthProvider,
 };
-use authkestra_guard::jwt::{validate_jwt_generic, JwksCache};
+use authkestra_resource::jwt::{validate_jwt_generic, JwksCache};
 use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};

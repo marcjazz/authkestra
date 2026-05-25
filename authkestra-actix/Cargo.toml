@@ -11,7 +11,7 @@ categories = ["authentication", "web-programming::http-server"]
 [dependencies]
 authkestra-engine = { version = "0.1.2", path = "../authkestra-engine" }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session", optional = true }
-authkestra-guard = { version = "0.1.0", path = "../authkestra-guard", optional = true }
+authkestra-resource = { version = "0.1.0", path = "../authkestra-resource", optional = true }
 actix-web = "4"
 actix-utils = "3"
 futures-util = "0.3"
@@ -28,4 +28,4 @@ default = []
 session = ["dep:authkestra-session", "authkestra-engine/session"]
 flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engine/token"]
 token = ["authkestra-engine/token"]
-guard = ["dep:authkestra-guard"]
+guard = ["dep:authkestra-resource"]

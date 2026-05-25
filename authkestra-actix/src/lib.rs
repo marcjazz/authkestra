@@ -228,7 +228,7 @@ where
 
     fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
         let cache = req
-            .app_data::<web::Data<Arc<authkestra_guard::jwt::JwksCache>>>()
+            .app_data::<web::Data<Arc<authkestra_resource::jwt::JwksCache>>>()
             .cloned();
         let validation = req
             .app_data::<web::Data<jsonwebtoken::Validation>>()
@@ -261,7 +261,7 @@ where
 
             let token = &auth_header[7..];
             let claims =
-                authkestra_guard::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
+                authkestra_resource::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
                     .await
                     .map_err(|e| {
                         actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}"))

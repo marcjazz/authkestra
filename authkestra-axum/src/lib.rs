@@ -3,7 +3,7 @@ pub use authkestra_engine::TokenManager;
 #[cfg(feature = "flow")]
 pub use authkestra_engine::{AuthEngine, Missing, SessionConfig};
 #[cfg(feature = "guard")]
-pub use authkestra_guard::AuthEngineGuard;
+pub use authkestra_resource::AuthEngineGuard;
 use axum::extract::FromRef;
 #[cfg(feature = "session")]
 use axum::extract::FromRequestParts;
@@ -107,7 +107,7 @@ pub struct Jwt<T>(pub T);
 impl<S, T> FromRequestParts<S> for Jwt<T>
 where
     S: Send + Sync,
-    Arc<authkestra_guard::jwt::JwksCache>: FromRef<S>,
+    Arc<authkestra_resource::jwt::JwksCache>: FromRef<S>,
     jsonwebtoken::Validation: FromRef<S>,
     T: for<'de> serde::Deserialize<'de> + 'static,
 {
@@ -117,7 +117,7 @@ where
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let cache = Arc::<authkestra_guard::jwt::JwksCache>::from_ref(state);
+        let cache = Arc::<authkestra_resource::jwt::JwksCache>::from_ref(state);
         let validation = jsonwebtoken::Validation::from_ref(state);
 
         let auth_header = parts
@@ -135,9 +135,10 @@ where
         }
 
         let token = &auth_header[7..];
-        let claims = authkestra_guard::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
-            .await
-            .map_err(|e| AuthEngineAxumError::Unauthorized(format!("Invalid token: {e}")))?;
+        let claims =
+            authkestra_resource::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
+                .await
+                .map_err(|e| AuthEngineAxumError::Unauthorized(format!("Invalid token: {e}")))?;
 
         Ok(Jwt(claims))
     }
@@ -153,7 +154,7 @@ pub struct Auth<I>(pub I);
 impl<S, I> FromRequestParts<S> for Auth<I>
 where
     S: Send + Sync,
-    Arc<authkestra_guard::AuthEngineGuard<I>>: FromRef<S>,
+    Arc<authkestra_resource::AuthEngineGuard<I>>: FromRef<S>,
     I: Send + Sync + 'static,
 {
     type Rejection = AuthEngineAxumError;
@@ -162,7 +163,7 @@ where
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
-        let guard = Arc::<authkestra_guard::AuthEngineGuard<I>>::from_ref(state);
+        let guard = Arc::<authkestra_resource::AuthEngineGuard<I>>::from_ref(state);
         match guard.authenticate(parts).await {
             Ok(Some(identity)) => Ok(Auth(identity)),
             Ok(None) => Err(AuthEngineAxumError::Unauthorized(

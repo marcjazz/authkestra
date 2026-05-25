@@ -18,8 +18,8 @@ use authkestra_engine::state::Identity;
 use authkestra_engine::strategy::{SessionProvider, SessionStrategy};
 use authkestra_engine::SessionConfig;
 use authkestra_engine::{HasSessionStoreMarker, SessionStoreState};
-use authkestra_guard::AuthEngineGuard;
 use authkestra_providers_github::GithubProvider;
+use authkestra_resource::AuthEngineGuard;
 use authkestra_session::SessionStore;
 use authkestra_session_memory::MemoryStore;
 use axum::{

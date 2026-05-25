@@ -11,7 +11,7 @@ categories = ["authentication", "web-programming::http-server"]
 [dependencies]
 authkestra-engine = { version = "0.1.2", path = "../authkestra-engine" }
 authkestra-session = { version = "0.1.1", path = "../authkestra-session", optional = true }
-authkestra-guard = { version = "0.1.0", path = "../authkestra-guard", optional = true }
+authkestra-resource = { version = "0.1.0", path = "../authkestra-resource", optional = true }
 authkestra-macros = { version = "0.1.0", path = "../authkestra-macros", features = ["axum"], optional = true }
 axum = "0.8.8"
 jsonwebtoken = "10.3.0"
@@ -28,4 +28,4 @@ macros = ["authkestra-macros"]
 session = ["dep:authkestra-session", "authkestra-engine/session"]
 flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engine/token"]
 token = ["authkestra-engine/token"]
-guard = ["dep:authkestra-guard"]
+guard = ["dep:authkestra-resource"]
