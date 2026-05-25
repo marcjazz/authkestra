@@ -15,7 +15,8 @@ use std::sync::Arc;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Session Store
-    let session_store: Arc<dyn SessionStore> = Arc::new(authkestra_session_memory::MemoryStore::default());
+    let session_store: Arc<dyn SessionStore> =
+        Arc::new(authkestra_session_memory::MemoryStore::default());
 
     let auth_engine = AuthEngine::builder()
         .session_store(session_store)

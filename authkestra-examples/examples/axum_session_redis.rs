@@ -33,7 +33,8 @@ async fn main() {
 
     // Redis Session Store
     let session_store: Arc<dyn SessionStore> = Arc::new(
-        RedisStore::new(&redis_url, "authkestra_example".into()).expect("Failed to connect to Redis"),
+        RedisStore::new(&redis_url, "authkestra_example".into())
+            .expect("Failed to connect to Redis"),
     );
 
     let auth_engine = AuthEngine::builder()

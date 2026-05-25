@@ -23,7 +23,8 @@ type AppState = AuthkestraState<Configured<Arc<dyn SessionStore>>>;
 #[tokio::main]
 async fn main() {
     // Session Store
-    let session_store: Arc<dyn SessionStore> = Arc::new(authkestra_session_memory::MemoryStore::default());
+    let session_store: Arc<dyn SessionStore> =
+        Arc::new(authkestra_session_memory::MemoryStore::default());
 
     let auth_engine = AuthEngine::builder()
         .session_store(session_store)
