@@ -23,7 +23,7 @@
             try {
                 const res = await fetch('/api/user');
                 const app = document.getElementById('app');
-                if (res.status === 200) {
+                if (res.ok) {
                     const user = await res.json();
                     app.innerHTML = `
                         <h2>Welcome, ${user.id}!</h2>
@@ -37,8 +37,7 @@
                         <h2>Not Authenticated</h2>
                         <p>Please log in to continue.</p>
                         <div id="login-methods">
-                             <a href="/auth/login/github" class="btn">Login with GitHub</a>
-                             <a href="/auth/login/google" class="btn">Login with Google</a>
+                             <a href="/auth/login" class="btn">Login</a>
                         </div>
                     `;
                 }

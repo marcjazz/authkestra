@@ -12,7 +12,6 @@ use authkestra_engine::{Configured, SessionConfig};
 use authkestra_providers_github::GithubProvider;
 use authkestra_session::SessionStore;
 use axum::{
-    http::StatusCode,
     response::{IntoResponse, Json},
     routing::get,
     Router,
@@ -35,7 +34,7 @@ async fn main() {
     let client_secret = std::env::var("AUTHKESTRA_GITHUB_CLIENT_SECRET")
         .expect("AUTHKESTRA_GITHUB_CLIENT_SECRET must be set");
     let redirect_uri = std::env::var("AUTHKESTRA_GITHUB_REDIRECT_URI")
-        .unwrap_or_else(|_| "http://localhost:3000/auth/callback/github".to_string());
+        .unwrap_or_else(|_| "http://localhost:3000/auth/github/callback".to_string());
 
     let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
 
@@ -70,18 +69,12 @@ async fn main() {
 
 async fn get_user(session: Result<AuthSession, AuthkestraAxumError>) -> impl IntoResponse {
     match session {
-        Ok(AuthSession(session)) => (
-            StatusCode::OK,
-            Json(json!({
-                "id": session.identity.external_id,
-                "username": session.identity.username,
-                "email": session.identity.email,
-                "provider": session.identity.provider_id,
-            })),
-        ),
-        Err(_) => (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "Not authenticated" })),
-        ),
+        Ok(AuthSession(session)) => Json(json!({
+            "id": session.identity.external_id,
+            "username": session.identity.username,
+            "email": session.identity.email,
+            "provider": session.identity.provider_id,
+        })),
+        Err(_) => Json(json!({ "error": "Not authenticated" })),
     }
 }
