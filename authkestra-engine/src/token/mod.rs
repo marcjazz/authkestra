@@ -149,7 +149,10 @@ mod tests {
     #[test]
     fn test_claims_serialization() {
         let mut extra = HashMap::new();
-        extra.insert("custom".to_string(), serde_json::Value::String("value".to_string()));
+        extra.insert(
+            "custom".to_string(),
+            serde_json::Value::String("value".to_string()),
+        );
 
         let claims = Claims {
             iss: Some("issuer".to_string()),

@@ -32,7 +32,6 @@ pub enum ValidationError {
     Validation(String),
 }
 
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct Jwk {
     pub kid: Option<String>,
