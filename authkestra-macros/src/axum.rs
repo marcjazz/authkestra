@@ -47,9 +47,9 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
     let authkestra_field = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields) => fields.named.iter().find(|f| {
-                f.attrs
-                    .iter()
-                    .any(|attr| attr.path().is_ident("auth_engine") || attr.path().is_ident("authkestra"))
+                f.attrs.iter().any(|attr| {
+                    attr.path().is_ident("auth_engine") || attr.path().is_ident("authkestra")
+                })
             }),
             _ => {
                 return syn::Error::new_spanned(

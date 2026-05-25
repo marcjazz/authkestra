@@ -1,5 +1,5 @@
 use authkestra::flow::{AuthEngine, OAuth2Flow};
-use authkestra_axum::{AuthSession, AuthEngineAxumExt, AuthEngineState};
+use authkestra_axum::{AuthEngineAxumExt, AuthEngineState, AuthSession};
 use authkestra_oidc::OidcProvider;
 use authkestra_session::MemoryStore;
 use axum::{response::Html, routing::get, Router};
@@ -7,18 +7,17 @@ use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 
 /// AuthEngine state with support for session only.
-type AppState = AuthEngineState<authkestra_engine::Configured<Arc<dyn authkestra_session::SessionStore>>>;
+type AppState =
+    AuthEngineState<authkestra_engine::Configured<Arc<dyn authkestra_session::SessionStore>>>;
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
 
-    let client_id =
-        std::env::var("OIDC_CLIENT_ID").expect("OIDC_CLIENT_ID env var must be set");
+    let client_id = std::env::var("OIDC_CLIENT_ID").expect("OIDC_CLIENT_ID env var must be set");
     let client_secret =
         std::env::var("OIDC_CLIENT_SECRET").expect("OIDC_CLIENT_SECRET env var must be set");
-    let issuer_url =
-        std::env::var("OIDC_ISSUER_URL").expect("OIDC_ISSUER_URL env var must be set");
+    let issuer_url = std::env::var("OIDC_ISSUER_URL").expect("OIDC_ISSUER_URL env var must be set");
     let redirect_uri = std::env::var("OIDC_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/auth/oidc/callback".to_string());
 
@@ -47,7 +46,9 @@ async fn main() {
 }
 
 async fn index() -> Html<&'static str> {
-    Html(r#"<h1>OIDC Example</h1><a href="/auth/oidc?scope=openid%20profile%20email&success_url=/protected">Login with OIDC</a>"#)
+    Html(
+        r#"<h1>OIDC Example</h1><a href="/auth/oidc?scope=openid%20profile%20email&success_url=/protected">Login with OIDC</a>"#,
+    )
 }
 
 async fn protected(AuthSession(session): AuthSession) -> String {

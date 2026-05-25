@@ -8,8 +8,8 @@ use authkestra_axum::{
     helpers::{handle_oauth_callback_jwt_erased, initiate_oauth_login, OAuthCallbackParams},
     AuthToken, AuthkestraState,
 };
-use authkestra_engine::{Missing, Configured};
 use authkestra_engine::TokenManager;
+use authkestra_engine::{Configured, Missing};
 use authkestra_providers_github::GithubProvider;
 use axum::{
     extract::{Query, State},
@@ -45,7 +45,9 @@ async fn main() {
         )))
         .build();
 
-    let state = AppState { authkestra: auth_engine.clone() };
+    let state = AppState {
+        authkestra: auth_engine.clone(),
+    };
 
     let app = Router::new()
         .route("/", get(index))

@@ -1,5 +1,5 @@
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use authkestra_actix::{AuthSession, AuthEngineActixExt};
+use authkestra_actix::{AuthEngineActixExt, AuthSession};
 use authkestra_engine::{AuthEngine, Missing, OAuth2Flow};
 use authkestra_providers_github::GithubProvider;
 use authkestra_session::SqlStore;

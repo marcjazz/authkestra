@@ -101,8 +101,10 @@ async fn login(
         Err(e) => return Ok(HttpResponse::InternalServerError().body(e.to_string())),
     };
 
-    let cookie =
-        authkestra_actix::helpers::create_actix_cookie(&data.auth_engine.session_config, session.id);
+    let cookie = authkestra_actix::helpers::create_actix_cookie(
+        &data.auth_engine.session_config,
+        session.id,
+    );
 
     Ok(HttpResponse::Found()
         .append_header(("Location", "/protected"))

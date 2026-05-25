@@ -14,7 +14,7 @@
 #![warn(missing_docs)]
 
 use crate::auth::{
-    error::AuthError, state::Identity, CredentialsProvider, OAuthProvider, UserMapper,
+    error::AuthError, state::Identity, CredentialsProvider, UserMapper,
 };
 pub use crate::auth::{ErasedOAuthFlow, Session, SessionConfig, SessionStore};
 use async_trait::async_trait;
@@ -53,7 +53,6 @@ pub trait Flow: Send + Sync {
 }
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 pub use crate::engine::{
     AuthEngine, AuthEngineBuilder, Authkestra, Configured, Missing, StatefulAuthEngine,

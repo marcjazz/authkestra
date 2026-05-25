@@ -153,9 +153,7 @@ mod tests {
 
         // Transition to with session store
         let store = MockSessionStore;
-        let engine_with_session = AuthEngine::builder()
-            .session_store(Arc::new(store))
-            .build();
+        let engine_with_session = AuthEngine::builder().session_store(Arc::new(store)).build();
 
         // Now session_store() is available
         let _s = engine_with_session.session_store();

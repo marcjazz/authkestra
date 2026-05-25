@@ -3,7 +3,7 @@
 //! This example demonstrates how to set up AuthEngine with Actix Web for a Single Page Application (SPA)
 //! using JWTs for stateless authentication.
 
-use actix_web::{get, web, App, HttpResponse, HttpServer, Responder, HttpRequest};
+use actix_web::{get, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use authkestra::flow::{AuthEngine, OAuth2Flow, StatelessAuthkestra};
 use authkestra_actix::{
     helpers::{handle_oauth_callback_jwt_erased, initiate_oauth_login_erased, OAuthCallbackParams},
