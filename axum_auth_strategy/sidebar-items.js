@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["app","main","protected_route"],"struct":["CustomHeaderStrategy","MyBasicAuthenticator","User"]};

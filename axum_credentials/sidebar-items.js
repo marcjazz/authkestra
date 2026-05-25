@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["index","login","main","protected"],"struct":["AppState","LocalUser","LoginCredentials","MyCredentialsProvider","SqlxUserMapper"]};

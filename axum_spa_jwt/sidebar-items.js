@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["callback_handler","index","login_handler","main","protected"],"type":["AppState"]};
