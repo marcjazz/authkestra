@@ -1,16 +1,18 @@
 #[cfg(test)]
 mod tests {
+    use crate::auth::session::{Session, SessionStore};
     use crate::auth::{AuthError, AuthInput, AuthMethod, Identity, Provider, ProviderConfig};
     use crate::flow::{Flow, FlowContext, FlowResult};
     use crate::token::TokenService;
-    use crate::auth::session::{Session, SessionStore};
     use async_trait::async_trait;
     use std::collections::HashMap;
 
     struct MockAuthMethod;
     #[async_trait]
     impl AuthMethod for MockAuthMethod {
-        fn name(&self) -> &str { "mock" }
+        fn name(&self) -> &str {
+            "mock"
+        }
         async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
             Ok(Identity {
                 provider_id: "mock".to_string(),
@@ -36,7 +38,9 @@ mod tests {
     struct MockFlow;
     #[async_trait]
     impl Flow for MockFlow {
-        fn id(&self) -> &str { "mock-flow" }
+        fn id(&self) -> &str {
+            "mock-flow"
+        }
         async fn execute(&self, _ctx: FlowContext) -> Result<FlowResult, AuthError> {
             Ok(FlowResult::Complete(Identity {
                 provider_id: "mock".to_string(),
@@ -51,15 +55,25 @@ mod tests {
     struct MockSessionStore;
     #[async_trait]
     impl SessionStore for MockSessionStore {
-        async fn load_session(&self, _id: &str) -> Result<Option<Session>, AuthError> { Ok(None) }
-        async fn save_session(&self, _session: &Session) -> Result<(), AuthError> { Ok(()) }
-        async fn delete_session(&self, _id: &str) -> Result<(), AuthError> { Ok(()) }
+        async fn load_session(&self, _id: &str) -> Result<Option<Session>, AuthError> {
+            Ok(None)
+        }
+        async fn save_session(&self, _session: &Session) -> Result<(), AuthError> {
+            Ok(())
+        }
+        async fn delete_session(&self, _id: &str) -> Result<(), AuthError> {
+            Ok(())
+        }
     }
 
     struct MockTokenService;
     #[async_trait]
     impl TokenService for MockTokenService {
-        async fn issue(&self, _identity: &Identity, _expires_in_secs: u64) -> Result<String, AuthError> {
+        async fn issue(
+            &self,
+            _identity: &Identity,
+            _expires_in_secs: u64,
+        ) -> Result<String, AuthError> {
             Ok("mock-token".to_string())
         }
         async fn verify(&self, _token: &str) -> Result<Identity, AuthError> {
@@ -76,7 +90,10 @@ mod tests {
     #[tokio::test]
     async fn test_auth_method_mock() {
         let method = MockAuthMethod;
-        let identity = method.authenticate(AuthInput::Token("test".to_string())).await.unwrap();
+        let identity = method
+            .authenticate(AuthInput::Token("test".to_string()))
+            .await
+            .unwrap();
         assert_eq!(identity.external_id, "user123");
     }
 
