@@ -2,6 +2,7 @@ use crate::auth::{
     error::AuthError, state::Identity, state::OAuthToken, ErasedOAuthFlow, OAuthProvider,
     UserMapper,
 };
+use crate::flow::{Flow, FlowContext, FlowResult};
 use async_trait::async_trait;
 
 /// Orchestrates the standard OAuth2 Authorization Code flow.
@@ -10,6 +11,38 @@ pub struct OAuth2Flow<P: OAuthProvider, M: UserMapper = ()> {
     mapper: Option<M>,
     scopes: Vec<String>,
     use_pkce: bool,
+}
+
+#[async_trait]
+impl<P: OAuthProvider + 'static, M: UserMapper + 'static> Flow for OAuth2Flow<P, M> {
+    fn id(&self) -> &str {
+        self.provider.provider_id()
+    }
+
+    async fn execute(&self, ctx: FlowContext) -> Result<FlowResult, AuthError> {
+        if let Some(code) = ctx.params.get("code") {
+            let received_state = ctx.params.get("state").ok_or(AuthError::CsrfMismatch)?;
+            let expected_state = &ctx.state;
+            let code_verifier = ctx.params.get("code_verifier").map(|s| s.as_str());
+
+            let (identity, _token, _local_user) = self
+                .finalize_login(code, received_state, expected_state, code_verifier)
+                .await?;
+            Ok(FlowResult::Complete(identity))
+        } else {
+            // Assume initiation if no code is present
+            let scopes_str = ctx.params.get("scopes").map(|s| s.as_str()).unwrap_or("");
+            let scopes: Vec<&str> = if scopes_str.is_empty() {
+                Vec::new()
+            } else {
+                scopes_str.split(',').collect()
+            };
+
+            let pkce_challenge = ctx.params.get("pkce_challenge").map(|s| s.as_str());
+            let (url, _state) = self.initiate_login(&scopes, pkce_challenge);
+            Ok(FlowResult::Redirect(url))
+        }
+    }
 }
 
 #[async_trait]

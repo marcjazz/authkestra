@@ -1,6 +1,7 @@
 use crate::error::OidcError;
 use async_trait::async_trait;
 use authkestra_engine::{
+    auth::{Provider, ProviderConfig},
     discovery::ProviderMetadata,
     error::AuthError,
     state::{Identity, OAuthToken},
@@ -65,6 +66,16 @@ impl OidcProvider {
 
     pub fn metadata(&self) -> &ProviderMetadata {
         &self.metadata
+    }
+}
+
+impl Provider for OidcProvider {
+    fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            id: "oidc".to_string(),
+            name: "OIDC".to_string(),
+            extra: HashMap::new(),
+        }
     }
 }
 

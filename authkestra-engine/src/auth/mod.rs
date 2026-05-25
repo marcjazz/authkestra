@@ -94,7 +94,7 @@ pub enum SameSite {
 
 /// Trait for an OAuth2-compatible provider.
 #[async_trait]
-pub trait OAuthProvider: Send + Sync {
+pub trait OAuthProvider: Provider {
     /// Get the provider identifier.
     fn provider_id(&self) -> &str;
 
