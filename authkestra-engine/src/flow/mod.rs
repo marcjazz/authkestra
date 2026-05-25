@@ -13,9 +13,7 @@
 
 #![warn(missing_docs)]
 
-use crate::auth::{
-    error::AuthError, state::Identity, CredentialsProvider, UserMapper,
-};
+use crate::auth::{error::AuthError, state::Identity, CredentialsProvider, UserMapper};
 pub use crate::auth::{ErasedOAuthFlow, Session, SessionConfig, SessionStore};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
