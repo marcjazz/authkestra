@@ -10,7 +10,7 @@
 use authkestra::flow::{AuthEngine, OAuth2Flow};
 use authkestra_axum::{helpers, AuthToken, AuthkestraAxumError};
 use authkestra_engine::{token::TokenManager, Configured, Missing};
-use authkestra_providers_github::GithubProvider;
+use authkestra_providers::github::GithubProvider;
 use axum::{
     extract::{FromRef, Path, Query, State},
     http::StatusCode,

@@ -26,11 +26,11 @@ pub use authkestra_actix as actix;
 /// Authentication providers.
 pub mod providers {
     #[cfg(feature = "github")]
-    pub use authkestra_providers_github as github;
+    pub use authkestra_providers::github;
 
     #[cfg(feature = "google")]
-    pub use authkestra_providers_google as google;
+    pub use authkestra_providers::google;
 
     #[cfg(feature = "discord")]
-    pub use authkestra_providers_discord as discord;
+    pub use authkestra_providers::discord;
 }
