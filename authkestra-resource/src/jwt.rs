@@ -2,10 +2,11 @@ use async_trait::async_trait;
 use authkestra_engine::{
     error::AuthError,
     strategy::{utils, AuthenticationStrategy},
+    token::Claims,
 };
 use http::request::Parts;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -29,18 +30,6 @@ pub enum ValidationError {
     Discovery(#[from] AuthError),
     #[error("Validation error: {0}")]
     Validation(String),
-}
-
-/// Standard claims for JWT/PASETO validation.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Claims {
-    pub iss: Option<String>,
-    pub sub: Option<String>,
-    pub aud: Option<String>,
-    pub exp: Option<usize>,
-    pub nbf: Option<usize>,
-    pub iat: Option<usize>,
-    pub jti: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

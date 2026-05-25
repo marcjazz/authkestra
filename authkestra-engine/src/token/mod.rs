@@ -15,21 +15,27 @@ pub trait TokenService: Send + Sync {
     async fn verify(&self, token: &str) -> Result<Identity, AuthError>;
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
+    // Standard OIDC claims
+    pub iss: Option<String>,
     pub sub: String,
+    pub aud: Option<String>,
     pub exp: usize,
     pub iat: usize,
-    pub iss: Option<String>,
-    pub aud: Option<String>,
+    pub nbf: Option<usize>,
+    pub jti: Option<String>,
+
+    // Authkestra-specific core fields
     pub scope: Option<String>,
     /// Optional identity data for user-centric tokens.
     /// If None, this is likely a machine-to-machine token.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity: Option<Identity>,
-    /// Additional custom claims.
+
+    // Isolated custom claims
     #[serde(flatten)]
-    pub custom: HashMap<String, serde_json::Value>,
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -64,14 +70,16 @@ impl TokenManager {
         let expiration = now + expires_in_secs as usize;
 
         let claims = Claims {
+            iss: self.issuer.clone(),
             sub: identity.external_id.clone(),
+            aud: None,
             exp: expiration,
             iat: now,
-            iss: self.issuer.clone(),
-            aud: None,
+            nbf: Some(now),
+            jti: Some(uuid::Uuid::new_v4().to_string()),
             scope,
             identity: Some(identity),
-            custom: HashMap::new(),
+            extra: HashMap::new(),
         };
 
         encode(&Header::default(), &claims, &self.encoding_key)
@@ -89,14 +97,16 @@ impl TokenManager {
         let expiration = now + expires_in_secs as usize;
 
         let claims = Claims {
+            iss: self.issuer.clone(),
             sub: client_id.to_string(),
+            aud: None,
             exp: expiration,
             iat: now,
-            iss: self.issuer.clone(),
-            aud: None,
+            nbf: Some(now),
+            jti: Some(uuid::Uuid::new_v4().to_string()),
             scope,
             identity: None,
-            custom: HashMap::new(),
+            extra: HashMap::new(),
         };
 
         encode(&Header::default(), &claims, &self.encoding_key)
@@ -127,5 +137,67 @@ impl TokenService for TokenManager {
         claims
             .identity
             .ok_or_else(|| AuthError::Token("No identity in token".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::state::Identity;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_claims_serialization() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "custom".to_string(),
+            serde_json::Value::String("value".to_string()),
+        );
+
+        let claims = Claims {
+            iss: Some("issuer".to_string()),
+            sub: "user123".to_string(),
+            aud: Some("audience".to_string()),
+            exp: 1000,
+            iat: 500,
+            nbf: Some(500),
+            jti: Some("jti".to_string()),
+            scope: Some("openid profile".to_string()),
+            identity: Some(Identity {
+                provider_id: "google".to_string(),
+                external_id: "user123".to_string(),
+                email: Some("user@example.com".to_string()),
+                username: Some("user".to_string()),
+                attributes: HashMap::new(),
+            }),
+            extra,
+        };
+
+        let serialized = serde_json::to_string(&claims).unwrap();
+        let deserialized: Claims = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.iss, claims.iss);
+        assert_eq!(deserialized.sub, claims.sub);
+        assert_eq!(deserialized.extra.get("custom").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_token_manager_issuance() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager.issue_user_token(identity, 3600, None).unwrap();
+        let claims = manager.validate_token(&token).unwrap();
+
+        assert_eq!(claims.iss, Some("issuer".to_string()));
+        assert_eq!(claims.sub, "user123");
+        assert!(claims.jti.is_some());
+        assert!(claims.nbf.is_some());
     }
 }
