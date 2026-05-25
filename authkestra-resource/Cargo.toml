@@ -1,11 +1,11 @@
 [package]
-name = "authkestra-guard"
+name = "authkestra-resource"
 version = "0.1.0"
 edition = "2021"
-description = "Authentication guard and strategies for the authkestra framework"
+description = "Resource server enforcement and validation for the authkestra framework"
 repository = "https://github.com/marcjazz/authkestra"
 license = "MIT OR Apache-2.0"
-keywords = ["auth", "authentication", "guard", "middleware"]
+keywords = ["auth", "authentication", "resource", "validation", "middleware"]
 categories = ["authentication"]
 
 [dependencies]

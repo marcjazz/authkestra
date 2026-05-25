@@ -15,7 +15,7 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
   - `handle_oauth_callback`: Finalizes OAuth login and creates a server-side session.
   - `handle_oauth_callback_jwt`: Finalizes OAuth login and returns a JWT.
 - **Offline Validation**:
-  - `Jwt<T>`: Extractor for validating JWTs from external OIDC providers using JWKS (via `authkestra-guard`).
+  - `Jwt<T>`: Extractor for validating JWTs from external OIDC providers using JWKS (via `authkestra-resource`).
 - **Session Management**:
   - `logout`: Clears the session cookie and removes it from the store.
   - `SessionConfig`: Customizable session settings (cookie name, secure, http_only, etc.).
@@ -101,8 +101,8 @@ The `Auth<I>` extractor allows you to use a central `AuthkestraGuard` that can t
 ```rust
 use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::Auth;
-use authkestra_guard::{AuthkestraGuard, AuthPolicy};
-use authkestra_guard::jwt::JwtStrategy;
+use authkestra_resource::{AuthEngineGuard, AuthPolicy};
+use authkestra_resource::jwt::JwtStrategy;
 use authkestra_session::SessionStrategy;
 use std::sync::Arc;
 

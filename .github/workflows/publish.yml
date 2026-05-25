@@ -53,7 +53,7 @@ jobs:
         crate:
           - authkestra-token
           - authkestra-session
-          - authkestra-guard
+          - authkestra-resource
           - authkestra-flow
           - authkestra-providers-github
           - authkestra-providers-google

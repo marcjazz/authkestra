@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use authkestra_axum::Auth;
 use authkestra_engine::error::AuthError;
 use authkestra_engine::strategy::{AuthenticationStrategy, BasicAuthenticator, BasicStrategy};
-use authkestra_guard::AuthEngineGuard;
+use authkestra_resource::AuthEngineGuard;
 use axum::{http::request::Parts, routing::get, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -110,7 +110,7 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use authkestra_guard::{
+    use authkestra_resource::{
         jwt::{JwtStrategy, ValidationConfig},
         AuthPolicy,
     };

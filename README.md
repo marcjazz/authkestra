@@ -18,7 +18,7 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 🚀 Features
 
-- **Modular Design**: Concerns are strictly separated into crates: `authkestra-engine`, `authkestra-guard`, `authkestra-session`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
+- **Modular Design**: Concerns are strictly separated into crates: `authkestra-engine`, `authkestra-resource`, `authkestra-session`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
 - **Explicit Flow Control**: Dependencies and authentication context are injected explicitly via **Extractors** (Axum/Actix) or constructor arguments, eliminating "magic" middleware.
 - **Flexible Chaining**: Use the `AuthEngineGuard` to chain multiple authentication strategies (Token, Session, Basic, Custom) in any order.
 - **Provider Agnostic**: Easily integrate new OAuth providers by implementing the `OAuthProvider` trait.
@@ -31,7 +31,7 @@ For advanced users, individual crates are still available and can be used indepe
 | :----------------------------------------------------------------------- | :------------------------------------------------------------------------ |
 | [`authkestra`](authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
 | [`authkestra-engine`](authkestra-engine/README.md)                     | Foundational types, traits and the **AuthEngine** orchestrator.           |
-| [`authkestra-guard`](authkestra-guard/README.md)                         | Authentication guard and strategies (JWT offline validation, etc).        |
+| [`authkestra-resource`](authkestra-resource/README.md)                         | Resource server enforcement and validation (JWT, etc).        |
 | [`authkestra-session`](authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
 | [`authkestra-token`](authkestra-token/README.md)                         | JWT signing and token abstraction.                                        |
 | [`authkestra-providers-github`](authkestra-providers-github/README.md)   | Concrete implementation for GitHub OAuth.                                 |

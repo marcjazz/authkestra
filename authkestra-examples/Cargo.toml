@@ -11,7 +11,7 @@ authkestra-session = { version = "0.1.1", path = "../authkestra-session" }
 authkestra-session-memory = { version = "0.1.0", path = "../authkestra-session-memory" }
 authkestra-session-redis = { version = "0.1.0", path = "../authkestra-session-redis" }
 authkestra-session-sql = { version = "0.1.0", path = "../authkestra-session-sql", features = ["sqlite"] }
-authkestra-guard = { path = "../authkestra-guard" }
+authkestra-resource = { path = "../authkestra-resource" }
 authkestra-providers-github = { path = "../authkestra-providers-github" }
 authkestra-providers-google = { path = "../authkestra-providers-google" }
 authkestra-providers-discord = { path = "../authkestra-providers-discord" }

@@ -58,7 +58,7 @@ Extracts and validates a JWT against a remote JWKS (e.g., Google, Auth0). Requir
 
 ```rust
 use authkestra_actix::Jwt;
-use authkestra_guard::jwt::JwksCache;
+use authkestra_resource::jwt::JwksCache;
 use actix_web::{get, HttpResponse, web};
 use serde::Deserialize;
 use std::sync::Arc;

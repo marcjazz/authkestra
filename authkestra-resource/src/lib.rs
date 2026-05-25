@@ -4,8 +4,8 @@ use http::request::Parts;
 
 pub mod jwt;
 
-pub use AuthEngineGuard as AuthkestraGuard;
-pub use AuthEngineGuardBuilder as AuthkestraGuardBuilder;
+pub use AuthEngineGuard as ResourceEnforcer;
+pub use AuthEngineGuardBuilder as ResourceEnforcerBuilder;
 
 /// Policy for controlling the behavior of chained authentication strategies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

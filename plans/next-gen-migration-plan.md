@@ -21,7 +21,7 @@ This plan integrates the core structural migration from RFC-001 with the advance
 
 ## 4. Fine-Grained Authorization & Policy-as-Code (Phase 4)
 
-- **Beyond ABAC-lite**: Rename `authkestra-guard` to `authkestra-policy` or `authkestra-resource`.
+- **Beyond ABAC-lite**: Rename `authkestra-guard` to `authkestra-resource`.
 - **ReBAC Engine**: Introduce a Zanzibar-inspired relationship graph traversal engine for complex permissions (tuples of `user`, `relation`, `object`).
 - **ABAC Integration**: Support declarative Policy-as-Code (like AWS Cedar or Rego) for context-heavy attribute decisions.
 
