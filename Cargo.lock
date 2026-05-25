@@ -293,6 +293,7 @@ dependencies = [
  "authkestra-providers-github",
  "authkestra-providers-google",
  "authkestra-session",
+ "authkestra-session-memory",
  "tokio",
 ]
 

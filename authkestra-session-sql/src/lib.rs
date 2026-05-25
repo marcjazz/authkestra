@@ -1,11 +1,16 @@
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 use async_trait::async_trait;
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 use authkestra_engine::auth::{AuthError, Identity, Session, SessionStore};
 use sqlx::Database;
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct SqlSessionStore<DB: Database> {
+    #[allow(dead_code)]
     pool: sqlx::Pool<DB>,
+    #[allow(dead_code)]
     table_name: String,
 }
 
