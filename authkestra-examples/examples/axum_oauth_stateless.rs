@@ -8,9 +8,7 @@
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
 use authkestra::flow::{AuthEngine, OAuth2Flow};
-use authkestra_axum::{
-    helpers, AuthkestraAxumError, AuthToken,
-};
+use authkestra_axum::{helpers, AuthToken, AuthkestraAxumError};
 use authkestra_engine::{token::TokenManager, Configured, Missing};
 use authkestra_providers_github::GithubProvider;
 use axum::{
@@ -109,10 +107,11 @@ async fn callback_handler(
     cookies: Cookies,
 ) -> Result<impl IntoResponse, AuthkestraAxumError> {
     let token_manager = <Result<Arc<TokenManager>, AuthkestraAxumError>>::from_ref(&state)?;
-    
-    let flow = state.authkestra.providers.get(&provider).ok_or_else(|| {
-        AuthkestraAxumError::Internal(format!("Provider {} not found", provider))
-    })?;
+
+    let flow =
+        state.authkestra.providers.get(&provider).ok_or_else(|| {
+            AuthkestraAxumError::Internal(format!("Provider {} not found", provider))
+        })?;
 
     // We use the JWT-specific callback helper
     helpers::handle_oauth_callback_jwt_erased(

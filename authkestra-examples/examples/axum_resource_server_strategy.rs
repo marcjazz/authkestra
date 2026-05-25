@@ -40,9 +40,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     // 1. Configure the JWT Strategy
-    let issuer = std::env::var("OIDC_ISSUER")
-        .unwrap_or_else(|_| "https://accounts.google.com".to_string());
-    
+    let issuer =
+        std::env::var("OIDC_ISSUER").unwrap_or_else(|_| "https://accounts.google.com".to_string());
+
     let validation_config = ValidationConfig::builder()
         .jwks_url(format!("{}/.well-known/jwks.json", issuer))
         .issuer(issuer)
@@ -51,9 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let jwt_strategy = JwtStrategy::<UserIdentity>::new(validation_config);
 
     // 2. Configure the Resource Enforcer (Guard)
-    let resource_enforcer = ResourceEnforcer::builder()
-        .strategy(jwt_strategy)
-        .build();
+    let resource_enforcer = ResourceEnforcer::builder().strategy(jwt_strategy).build();
 
     let state = AppState {
         resource_enforcer: Arc::new(resource_enforcer),
@@ -69,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(3000);
-    
+
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("📡 Resource Server Strategy listening on http://{addr}");
