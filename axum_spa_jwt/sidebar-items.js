@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["callback_handler","frontend","login_handler","logout_handler","main","protected_resource"],"type":["AppState"]};
+window.SIDEBAR_ITEMS = {"fn":["callback_handler","index","login_handler","main","protected"],"type":["AppState"]};

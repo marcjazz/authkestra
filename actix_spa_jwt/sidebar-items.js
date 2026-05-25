@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["main"],"struct":["AppState","callback_handler","frontend","login_handler","protected_resource"]};
+window.SIDEBAR_ITEMS = {"fn":["main"],"struct":["AppState","callback","index","login","protected"]};
