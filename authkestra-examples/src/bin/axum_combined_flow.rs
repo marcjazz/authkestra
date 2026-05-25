@@ -20,7 +20,8 @@ use authkestra_engine::SessionConfig;
 use authkestra_engine::{HasSessionStoreMarker, SessionStoreState};
 use authkestra_guard::AuthEngineGuard;
 use authkestra_providers_github::GithubProvider;
-use authkestra_session::{MemoryStore, SessionStore};
+use authkestra_session::SessionStore;
+use authkestra_session_memory::MemoryStore;
 use axum::{
     extract::{FromRef, State},
     response::{Html, IntoResponse},

@@ -3,7 +3,8 @@ use authkestra::flow::{AuthEngine, CredentialsFlow};
 use authkestra_axum::AuthSession;
 use authkestra_engine::{error::AuthError, state::Identity, CredentialsProvider, UserMapper};
 use authkestra_engine::{Configured, Missing};
-use authkestra_session::{MemoryStore, SessionStore};
+use authkestra_session::SessionStore;
+use authkestra_session_memory::MemoryStore;
 use axum::{
     extract::{Form, State},
     response::{IntoResponse, Redirect},

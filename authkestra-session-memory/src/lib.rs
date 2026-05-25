@@ -1,17 +1,16 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use authkestra_engine::error::AuthError;
-
-use crate::{Session, SessionStore};
+use authkestra_engine::auth::{AuthError, Session, SessionStore};
 
 /// An in-memory implementation of [`SessionStore`].
 ///
 /// **Note**: This store is not persistent and will be cleared when the application restarts.
 /// It is primarily intended for development and testing.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MemoryStore {
-    sessions: std::sync::Mutex<HashMap<String, Session>>,
+    sessions: Arc<Mutex<HashMap<String, Session>>>,
 }
 
 impl MemoryStore {
@@ -41,11 +40,9 @@ impl SessionStore for MemoryStore {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use authkestra_engine::state::Identity;
-
     use super::*;
+    use authkestra_engine::auth::Identity;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_memory_store() {

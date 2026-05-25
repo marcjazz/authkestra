@@ -1,8 +1,6 @@
 use async_trait::async_trait;
-use authkestra_engine::error::AuthError;
+use authkestra_engine::auth::{AuthError, Session, SessionStore};
 use redis::AsyncCommands;
-
-use crate::{Session, SessionStore};
 
 pub struct RedisStore {
     client: redis::Client,

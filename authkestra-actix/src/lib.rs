@@ -18,8 +18,13 @@ use futures::future::LocalBoxFuture;
 use std::sync::Arc;
 
 pub mod helpers;
-use helpers::{actix_callback_handler, actix_login_handler, actix_logout_handler};
 
+#[cfg(feature = "flow")]
+pub use helpers::actix_login_handler;
+#[cfg(all(feature = "flow", feature = "session"))]
+pub use helpers::{actix_callback_handler, actix_logout_handler};
+
+#[cfg(all(feature = "flow", feature = "session"))]
 pub use AuthEngineActixExt as AuthkestraActixExt;
 
 #[cfg(feature = "flow")]
