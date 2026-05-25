@@ -167,3 +167,4 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for Box<T> {
             .await
     }
 }
+trait AuthMethod {}
