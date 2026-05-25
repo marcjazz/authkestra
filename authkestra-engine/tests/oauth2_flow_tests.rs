@@ -1,8 +1,8 @@
+use async_trait::async_trait;
 use authkestra_engine::auth::{
     AuthError, Identity, OAuthProvider, OAuthToken, Provider, ProviderConfig,
 };
 use authkestra_engine::flow::{Flow, FlowContext, FlowResult, OAuth2Flow};
-use async_trait::async_trait;
 use std::collections::HashMap;
 
 struct MockOAuthProvider;
@@ -65,14 +65,14 @@ impl OAuthProvider for MockOAuthProvider {
 async fn test_oauth2_flow_initiate() {
     let provider = MockOAuthProvider;
     let flow = OAuth2Flow::new(provider);
-    
+
     let ctx = FlowContext {
         state: "new_state".to_string(),
         params: HashMap::new(),
     };
-    
+
     let result = flow.execute(ctx).await.unwrap();
-    
+
     match result {
         FlowResult::Redirect(url) => {
             assert!(url.contains("https://example.com/auth"));
@@ -87,18 +87,18 @@ async fn test_oauth2_flow_initiate() {
 async fn test_oauth2_flow_finalize() {
     let provider = MockOAuthProvider;
     let flow = OAuth2Flow::new(provider);
-    
+
     let mut params = HashMap::new();
     params.insert("code".to_string(), "valid_code".to_string());
     params.insert("state".to_string(), "correct_state".to_string());
-    
+
     let ctx = FlowContext {
         state: "correct_state".to_string(),
         params,
     };
-    
+
     let result = flow.execute(ctx).await.unwrap();
-    
+
     match result {
         FlowResult::Complete(identity) => {
             assert_eq!(identity.external_id, "user123");
@@ -111,16 +111,16 @@ async fn test_oauth2_flow_finalize() {
 async fn test_oauth2_flow_finalize_invalid_state() {
     let provider = MockOAuthProvider;
     let flow = OAuth2Flow::new(provider);
-    
+
     let mut params = HashMap::new();
     params.insert("code".to_string(), "valid_code".to_string());
     params.insert("state".to_string(), "wrong_state".to_string());
-    
+
     let ctx = FlowContext {
         state: "correct_state".to_string(),
         params,
     };
-    
+
     let result = flow.execute(ctx).await;
     assert!(matches!(result, Err(AuthError::CsrfMismatch)));
 }
