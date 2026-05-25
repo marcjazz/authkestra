@@ -1,2 +1,2 @@
-window.ALL_CRATES = ["authkestra","authkestra_actix","authkestra_axum","authkestra_engine","authkestra_macros","authkestra_oidc","authkestra_providers_discord","authkestra_providers_github","authkestra_providers_google","authkestra_resource","authkestra_session","authkestra_session_memory","authkestra_session_redis","authkestra_session_sql"];
-//{"start":21,"fragment_lengths":[12,19,18,20,20,18,31,30,30,22,21,28,27,25]}
+window.ALL_CRATES = ["authkestra","authkestra_actix","authkestra_axum","authkestra_engine","authkestra_macros","authkestra_oidc","authkestra_providers","authkestra_resource","authkestra_session","authkestra_session_memory","authkestra_session_redis","authkestra_session_sql"];
+//{"start":21,"fragment_lengths":[12,19,18,20,20,18,23,22,21,28,27,25]}
