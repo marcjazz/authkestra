@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 pub mod helpers;
 
-#[cfg(feature = "session")]
-pub use helpers::{Session, SessionStore};
 pub use helpers::AuthEngineAxumError;
 pub use helpers::AuthEngineAxumError as AuthkestraAxumError;
+#[cfg(feature = "session")]
+pub use helpers::{Session, SessionStore};
 
 #[cfg(all(feature = "flow", feature = "session"))]
 pub use AuthEngineAxumExt as AuthkestraAxumExt;
