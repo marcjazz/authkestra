@@ -1,9 +1,10 @@
 use authkestra_axum::Jwt;
 use authkestra_engine::discovery::ProviderMetadata;
 use authkestra_resource::jwt::JwksCache;
-use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
+use axum::{extract::FromRef, response::{IntoResponse, Json}, routing::get, Router};
 use jsonwebtoken::{Algorithm, Validation};
 use serde::Deserialize;
+use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
 /// This example demonstrates an Axum resource server that protects its endpoints
@@ -109,14 +110,10 @@ async fn index() -> impl IntoResponse {
 }
 
 async fn protected(Jwt(claims): Jwt<MyClaims>) -> impl IntoResponse {
-    let scope_msg = claims
-        .scope
-        .as_ref()
-        .map(|s| format!(" Your scopes: {s}"))
-        .unwrap_or_default();
-
-    format!(
-        "Hello, {}! Your email is {:?}.{} You have access to this protected resource.",
-        claims.sub, claims.email, scope_msg
-    )
+    Json(json!({
+        "message": "You have access to this protected resource.",
+        "user_id": claims.sub,
+        "email": claims.email,
+        "scope": claims.scope,
+    }))
 }

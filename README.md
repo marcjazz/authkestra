@@ -43,14 +43,16 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 🛠️ Usage
 
-To see Authkestra in action, check out the [examples](examples/) directory:
+To see Authkestra in action, check out the [examples](authkestra-examples/examples/) directory:
 
-- [Get Started](authkestra-examples/src/bin/client_credentials_flow.rs)
-- [Axum Combined Flow (Authkestra + AuthkestraGuard)](authkestra-examples/src/bin/axum_combined_flow.rs)
-- [Axum with GitHub OAuth](authkestra-examples/src/bin/axum_oauth.rs)
-- [Actix with GitHub OAuth](authkestra-examples/src/bin/actix_github.rs)
-- [OIDC Generic Provider](authkestra-examples/src/bin/oidc_generic.rs)
-- [Device Flow](authkestra-examples/src/bin/device_flow.rs)
+- [Axum Basic Setup](authkestra-examples/examples/axum_basic_setup.rs): `cargo run --example axum_basic_setup`
+- [Actix Basic Setup](authkestra-examples/examples/actix_basic_setup.rs): `cargo run --example actix_basic_setup`
+- [Axum with GitHub OAuth](authkestra-examples/examples/axum_oauth2_github.rs): `cargo run --example axum_oauth2_github`
+- [Axum with Google OIDC](authkestra-examples/examples/axum_oidc_google.rs): `cargo run --example axum_oidc_google`
+- [Axum with Redis Session](authkestra-examples/examples/axum_session_redis.rs): `cargo run --example axum_session_redis`
+- [Client Credentials Flow](authkestra-examples/examples/axum_client_credentials.rs): `cargo run --example axum_client_credentials`
+- [Device Flow](authkestra-examples/examples/axum_device_flow.rs): `cargo run --example axum_device_flow`
+- [Axum Resource Server](authkestra-examples/examples/axum_resource_server.rs): `cargo run --example axum_resource_server`
 
 ## �️ Technical Design Principles
 
