@@ -19,10 +19,19 @@ pub struct SessionConfig {
     pub path: String,
     /// The maximum age of the session.
     pub max_age: Option<chrono::Duration>,
+    /// Key used to encrypt intermediate OAuth state cookies.
+    /// Must be 32 bytes for AES-256-GCM.
+    pub state_encryption_key: [u8; 32],
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
+        let mut key = [0u8; 32];
+        // In a real app, this should be loaded from env.
+        // For default/dev, we use a fixed but "not secure" key or random.
+        // To support horizontal scaling, it MUST be consistent across instances.
+        key.copy_from_slice(b"static_key_change_in_production!");
+
         Self {
             cookie_name: "authkestra_session".to_string(),
             secure: true,
@@ -30,6 +39,7 @@ impl Default for SessionConfig {
             same_site: SameSite::Lax,
             path: "/".to_string(),
             max_age: Some(chrono::Duration::hours(24)),
+            state_encryption_key: key,
         }
     }
 }

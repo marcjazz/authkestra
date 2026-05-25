@@ -30,6 +30,7 @@ pub struct Claims {
     pub email: Option<String>,
     pub name: Option<String>,
     pub picture: Option<String>,
+    pub nonce: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -90,6 +91,7 @@ impl OAuthProvider for OidcProvider {
         state: &str,
         scopes: &[&str],
         code_challenge: Option<&str>,
+        nonce: Option<&str>,
     ) -> String {
         let mut full_scopes = scopes.to_vec();
         if !full_scopes.contains(&"openid") {
@@ -113,6 +115,10 @@ impl OAuthProvider for OidcProvider {
             ));
         }
 
+        if let Some(n) = nonce {
+            url.push_str(&format!("&nonce={n}"));
+        }
+
         url
     }
 
@@ -120,6 +126,7 @@ impl OAuthProvider for OidcProvider {
         &self,
         code: &str,
         code_verifier: Option<&str>,
+        nonce: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError> {
         // 1. Exchange code for tokens
         let mut params = HashMap::new();
@@ -153,6 +160,13 @@ impl OAuthProvider for OidcProvider {
             .await
             .map_err(OidcError::from)
             .map_err(AuthError::from)?;
+
+        // 3. Validate Nonce
+        if let Some(expected_nonce) = nonce {
+            if claims.nonce.as_deref() != Some(expected_nonce) {
+                return Err(AuthError::Token("Nonce mismatch".to_string()));
+            }
+        }
 
         // 4. Construct Identity
         let mut attributes = HashMap::new();

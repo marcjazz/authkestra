@@ -37,3 +37,96 @@ pub struct OAuthToken {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
 }
+
+/// Intermediate state for OAuth2/OIDC flows, stored in an encrypted cookie.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuth2State {
+    /// CSRF protection state parameter
+    pub state: String,
+    /// OIDC nonce to prevent replay attacks
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    /// PKCE code verifier
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_verifier: Option<String>,
+    /// Optional redirect URL to go back to after flow completion
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub success_url: Option<String>,
+    /// The provider identifier
+    pub provider_id: String,
+    /// Expiration timestamp (seconds since epoch)
+    pub expires_at: i64,
+}
+
+impl OAuth2State {
+    /// Encrypts the state into a base64-encoded string.
+    pub fn encrypt(&self, key: &[u8; 32]) -> Result<String, crate::auth::error::AuthError> {
+        use aes_gcm::{
+            aead::{Aead, KeyInit},
+            Aes256Gcm, Nonce,
+        };
+        use rand::RngCore;
+
+        let cipher = Aes256Gcm::new(key.into());
+        let mut nonce_bytes = [0u8; 12];
+        rand::rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let json = serde_json::to_vec(self).map_err(|e| {
+            crate::auth::error::AuthError::Token(format!("Failed to serialize state: {e}"))
+        })?;
+
+        let ciphertext = cipher.encrypt(nonce, json.as_slice()).map_err(|e| {
+            crate::auth::error::AuthError::Token(format!("Encryption failed: {e}"))
+        })?;
+
+        let mut combined = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
+        combined.extend_from_slice(&nonce_bytes);
+        combined.extend_from_slice(&ciphertext);
+
+        Ok(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            combined,
+        ))
+    }
+
+    /// Decrypts the state from a base64-encoded string.
+    pub fn decrypt(
+        encoded: &str,
+        key: &[u8; 32],
+    ) -> Result<Self, crate::auth::error::AuthError> {
+        use aes_gcm::{
+            aead::{Aead, KeyInit},
+            Aes256Gcm, Nonce,
+        };
+
+        let combined = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded)
+            .map_err(|e| {
+                crate::auth::error::AuthError::Token(format!("Failed to decode base64 state: {e}"))
+            })?;
+
+        if combined.len() < 12 {
+            return Err(crate::auth::error::AuthError::Token(
+                "Invalid encrypted state".to_string(),
+            ));
+        }
+
+        let (nonce_bytes, ciphertext) = combined.split_at(12);
+        let nonce = Nonce::from_slice(nonce_bytes);
+        let cipher = Aes256Gcm::new(key.into());
+
+        let decrypted = cipher.decrypt(nonce, ciphertext).map_err(|e| {
+            crate::auth::error::AuthError::Token(format!("Decryption failed: {e}"))
+        })?;
+
+        let state: Self = serde_json::from_slice(&decrypted).map_err(|e| {
+            crate::auth::error::AuthError::Token(format!("Failed to deserialize state: {e}"))
+        })?;
+
+        if chrono::Utc::now().timestamp() > state.expires_at {
+            return Err(crate::auth::error::AuthError::Token("State expired".to_string()));
+        }
+
+        Ok(state)
+    }
+}

@@ -59,14 +59,14 @@ async fn test_google_oauth_flow() {
     );
 
     // Simulate the authorization URL generation
-    let authorize_url = provider.get_authorization_url("test_state", &["email", "profile"], None);
+    let authorize_url = provider.get_authorization_url("test_state", &["email", "profile"], None, None);
     assert!(authorize_url.starts_with(&format!("{}/auth", server.uri())));
     assert!(authorize_url.contains("state=test_state"));
 
     let code = "test_code";
 
     let (identity, token_response): (Identity, OAuthToken) = provider
-        .exchange_code_for_identity(code, None)
+        .exchange_code_for_identity(code, None, None)
         .await
         .expect("Failed to exchange code");
 

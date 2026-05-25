@@ -89,6 +89,7 @@ impl OAuthProvider for GoogleProvider {
         state: &str,
         scopes: &[&str],
         code_challenge: Option<&str>,
+        nonce: Option<&str>,
     ) -> String {
         let scope_param = if scopes.is_empty() {
             "openid email profile".to_string()
@@ -100,13 +101,19 @@ impl OAuthProvider for GoogleProvider {
             "{auth_url}?client_id={client_id}&redirect_uri={redirect_uri}&state={state}&scope={scope_param}&response_type=code&access_type=offline&prompt=consent",
             auth_url = self.auth_url,
             client_id = self.client_id,
-            redirect_uri = self.redirect_uri
+            redirect_uri = urlencoding::encode(&self.redirect_uri),
+            state = state,
+            scope_param = urlencoding::encode(&scope_param)
         );
 
         if let Some(challenge) = code_challenge {
             url.push_str(&format!(
                 "&code_challenge={challenge}&code_challenge_method=S256"
             ));
+        }
+
+        if let Some(n) = nonce {
+            url.push_str(&format!("&nonce={n}"));
         }
 
         url
@@ -116,6 +123,7 @@ impl OAuthProvider for GoogleProvider {
         &self,
         code: &str,
         code_verifier: Option<&str>,
+        _nonce: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError> {
         // 1. Exchange code for access token
         let mut params = vec![
@@ -286,7 +294,7 @@ mod tests {
         );
 
         let (identity, token) = provider
-            .exchange_code_for_identity("test_code", None)
+            .exchange_code_for_identity("test_code", None, None)
             .await
             .unwrap();
 
