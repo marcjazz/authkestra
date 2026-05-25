@@ -35,7 +35,7 @@ async fn main() {
     let client_secret = std::env::var("AUTHKESTRA_GOOGLE_CLIENT_SECRET")
         .expect("AUTHKESTRA_GOOGLE_CLIENT_SECRET must be set");
     let redirect_uri = std::env::var("AUTHKESTRA_GOOGLE_REDIRECT_URI")
-        .unwrap_or_else(|_| "http://localhost:3000/auth/google/callback".to_string());
+        .unwrap_or_else(|_| "http://localhost:3000/auth/callback/google".to_string());
 
     let google_provider = GoogleProvider::new(client_id, client_secret, redirect_uri);
 

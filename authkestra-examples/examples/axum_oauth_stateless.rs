@@ -54,7 +54,7 @@ async fn main() {
     let client_secret = std::env::var("AUTHKESTRA_GITHUB_CLIENT_SECRET")
         .expect("AUTHKESTRA_GITHUB_CLIENT_SECRET must be set");
     let redirect_uri = std::env::var("AUTHKESTRA_GITHUB_REDIRECT_URI")
-        .unwrap_or_else(|_| "http://localhost:3000/auth/github/callback".to_string());
+        .unwrap_or_else(|_| "http://localhost:3000/auth/callback/github".to_string());
 
     let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
 
@@ -73,7 +73,7 @@ async fn main() {
         // Login route
         .route("/auth/:provider", get(login_handler))
         // Callback route (stateless)
-        .route("/auth/:provider/callback", get(callback_handler))
+        .route("/auth/callback/{provider}", get(callback_handler))
         .layer(tower_cookies::CookieManagerLayer::new())
         .with_state(state);
 
