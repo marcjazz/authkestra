@@ -40,9 +40,9 @@ impl SessionStore for MemoryStore {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use authkestra_engine::auth::Identity;
     use super::*;
+    use authkestra_engine::auth::Identity;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_memory_store() {
