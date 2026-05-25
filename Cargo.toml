@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "authkestra-engine",
     "authkestra-session",
+    "authkestra-session-memory",
+    "authkestra-session-redis",
+    "authkestra-session-sql",
     "authkestra-providers-github",
     "authkestra-providers-google",
     "authkestra-providers-discord",

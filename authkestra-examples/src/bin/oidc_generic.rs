@@ -1,7 +1,7 @@
 use authkestra::flow::{AuthEngine, OAuth2Flow};
 use authkestra_axum::{AuthEngineAxumExt, AuthEngineState, AuthSession};
 use authkestra_oidc::OidcProvider;
-use authkestra_session::MemoryStore;
+use authkestra_session_memory::MemoryStore;
 use axum::{response::Html, routing::get, Router};
 use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;

@@ -1,6 +1,5 @@
-use crate::{Session, SessionStore};
 use async_trait::async_trait;
-use authkestra_engine::{error::AuthError, state::Identity};
+use authkestra_engine::auth::{AuthError, Identity, Session, SessionStore};
 use sqlx::Database;
 use std::collections::HashMap;
 

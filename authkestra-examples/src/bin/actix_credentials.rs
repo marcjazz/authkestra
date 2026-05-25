@@ -128,7 +128,7 @@ async fn main() -> std::io::Result<()> {
     let mapper = MyUserMapper;
     let auth_flow = Arc::new(CredentialsFlow::with_mapper(provider, mapper));
 
-    let session_store: Arc<dyn SessionStore> = Arc::new(authkestra_session::MemoryStore::default());
+    let session_store: Arc<dyn SessionStore> = Arc::new(authkestra_session_memory::MemoryStore::default());
 
     let auth_engine = AuthEngine::builder()
         .session_store(session_store.clone())
