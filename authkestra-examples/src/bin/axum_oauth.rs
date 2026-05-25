@@ -1,6 +1,6 @@
 //! # Axum OAuth Example
 //!
-//! This example demonstrates how to set up Authkestra with Axum to support multiple OAuth2 providers
+//! This example demonstrates how to set up AuthEngine with Axum to support multiple OAuth2 providers
 //! (GitHub, Google, Discord) and session management.
 //!
 //! To run this example, you'll need to set the following environment variables in a `.env` file:
@@ -11,7 +11,7 @@
 //! - `AUTHKESTRA_DISCORD_CLIENT_ID`
 //! - `AUTHKESTRA_DISCORD_CLIENT_SECRET`
 
-use authkestra::flow::{Authkestra, OAuth2Flow};
+use authkestra::flow::{AuthEngine, OAuth2Flow};
 use authkestra_axum::{AuthSession, AuthkestraAxumExt, AuthkestraState};
 use authkestra_engine::{Configured, SessionConfig};
 use authkestra_providers_discord::DiscordProvider;
@@ -27,7 +27,7 @@ use axum::{
 use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 
-/// Authkestra state with support for session only.
+/// AuthEngine state with support for session only.
 type AppState = AuthkestraState<Configured<Arc<dyn SessionStore>>>;
 
 #[tokio::main]
@@ -35,7 +35,7 @@ async fn main() {
     // Load environment variables from .env file
     dotenvy::dotenv().ok();
 
-    let mut builder = Authkestra::builder();
+    let mut builder = AuthEngine::builder();
 
     // --- GitHub ---
     if let (Ok(client_id), Ok(client_secret)) = (
@@ -79,7 +79,7 @@ async fn main() {
         Arc::new(authkestra_session::MemoryStore::default())
     };
 
-    let authkestra = builder
+    let auth_engine = builder
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false,
@@ -88,13 +88,13 @@ async fn main() {
         .build();
 
     let state = AppState {
-        authkestra: authkestra.clone(),
+        authkestra: auth_engine.clone(),
     };
 
     let app = Router::new()
         .route("/", get(index))
         .route("/protected", get(protected))
-        .merge(authkestra.axum_router())
+        .merge(auth_engine.axum_router())
         .layer(CookieManagerLayer::new())
         .with_state(state);
 
@@ -105,7 +105,7 @@ async fn main() {
 
 /// The home page showing login options based on configured providers.
 async fn index(State(state): State<AppState>) -> impl IntoResponse {
-    let mut html = String::from("<h1>Welcome to Authkestra Axum OAuth Example</h1><ul>");
+    let mut html = String::from("<h1>Welcome to AuthEngine Axum OAuth Example</h1><ul>");
     if state.authkestra.providers.contains_key("github") {
         html.push_str("<li><a href=\"/auth/github?scope=user:email&success_url=/protected\">Login with GitHub</a></li>");
     }

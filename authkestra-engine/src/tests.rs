@@ -140,4 +140,24 @@ mod tests {
         let session = store.load_session("test").await.unwrap();
         assert!(session.is_none());
     }
+
+    #[test]
+    fn test_auth_engine_builder_typestate() {
+        use crate::engine::AuthEngine;
+        use std::sync::Arc;
+
+        // Base builder - session_store() not yet available (it is, but let's see how it behaves)
+        let builder = AuthEngine::builder();
+        let _engine = builder.build();
+        // _engine.session_store(); // This would fail to compile
+
+        // Transition to with session store
+        let store = MockSessionStore;
+        let engine_with_session = AuthEngine::builder()
+            .session_store(Arc::new(store))
+            .build();
+
+        // Now session_store() is available
+        let _s = engine_with_session.session_store();
+    }
 }

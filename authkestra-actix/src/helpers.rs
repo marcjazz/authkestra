@@ -5,7 +5,7 @@ use authkestra_engine::pkce::Pkce;
 #[cfg(all(feature = "flow", not(feature = "session")))]
 use authkestra_engine::SessionConfig;
 #[cfg(feature = "flow")]
-use authkestra_engine::{Authkestra, ErasedOAuthFlow, OAuth2Flow};
+use authkestra_engine::{AuthEngine, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
 use std::sync::Arc;
@@ -170,7 +170,7 @@ pub async fn handle_oauth_callback_erased(
 #[cfg(feature = "flow")]
 pub async fn actix_login_handler<S, T>(
     path: web::Path<String>,
-    authkestra: web::Data<Authkestra<S, T>>,
+    authkestra: web::Data<AuthEngine<S, T>>,
     params: web::Query<OAuthLoginParams>,
 ) -> impl actix_web::Responder {
     let provider = path.into_inner();
@@ -222,7 +222,7 @@ pub async fn actix_login_handler<S, T>(
 pub async fn actix_callback_handler<S, T>(
     req: HttpRequest,
     path: web::Path<String>,
-    authkestra: web::Data<Authkestra<S, T>>,
+    authkestra: web::Data<AuthEngine<S, T>>,
     params: web::Query<OAuthCallbackParams>,
 ) -> actix_web::Result<impl actix_web::Responder>
 where
@@ -266,7 +266,7 @@ where
 #[cfg(all(feature = "flow", feature = "session"))]
 pub async fn actix_logout_handler<S, T>(
     req: HttpRequest,
-    authkestra: web::Data<Authkestra<S, T>>,
+    authkestra: web::Data<AuthEngine<S, T>>,
 ) -> actix_web::Result<impl actix_web::Responder>
 where
     S: authkestra_engine::SessionStoreState,

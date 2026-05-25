@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use authkestra::flow::{Authkestra, CredentialsFlow};
+use authkestra::flow::{AuthEngine, CredentialsFlow};
 use authkestra_axum::AuthSession;
 use authkestra_engine::{error::AuthError, state::Identity, CredentialsProvider, UserMapper};
 use authkestra_engine::{Configured, Missing};
@@ -62,10 +62,6 @@ impl UserMapper for SqlxUserMapper {
     type LocalUser = LocalUser;
 
     async fn map_user(&self, identity: &Identity) -> Result<Self::LocalUser, AuthError> {
-        // Mocking SQLx query
-        // let user = sqlx::query_as!(LocalUser, "SELECT id, username, role FROM users WHERE external_id = $1", identity.external_id)
-        //     .fetch_one(&self.pool).await?;
-
         println!("Mapping identity {} to local user", identity.external_id);
 
         Ok(LocalUser {
@@ -83,7 +79,7 @@ use authkestra_axum::AuthkestraFromRef;
 struct AppState<S = Missing, T = Missing> {
     auth_flow: Arc<CredentialsFlow<MyCredentialsProvider, SqlxUserMapper>>,
     #[authkestra]
-    authkestra: Authkestra<S, T>,
+    auth_engine: AuthEngine<S, T>,
 }
 
 #[tokio::main]
@@ -94,11 +90,11 @@ async fn main() {
 
     let session_store = Arc::new(MemoryStore::default());
 
-    let authkestra = Authkestra::builder().session_store(session_store).build();
+    let auth_engine = AuthEngine::builder().session_store(session_store).build();
 
     let state = AppState {
         auth_flow,
-        authkestra,
+        auth_engine,
     };
 
     let app = Router::new()
@@ -144,7 +140,7 @@ async fn login(
 
     println!("Creating session for identity: {:?}", identity.external_id);
     let session = state
-        .authkestra
+        .auth_engine
         .create_session(identity)
         .await
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -152,7 +148,7 @@ async fn login(
     println!("Session created: {}", session.id);
 
     let cookie =
-        authkestra_axum::helpers::create_axum_cookie(&state.authkestra.session_config, session.id);
+        authkestra_axum::helpers::create_axum_cookie(&state.auth_engine.session_config, session.id);
     cookies.add(cookie);
 
     Ok(Redirect::to("/protected"))

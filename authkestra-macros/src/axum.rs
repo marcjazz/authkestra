@@ -7,12 +7,12 @@
 //!
 //! ```rust,ignore
 //! use authkestra_axum::AuthkestraFromRef;
-//! use authkestra::flow::Authkestra;
+//! use authkestra::flow::AuthEngine;
 //!
 //! #[derive(Clone, AuthkestraFromRef)]
 //! struct AppState {
-//!     #[authkestra]
-//!     auth: Authkestra<Configured<Arc<dyn SessionStore>>, Missing>,
+//!     #[auth_engine]
+//!     auth: AuthEngine<Configured<Arc<dyn SessionStore>>, Missing>,
 //!     db_pool: Arc<PgPool>,
 //! }
 //! ```
@@ -26,26 +26,15 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 /// Derive macro for automatic `FromRef` trait implementations.
 ///
 /// This macro generates 4 `FromRef` implementations required for Axum extractors:
-/// - `FromRef<YourState> for Authkestra<S, T>`
-/// - `FromRef<YourState> for Result<Arc<dyn SessionStore>, AuthkestraAxumError>`
+/// - `FromRef<YourState> for AuthEngine<S, T>`
+/// - `FromRef<YourState> for Result<Arc<dyn SessionStore>, AuthEngineAxumError>`
 /// - `FromRef<YourState> for SessionConfig`
-/// - `FromRef<YourState> for Result<Arc<TokenManager>, AuthkestraAxumError>`
+/// - `FromRef<YourState> for Result<Arc<TokenManager>, AuthEngineAxumError>`
 ///
 /// ## Requirements
 ///
-/// - The struct must have exactly one field marked with `#[authkestra]`
-/// - That field must be of type `Authkestra<S, T>` where S and T are type parameters
-///
-/// ## Example
-///
-/// ```rust,ignore
-/// #[derive(Clone, AuthkestraFromRef)]
-/// struct AppState<S, T> {
-///     #[authkestra]
-///     auth: Authkestra<S, T>,
-///     db_pool: Arc<PgPool>,
-/// }
-/// ```
+/// - The struct must have exactly one field marked with `#[auth_engine]` or `#[authkestra]`
+/// - That field must be of type `AuthEngine<S, T>` or `Authkestra<S, T>` where S and T are type parameters
 pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -54,13 +43,13 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    // Find the field marked with #[authkestra]
+    // Find the field marked with #[auth_engine] or #[authkestra]
     let authkestra_field = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
             Fields::Named(fields) => fields.named.iter().find(|f| {
                 f.attrs
                     .iter()
-                    .any(|attr| attr.path().is_ident("authkestra"))
+                    .any(|attr| attr.path().is_ident("auth_engine") || attr.path().is_ident("authkestra"))
             }),
             _ => {
                 return syn::Error::new_spanned(
@@ -86,7 +75,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
         None => {
             return syn::Error::new_spanned(
                 &input,
-                "No field marked with #[authkestra] found. Add #[authkestra] to your Authkestra field."
+                "No field marked with #[auth_engine] or #[authkestra] found. Add #[auth_engine] to your AuthEngine field."
             )
             .to_compile_error()
             .into();
@@ -95,14 +84,14 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
 
     let field_name = authkestra_field.ident.as_ref().unwrap();
 
-    // Extract type parameters S and T from Authkestra<S, T>
+    // Extract type parameters S and T from AuthEngine<S, T> or Authkestra<S, T>
     let (s_param, t_param) = match &authkestra_field.ty {
         Type::Path(type_path) => {
             let last_segment = type_path.path.segments.last().unwrap();
-            if last_segment.ident != "Authkestra" {
+            if last_segment.ident != "Authkestra" && last_segment.ident != "AuthEngine" {
                 return syn::Error::new_spanned(
                     &authkestra_field.ty,
-                    "Field marked with #[authkestra] must be of type Authkestra<S, T>",
+                    "Field marked with #[auth_engine] must be of type AuthEngine<S, T> or Authkestra<S, T>",
                 )
                 .to_compile_error()
                 .into();
@@ -113,7 +102,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
                     if args.args.len() != 2 {
                         return syn::Error::new_spanned(
                             &authkestra_field.ty,
-                            "Authkestra must have exactly 2 type parameters: Authkestra<S, T>",
+                            "AuthEngine must have exactly 2 type parameters: AuthEngine<S, T>",
                         )
                         .to_compile_error()
                         .into();
@@ -126,7 +115,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
                 _ => {
                     return syn::Error::new_spanned(
                         &authkestra_field.ty,
-                        "Authkestra must have type parameters: Authkestra<S, T>",
+                        "AuthEngine must have type parameters: AuthEngine<S, T>",
                     )
                     .to_compile_error()
                     .into();
@@ -136,7 +125,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
         _ => {
             return syn::Error::new_spanned(
                 &authkestra_field.ty,
-                "Field marked with #[authkestra] must be of type Authkestra<S, T>",
+                "Field marked with #[auth_engine] must be of type AuthEngine<S, T> or Authkestra<S, T>",
             )
             .to_compile_error()
             .into();
@@ -145,8 +134,8 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
 
     // Generate the 4 FromRef implementations
     let expanded = quote! {
-        // 1. FromRef for Authkestra<S, T>
-        impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::Authkestra<#s_param, #t_param>
+        // 1. FromRef for AuthEngine<S, T>
+        impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::AuthEngine<#s_param, #t_param>
         where
             #s_param: Clone,
             #t_param: Clone,
@@ -159,7 +148,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
 
         // 2. FromRef for SessionStore (when S: SessionStoreState)
         impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-            for ::std::result::Result<::std::sync::Arc<dyn authkestra_session::SessionStore>, authkestra_axum::AuthkestraAxumError>
+            for ::std::result::Result<::std::sync::Arc<dyn authkestra_session::SessionStore>, authkestra_axum::AuthEngineAxumError>
         where
             #s_param: authkestra_engine::SessionStoreState,
             #where_clause
@@ -180,7 +169,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
 
         // 4. FromRef for TokenManager (when T: TokenManagerState)
         impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-            for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::AuthkestraAxumError>
+            for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::AuthEngineAxumError>
         where
             #t_param: authkestra_engine::TokenManagerState,
             #where_clause

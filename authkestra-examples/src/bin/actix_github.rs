@@ -1,6 +1,6 @@
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use authkestra_actix::{AuthSession, AuthkestraActixExt};
-use authkestra_engine::{Authkestra, Missing, OAuth2Flow};
+use authkestra_actix::{AuthSession, AuthEngineActixExt};
+use authkestra_engine::{AuthEngine, Missing, OAuth2Flow};
 use authkestra_providers_github::GithubProvider;
 use authkestra_session::SqlStore;
 use authkestra_session::{SessionConfig, SessionStore};
@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 #[allow(dead_code)]
 struct AppState<S = Missing, T = Missing> {
-    authkestra: Authkestra<S, T>, // can be staleless or statefull
+    auth_engine: AuthEngine<S, T>, // can be staleless or statefull
 }
 
 #[get("/")]
@@ -68,13 +68,13 @@ async fn main() -> std::io::Result<()> {
 
     let session_store: Arc<dyn SessionStore> = Arc::new(SqlStore::new(pool));
 
-    let authkestra = Authkestra::builder()
+    let authkestra = AuthEngine::builder()
         .provider(OAuth2Flow::new(provider))
         .session_store(session_store.clone())
         .build();
 
     let app_state = web::Data::new(AppState {
-        authkestra: authkestra.clone(),
+        auth_engine: authkestra.clone(),
     });
 
     println!("Starting server on http://localhost:3000");

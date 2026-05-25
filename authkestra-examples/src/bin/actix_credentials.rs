@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use authkestra::flow::CredentialsFlow;
 use authkestra_actix::AuthSession;
 use authkestra_engine::{error::AuthError, state::Identity, CredentialsProvider, UserMapper};
-use authkestra_engine::{Authkestra, StatefullAuthkestra};
+use authkestra_engine::{AuthEngine, StatefulAuthEngine};
 use authkestra_session::SessionStore;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -64,7 +64,7 @@ impl UserMapper for MyUserMapper {
 // 4. App State
 struct AppState {
     auth_flow: Arc<CredentialsFlow<MyCredentialsProvider, MyUserMapper>>,
-    authkestra: StatefullAuthkestra,
+    auth_engine: StatefulAuthEngine,
 }
 
 #[get("/")]
@@ -96,13 +96,13 @@ async fn login(
         println!("Logged in as local user: {user:?}");
     }
 
-    let session = match data.authkestra.create_session(identity).await {
+    let session = match data.auth_engine.create_session(identity).await {
         Ok(s) => s,
         Err(e) => return Ok(HttpResponse::InternalServerError().body(e.to_string())),
     };
 
     let cookie =
-        authkestra_actix::helpers::create_actix_cookie(&data.authkestra.session_config, session.id);
+        authkestra_actix::helpers::create_actix_cookie(&data.auth_engine.session_config, session.id);
 
     Ok(HttpResponse::Found()
         .append_header(("Location", "/protected"))
@@ -128,13 +128,13 @@ async fn main() -> std::io::Result<()> {
 
     let session_store: Arc<dyn SessionStore> = Arc::new(authkestra_session::MemoryStore::default());
 
-    let authkestra = Authkestra::builder()
+    let auth_engine = AuthEngine::builder()
         .session_store(session_store.clone())
         .build();
 
     let app_state = web::Data::new(AppState {
         auth_flow,
-        authkestra: authkestra.clone(),
+        auth_engine: auth_engine.clone(),
     });
 
     println!("🚀 Actix Credentials Example running at http://localhost:3000");
@@ -142,9 +142,9 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
-            .app_data(web::Data::new(authkestra.clone()))
+            .app_data(web::Data::new(auth_engine.clone()))
             .app_data(web::Data::new(session_store.clone()))
-            .app_data(web::Data::new(authkestra.session_config.clone()))
+            .app_data(web::Data::new(auth_engine.session_config.clone()))
             .service(index)
             .service(login)
             .service(protected)

@@ -18,9 +18,9 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 🚀 Features
 
-- **Modular Design**: Concerns are strictly separated into crates: `authkestra-core`, `authkestra-flow`, `authkestra-guard`, `authkestra-session`, `authkestra-token`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
+- **Modular Design**: Concerns are strictly separated into crates: `authkestra-engine`, `authkestra-guard`, `authkestra-session`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
 - **Explicit Flow Control**: Dependencies and authentication context are injected explicitly via **Extractors** (Axum/Actix) or constructor arguments, eliminating "magic" middleware.
-- **Flexible Chaining**: Use the `AuthkestraGuard` to chain multiple authentication strategies (Token, Session, Basic, Custom) in any order.
+- **Flexible Chaining**: Use the `AuthEngineGuard` to chain multiple authentication strategies (Token, Session, Basic, Custom) in any order.
 - **Provider Agnostic**: Easily integrate new OAuth providers by implementing the `OAuthProvider` trait.
 - **Session Management**: Flexible session storage via the `SessionStore` trait, with built-in support for in-memory, Redis, and SQL via `sqlx`.
 - **Stateless Tokens**: Comprehensive JWT support and offline validation.
@@ -30,8 +30,7 @@ For advanced users, individual crates are still available and can be used indepe
 | Crate                                                                    | Responsibility                                                            |
 | :----------------------------------------------------------------------- | :------------------------------------------------------------------------ |
 | [`authkestra`](authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
-| [`authkestra-core`](authkestra-core/README.md)                           | Foundational types, traits (`Identity`, `OAuthProvider`, `SessionStore`). |
-| [`authkestra-flow`](authkestra-flow/README.md)                           | Orchestrates OAuth2/OIDC flows (Authorization Code, PKCE).                |
+| [`authkestra-engine`](authkestra-engine/README.md)                     | Foundational types, traits and the **AuthEngine** orchestrator.           |
 | [`authkestra-guard`](authkestra-guard/README.md)                         | Authentication guard and strategies (JWT offline validation, etc).        |
 | [`authkestra-session`](authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
 | [`authkestra-token`](authkestra-token/README.md)                         | JWT signing and token abstraction.                                        |
@@ -59,7 +58,8 @@ The architecture favors compile-time guarantees over runtime flexibility:
 
 - **Trait-Based Extension**: Customization is achieved by implementing traits, not by configuring dynamic strategies.
 - **Explicit Injection**: Authentication context is never implicitly available; users must explicitly request it via extractors (e.g., `AuthSession(session): AuthSession`).
-- **Framework Agnostic Core**: `authkestra-flow` is pure Rust logic, completely independent of any web framework.
+- **Framework Agnostic Core**: `authkestra-engine` is pure Rust logic, completely independent of any web framework.
+- **Typestate Builder Pattern**: The `AuthEngine` is built using typestates to enforce compile-time safety (e.g., session methods are only available if a session store is configured).
 
 ## 📜 License
 
