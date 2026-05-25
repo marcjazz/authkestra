@@ -23,7 +23,7 @@
             try {
                 const res = await fetch('/api/user');
                 const app = document.getElementById('app');
-                if (res.ok) {
+                if (res.status === 200) {
                     const user = await res.json();
                     app.innerHTML = `
                         <h2>Welcome, ${user.id}!</h2>

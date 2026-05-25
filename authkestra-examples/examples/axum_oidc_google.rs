@@ -12,6 +12,7 @@ use authkestra_engine::{Configured, SessionConfig};
 use authkestra_providers_google::GoogleProvider;
 use authkestra_session::SessionStore;
 use axum::{
+    http::StatusCode,
     response::{IntoResponse, Json},
     routing::get,
     Router,
@@ -69,12 +70,18 @@ async fn main() {
 
 async fn get_user(session: Result<AuthSession, AuthkestraAxumError>) -> impl IntoResponse {
     match session {
-        Ok(AuthSession(session)) => Json(json!({
-            "id": session.identity.external_id,
-            "username": session.identity.username,
-            "email": session.identity.email,
-            "provider": session.identity.provider_id,
-        })),
-        Err(_) => Json(json!({ "error": "Not authenticated" })),
+        Ok(AuthSession(session)) => (
+            StatusCode::OK,
+            Json(json!({
+                "id": session.identity.external_id,
+                "username": session.identity.username,
+                "email": session.identity.email,
+                "provider": session.identity.provider_id,
+            })),
+        ),
+        Err(_) => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "Not authenticated" })),
+        ),
     }
 }
