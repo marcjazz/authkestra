@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Claims","TokenManager"]};
+window.SIDEBAR_ITEMS = {"struct":["Claims","TokenManager"],"trait":["TokenService"]};
