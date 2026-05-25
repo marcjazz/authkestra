@@ -34,4 +34,3 @@ pub mod providers {
     #[cfg(feature = "discord")]
     pub use authkestra_providers::discord;
 }
-
