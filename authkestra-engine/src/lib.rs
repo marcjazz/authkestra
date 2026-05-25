@@ -7,5 +7,7 @@ pub use auth::*;
 pub use flow::*;
 pub use token::*;
 
+pub trait Provider {}
+
 #[cfg(test)]
 mod tests;
