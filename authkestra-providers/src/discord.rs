@@ -83,6 +83,7 @@ impl OAuthProvider for DiscordProvider {
         state: &str,
         scopes: &[&str],
         code_challenge: Option<&str>,
+        _nonce: Option<&str>,
     ) -> String {
         let scope_param = if scopes.is_empty() {
             "identify email".to_string()
@@ -94,6 +95,7 @@ impl OAuthProvider for DiscordProvider {
             "https://discord.com/api/oauth2/authorize?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&state={state}&scope={scope_param}",
             client_id = self.client_id,
             redirect_uri = urlencoding::encode(&self.redirect_uri),
+            state = state,
             scope_param = urlencoding::encode(&scope_param)
         );
 
@@ -110,6 +112,7 @@ impl OAuthProvider for DiscordProvider {
         &self,
         code: &str,
         code_verifier: Option<&str>,
+        _nonce: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError> {
         // 1. Exchange code for access token
         let mut params = vec![
@@ -272,7 +275,7 @@ mod tests {
         );
 
         let (identity, token) = provider
-            .exchange_code_for_identity("test_code", None)
+            .exchange_code_for_identity("test_code", None, None)
             .await
             .unwrap();
 

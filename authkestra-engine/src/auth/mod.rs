@@ -20,7 +20,7 @@ pub use error::AuthError;
 
 /// A unified identity structure returned by all providers.
 pub mod state;
-pub use state::{Identity, OAuthToken};
+pub use state::{Identity, OAuth2State, OAuthToken};
 
 /// Discovery utilities for OAuth2 providers.
 pub mod discovery;
@@ -104,6 +104,7 @@ pub trait OAuthProvider: Provider {
         state: &str,
         scopes: &[&str],
         code_challenge: Option<&str>,
+        nonce: Option<&str>,
     ) -> String;
 
     /// Exchange an authorization code for an Identity.
@@ -111,6 +112,7 @@ pub trait OAuthProvider: Provider {
         &self,
         code: &str,
         code_verifier: Option<&str>,
+        nonce: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError>;
 
     /// Refresh an access token using a refresh token.
@@ -155,14 +157,17 @@ pub trait ErasedOAuthFlow: Send + Sync {
     /// Get the provider identifier.
     fn provider_id(&self) -> String;
     /// Generates the redirect URL and CSRF state.
-    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, String);
+    fn initiate_login(
+        &self,
+        scopes: &[&str],
+        pkce_challenge: Option<&str>,
+    ) -> (String, OAuth2State);
     /// Completes the flow by exchanging the code.
     async fn finalize_login(
         &self,
         code: &str,
         received_state: &str,
-        expected_state: &str,
-        pkce_verifier: Option<&str>,
+        expected_state: &OAuth2State,
     ) -> Result<(Identity, OAuthToken), AuthError>;
 }
 
@@ -180,7 +185,11 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for std::sync::Arc<T> {
         (**self).provider_id()
     }
 
-    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, String) {
+    fn initiate_login(
+        &self,
+        scopes: &[&str],
+        pkce_challenge: Option<&str>,
+    ) -> (String, OAuth2State) {
         (**self).initiate_login(scopes, pkce_challenge)
     }
 
@@ -188,11 +197,10 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for std::sync::Arc<T> {
         &self,
         code: &str,
         received_state: &str,
-        expected_state: &str,
-        pkce_verifier: Option<&str>,
+        expected_state: &OAuth2State,
     ) -> Result<(Identity, OAuthToken), AuthError> {
         (**self)
-            .finalize_login(code, received_state, expected_state, pkce_verifier)
+            .finalize_login(code, received_state, expected_state)
             .await
     }
 }
@@ -203,7 +211,11 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for Box<T> {
         (**self).provider_id()
     }
 
-    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, String) {
+    fn initiate_login(
+        &self,
+        scopes: &[&str],
+        pkce_challenge: Option<&str>,
+    ) -> (String, OAuth2State) {
         (**self).initiate_login(scopes, pkce_challenge)
     }
 
@@ -211,11 +223,10 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for Box<T> {
         &self,
         code: &str,
         received_state: &str,
-        expected_state: &str,
-        pkce_verifier: Option<&str>,
+        expected_state: &OAuth2State,
     ) -> Result<(Identity, OAuthToken), AuthError> {
         (**self)
-            .finalize_login(code, received_state, expected_state, pkce_verifier)
+            .finalize_login(code, received_state, expected_state)
             .await
     }
 }

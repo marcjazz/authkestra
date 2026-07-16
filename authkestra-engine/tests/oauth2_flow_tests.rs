@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use authkestra_engine::auth::{
     AuthError, Identity, OAuthProvider, OAuthToken, Provider, ProviderConfig,
 };
-use authkestra_engine::flow::{Flow, FlowContext, FlowResult, OAuth2Flow};
+use authkestra_engine::flow::OAuth2Flow;
 use std::collections::HashMap;
 
 struct MockOAuthProvider;
@@ -28,6 +28,7 @@ impl OAuthProvider for MockOAuthProvider {
         state: &str,
         _scopes: &[&str],
         _code_challenge: Option<&str>,
+        _nonce: Option<&str>,
     ) -> String {
         format!("https://example.com/auth?state={}", state)
     }
@@ -36,6 +37,7 @@ impl OAuthProvider for MockOAuthProvider {
         &self,
         code: &str,
         _code_verifier: Option<&str>,
+        _nonce: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError> {
         if code == "valid_code" {
             Ok((
@@ -66,21 +68,10 @@ async fn test_oauth2_flow_initiate() {
     let provider = MockOAuthProvider;
     let flow = OAuth2Flow::new(provider);
 
-    let ctx = FlowContext {
-        state: "new_state".to_string(),
-        params: HashMap::new(),
-    };
+    let (url, state) = flow.initiate_login(&["openid"], None);
 
-    let result = flow.execute(ctx).await.unwrap();
-
-    match result {
-        FlowResult::Redirect(url) => {
-            assert!(url.contains("https://example.com/auth"));
-            // The state in the URL might be different from ctx.state because OAuth2Flow::initiate_login generates its own UUID
-            // but we just want to see it redirects.
-        }
-        _ => panic!("Expected Redirect"),
-    }
+    assert!(url.contains("https://example.com/auth"));
+    assert!(!state.state.is_empty());
 }
 
 #[tokio::test]
@@ -88,23 +79,14 @@ async fn test_oauth2_flow_finalize() {
     let provider = MockOAuthProvider;
     let flow = OAuth2Flow::new(provider);
 
-    let mut params = HashMap::new();
-    params.insert("code".to_string(), "valid_code".to_string());
-    params.insert("state".to_string(), "correct_state".to_string());
+    let (_, state) = flow.initiate_login(&["openid"], None);
 
-    let ctx = FlowContext {
-        state: "correct_state".to_string(),
-        params,
-    };
+    let (identity, _token, _) = flow
+        .finalize_login("valid_code", &state.state, &state)
+        .await
+        .unwrap();
 
-    let result = flow.execute(ctx).await.unwrap();
-
-    match result {
-        FlowResult::Complete(identity) => {
-            assert_eq!(identity.external_id, "user123");
-        }
-        _ => panic!("Expected Complete"),
-    }
+    assert_eq!(identity.external_id, "user123");
 }
 
 #[tokio::test]
@@ -112,15 +94,10 @@ async fn test_oauth2_flow_finalize_invalid_state() {
     let provider = MockOAuthProvider;
     let flow = OAuth2Flow::new(provider);
 
-    let mut params = HashMap::new();
-    params.insert("code".to_string(), "valid_code".to_string());
-    params.insert("state".to_string(), "wrong_state".to_string());
+    let (_, state) = flow.initiate_login(&["openid"], None);
 
-    let ctx = FlowContext {
-        state: "correct_state".to_string(),
-        params,
-    };
-
-    let result = flow.execute(ctx).await;
+    let result = flow
+        .finalize_login("valid_code", "wrong_state", &state)
+        .await;
     assert!(matches!(result, Err(AuthError::CsrfMismatch)));
 }

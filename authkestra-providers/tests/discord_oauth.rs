@@ -59,14 +59,15 @@ async fn test_discord_oauth_flow() {
     );
 
     // Simulate the authorization URL generation
-    let authorize_url = provider.get_authorization_url("test_state", &["identify", "email"], None);
+    let authorize_url =
+        provider.get_authorization_url("test_state", &["identify", "email"], None, None);
     assert!(authorize_url.contains("state=test_state"));
     assert!(authorize_url.contains("client_id=test_client_id"));
 
     let code = "test_code";
 
     let (identity, token_response): (Identity, OAuthToken) = provider
-        .exchange_code_for_identity(code, None)
+        .exchange_code_for_identity(code, None, None)
         .await
         .expect("Failed to exchange code");
 

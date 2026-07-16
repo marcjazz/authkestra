@@ -5,7 +5,7 @@ use authkestra_engine::pkce::Pkce;
 #[cfg(all(feature = "flow", not(feature = "session")))]
 use authkestra_engine::SessionConfig;
 #[cfg(feature = "flow")]
-use authkestra_engine::{AuthEngine, ErasedOAuthFlow, OAuth2Flow};
+use authkestra_engine::{state::OAuth2State, AuthEngine, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
 use std::sync::Arc;
@@ -51,22 +51,39 @@ pub fn create_actix_cookie<'a>(config: &SessionConfig, value: String) -> Cookie<
 ///
 /// This generates the authorization URL and sets a CSRF state cookie.
 #[cfg(feature = "flow")]
-pub fn initiate_oauth_login<P, M>(flow: &OAuth2Flow<P, M>, scopes: &[&str]) -> HttpResponse
+pub fn initiate_oauth_login<P, M>(
+    flow: &OAuth2Flow<P, M>,
+    scopes: &[&str],
+    config: &SessionConfig,
+    success_url: Option<String>,
+) -> HttpResponse
 where
     P: authkestra_engine::OAuthProvider + 'static,
     M: authkestra_engine::UserMapper + 'static,
 {
-    initiate_oauth_login_erased(flow, scopes)
+    initiate_oauth_login_erased(flow, scopes, config, success_url)
 }
 
 #[cfg(feature = "flow")]
-pub fn initiate_oauth_login_erased(flow: &dyn ErasedOAuthFlow, scopes: &[&str]) -> HttpResponse {
+pub fn initiate_oauth_login_erased(
+    flow: &dyn ErasedOAuthFlow,
+    scopes: &[&str],
+    config: &SessionConfig,
+    success_url: Option<String>,
+) -> HttpResponse {
     let pkce = Pkce::new();
-    let (url, csrf_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
+    let (url, mut auth_state) = flow.initiate_login(scopes, Some(&pkce.code_challenge));
 
-    let cookie_name = format!("authkestra_engine_{csrf_state}");
+    auth_state.code_verifier = Some(pkce.code_verifier);
+    auth_state.success_url = success_url;
 
-    let cookie = Cookie::build(cookie_name, pkce.code_verifier)
+    let encrypted = auth_state
+        .encrypt(&config.state_encryption_key)
+        .expect("Failed to encrypt OAuth state");
+
+    let cookie_name = format!("authkestra_state_{}", auth_state.state);
+
+    let cookie = Cookie::build(cookie_name, encrypted)
         .path("/")
         .http_only(true)
         .same_site(actix_web::cookie::SameSite::Lax)
@@ -104,24 +121,23 @@ pub async fn handle_oauth_callback_erased(
     params: OAuthCallbackParams,
     store: Arc<dyn SessionStore>,
     config: SessionConfig,
-    success_url: &str,
+    _success_url: &str,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let cookie_name = format!("authkestra_engine_{}", params.state);
-    let pkce_verifier = req
+    let state_param = &params.state;
+    let cookie_name = format!("authkestra_state_{state_param}");
+    let encrypted_state = req
         .cookie(&cookie_name)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
         })?;
 
+    let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
+        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}")))?;
+
     // Exchange code
     let (mut identity, token) = flow
-        .finalize_login(
-            &params.code,
-            &params.state,
-            &params.state, // We use the state itself as expected_state
-            Some(&pkce_verifier),
-        )
+        .finalize_login(&params.code, &params.state, &expected_state)
         .await
         .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
 
@@ -160,8 +176,12 @@ pub async fn handle_oauth_callback_erased(
         .max_age(actix_web::cookie::time::Duration::ZERO)
         .finish();
 
+    let final_success_url = expected_state
+        .success_url
+        .unwrap_or_else(|| "/".to_string());
+
     Ok(HttpResponse::Found()
-        .insert_header((header::LOCATION, success_url))
+        .insert_header((header::LOCATION, final_success_url))
         .cookie(cookie)
         .cookie(remove_cookie)
         .finish())
@@ -187,35 +207,12 @@ pub async fn actix_login_handler<S, T>(
         .filter(|s| !s.is_empty())
         .collect();
 
-    let pkce = Pkce::new();
-    let (url, csrf_state) = flow.initiate_login(&scopes, Some(&pkce.code_challenge));
-
-    let cookie_name = format!("authkestra_engine_{csrf_state}");
-    let cookie = Cookie::build(cookie_name, pkce.code_verifier)
-        .path("/")
-        .http_only(true)
-        .same_site(actix_web::cookie::SameSite::Lax)
-        .secure(true)
-        .max_age(actix_web::cookie::time::Duration::minutes(15))
-        .finish();
-
-    let mut res = HttpResponse::Found();
-    res.insert_header((header::LOCATION, url));
-    res.cookie(cookie);
-
-    if let Some(success_url) = &params.success_url {
-        let success_cookie_name = format!("authkestra_success_{csrf_state}");
-        let success_cookie = Cookie::build(success_cookie_name, success_url.clone())
-            .path("/")
-            .http_only(true)
-            .same_site(actix_web::cookie::SameSite::Lax)
-            .secure(true)
-            .max_age(actix_web::cookie::time::Duration::minutes(15))
-            .finish();
-        res.cookie(success_cookie);
-    }
-
-    res.finish()
+    initiate_oauth_login_erased(
+        flow.as_ref(),
+        &scopes,
+        &authkestra.session_config,
+        params.success_url.clone(),
+    )
 }
 
 #[cfg(all(feature = "flow", feature = "session"))]
@@ -237,29 +234,17 @@ where
     };
 
     let callback_params = params.into_inner();
-    let success_url_cookie_name = format!("authkestra_success_{}", callback_params.state);
-    let success_url = req
-        .cookie(&success_url_cookie_name)
-        .map(|c| c.value().to_string())
-        .unwrap_or_else(|| "/".to_string());
 
-    let remove_cookie = Cookie::build(success_url_cookie_name, "")
-        .path("/")
-        .secure(true)
-        .max_age(actix_web::cookie::time::Duration::ZERO)
-        .finish();
-
-    let mut response = handle_oauth_callback_erased(
+    let response = handle_oauth_callback_erased(
         req,
         flow.as_ref(),
         callback_params,
         authkestra.session_store.get_store(),
         authkestra.session_config.clone(),
-        &success_url,
+        "",
     )
     .await?;
 
-    response.add_cookie(&remove_cookie)?;
     Ok(response)
 }
 
@@ -315,24 +300,24 @@ pub async fn handle_oauth_callback_jwt_erased(
     params: OAuthCallbackParams,
     token_manager: Arc<authkestra_engine::TokenManager>,
     expires_in_secs: u64,
+    config: SessionConfig,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let cookie_name = format!("authkestra_engine_{}", params.state);
+    let state_param = &params.state;
+    let cookie_name = format!("authkestra_state_{state_param}");
 
-    let pkce_verifier = req
+    let encrypted_state = req
         .cookie(&cookie_name)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
         })?;
 
+    let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
+        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}")))?;
+
     // Exchange code
     let (identity, _token) = flow
-        .finalize_login(
-            &params.code,
-            &params.state,
-            &params.state,
-            Some(&pkce_verifier),
-        )
+        .finalize_login(&params.code, &params.state, &expected_state)
         .await
         .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
 
@@ -366,10 +351,12 @@ pub async fn handle_oauth_callback_jwt<P, M>(
     params: OAuthCallbackParams,
     token_manager: Arc<authkestra_engine::TokenManager>,
     expires_in_secs: u64,
+    config: SessionConfig,
 ) -> Result<HttpResponse, actix_web::Error>
 where
     P: authkestra_engine::OAuthProvider + Send + Sync + 'static,
     M: authkestra_engine::UserMapper + Send + Sync + 'static,
 {
-    handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs).await
+    handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs, config)
+        .await
 }

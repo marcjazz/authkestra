@@ -42,6 +42,13 @@ impl FromRef<AppState> for AuthEngine<Missing, Configured<Arc<TokenManager>>> {
     }
 }
 
+/// Required for encrypted state handling.
+impl FromRef<AppState> for authkestra_axum::SessionConfig {
+    fn from_ref(state: &AppState) -> Self {
+        state.authkestra.session_config.clone()
+    }
+}
+
 #[tokio::main]
 async fn main() {
     // Load environment variables from .env file
@@ -120,6 +127,7 @@ async fn callback_handler(
         params,
         token_manager,
         3600, // 1 hour
+        state.authkestra.session_config.clone(),
     )
     .await
     .map_err(|(status, msg)| {

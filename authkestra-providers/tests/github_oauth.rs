@@ -55,7 +55,7 @@ async fn test_github_oauth_flow() {
     );
 
     // Simulate the authorization URL generation
-    let authorize_url = provider.get_authorization_url("test_state", &["user:email"], None);
+    let authorize_url = provider.get_authorization_url("test_state", &["user:email"], None, None);
     assert!(authorize_url.starts_with(&format!("{}/login/oauth/authorize", server.uri())));
     assert!(authorize_url.contains("state=test_state"));
 
@@ -65,7 +65,7 @@ async fn test_github_oauth_flow() {
     let code = "test_code";
 
     let (identity, token_response): (Identity, OAuthToken) = provider
-        .exchange_code_for_identity(code, None)
+        .exchange_code_for_identity(code, None, None)
         .await
         .expect("Failed to exchange code");
 

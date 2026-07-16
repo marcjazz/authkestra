@@ -88,6 +88,7 @@ impl OAuthProvider for GithubProvider {
         state: &str,
         scopes: &[&str],
         _code_challenge: Option<&str>,
+        _nonce: Option<&str>,
     ) -> String {
         let scope_param = if scopes.is_empty() {
             "user:email".to_string()
@@ -99,7 +100,9 @@ impl OAuthProvider for GithubProvider {
             "{auth_url}?client_id={client_id}&redirect_uri={redirect_uri}&state={state}&scope={scope_param}",
             auth_url = self.authorization_url,
             client_id = self.client_id,
-            redirect_uri = self.redirect_uri
+            redirect_uri = urlencoding::encode(&self.redirect_uri),
+            state = state,
+            scope_param = urlencoding::encode(&scope_param)
         )
     }
 
@@ -107,6 +110,7 @@ impl OAuthProvider for GithubProvider {
         &self,
         code: &str,
         _code_verifier: Option<&str>,
+        _nonce: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError> {
         // 1. Exchange code for access token
         let token_response = self
