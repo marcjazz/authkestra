@@ -59,7 +59,8 @@ async fn test_google_oauth_flow() {
     );
 
     // Simulate the authorization URL generation
-    let authorize_url = provider.get_authorization_url("test_state", &["email", "profile"], None, None);
+    let authorize_url =
+        provider.get_authorization_url("test_state", &["email", "profile"], None, None);
     assert!(authorize_url.starts_with(&format!("{}/auth", server.uri())));
     assert!(authorize_url.contains("state=test_state"));
 

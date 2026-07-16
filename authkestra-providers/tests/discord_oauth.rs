@@ -59,7 +59,8 @@ async fn test_discord_oauth_flow() {
     );
 
     // Simulate the authorization URL generation
-    let authorize_url = provider.get_authorization_url("test_state", &["identify", "email"], None, None);
+    let authorize_url =
+        provider.get_authorization_url("test_state", &["identify", "email"], None, None);
     assert!(authorize_url.contains("state=test_state"));
     assert!(authorize_url.contains("client_id=test_client_id"));
 

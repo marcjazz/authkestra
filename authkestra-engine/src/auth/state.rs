@@ -70,15 +70,15 @@ impl OAuth2State {
         let cipher = Aes256Gcm::new(key.into());
         let mut nonce_bytes = [0u8; 12];
         rand::rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let json = serde_json::to_vec(self).map_err(|e| {
             crate::auth::error::AuthError::Token(format!("Failed to serialize state: {e}"))
         })?;
 
-        let ciphertext = cipher.encrypt(nonce, json.as_slice()).map_err(|e| {
-            crate::auth::error::AuthError::Token(format!("Encryption failed: {e}"))
-        })?;
+        let ciphertext = cipher
+            .encrypt(&nonce, json.as_slice())
+            .map_err(|e| crate::auth::error::AuthError::Token(format!("Encryption failed: {e}")))?;
 
         let mut combined = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
         combined.extend_from_slice(&nonce_bytes);
@@ -91,10 +91,7 @@ impl OAuth2State {
     }
 
     /// Decrypts the state from a base64-encoded string.
-    pub fn decrypt(
-        encoded: &str,
-        key: &[u8; 32],
-    ) -> Result<Self, crate::auth::error::AuthError> {
+    pub fn decrypt(encoded: &str, key: &[u8; 32]) -> Result<Self, crate::auth::error::AuthError> {
         use aes_gcm::{
             aead::{Aead, KeyInit},
             Aes256Gcm, Nonce,
@@ -112,19 +109,24 @@ impl OAuth2State {
         }
 
         let (nonce_bytes, ciphertext) = combined.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce_arr: [u8; 12] = nonce_bytes.try_into().map_err(|_| {
+            crate::auth::error::AuthError::Token("Invalid nonce length".to_string())
+        })?;
+        let nonce = Nonce::from(nonce_arr);
         let cipher = Aes256Gcm::new(key.into());
 
-        let decrypted = cipher.decrypt(nonce, ciphertext).map_err(|e| {
-            crate::auth::error::AuthError::Token(format!("Decryption failed: {e}"))
-        })?;
+        let decrypted = cipher
+            .decrypt(&nonce, ciphertext)
+            .map_err(|e| crate::auth::error::AuthError::Token(format!("Decryption failed: {e}")))?;
 
         let state: Self = serde_json::from_slice(&decrypted).map_err(|e| {
             crate::auth::error::AuthError::Token(format!("Failed to deserialize state: {e}"))
         })?;
 
         if chrono::Utc::now().timestamp() > state.expires_at {
-            return Err(crate::auth::error::AuthError::Token("State expired".to_string()));
+            return Err(crate::auth::error::AuthError::Token(
+                "State expired".to_string(),
+            ));
         }
 
         Ok(state)

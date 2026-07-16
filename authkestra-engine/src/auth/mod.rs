@@ -20,7 +20,7 @@ pub use error::AuthError;
 
 /// A unified identity structure returned by all providers.
 pub mod state;
-pub use state::{Identity, OAuthToken, OAuth2State};
+pub use state::{Identity, OAuth2State, OAuthToken};
 
 /// Discovery utilities for OAuth2 providers.
 pub mod discovery;
@@ -157,7 +157,11 @@ pub trait ErasedOAuthFlow: Send + Sync {
     /// Get the provider identifier.
     fn provider_id(&self) -> String;
     /// Generates the redirect URL and CSRF state.
-    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, OAuth2State);
+    fn initiate_login(
+        &self,
+        scopes: &[&str],
+        pkce_challenge: Option<&str>,
+    ) -> (String, OAuth2State);
     /// Completes the flow by exchanging the code.
     async fn finalize_login(
         &self,
@@ -181,7 +185,11 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for std::sync::Arc<T> {
         (**self).provider_id()
     }
 
-    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, OAuth2State) {
+    fn initiate_login(
+        &self,
+        scopes: &[&str],
+        pkce_challenge: Option<&str>,
+    ) -> (String, OAuth2State) {
         (**self).initiate_login(scopes, pkce_challenge)
     }
 
@@ -203,7 +211,11 @@ impl<T: ErasedOAuthFlow + ?Sized> ErasedOAuthFlow for Box<T> {
         (**self).provider_id()
     }
 
-    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, OAuth2State) {
+    fn initiate_login(
+        &self,
+        scopes: &[&str],
+        pkce_challenge: Option<&str>,
+    ) -> (String, OAuth2State) {
         (**self).initiate_login(scopes, pkce_challenge)
     }
 

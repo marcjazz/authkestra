@@ -5,7 +5,7 @@ use authkestra_engine::pkce::Pkce;
 #[cfg(all(feature = "flow", not(feature = "session")))]
 use authkestra_engine::SessionConfig;
 #[cfg(feature = "flow")]
-use authkestra_engine::{AuthEngine, ErasedOAuthFlow, OAuth2Flow, state::OAuth2State};
+use authkestra_engine::{state::OAuth2State, AuthEngine, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
 use std::sync::Arc;
@@ -176,7 +176,9 @@ pub async fn handle_oauth_callback_erased(
         .max_age(actix_web::cookie::time::Duration::ZERO)
         .finish();
 
-    let final_success_url = expected_state.success_url.unwrap_or_else(|| "/".to_string());
+    let final_success_url = expected_state
+        .success_url
+        .unwrap_or_else(|| "/".to_string());
 
     Ok(HttpResponse::Found()
         .insert_header((header::LOCATION, final_success_url))
@@ -355,5 +357,6 @@ where
     P: authkestra_engine::OAuthProvider + Send + Sync + 'static,
     M: authkestra_engine::UserMapper + Send + Sync + 'static,
 {
-    handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs, config).await
+    handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs, config)
+        .await
 }

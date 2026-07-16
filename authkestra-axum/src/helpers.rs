@@ -3,7 +3,7 @@ use authkestra_engine::TokenManager;
 #[cfg(any(feature = "flow", feature = "session", feature = "token"))]
 use authkestra_engine::{
     pkce::Pkce,
-    state::{Identity, OAuthToken, OAuth2State},
+    state::{Identity, OAuth2State, OAuthToken},
 };
 #[cfg(feature = "flow")]
 use authkestra_engine::{AuthEngine, ErasedOAuthFlow, OAuth2Flow};
@@ -115,7 +115,12 @@ async fn finalize_callback_erased(
         })?;
 
     let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
-        .map_err(|e| (StatusCode::UNAUTHORIZED, format!("Invalid state cookie: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::UNAUTHORIZED,
+                format!("Invalid state cookie: {e}"),
+            )
+        })?;
 
     // Remove cookie after use
     let mut remove_cookie = Cookie::new(cookie_name, "");
@@ -247,7 +252,15 @@ where
     P: authkestra_engine::OAuthProvider + Send + Sync + 'static,
     M: authkestra_engine::UserMapper + Send + Sync + 'static,
 {
-    handle_oauth_callback_jwt_erased(flow, cookies, params, token_manager, expires_in_secs, config).await
+    handle_oauth_callback_jwt_erased(
+        flow,
+        cookies,
+        params,
+        token_manager,
+        expires_in_secs,
+        config,
+    )
+    .await
 }
 
 /// Helper to handle logout by deleting the session from the store and clearing the cookie.

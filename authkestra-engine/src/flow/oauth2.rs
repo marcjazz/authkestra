@@ -1,6 +1,6 @@
 use crate::auth::{
-    error::AuthError, state::Identity, state::OAuthToken, state::OAuth2State, ErasedOAuthFlow, OAuthProvider,
-    UserMapper,
+    error::AuthError, state::Identity, state::OAuth2State, state::OAuthToken, ErasedOAuthFlow,
+    OAuthProvider, UserMapper,
 };
 use crate::flow::{Flow, FlowContext, FlowResult};
 use async_trait::async_trait;
@@ -22,11 +22,13 @@ impl<P: OAuthProvider + 'static, M: UserMapper + 'static> Flow for OAuth2Flow<P,
     async fn execute(&self, ctx: FlowContext) -> Result<FlowResult, AuthError> {
         if let Some(_code) = ctx.params.get("code") {
             let _received_state = ctx.params.get("state").ok_or(AuthError::CsrfMismatch)?;
-            
+
             // In the new model, expected_state must be provided via some context.
             // For now, if it's missing from ctx, we might need to adjust FlowContext.
             // But ErasedOAuthFlow is what the adapters use.
-            Err(AuthError::Token("Direct Flow execution not updated for encrypted state".to_string()))
+            Err(AuthError::Token(
+                "Direct Flow execution not updated for encrypted state".to_string(),
+            ))
         } else {
             // Assume initiation if no code is present
             let scopes_str = ctx.params.get("scopes").map(|s| s.as_str()).unwrap_or("");
@@ -49,7 +51,11 @@ impl<P: OAuthProvider + 'static, M: UserMapper + 'static> ErasedOAuthFlow for OA
         self.provider.provider_id().to_string()
     }
 
-    fn initiate_login(&self, scopes: &[&str], pkce_challenge: Option<&str>) -> (String, OAuth2State) {
+    fn initiate_login(
+        &self,
+        scopes: &[&str],
+        pkce_challenge: Option<&str>,
+    ) -> (String, OAuth2State) {
         let effective_scopes = if !scopes.is_empty() {
             scopes
         } else {
@@ -130,9 +136,12 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
                 .collect::<Vec<&str>>()
         };
 
-        let url = self
-            .provider
-            .get_authorization_url(&state, effective_scopes, pkce_challenge, nonce.as_deref());
+        let url = self.provider.get_authorization_url(
+            &state,
+            effective_scopes,
+            pkce_challenge,
+            nonce.as_deref(),
+        );
 
         let auth_state = OAuth2State {
             state: state.clone(),
@@ -159,11 +168,15 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
         }
         let (identity, token) = self
             .provider
-            .exchange_code_for_identity(code, expected_state.code_verifier.as_deref(), expected_state.nonce.as_deref())
+            .exchange_code_for_identity(
+                code,
+                expected_state.code_verifier.as_deref(),
+                expected_state.nonce.as_deref(),
+            )
             .await?;
 
         // TODO: Validate nonce if present in identity/ID token
-        
+
         let local_user = if let Some(mapper) = &self.mapper {
             Some(mapper.map_user(&identity).await?)
         } else {
