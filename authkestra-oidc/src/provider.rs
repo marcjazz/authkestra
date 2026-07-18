@@ -12,15 +12,16 @@ use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
+use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub struct OidcProvider {
     client_id: String,
     client_secret: String,
     redirect_uri: String,
-    metadata: Arc<std::sync::RwLock<ProviderMetadata>>,
+    metadata: Arc<RwLock<ProviderMetadata>>,
     http_client: reqwest::Client,
-    cache: Arc<std::sync::RwLock<Arc<JwksCache>>>,
+    cache: Arc<RwLock<JwksCache>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -73,34 +74,27 @@ impl OidcProvider {
             }
         };
 
-        let cache = Arc::new(JwksCache::new(metadata.jwks_uri.clone(), refresh_interval));
+        // For JwksCache we use the same refresh interval
+        let cache = JwksCache::new(metadata.jwks_uri.clone(), refresh_interval);
 
         let provider = Self {
             client_id,
             client_secret,
             redirect_uri,
-            metadata: Arc::new(std::sync::RwLock::new(metadata)),
+            metadata: Arc::new(RwLock::new(metadata)),
             http_client: client.clone(),
-            cache: Arc::new(std::sync::RwLock::new(cache)),
+            cache: Arc::new(RwLock::new(cache)),
         };
 
         // Spawn background refresh task
         let issuer_url_owned = issuer_url.to_string();
-        let metadata_ref = Arc::downgrade(&provider.metadata);
-        let cache_ref = Arc::downgrade(&provider.cache);
+        let metadata_ref = provider.metadata.clone();
+        let cache_ref = provider.cache.clone();
 
         tokio::spawn(async move {
             let mut current_interval = refresh_interval;
             loop {
                 tokio::time::sleep(current_interval).await;
-
-                // If the provider has been dropped, exit the background task
-                let (metadata_arc, cache_arc) = match (metadata_ref.upgrade(), cache_ref.upgrade())
-                {
-                    (Some(m), Some(c)) => (m, c),
-                    _ => break,
-                };
-
                 log::debug!(
                     "Refreshing OIDC discovery document for {}",
                     issuer_url_owned
@@ -120,7 +114,7 @@ impl OidcProvider {
                             }
                         };
 
-                        let mut meta_write = metadata_arc.write().unwrap();
+                        let mut meta_write = metadata_ref.write().await;
                         let jwks_uri_changed = meta_write.jwks_uri != new_metadata.jwks_uri;
                         *meta_write = new_metadata.clone();
                         drop(meta_write); // Release lock early
@@ -130,10 +124,8 @@ impl OidcProvider {
                                 "OIDC jwks_uri changed for {}, recreating JwksCache",
                                 issuer_url_owned
                             );
-                            let new_cache =
-                                Arc::new(JwksCache::new(new_metadata.jwks_uri, current_interval));
-                            let mut cache_write = cache_arc.write().unwrap();
-                            *cache_write = new_cache;
+                            let mut cache_write = cache_ref.write().await;
+                            *cache_write = JwksCache::new(new_metadata.jwks_uri, current_interval);
                         } else {
                             // If JWKS didn't change, its internal TTL might still need updating if current_interval changed,
                             // but currently JwksCache doesn't expose a method to update TTL. Recreating it is safe anyway
@@ -158,7 +150,7 @@ impl OidcProvider {
     }
 
     pub async fn get_metadata(&self) -> ProviderMetadata {
-        self.metadata.read().unwrap().clone()
+        self.metadata.read().await.clone()
     }
 }
 
@@ -186,7 +178,15 @@ impl OAuthProvider for OidcProvider {
         code_challenge: Option<&str>,
         nonce: Option<&str>,
     ) -> String {
-        let metadata = self.metadata.read().unwrap().clone();
+        // Because get_authorization_url is synchronous in the trait but we need async read lock,
+        // we must block or the trait needs to change.
+        // Wait, the trait `OAuthProvider` defines `get_authorization_url` as synchronous returning String.
+        // We cannot `.await` in a sync function.
+        // We can use `tokio::task::block_in_place` or change the trait.
+
+        let metadata = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async { self.metadata.read().await.clone() })
+        });
 
         let mut full_scopes = scopes.to_vec();
         if !full_scopes.contains(&"openid") {
@@ -235,7 +235,7 @@ impl OAuthProvider for OidcProvider {
             params.insert("code_verifier", verifier.to_string());
         }
 
-        let metadata = self.metadata.read().unwrap().clone();
+        let metadata = self.metadata.read().await.clone();
 
         let token_response = self
             .http_client
@@ -253,7 +253,7 @@ impl OAuthProvider for OidcProvider {
             .ok_or_else(|| AuthError::Token("Missing id_token in response".to_string()))?;
 
         // 2. Validate ID Token using the validator
-        let cache = self.cache.read().unwrap().clone(); // Clone the Arc, releasing the lock immediately
+        let cache = self.cache.read().await;
         let claims = validate_jwt_generic::<Claims>(&id_token, &cache, &Validation::default())
             .await
             .map_err(OidcError::from)
