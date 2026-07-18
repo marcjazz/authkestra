@@ -50,8 +50,9 @@ impl GithubProvider {
     }
 }
 
+#[async_trait]
 impl Provider for GithubProvider {
-    fn config(&self) -> ProviderConfig {
+    async fn config(&self) -> ProviderConfig {
         ProviderConfig {
             id: "github".to_string(),
             name: "GitHub".to_string(),

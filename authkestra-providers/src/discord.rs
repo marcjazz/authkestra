@@ -44,8 +44,9 @@ impl DiscordProvider {
     }
 }
 
+#[async_trait]
 impl Provider for DiscordProvider {
-    fn config(&self) -> ProviderConfig {
+    async fn config(&self) -> ProviderConfig {
         ProviderConfig {
             id: "discord".to_string(),
             name: "Discord".to_string(),

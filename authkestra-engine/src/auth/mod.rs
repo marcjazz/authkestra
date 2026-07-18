@@ -76,9 +76,10 @@ pub struct ProviderConfig {
 
 /// An external identity source (e.g., Google, GitHub).
 /// Providers should contain zero business logic—only configuration and mapping.
+#[async_trait]
 pub trait Provider: Send + Sync {
     /// Returns the provider configuration.
-    fn config(&self) -> ProviderConfig;
+    async fn config(&self) -> ProviderConfig;
 }
 
 /// Controls whether a cookie is sent with cross-site requests.
