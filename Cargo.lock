@@ -348,6 +348,7 @@ dependencies = [
  "authkestra-engine",
  "authkestra-oidc",
  "authkestra-providers",
+ "authkestra-resource",
  "authkestra-session",
  "tokio",
 ]
