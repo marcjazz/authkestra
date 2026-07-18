@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["GrantType"],"struct":["ClientRegistration","InMemoryClientStore"],"trait":["ClientStore"]};

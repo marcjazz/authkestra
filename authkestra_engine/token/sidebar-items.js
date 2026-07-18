@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["jwk"],"struct":["Claims","TokenManager"],"trait":["TokenService"]};
+window.SIDEBAR_ITEMS = {"struct":["Claims","TokenManager"],"trait":["TokenService"]};
