@@ -81,7 +81,7 @@ pub fn initiate_oauth_login_erased(
         .encrypt(&config.state_encryption_key)
         .expect("Failed to encrypt OAuth state");
 
-    let cookie_name = format!("authkestra_state_{}", auth_state.state);
+    let cookie_name = "ak_state";
 
     let cookie = Cookie::build(cookie_name, encrypted)
         .path("/")
@@ -123,10 +123,9 @@ pub async fn handle_oauth_callback_erased(
     config: SessionConfig,
     _success_url: &str,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let state_param = &params.state;
-    let cookie_name = format!("authkestra_state_{state_param}");
+    let cookie_name = "ak_state";
     let encrypted_state = req
-        .cookie(&cookie_name)
+        .cookie(cookie_name)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
@@ -302,11 +301,10 @@ pub async fn handle_oauth_callback_jwt_erased(
     expires_in_secs: u64,
     config: SessionConfig,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let state_param = &params.state;
-    let cookie_name = format!("authkestra_state_{state_param}");
+    let cookie_name = "ak_state";
 
     let encrypted_state = req
-        .cookie(&cookie_name)
+        .cookie(cookie_name)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")

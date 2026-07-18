@@ -10,15 +10,18 @@ use authkestra_engine::{
 use authkestra_resource::jwt::{validate_jwt_generic, JwksCache};
 use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
+use tokio::sync::RwLock;
 
+#[derive(Clone)]
 pub struct OidcProvider {
     client_id: String,
     client_secret: String,
     redirect_uri: String,
-    metadata: ProviderMetadata,
+    metadata: Arc<RwLock<ProviderMetadata>>,
     http_client: reqwest::Client,
-    cache: JwksCache,
+    cache: Arc<RwLock<JwksCache>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,29 +47,110 @@ struct OidcTokenResponse {
 }
 
 impl OidcProvider {
-    /// Creates a new provider by performing discovery
+    /// Creates a new provider by performing discovery.
+    /// Spawns a background task to periodically refresh the discovery document
+    /// and JWKS cache based on the Cache-Control max-age header.
+    /// If the header is missing, `fallback_refresh_interval` is used.
     pub async fn discover(
         client_id: String,
         client_secret: String,
         redirect_uri: String,
         issuer_url: &str,
+        fallback_refresh_interval: Duration,
     ) -> Result<Self, OidcError> {
         let client = reqwest::Client::new();
-        let metadata = ProviderMetadata::discover(issuer_url, client.clone()).await?;
-        let cache = JwksCache::new(metadata.jwks_uri.clone(), Duration::from_secs(3600));
+        let (metadata, cache_max_age) =
+            ProviderMetadata::discover(issuer_url, client.clone()).await?;
 
-        Ok(Self {
+        let refresh_interval = match cache_max_age {
+            Some(duration) => duration,
+            None => {
+                log::warn!(
+                    "No valid Cache-Control max-age found in discovery document from {}. Using fallback interval of {} seconds.",
+                    issuer_url,
+                    fallback_refresh_interval.as_secs()
+                );
+                fallback_refresh_interval
+            }
+        };
+
+        // For JwksCache we use the same refresh interval
+        let cache = JwksCache::new(metadata.jwks_uri.clone(), refresh_interval);
+
+        let provider = Self {
             client_id,
             client_secret,
             redirect_uri,
-            metadata,
-            http_client: client,
-            cache,
-        })
+            metadata: Arc::new(RwLock::new(metadata)),
+            http_client: client.clone(),
+            cache: Arc::new(RwLock::new(cache)),
+        };
+
+        // Spawn background refresh task
+        let issuer_url_owned = issuer_url.to_string();
+        let metadata_ref = provider.metadata.clone();
+        let cache_ref = provider.cache.clone();
+
+        tokio::spawn(async move {
+            let mut current_interval = refresh_interval;
+            loop {
+                tokio::time::sleep(current_interval).await;
+                log::debug!(
+                    "Refreshing OIDC discovery document for {}",
+                    issuer_url_owned
+                );
+
+                match ProviderMetadata::discover(&issuer_url_owned, client.clone()).await {
+                    Ok((new_metadata, new_cache_max_age)) => {
+                        current_interval = match new_cache_max_age {
+                            Some(duration) => duration,
+                            None => {
+                                log::warn!(
+                                    "No valid Cache-Control max-age found in discovery document from {}. Using fallback interval of {} seconds.",
+                                    issuer_url_owned,
+                                    fallback_refresh_interval.as_secs()
+                                );
+                                fallback_refresh_interval
+                            }
+                        };
+
+                        let mut meta_write = metadata_ref.write().await;
+                        let jwks_uri_changed = meta_write.jwks_uri != new_metadata.jwks_uri;
+                        *meta_write = new_metadata.clone();
+                        drop(meta_write); // Release lock early
+
+                        if jwks_uri_changed {
+                            log::info!(
+                                "OIDC jwks_uri changed for {}, recreating JwksCache",
+                                issuer_url_owned
+                            );
+                            let mut cache_write = cache_ref.write().await;
+                            *cache_write = JwksCache::new(new_metadata.jwks_uri, current_interval);
+                        } else {
+                            // If JWKS didn't change, its internal TTL might still need updating if current_interval changed,
+                            // but currently JwksCache doesn't expose a method to update TTL. Recreating it is safe anyway
+                            // and ensures we use the new interval. Or we can just let it be since it manages its own refresh
+                            // based on its original TTL. For simplicity and correctness, we just leave it unless uri changes,
+                            // as JwksCache will refetch keys when they expire.
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to refresh OIDC discovery document for {}: {e}",
+                            issuer_url_owned
+                        );
+                        // Retry after a short delay on failure to avoid tight loop
+                        current_interval = Duration::from_secs(60);
+                    }
+                }
+            }
+        });
+
+        Ok(provider)
     }
 
-    pub fn metadata(&self) -> &ProviderMetadata {
-        &self.metadata
+    pub async fn get_metadata(&self) -> ProviderMetadata {
+        self.metadata.read().await.clone()
     }
 }
 
@@ -94,6 +178,16 @@ impl OAuthProvider for OidcProvider {
         code_challenge: Option<&str>,
         nonce: Option<&str>,
     ) -> String {
+        // Because get_authorization_url is synchronous in the trait but we need async read lock,
+        // we must block or the trait needs to change.
+        // Wait, the trait `OAuthProvider` defines `get_authorization_url` as synchronous returning String.
+        // We cannot `.await` in a sync function.
+        // We can use `tokio::task::block_in_place` or change the trait.
+
+        let metadata = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async { self.metadata.read().await.clone() })
+        });
+
         let mut full_scopes = scopes.to_vec();
         if !full_scopes.contains(&"openid") {
             full_scopes.push("openid");
@@ -103,7 +197,7 @@ impl OAuthProvider for OidcProvider {
 
         let mut url = format!(
             "{}?client_id={}&redirect_uri={}&response_type=code&state={}&scope={}",
-            self.metadata.authorization_endpoint,
+            metadata.authorization_endpoint,
             self.client_id,
             urlencoding::encode(&self.redirect_uri),
             state,
@@ -141,9 +235,11 @@ impl OAuthProvider for OidcProvider {
             params.insert("code_verifier", verifier.to_string());
         }
 
+        let metadata = self.metadata.read().await.clone();
+
         let token_response = self
             .http_client
-            .post(&self.metadata.token_endpoint)
+            .post(&metadata.token_endpoint)
             .form(&params)
             .send()
             .await
@@ -157,7 +253,8 @@ impl OAuthProvider for OidcProvider {
             .ok_or_else(|| AuthError::Token("Missing id_token in response".to_string()))?;
 
         // 2. Validate ID Token using the validator
-        let claims = validate_jwt_generic::<Claims>(&id_token, &self.cache, &Validation::default())
+        let cache = self.cache.read().await;
+        let claims = validate_jwt_generic::<Claims>(&id_token, &cache, &Validation::default())
             .await
             .map_err(OidcError::from)
             .map_err(AuthError::from)?;

@@ -79,7 +79,7 @@ pub fn initiate_oauth_login(
         .encrypt(&config.state_encryption_key)
         .expect("Failed to encrypt OAuth state");
 
-    let cookie_name = format!("authkestra_state_{}", auth_state.state);
+    let cookie_name = "ak_state";
 
     let mut cookie = Cookie::new(cookie_name, encrypted);
     cookie.set_path("/");
@@ -101,11 +101,10 @@ async fn finalize_callback_erased(
     params: &OAuthCallbackParams,
     config: &SessionConfig,
 ) -> Result<(Identity, OAuthToken, OAuth2State), (StatusCode, String)> {
-    let state_param = &params.state;
-    let cookie_name = format!("authkestra_state_{state_param}");
+    let cookie_name = "ak_state";
 
     let encrypted_state = cookies
-        .get(&cookie_name)
+        .get(cookie_name)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
             (
