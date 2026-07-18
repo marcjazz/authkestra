@@ -7,8 +7,9 @@ use std::collections::HashMap;
 
 struct MockOAuthProvider;
 
+#[async_trait]
 impl Provider for MockOAuthProvider {
-    fn config(&self) -> ProviderConfig {
+    async fn config(&self) -> ProviderConfig {
         ProviderConfig {
             id: "mock".to_string(),
             name: "Mock".to_string(),

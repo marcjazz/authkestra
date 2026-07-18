@@ -70,8 +70,9 @@ impl OidcProvider {
     }
 }
 
+#[async_trait]
 impl Provider for OidcProvider {
-    fn config(&self) -> ProviderConfig {
+    async fn config(&self) -> ProviderConfig {
         ProviderConfig {
             id: "oidc".to_string(),
             name: "OIDC".to_string(),

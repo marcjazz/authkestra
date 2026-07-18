@@ -23,8 +23,9 @@ impl AuthMethod for MockAuthMethod {
 }
 
 struct MockProvider;
+#[async_trait]
 impl Provider for MockProvider {
-    fn config(&self) -> ProviderConfig {
+    async fn config(&self) -> ProviderConfig {
         ProviderConfig {
             id: "mock-provider".to_string(),
             name: "Mock Provider".to_string(),
@@ -95,10 +96,10 @@ async fn test_auth_method_mock() {
     assert_eq!(identity.external_id, "user123");
 }
 
-#[test]
-fn test_provider_mock() {
+#[tokio::test]
+async fn test_provider_mock() {
     let provider = MockProvider;
-    assert_eq!(provider.config().id, "mock-provider");
+    assert_eq!(provider.config().await.id, "mock-provider");
 }
 
 #[tokio::test]

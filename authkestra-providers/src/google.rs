@@ -48,8 +48,9 @@ impl GoogleProvider {
     }
 }
 
+#[async_trait]
 impl Provider for GoogleProvider {
-    fn config(&self) -> ProviderConfig {
+    async fn config(&self) -> ProviderConfig {
         ProviderConfig {
             id: "google".to_string(),
             name: "Google".to_string(),
