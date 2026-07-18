@@ -1,4 +1,4 @@
 /target
 .env
 act_output.log
-.agent.zencoder/
+.agent.zencoder/*.pem
