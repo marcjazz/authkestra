@@ -28,10 +28,14 @@ log = "0.4"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 tokio = { version = "1.0", features = ["full"] }
 aes-gcm = "0.10.3"
+rsa = "0.9.6"
 
 [features]
 default = ["token", "flow"]
 token = []
 flow = []
 session = []
+
+[dev-dependencies]
+rand_core = "0.6.4"
 

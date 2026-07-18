@@ -12,6 +12,7 @@ members = [
     "authkestra-oidc",
     "authkestra-actix",
     "authkestra-resource",
+    "authkestra-op",
     "authkestra",
     "authkestra-examples",
 ]

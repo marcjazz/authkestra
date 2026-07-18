@@ -7,3 +7,7 @@
 - **Stateless OAuth**: Store OAuth `state` and `nonce` in encrypted cookies, never in the database.
 - **OIDC Discovery**: Cache discovery documents via background `tokio::spawn` tasks, avoid per-request fetching.
 - **Database Agnosticism**: Never enforce schemas; always define data access via traits (e.g., `UserStore`, `SessionStore`).
+- **OP (RFC-003) — redirect_uri**: Always match `redirect_uri` by exact string equality against `ClientRegistration::redirect_uris`. Never add prefix, wildcard, or normalized matching, even if it seems convenient for local dev.
+- **OP (RFC-003) — code replay**: `AuthorizationCodeStore::consume_code` must check-and-invalidate a code atomically (single storage operation/transaction). Never implement it as a separate lookup followed by a separate update.
+- **OP (RFC-003) — token signing**: OP-issued tokens (ID tokens, and anything a third-party relying party must verify) must use asymmetric signing (RS256+) with a `kid`. Never use `TokenManager`'s existing HS256 path for tokens handed to an external client.
+- **OP (RFC-003) — error responses**: Do not let OP error responses distinguish "client doesn't exist" from "client exists but redirect_uri is wrong" from "code doesn't exist" vs "code already used." Collapse these into the same generic error at the response layer to avoid enumeration.
