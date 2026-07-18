@@ -24,8 +24,12 @@ pub struct ProviderMetadata {
 }
 
 impl ProviderMetadata {
-    /// Fetches metadata from the issuer URL (appends /.well-known/openid-configuration)
-    pub async fn discover(issuer_url: &str, client: reqwest::Client) -> Result<Self, AuthError> {
+    /// Fetches metadata from the issuer URL (appends /.well-known/openid-configuration).
+    /// Also returns the parsed max-age from the Cache-Control header if present.
+    pub async fn discover(
+        issuer_url: &str,
+        client: reqwest::Client,
+    ) -> Result<(Self, Option<std::time::Duration>), AuthError> {
         let mut url = url::Url::parse(issuer_url)
             .map_err(|e| AuthError::Discovery(format!("Invalid issuer URL: {e}")))?;
 
@@ -37,15 +41,31 @@ impl ProviderMetadata {
             path.push("openid-configuration");
         }
 
-        let metadata = client
+        let response = client
             .get(url)
             .send()
             .await
-            .map_err(|_| AuthError::Network)?
+            .map_err(|_| AuthError::Network)?;
+
+        let mut cache_max_age = None;
+        if let Some(cache_control) = response.headers().get(reqwest::header::CACHE_CONTROL) {
+            if let Ok(cc_str) = cache_control.to_str() {
+                for directive in cc_str.split(',') {
+                    let directive = directive.trim();
+                    if let Some(rest) = directive.strip_prefix("max-age=") {
+                        if let Ok(secs) = rest.parse::<u64>() {
+                            cache_max_age = Some(std::time::Duration::from_secs(secs));
+                        }
+                    }
+                }
+            }
+        }
+
+        let metadata = response
             .json::<ProviderMetadata>()
             .await
             .map_err(|e| AuthError::Discovery(format!("Failed to parse metadata: {e}")))?;
 
-        Ok(metadata)
+        Ok((metadata, cache_max_age))
     }
 }
