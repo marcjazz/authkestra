@@ -1,16 +1,16 @@
 [package]
 name = "authkestra-oidc"
 version = "0.1.2"
-edition = "2021"
+edition.workspace = true
 description = "OIDC support for the authkestra framework"
-repository = "https://github.com/marcjazz/authkestra"
-license = "MIT OR Apache-2.0"
-keywords = ["auth", "oidc", "openid", "authentication"]
-categories = ["authentication"]
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-authkestra-engine = { version = "0.1.2", path = "../authkestra-engine", features = ["token"] }
-authkestra-resource = { version = "0.1.0", path = "../authkestra-resource" }
+authkestra-engine = { workspace = true, features = ["token"] }
+authkestra-resource = { workspace = true }
 reqwest = { version = "0.13.1", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

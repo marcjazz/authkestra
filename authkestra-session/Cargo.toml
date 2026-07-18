@@ -1,15 +1,15 @@
 [package]
 name = "authkestra-session"
 version = "0.1.1"
-edition = "2021"
+edition.workspace = true
 description = "Session management interfaces and implementations for the authkestra framework"
-repository = "https://github.com/marcjazz/authkestra"
-license = "MIT OR Apache-2.0"
-keywords = ["auth", "session"]
-categories = ["authentication", "web-programming"]
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-authkestra-engine = { version = "0.1.1", path = "../authkestra-engine" }
+authkestra-engine = { workspace = true }
 async-trait = "0.1"
 tracing = "0.1"
 

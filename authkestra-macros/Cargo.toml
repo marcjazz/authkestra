@@ -1,13 +1,13 @@
 [package]
 name = "authkestra-macros"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Authkestra Contributors"]
-license = "MIT OR Apache-2.0"
+license.workspace = true
 description = "Procedural macros for authkestra framework integrations"
-repository = "https://github.com/marcjazz/authkestra"
-keywords = ["auth", "oauth", "macros"]
-categories = ["web-programming", "authentication"]
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lib]
 proc-macro = true

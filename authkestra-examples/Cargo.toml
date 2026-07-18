@@ -1,18 +1,18 @@
 [package]
 name = "authkestra-examples"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 publish = false
 
 [dependencies]
-authkestra = { path = "../authkestra", features = ["full"] }
-authkestra-engine = { path = "../authkestra-engine", features = ["flow", "token", "session"] }
-authkestra-session = { version = "0.1.1", path = "../authkestra-session", features = ["memory", "redis", "sql-sqlite"] }
-authkestra-resource = { path = "../authkestra-resource" }
-authkestra-providers = { path = "../authkestra-providers", features = ["github", "google", "discord"] }
-authkestra-actix = { path = "../authkestra-actix", features = ["flow", "session", "token"] }
-authkestra-axum = { path = "../authkestra-axum", features = ["flow", "session", "token"] }
-authkestra-oidc = { path = "../authkestra-oidc" }
+authkestra = { workspace = true, features = ["full"] }
+authkestra-engine = { workspace = true, features = ["flow", "token", "session"] }
+authkestra-session = { workspace = true, features = ["memory", "redis", "sql-sqlite"] }
+authkestra-resource = { workspace = true }
+authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
+authkestra-actix = { workspace = true, features = ["flow", "session", "token"] }
+authkestra-axum = { workspace = true, features = ["flow", "session", "token"] }
+authkestra-oidc = { workspace = true }
 
 actix-web = "4"
 axum = "0.8"

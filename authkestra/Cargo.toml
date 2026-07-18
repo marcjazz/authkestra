@@ -1,25 +1,25 @@
 [package]
 name = "authkestra"
 version = "0.1.2"
-edition = "2021"
+edition.workspace = true
 description = "A modular authentication framework for Rust"
-repository = "https://github.com/marcjazz/authkestra"
-license = "MIT OR Apache-2.0"
-keywords = ["auth", "authentication", "oauth2", "oidc"]
-categories = ["authentication"]
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-authkestra-engine = { version = "0.1.2", path = "../authkestra-engine" }
-authkestra-session = { version = "0.1.1", path = "../authkestra-session", optional = true }
-authkestra-oidc = { version = "0.1.2", path = "../authkestra-oidc", optional = true }
-authkestra-axum = { version = "0.1.2", path = "../authkestra-axum", optional = true }
-authkestra-actix = { version = "0.1.2", path = "../authkestra-actix", optional = true }
-authkestra-providers = { version = "0.1.1", path = "../authkestra-providers", optional = true }
-authkestra-resource = { version = "0.1.0", path = "../authkestra-resource", optional = true }
+authkestra-engine = { workspace = true }
+authkestra-session = { workspace = true, optional = true }
+authkestra-oidc = { workspace = true, optional = true }
+authkestra-axum = { workspace = true, optional = true }
+authkestra-actix = { workspace = true, optional = true }
+authkestra-providers = { workspace = true, optional = true }
+authkestra-resource = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-authkestra-session = { version = "0.1.1", path = "../authkestra-session" }
+authkestra-session = { workspace = true }
 
 [features]
 default = []
