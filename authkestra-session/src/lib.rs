@@ -8,5 +8,9 @@ pub mod memory;
 #[cfg(feature = "redis")]
 pub mod redis;
 
-#[cfg(any(feature = "sql-postgres", feature = "sql-mysql", feature = "sql-sqlite"))]
+#[cfg(any(
+    feature = "sql-postgres",
+    feature = "sql-mysql",
+    feature = "sql-sqlite"
+))]
 pub mod sql;

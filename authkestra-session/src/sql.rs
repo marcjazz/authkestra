@@ -1,9 +1,21 @@
-#[cfg(any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"))]
+#[cfg(any(
+    feature = "sql-postgres",
+    feature = "sql-sqlite",
+    feature = "sql-mysql"
+))]
 use async_trait::async_trait;
-#[cfg(any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"))]
+#[cfg(any(
+    feature = "sql-postgres",
+    feature = "sql-sqlite",
+    feature = "sql-mysql"
+))]
 use authkestra_engine::auth::{AuthError, Identity, Session, SessionStore};
 use sqlx::Database;
-#[cfg(any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"))]
+#[cfg(any(
+    feature = "sql-postgres",
+    feature = "sql-sqlite",
+    feature = "sql-mysql"
+))]
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
