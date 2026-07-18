@@ -93,9 +93,10 @@ impl OidcProvider {
             let mut current_interval = refresh_interval;
             loop {
                 tokio::time::sleep(current_interval).await;
-                
+
                 // If the provider has been dropped, exit the background task
-                let (metadata_arc, cache_arc) = match (metadata_ref.upgrade(), cache_ref.upgrade()) {
+                let (metadata_arc, cache_arc) = match (metadata_ref.upgrade(), cache_ref.upgrade())
+                {
                     (Some(m), Some(c)) => (m, c),
                     _ => break,
                 };
@@ -129,7 +130,8 @@ impl OidcProvider {
                                 "OIDC jwks_uri changed for {}, recreating JwksCache",
                                 issuer_url_owned
                             );
-                            let new_cache = Arc::new(JwksCache::new(new_metadata.jwks_uri, current_interval));
+                            let new_cache =
+                                Arc::new(JwksCache::new(new_metadata.jwks_uri, current_interval));
                             let mut cache_write = cache_arc.write().unwrap();
                             *cache_write = new_cache;
                         } else {
