@@ -31,8 +31,8 @@ token = ["authkestra-engine/token"]
 oidc = ["dep:authkestra-oidc"]
 
 # Web frameworks
-axum = ["dep:authkestra-axum", "authkestra-axum/flow", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/guard"]
-actix = ["dep:authkestra-actix", "authkestra-actix/flow", "authkestra-actix/session", "authkestra-actix/token", "authkestra-actix/guard"]
+axum = ["dep:authkestra-axum", "authkestra-axum/flow", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
+actix = ["dep:authkestra-actix", "authkestra-actix/flow", "authkestra-actix/session", "authkestra-actix/token", "authkestra-actix/resource"]
 
 # Providers
 github = ["authkestra-providers/github"]

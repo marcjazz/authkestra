@@ -2,6 +2,15 @@
 
 Welcome to the Authkestra documentation! This guide will help contributors and users understand the vision, architecture, and roadmap for Authkestra, and provide foundational resources for building the next generation of authentication systems.
 
+## 📚 Documentation Hierarchy & Source of Truth
+
+To help navigate the various documentation surfaces, please adhere to the following hierarchy of truth:
+
+1. **RFCs (`docs/rfc-*.md`)**: These are the definitive design records. They represent the finalized, agreed-upon architecture and protocol specifications that the codebase must conform to.
+2. **`roadmap.md`**: This file tracks what is *actually* being built next. It reflects the immediate implementation priorities and active development phases.
+3. **`book/` (mdBook)**: This contains the user-facing tutorials and guides. Because the project is evolving rapidly, **the book may lag behind the RFCs and current codebase**. It is best effort documentation for end-users, not the architectural source of truth.
+4. **`research/`**: Contains raw research dumps and reference materials used during the design phases (e.g., `deep-search.md`). These are not authored documentation.
+
 ---
 
 ## 🧭 North Star
