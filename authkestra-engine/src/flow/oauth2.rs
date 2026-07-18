@@ -118,6 +118,7 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
     }
 
     /// Generates the redirect URL and CSRF state.
+    #[tracing::instrument(skip(self), fields(provider_id = %self.provider.provider_id()))]
     pub fn initiate_login(
         &self,
         scopes: &[&str],
@@ -136,6 +137,8 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
                 .collect::<Vec<&str>>()
         };
 
+        tracing::debug!(scopes = ?effective_scopes, "generating authorization URL");
+
         let url = self.provider.get_authorization_url(
             &state,
             effective_scopes,
@@ -152,11 +155,13 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
             expires_at: chrono::Utc::now().timestamp() + 600,
         };
 
+        tracing::info!("authorization login initiated successfully");
         (url, auth_state)
     }
 
     /// Completes the flow by exchanging the code.
     /// If a mapper is provided, it will also map the identity to a local user.
+    #[tracing::instrument(skip(self, code, expected_state), fields(provider_id = %self.provider.provider_id()))]
     pub async fn finalize_login(
         &self,
         code: &str,
@@ -164,8 +169,11 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
         expected_state: &OAuth2State,
     ) -> Result<(Identity, OAuthToken, Option<M::LocalUser>), AuthError> {
         if received_state != expected_state.state {
+            tracing::error!("CSRF mismatch: received state does not match expected state");
             return Err(AuthError::CsrfMismatch);
         }
+
+        tracing::debug!("exchanging code for identity");
         let (identity, token) = self
             .provider
             .exchange_code_for_identity(
@@ -173,12 +181,22 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
                 expected_state.code_verifier.as_deref(),
                 expected_state.nonce.as_deref(),
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to exchange code for identity");
+                e
+            })?;
+
+        tracing::info!(user_id = %identity.external_id, "successfully retrieved identity from provider");
 
         // TODO: Validate nonce if present in identity/ID token
 
         let local_user = if let Some(mapper) = &self.mapper {
-            Some(mapper.map_user(&identity).await?)
+            tracing::debug!("mapping user identity");
+            Some(mapper.map_user(&identity).await.map_err(|e| {
+                tracing::error!(error = %e, "failed to map user");
+                e
+            })?)
         } else {
             None
         };

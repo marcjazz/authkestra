@@ -79,7 +79,7 @@ pub fn initiate_oauth_login(
         .encrypt(&config.state_encryption_key)
         .expect("Failed to encrypt OAuth state");
 
-    let cookie_name = "ak_state";
+    let cookie_name = format!("authkestra_state_{}", auth_state.state);
 
     let mut cookie = Cookie::new(cookie_name, encrypted);
     cookie.set_path("/");
@@ -101,10 +101,11 @@ async fn finalize_callback_erased(
     params: &OAuthCallbackParams,
     config: &SessionConfig,
 ) -> Result<(Identity, OAuthToken, OAuth2State), (StatusCode, String)> {
-    let cookie_name = "ak_state";
+    let state_param = &params.state;
+    let cookie_name = format!("authkestra_state_{state_param}");
 
     let encrypted_state = cookies
-        .get(cookie_name)
+        .get(&cookie_name)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
             (
@@ -410,6 +411,16 @@ pub enum AuthEngineAxumError {
     ComponentMissing(String),
 }
 
+impl std::fmt::Display for AuthEngineAxumError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthEngineAxumError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            AuthEngineAxumError::Internal(msg) => write!(f, "Internal Error: {}", msg),
+            AuthEngineAxumError::ComponentMissing(msg) => write!(f, "Component Missing: {}", msg),
+        }
+    }
+}
+
 impl IntoResponse for AuthEngineAxumError {
     fn into_response(self) -> axum::response::Response {
         let (status, message) = match self {
@@ -422,48 +433,66 @@ impl IntoResponse for AuthEngineAxumError {
 }
 
 #[cfg(feature = "session")]
+#[tracing::instrument(skip(store, cookies))]
 pub async fn get_session(
     store: &Arc<dyn SessionStore>,
     config: &SessionConfig,
     cookies: &Cookies,
 ) -> Result<Session, AuthEngineAxumError> {
+    tracing::debug!("getting session from cookies");
     let session_id = cookies
         .get(&config.cookie_name)
         .map(|c| c.value().to_string())
-        .ok_or_else(|| AuthEngineAxumError::Unauthorized("Missing session cookie".to_string()))?;
+        .ok_or_else(|| {
+            tracing::warn!("missing session cookie in request");
+            AuthEngineAxumError::Unauthorized("Missing session cookie".to_string())
+        })?;
 
     let session = store
         .load_session(&session_id)
         .await
-        .map_err(|e| AuthEngineAxumError::Internal(e.to_string()))?
-        .ok_or_else(|| AuthEngineAxumError::Unauthorized("Invalid session".to_string()))?;
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to load session from store");
+            AuthEngineAxumError::Internal(e.to_string())
+        })?
+        .ok_or_else(|| {
+            tracing::warn!("session not found or invalid");
+            AuthEngineAxumError::Unauthorized("Invalid session".to_string())
+        })?;
 
+    tracing::info!(session_id = %session.id, user_id = %session.identity.external_id, "successfully retrieved session");
     Ok(session)
 }
 
 #[cfg(feature = "token")]
+#[tracing::instrument(skip_all)]
 pub async fn get_token(
     parts: &axum::http::request::Parts,
     token_manager: &TokenManager,
 ) -> Result<authkestra_engine::Claims, AuthEngineAxumError> {
+    tracing::debug!("getting token from request parts");
     let auth_header = parts
         .headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| {
+            tracing::warn!("missing Authorization header in request");
             AuthEngineAxumError::Unauthorized("Missing Authorization header".to_string())
         })?;
 
     if !auth_header.starts_with("Bearer ") {
+        tracing::warn!("invalid Authorization header format in request");
         return Err(AuthEngineAxumError::Unauthorized(
             "Invalid Authorization header".to_string(),
         ));
     }
 
     let token = &auth_header[7..];
-    let claims = token_manager
-        .validate_token(token)
-        .map_err(|e| AuthEngineAxumError::Unauthorized(format!("Invalid token: {e}")))?;
+    let claims = token_manager.validate_token(token).map_err(|e| {
+        tracing::error!(error = %e, "failed to validate token");
+        AuthEngineAxumError::Unauthorized(format!("Invalid token: {e}"))
+    })?;
 
+    tracing::info!("successfully retrieved and validated token");
     Ok(claims)
 }

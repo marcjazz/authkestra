@@ -126,23 +126,35 @@ impl FromRequest for AuthSession {
             .map(|c| c.value().to_string());
 
         Box::pin(async move {
+            tracing::debug!("extracting AuthSession from actix request");
             let store = store.ok_or_else(|| {
+                tracing::error!("SessionStore not configured in actix app data");
                 actix_web::error::ErrorInternalServerError("SessionStore not configured")
             })?;
             let _config = config.ok_or_else(|| {
+                tracing::error!("SessionConfig not configured in actix app data");
                 actix_web::error::ErrorInternalServerError("SessionConfig not configured")
             })?;
 
-            let session_id = session_id
-                .ok_or_else(|| actix_web::error::ErrorUnauthorized("Missing session cookie"))?;
+            let session_id = session_id.ok_or_else(|| {
+                tracing::warn!("missing session cookie in request");
+                actix_web::error::ErrorUnauthorized("Missing session cookie")
+            })?;
 
             let session = store
                 .get_ref()
                 .load_session(&session_id)
                 .await
-                .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?
-                .ok_or_else(|| actix_web::error::ErrorUnauthorized("Invalid session"))?;
+                .map_err(|e| {
+                    tracing::error!(error = %e, "failed to load session from store");
+                    actix_web::error::ErrorInternalServerError(e.to_string())
+                })?
+                .ok_or_else(|| {
+                    tracing::warn!("session not found or invalid");
+                    actix_web::error::ErrorUnauthorized("Invalid session")
+                })?;
 
+            tracing::info!(session_id = %session.id, user_id = %session.identity.external_id, "successfully extracted actix AuthSession");
             Ok(AuthSession(session))
         })
     }
@@ -191,25 +203,30 @@ impl FromRequest for AuthToken {
             .map(|s| s.to_string());
 
         Box::pin(async move {
+            tracing::debug!("extracting AuthToken from actix request");
             let token_manager = token_manager.ok_or_else(|| {
+                tracing::error!("Token manager not configured in actix app data");
                 actix_web::error::ErrorInternalServerError("Token manager not configured")
             })?;
             let auth_header = auth_header.ok_or_else(|| {
+                tracing::warn!("missing Authorization header in actix request");
                 actix_web::error::ErrorUnauthorized("Missing Authorization header")
             })?;
 
             if !auth_header.starts_with("Bearer ") {
+                tracing::warn!("invalid Authorization header format in actix request");
                 return Err(actix_web::error::ErrorUnauthorized(
                     "Invalid Authorization header",
                 ));
             }
 
             let token = &auth_header[7..];
-            let claims = token_manager
-                .get_ref()
-                .validate_token(token)
-                .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}")))?;
+            let claims = token_manager.get_ref().validate_token(token).map_err(|e| {
+                tracing::error!(error = %e, "failed to validate token");
+                actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}"))
+            })?;
 
+            tracing::info!("successfully extracted and validated actix AuthToken");
             Ok(AuthToken(claims))
         })
     }
@@ -244,19 +261,24 @@ where
             .map(|s| s.to_string());
 
         Box::pin(async move {
+            tracing::debug!("extracting Jwt from actix request");
             let cache = cache.ok_or_else(|| {
+                tracing::error!("JwksCache not configured in actix app data");
                 actix_web::error::ErrorInternalServerError("JwksCache not configured")
             })?;
             let validation = validation.ok_or_else(|| {
+                tracing::error!("jsonwebtoken::Validation not configured in actix app data");
                 actix_web::error::ErrorInternalServerError(
                     "jsonwebtoken::Validation not configured",
                 )
             })?;
             let auth_header = auth_header.ok_or_else(|| {
+                tracing::warn!("missing Authorization header in actix request");
                 actix_web::error::ErrorUnauthorized("Missing Authorization header")
             })?;
 
             if !auth_header.starts_with("Bearer ") {
+                tracing::warn!("invalid Authorization header format in actix request");
                 return Err(actix_web::error::ErrorUnauthorized(
                     "Invalid Authorization header",
                 ));
@@ -267,9 +289,11 @@ where
                 authkestra_resource::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
                     .await
                     .map_err(|e| {
+                        tracing::error!(error = %e, "failed to validate generic jwt");
                         actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}"))
                     })?;
 
+            tracing::info!("successfully extracted and validated actix Jwt");
             Ok(Jwt(claims))
         })
     }

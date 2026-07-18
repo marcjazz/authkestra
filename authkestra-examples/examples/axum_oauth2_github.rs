@@ -26,6 +26,21 @@ type AppState = AuthkestraState<Configured<Arc<dyn SessionStore>>>;
 
 #[tokio::main]
 async fn main() {
+    // =========================================================================
+    // Initialize tracing subscriber for logging
+    // =========================================================================
+    // This allows the user to capture logs emitted by Authkestra via `tracing`.
+    // You can customize the log level by setting the `RUST_LOG` environment
+    // variable (e.g., `RUST_LOG=debug`, `RUST_LOG=authkestra=info,my_app=debug`).
+    // `tracing_subscriber::fmt::init()` installs a global default subscriber
+    // that formats logs to standard output.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
     // Load environment variables from .env file
     dotenvy::dotenv().ok();
 
