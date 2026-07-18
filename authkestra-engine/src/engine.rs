@@ -165,6 +165,7 @@ impl<T> AuthEngine<Configured<Arc<dyn SessionStore>>, T> {
     }
 
     /// Create a new session for the given identity.
+    #[tracing::instrument(skip(self, identity), fields(user_id = %identity.external_id))]
     pub async fn create_session(&self, identity: Identity) -> Result<Session, AuthError> {
         let session_duration = self
             .session_config
@@ -176,12 +177,18 @@ impl<T> AuthEngine<Configured<Arc<dyn SessionStore>>, T> {
             expires_at: chrono::Utc::now() + session_duration,
         };
 
+        tracing::debug!(session_id = %session.id, "creating new session");
+
         self.session_store
             .0
             .save_session(&session)
             .await
-            .map_err(|e| AuthError::Session(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to save session");
+                AuthError::Session(e.to_string())
+            })?;
 
+        tracing::info!(session_id = %session.id, "session created successfully");
         Ok(session)
     }
 }
@@ -194,15 +201,23 @@ impl<S> AuthEngine<S, Configured<Arc<TokenManager>>> {
     }
 
     /// Issue a JWT for the given identity.
+    #[tracing::instrument(skip(self, identity), fields(user_id = %identity.external_id))]
     pub fn issue_token(
         &self,
         identity: Identity,
         expires_in_secs: u64,
     ) -> Result<String, AuthError> {
+        tracing::debug!("issuing token for user");
         self.token_manager
             .0
             .issue_user_token(identity, expires_in_secs, None)
-            .map_err(|e| AuthError::Token(e.to_string()))
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to issue token");
+                AuthError::Token(e.to_string())
+            })
+            .inspect(|_| {
+                tracing::info!("token issued successfully");
+            })
     }
 }
 

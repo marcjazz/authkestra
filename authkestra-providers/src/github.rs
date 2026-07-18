@@ -107,12 +107,14 @@ impl OAuthProvider for GithubProvider {
         )
     }
 
+    #[tracing::instrument(skip(self, code, _code_verifier, _nonce))]
     async fn exchange_code_for_identity(
         &self,
         code: &str,
         _code_verifier: Option<&str>,
         _nonce: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError> {
+        tracing::debug!("exchanging GitHub code for access token");
         // 1. Exchange code for access token
         let token_response = self
             .http_client
@@ -126,11 +128,18 @@ impl OAuthProvider for GithubProvider {
             ])
             .send()
             .await
-            .map_err(|_| AuthError::Network)?
+            .map_err(|e| {
+                tracing::error!(error = %e, "network error while exchanging GitHub code");
+                AuthError::Network
+            })?
             .json::<GithubAccessTokenResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to parse GitHub token response");
+                AuthError::Provider(format!("Failed to parse token response: {e}"))
+            })?;
 
+        tracing::debug!("fetching GitHub user information");
         // 2. Get user information
         let user_response = self
             .http_client
@@ -142,10 +151,16 @@ impl OAuthProvider for GithubProvider {
             .header("User-Agent", "authkestra")
             .send()
             .await
-            .map_err(|_| AuthError::Network)?
+            .map_err(|e| {
+                tracing::error!(error = %e, "network error while fetching GitHub user");
+                AuthError::Network
+            })?
             .json::<GithubUserResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse user response: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to parse GitHub user response");
+                AuthError::Provider(format!("Failed to parse user response: {e}"))
+            })?;
 
         // 3. Map to Identity
         let identity = Identity {
@@ -165,10 +180,13 @@ impl OAuthProvider for GithubProvider {
             id_token: token_response.id_token,
         };
 
+        tracing::info!(external_id = %identity.external_id, "successfully exchanged GitHub code for identity");
         Ok((identity, token))
     }
 
+    #[tracing::instrument(skip(self, refresh_token))]
     async fn refresh_token(&self, refresh_token: &str) -> Result<OAuthToken, AuthError> {
+        tracing::debug!("refreshing GitHub access token");
         let token_response = self
             .http_client
             .post(&self.token_url)
@@ -181,13 +199,18 @@ impl OAuthProvider for GithubProvider {
             ])
             .send()
             .await
-            .map_err(|_| AuthError::Network)?
+            .map_err(|e| {
+                tracing::error!(error = %e, "network error while refreshing GitHub token");
+                AuthError::Network
+            })?
             .json::<GithubAccessTokenResponse>()
             .await
             .map_err(|e| {
+                tracing::error!(error = %e, "failed to parse GitHub refresh token response");
                 AuthError::Provider(format!("Failed to parse refresh token response: {e}"))
             })?;
 
+        tracing::info!("successfully refreshed GitHub access token");
         Ok(OAuthToken {
             access_token: token_response.access_token,
             token_type: token_response.token_type,
@@ -200,7 +223,9 @@ impl OAuthProvider for GithubProvider {
         })
     }
 
+    #[tracing::instrument(skip(self, token))]
     async fn revoke_token(&self, token: &str) -> Result<(), AuthError> {
+        tracing::debug!("revoking GitHub access token");
         let response = self
             .http_client
             .delete(format!(
@@ -214,15 +239,20 @@ impl OAuthProvider for GithubProvider {
             }))
             .send()
             .await
-            .map_err(|_| AuthError::Network)?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "network error while revoking GitHub token");
+                AuthError::Network
+            })?;
 
         if response.status().is_success() || response.status() == reqwest::StatusCode::NO_CONTENT {
+            tracing::info!("successfully revoked GitHub access token");
             Ok(())
         } else {
             let error_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
+            tracing::error!(error = %error_text, "failed to revoke GitHub access token");
             Err(AuthError::Provider(format!(
                 "Failed to revoke token: {error_text}"
             )))

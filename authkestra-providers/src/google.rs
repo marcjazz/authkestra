@@ -120,12 +120,14 @@ impl OAuthProvider for GoogleProvider {
         url
     }
 
+    #[tracing::instrument(skip(self, code, code_verifier, _nonce))]
     async fn exchange_code_for_identity(
         &self,
         code: &str,
         code_verifier: Option<&str>,
         _nonce: Option<&str>,
     ) -> Result<(Identity, OAuthToken), AuthError> {
+        tracing::debug!("exchanging Google code for access token");
         // 1. Exchange code for access token
         let mut params = vec![
             ("code", code.to_string()),
@@ -145,11 +147,18 @@ impl OAuthProvider for GoogleProvider {
             .form(&params)
             .send()
             .await
-            .map_err(|_| AuthError::Network)?
+            .map_err(|e| {
+                tracing::error!(error = %e, "network error while exchanging Google code");
+                AuthError::Network
+            })?
             .json::<GoogleTokenResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse token response: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to parse Google token response");
+                AuthError::Provider(format!("Failed to parse token response: {e}"))
+            })?;
 
+        tracing::debug!("fetching Google user information");
         // 2. Get user information
         let user_response = self
             .http_client
@@ -160,10 +169,16 @@ impl OAuthProvider for GoogleProvider {
             )
             .send()
             .await
-            .map_err(|_| AuthError::Network)?
+            .map_err(|e| {
+                tracing::error!(error = %e, "network error while fetching Google user");
+                AuthError::Network
+            })?
             .json::<GoogleUserResponse>()
             .await
-            .map_err(|e| AuthError::Provider(format!("Failed to parse user response: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to parse Google user response");
+                AuthError::Provider(format!("Failed to parse user response: {e}"))
+            })?;
 
         // 3. Map to Identity
         let mut attributes = HashMap::new();
@@ -194,10 +209,13 @@ impl OAuthProvider for GoogleProvider {
             id_token: token_response.id_token,
         };
 
+        tracing::info!(external_id = %identity.external_id, "successfully exchanged Google code for identity");
         Ok((identity, token))
     }
 
+    #[tracing::instrument(skip(self, refresh_token))]
     async fn refresh_token(&self, refresh_token: &str) -> Result<OAuthToken, AuthError> {
+        tracing::debug!("refreshing Google access token");
         let token_response = self
             .http_client
             .post(&self.token_url)
@@ -209,13 +227,18 @@ impl OAuthProvider for GoogleProvider {
             ])
             .send()
             .await
-            .map_err(|_| AuthError::Network)?
+            .map_err(|e| {
+                tracing::error!(error = %e, "network error while refreshing Google token");
+                AuthError::Network
+            })?
             .json::<GoogleTokenResponse>()
             .await
             .map_err(|e| {
+                tracing::error!(error = %e, "failed to parse Google refresh token response");
                 AuthError::Provider(format!("Failed to parse refresh token response: {e}"))
             })?;
 
+        tracing::info!("successfully refreshed Google access token");
         Ok(OAuthToken {
             access_token: token_response.access_token,
             token_type: token_response.token_type,
@@ -226,22 +249,29 @@ impl OAuthProvider for GoogleProvider {
         })
     }
 
+    #[tracing::instrument(skip(self, token))]
     async fn revoke_token(&self, token: &str) -> Result<(), AuthError> {
+        tracing::debug!("revoking Google access token");
         let response = self
             .http_client
             .post(&self.revoke_url)
             .form(&[("token", token)])
             .send()
             .await
-            .map_err(|_| AuthError::Network)?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "network error while revoking Google token");
+                AuthError::Network
+            })?;
 
         if response.status().is_success() {
+            tracing::info!("successfully revoked Google access token");
             Ok(())
         } else {
             let error_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
+            tracing::error!(error = %error_text, "failed to revoke Google access token");
             Err(AuthError::Provider(format!(
                 "Failed to revoke token: {error_text}"
             )))

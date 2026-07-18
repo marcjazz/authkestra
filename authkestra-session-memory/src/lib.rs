@@ -22,17 +22,23 @@ impl MemoryStore {
 
 #[async_trait]
 impl SessionStore for MemoryStore {
+    #[tracing::instrument(skip(self))]
     async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
+        tracing::debug!(session_id = %id, "loading session from memory store");
         Ok(self.sessions.lock().unwrap().get(id).cloned())
     }
+    #[tracing::instrument(skip(self, session), fields(session_id = %session.id))]
     async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
+        tracing::debug!("saving session to memory store");
         self.sessions
             .lock()
             .unwrap()
             .insert(session.id.clone(), session.clone());
         Ok(())
     }
+    #[tracing::instrument(skip(self))]
     async fn delete_session(&self, id: &str) -> Result<(), AuthError> {
+        tracing::debug!(session_id = %id, "deleting session from memory store");
         self.sessions.lock().unwrap().remove(id);
         Ok(())
     }

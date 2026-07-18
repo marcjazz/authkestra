@@ -56,19 +56,30 @@ where
 {
     type Rejection = AuthEngineAxumError;
 
+    #[tracing::instrument(skip_all)]
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
         use tower_cookies::Cookies;
+        tracing::debug!("extracting AuthSession from request");
         let session_store = <Result<Arc<dyn SessionStore>, AuthEngineAxumError>>::from_ref(state)?;
         let session_config = SessionConfig::from_ref(state);
         let cookies = Cookies::from_request_parts(parts, state)
             .await
-            .map_err(|e| AuthEngineAxumError::Internal(e.1.to_string()))?;
+            .map_err(|e| {
+                tracing::error!(error = %e.1, "failed to extract cookies");
+                AuthEngineAxumError::Internal(e.1.to_string())
+            })?;
 
-        let session = helpers::get_session(&session_store, &session_config, &cookies).await?;
+        let session = helpers::get_session(&session_store, &session_config, &cookies)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to get session from store");
+                e
+            })?;
 
+        tracing::info!(session_id = %session.id, user_id = %session.identity.external_id, "successfully extracted AuthSession");
         Ok(AuthSession(session))
     }
 }
@@ -87,12 +98,20 @@ where
 {
     type Rejection = AuthEngineAxumError;
 
+    #[tracing::instrument(skip_all)]
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
+        tracing::debug!("extracting AuthToken from request");
         let token_manager = <Result<Arc<TokenManager>, AuthEngineAxumError>>::from_ref(state)?;
-        let token = helpers::get_token(parts, &token_manager).await?;
+        let token = helpers::get_token(parts, &token_manager)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to get and validate token");
+                e
+            })?;
+        tracing::info!("successfully extracted and validated AuthToken");
         Ok(AuthToken(token))
     }
 }
@@ -159,17 +178,28 @@ where
 {
     type Rejection = AuthEngineAxumError;
 
+    #[tracing::instrument(skip_all)]
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
+        tracing::debug!("extracting generic Auth from request via AuthEngineGuard");
         let guard = Arc::<authkestra_resource::AuthEngineGuard<I>>::from_ref(state);
         match guard.authenticate(parts).await {
-            Ok(Some(identity)) => Ok(Auth(identity)),
-            Ok(None) => Err(AuthEngineAxumError::Unauthorized(
-                "Authentication failed".to_string(),
-            )),
-            Err(e) => Err(AuthEngineAxumError::Internal(e.to_string())),
+            Ok(Some(identity)) => {
+                tracing::info!("successfully authenticated request via AuthEngineGuard");
+                Ok(Auth(identity))
+            }
+            Ok(None) => {
+                tracing::warn!("authentication failed: no identity returned");
+                Err(AuthEngineAxumError::Unauthorized(
+                    "Authentication failed".to_string(),
+                ))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "internal error during authentication");
+                Err(AuthEngineAxumError::Internal(e.to_string()))
+            }
         }
     }
 }

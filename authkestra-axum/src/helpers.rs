@@ -411,6 +411,16 @@ pub enum AuthEngineAxumError {
     ComponentMissing(String),
 }
 
+impl std::fmt::Display for AuthEngineAxumError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthEngineAxumError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            AuthEngineAxumError::Internal(msg) => write!(f, "Internal Error: {}", msg),
+            AuthEngineAxumError::ComponentMissing(msg) => write!(f, "Component Missing: {}", msg),
+        }
+    }
+}
+
 impl IntoResponse for AuthEngineAxumError {
     fn into_response(self) -> axum::response::Response {
         let (status, message) = match self {
