@@ -349,7 +349,6 @@ dependencies = [
  "authkestra-oidc",
  "authkestra-providers",
  "authkestra-session",
- "authkestra-session-memory",
  "tokio",
 ]
 
@@ -429,9 +428,6 @@ dependencies = [
  "authkestra-providers",
  "authkestra-resource",
  "authkestra-session",
- "authkestra-session-memory",
- "authkestra-session-redis",
- "authkestra-session-sql",
  "axum",
  "base64",
  "chrono",
@@ -515,43 +511,8 @@ version = "0.1.1"
 dependencies = [
  "async-trait",
  "authkestra-engine",
- "tokio",
-]
-
-[[package]]
-name = "authkestra-session-memory"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "authkestra-engine",
- "authkestra-session",
- "chrono",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "authkestra-session-redis"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "authkestra-engine",
- "authkestra-session",
  "chrono",
  "redis",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "authkestra-session-sql"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "authkestra-engine",
- "authkestra-session",
- "chrono",
  "serde_json",
  "sqlx",
  "tokio",

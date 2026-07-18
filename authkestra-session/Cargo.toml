@@ -2,7 +2,7 @@
 name = "authkestra-session"
 version = "0.1.1"
 edition = "2021"
-description = "Session management interfaces for the authkestra framework"
+description = "Session management interfaces and implementations for the authkestra framework"
 repository = "https://github.com/marcjazz/authkestra"
 license = "MIT OR Apache-2.0"
 keywords = ["auth", "session"]
@@ -11,6 +11,28 @@ categories = ["authentication", "web-programming"]
 [dependencies]
 authkestra-engine = { version = "0.1.1", path = "../authkestra-engine" }
 async-trait = "0.1"
+tracing = "0.1"
+
+# Common optional dependencies
+chrono = { version = "0.4", features = ["serde"], optional = true }
+serde_json = { version = "1.0", optional = true }
+
+# Memory optional dependencies
+tokio = { version = "1.0", features = ["sync"], optional = true }
+
+# Redis optional dependencies
+redis = { version = "0.27", features = ["tokio-comp"], optional = true }
+
+# SQL optional dependencies
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "chrono", "macros"], default-features = false, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+
+[features]
+default = []
+memory = ["dep:tokio", "dep:chrono"]
+redis = ["dep:redis", "dep:serde_json", "dep:chrono"]
+sql-postgres = ["dep:sqlx", "sqlx/postgres", "dep:serde_json", "dep:chrono"]
+sql-mysql = ["dep:sqlx", "sqlx/mysql", "dep:serde_json", "dep:chrono"]
+sql-sqlite = ["dep:sqlx", "sqlx/sqlite", "dep:serde_json", "dep:chrono"]

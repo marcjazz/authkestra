@@ -18,7 +18,7 @@ authkestra-providers = { version = "0.1.1", path = "../authkestra-providers", op
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-authkestra-session-memory = { version = "0.1.0", path = "../authkestra-session-memory" }
+authkestra-session = { version = "0.1.1", path = "../authkestra-session" }
 
 [features]
 default = []

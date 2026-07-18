@@ -1,9 +1,9 @@
-#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
+#[cfg(any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"))]
 use async_trait::async_trait;
-#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
+#[cfg(any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"))]
 use authkestra_engine::auth::{AuthError, Identity, Session, SessionStore};
 use sqlx::Database;
-#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
+#[cfg(any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"))]
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -41,7 +41,7 @@ impl<DB: Database> SqlSessionStore<DB> {
     }
 }
 
-#[cfg(feature = "postgres")]
+#[cfg(feature = "sql-postgres")]
 #[async_trait]
 impl SessionStore for SqlSessionStore<sqlx::Postgres> {
     #[tracing::instrument(skip(self))]
@@ -137,7 +137,7 @@ impl SessionStore for SqlSessionStore<sqlx::Postgres> {
     }
 }
 
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "sql-sqlite")]
 #[async_trait]
 impl SessionStore for SqlSessionStore<sqlx::Sqlite> {
     #[tracing::instrument(skip(self))]
@@ -233,7 +233,7 @@ impl SessionStore for SqlSessionStore<sqlx::Sqlite> {
     }
 }
 
-#[cfg(feature = "mysql")]
+#[cfg(feature = "sql-mysql")]
 #[async_trait]
 impl SessionStore for SqlSessionStore<sqlx::MySql> {
     #[tracing::instrument(skip(self))]

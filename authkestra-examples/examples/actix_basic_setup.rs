@@ -16,7 +16,7 @@ use std::sync::Arc;
 async fn main() -> std::io::Result<()> {
     // Session Store
     let session_store: Arc<dyn SessionStore> =
-        Arc::new(authkestra_session_memory::MemoryStore::default());
+        Arc::new(authkestra_session::memory::MemoryStore::default());
 
     let auth_engine = AuthEngine::builder()
         .session_store(session_store)

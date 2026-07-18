@@ -35,7 +35,7 @@ This roadmap outlines the evolution of Authkestra into a next-generation identit
 - `authkestra-vc`: Verifiable Credentials & OIDC4VP implementation.
 - `authkestra-policy`: Fine-grained ReBAC/ABAC enforcement.
 - `authkestra-ssf`: Shared Signals Framework receiver/transmitter.
-- `authkestra-session-*`: Pluggable storage backends (Redis, SQL, Memory).
+- `authkestra-session`: Pluggable storage backends (Redis, SQL, Memory) gated by features.
 
 **Adapters:**
 - `authkestra-axum` / `authkestra-actix`: Native web framework integrations.

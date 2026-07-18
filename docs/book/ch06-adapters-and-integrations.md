@@ -1,6 +1,6 @@
 # Chapter 6: Adapters and Integrations
 
-To be truly framework-agnostic, the core engine must not know about HTTP requests or specific database connections. Adapters bridge this gap. Our architecture strictly separates interfaces from implementations—for example, treating `authkestra-session` purely as a contract, while implementations like `authkestra-session-memory` or `authkestra-session-redis` plug in dynamically.
+To be truly framework-agnostic, the core engine must not know about HTTP requests or specific database connections. Adapters bridge this gap. Our architecture strictly separates interfaces from implementations—for example, treating `authkestra-session` purely as a contract by default, while implementations plug in dynamically via feature flags (e.g., `memory`, `redis`).
 
 ## Web Framework Adapters
 
@@ -11,12 +11,15 @@ We provide first-class integration layers for:
 
 These are not just loose helpers, but robust, native-feeling extensions providing middleware, extractors, and routing guards. They map standard `AuthContext` requests into the framework's native HTTP response types.
 
+### Supported Session Providers
+
+- **Memory** (`memory` feature in `authkestra-session`) for local development.
+- **Redis** (`redis` feature in `authkestra-session`) via `redis-rs`.
+- **SQL** (`sql-postgres`, `sql-mysql` features in `authkestra-session`) for Postgres, MySQL.
+
 ## Database Adapters
 
-For session storage and user data, adapters rely strictly on traits:
-
-- **Redis** (`authkestra-session-redis`) via `redis-rs`.
-- **SQL** (`authkestra-session-sql`) for Postgres, MySQL.
+For session storage and user data, adapters rely strictly on traits (`SessionStore`, etc), ensuring developers can plug their existing databases directly into Authkestra via feature-flagged implementations or custom code.
 
 ### Architectural Decisions & Future Direction
 
