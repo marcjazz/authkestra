@@ -14,7 +14,7 @@ Thank you for your interest in contributing to Authkestra! We welcome contributi
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/your-username/authkestra.git
+    git clone https://github.com/marcjazz/authkestra.git
     cd authkestra
     ```
 

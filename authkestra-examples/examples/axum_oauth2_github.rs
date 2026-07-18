@@ -55,7 +55,7 @@ async fn main() {
 
     // Session Store
     let session_store: Arc<dyn SessionStore> =
-        Arc::new(authkestra_session_memory::MemoryStore::default());
+        Arc::new(authkestra_session::memory::MemoryStore::default());
 
     let auth_engine = AuthEngine::builder()
         .provider(OAuth2Flow::new(github_provider))

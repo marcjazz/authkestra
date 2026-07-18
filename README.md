@@ -30,13 +30,10 @@ For advanced users, individual crates are still available and can be used indepe
 | Crate                                                                    | Responsibility                                                            |
 | :----------------------------------------------------------------------- | :------------------------------------------------------------------------ |
 | [`authkestra`](authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
-| [`authkestra-engine`](authkestra-engine/README.md)                     | Foundational types, traits and the **AuthEngine** orchestrator.           |
-| [`authkestra-resource`](authkestra-resource/README.md)                         | Resource server enforcement and validation (JWT, etc).        |
+| [`authkestra-engine`](authkestra-engine/README.md)                       | Foundational types, traits and the **AuthEngine** orchestrator.           |
+| [`authkestra-resource`](authkestra-resource/README.md)                   | Resource server enforcement and validation (JWT, etc).                    |
 | [`authkestra-session`](authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
-| [`authkestra-token`](authkestra-token/README.md)                         | JWT signing and token abstraction.                                        |
-| [`authkestra-providers-github`](authkestra-providers-github/README.md)   | Concrete implementation for GitHub OAuth.                                 |
-| [`authkestra-providers-google`](authkestra-providers-google/README.md)   | Concrete implementation for Google OAuth.                                 |
-| [`authkestra-providers-discord`](authkestra-providers-discord/README.md) | Concrete implementation for Discord OAuth.                                |
+| [`authkestra-providers`](authkestra-providers/README.md)                 | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
 | [`authkestra-axum`](authkestra-axum/README.md)                           | Axum-specific integration, including `AuthSession` extractors.            |
 | [`authkestra-actix`](authkestra-actix/README.md)                         | Actix-specific integration.                                               |
 | [`authkestra-oidc`](authkestra-oidc/README.md)                           | OpenID Connect discovery and provider support.                            |

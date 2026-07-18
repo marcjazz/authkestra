@@ -15,7 +15,7 @@ google = []
 discord = ["urlencoding"]
 
 [dependencies]
-authkestra-engine = { version = "0.1.1", path = "../authkestra-engine" }
+authkestra-engine = { version = "0.1.2", path = "../authkestra-engine" }
 async-trait = "0.1"
 reqwest = { version = "0.13.1", features = ["json", "form"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -2,12 +2,12 @@
 pub use authkestra_engine::TokenManager;
 #[cfg(feature = "flow")]
 pub use authkestra_engine::{AuthEngine, Missing, SessionConfig};
-#[cfg(feature = "guard")]
+#[cfg(feature = "resource")]
 pub use authkestra_resource::AuthEngineGuard;
 use axum::extract::FromRef;
 #[cfg(feature = "session")]
 use axum::extract::FromRequestParts;
-#[cfg(any(feature = "session", feature = "token", feature = "guard"))]
+#[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use std::sync::Arc;
 
 pub mod helpers;
@@ -119,10 +119,10 @@ where
 /// A generic JWT extractor for resource server validation.
 ///
 /// Validates a Bearer token against a configured `JwksCache` and `JwtValidation`.
-#[cfg(feature = "guard")]
+#[cfg(feature = "resource")]
 pub struct Jwt<T>(pub T);
 
-#[cfg(feature = "guard")]
+#[cfg(feature = "resource")]
 impl<S, T> FromRequestParts<S> for Jwt<T>
 where
     S: Send + Sync,
@@ -166,10 +166,10 @@ where
 /// A unified extractor for authentication.
 ///
 /// It uses the `AuthEngineGuard` from the application state to validate the request.
-#[cfg(feature = "guard")]
+#[cfg(feature = "resource")]
 pub struct Auth<I>(pub I);
 
-#[cfg(feature = "guard")]
+#[cfg(feature = "resource")]
 impl<S, I> FromRequestParts<S> for Auth<I>
 where
     S: Send + Sync,
