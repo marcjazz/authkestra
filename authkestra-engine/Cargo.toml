@@ -36,6 +36,3 @@ token = []
 flow = []
 session = []
 
-[dev-dependencies]
-rand_core = "0.6.4"
-
