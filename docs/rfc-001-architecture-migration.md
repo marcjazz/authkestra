@@ -90,8 +90,9 @@ pub trait Flow {
 An external identity source (e.g., Google, GitHub). Providers should contain zero business logic—only configuration and mapping.
 
 ```rust
-pub trait Provider {
-    fn config(&self) -> ProviderConfig;
+#[async_trait]
+pub trait Provider: Send + Sync {
+    async fn config(&self) -> ProviderConfig;
 }
 ```
 
