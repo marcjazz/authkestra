@@ -88,24 +88,44 @@ impl InMemoryAuthorizationCodeStore {
 #[async_trait]
 impl AuthorizationCodeStore for InMemoryAuthorizationCodeStore {
     async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+        tracing::debug!(client_id = %code.client_id, "storing authorization code in memory");
         self.codes
             .write()
-            .map_err(|_| OpError::Storage)?
+            .map_err(|_| {
+                tracing::error!("authorization code store lock poisoned");
+                OpError::Storage
+            })?
             .insert(code.code.clone(), code);
         Ok(())
     }
 
     async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
-        let mut codes = self.codes.write().map_err(|_| OpError::Storage)?;
+        tracing::trace!("attempting to consume authorization code");
+        let mut codes = self.codes.write().map_err(|_| {
+            tracing::error!("authorization code store lock poisoned");
+            OpError::Storage
+        })?;
         // `get_mut` + check + mutate while holding the write lock is the
         // atomic step this trait's contract requires — do not replace this
         // with a separate read followed by a separate write.
         match codes.get_mut(code) {
             Some(entry) if !entry.used && !entry.is_expired(Utc::now()) => {
+                tracing::debug!(client_id = %entry.client_id, "successfully consumed authorization code");
                 entry.used = true;
                 Ok(Some(entry.clone()))
             }
-            _ => Ok(None),
+            Some(entry) if entry.used => {
+                tracing::warn!(client_id = %entry.client_id, "attempted to consume an already-used authorization code");
+                Ok(None)
+            }
+            Some(entry) => {
+                tracing::debug!(client_id = %entry.client_id, "attempted to consume an expired authorization code");
+                Ok(None)
+            }
+            None => {
+                tracing::debug!("authorization code not found");
+                Ok(None)
+            }
         }
     }
 }

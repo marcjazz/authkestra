@@ -83,6 +83,7 @@ impl InMemoryClientStore {
     /// Registers a client, replacing any existing registration with the
     /// same `client_id`.
     pub fn register(&self, client: ClientRegistration) {
+        tracing::debug!(client_id = %client.client_id, "registering client in memory");
         self.clients
             .write()
             .expect("client store lock poisoned")
@@ -93,10 +94,14 @@ impl InMemoryClientStore {
 #[async_trait]
 impl ClientStore for InMemoryClientStore {
     async fn find_client(&self, client_id: &str) -> Result<Option<ClientRegistration>, OpError> {
+        tracing::trace!(client_id, "looking up client");
         Ok(self
             .clients
             .read()
-            .map_err(|_| OpError::Storage)?
+            .map_err(|_| {
+                tracing::error!("client store lock poisoned");
+                OpError::Storage
+            })?
             .get(client_id)
             .cloned())
     }
