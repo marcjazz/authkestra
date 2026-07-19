@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "your_client_secret".to_string(),
         "http://localhost:8080/callback".to_string(),
         "https://accounts.google.com", // Issuer URL
+        std::time::Duration::from_secs(3600), // Fallback refresh interval
     ).await?;
 
     // Generate an authorization URL
