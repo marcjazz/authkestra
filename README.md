@@ -35,7 +35,7 @@ For advanced users, individual crates are still available and can be used indepe
 | [`authkestra-session`](authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
 | [`authkestra-providers`](authkestra-providers/README.md)                 | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
 | [`authkestra-axum`](authkestra-axum/README.md)                           | Axum-specific integration, including `AuthSession` extractors.            |
-| [`authkestra-actix`](authkestra-actix/README.md)                         | Actix-specific integration.                                               |
+| [`authkestra-actix`](authkestra-actix/README.md)                         | Actix-specific integration (Second-tier adapter, no macro support yet).   |
 | [`authkestra-oidc`](authkestra-oidc/README.md)                           | OpenID Connect discovery and provider support.                            |
 
 ## 🛠️ Usage
