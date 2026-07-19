@@ -11,6 +11,7 @@ members = [
     "authkestra-resource",
     "authkestra",
     "authkestra-examples",
+    "authkestra-op",
 ]
 
 [workspace.package]
@@ -31,3 +32,4 @@ authkestra-actix = { version = "0.1.3", path = "authkestra-actix" }
 authkestra-resource = { version = "0.1.0", path = "authkestra-resource" }
 authkestra = { version = "0.1.2", path = "authkestra" }
 authkestra-examples = { version = "0.1.0", path = "authkestra-examples" }
+authkestra-op = { version = "0.1.0", path = "authkestra-op" }

@@ -1,0 +1,23 @@
+[package]
+name = "authkestra-op"
+version = "0.1.0"
+edition.workspace = true
+description = "OpenID Provider (OP) support for the authkestra framework — issue tokens and run the authorization code grant, rather than only consuming an external IdP"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+authkestra-engine = { workspace = true, features = ["token"] }
+authkestra-resource = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0.18"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
