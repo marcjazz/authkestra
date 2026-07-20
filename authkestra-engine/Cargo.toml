@@ -10,7 +10,7 @@ license.workspace = true
 # From authkestra-core
 serde = { version = "1.0", features = ["derive"] }
 reqwest = { version = "0.13.1", features = ["json", "form"] }
-url = "2.5"
+url = { workspace = true }
 http = "1"
 thiserror = "2.0.18"
 async-trait = "0.1"

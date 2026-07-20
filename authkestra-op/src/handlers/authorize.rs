@@ -55,20 +55,22 @@ pub async fn handle_authorize(
     }
 
     // FROM HERE ON, all further errors are Redirect outcomes
-    let redirect_url = req.redirect_uri.clone();
-    let state = req.state.clone();
+    let parsed_uri = match url::Url::parse(&req.redirect_uri) {
+        Ok(u) => u,
+        Err(_) => return AuthorizeOutcome::DirectError(OpError::RedirectUriMismatch),
+    };
 
     let error_redirect = |error: &str, description: &str| -> AuthorizeOutcome {
-        let mut url = redirect_url.clone();
-        let sep = if url.contains('?') { "&" } else { "?" };
-        url.push_str(&format!(
-            "{}error={}&error_description={}",
-            sep, error, description
-        ));
-        if let Some(ref s) = state {
-            url.push_str(&format!("&state={}", s));
+        let mut url = parsed_uri.clone();
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("error", error);
+            query.append_pair("error_description", description);
+            if let Some(ref s) = req.state {
+                query.append_pair("state", s);
+            }
         }
-        AuthorizeOutcome::Redirect(url)
+        AuthorizeOutcome::Redirect(url.into())
     };
 
     // 4. Check response_type == "code"
@@ -95,6 +97,11 @@ pub async fn handle_authorize(
         if req.code_challenge_method.as_deref() != Some("S256") {
             return error_redirect("invalid_request", "code_challenge_method must be S256");
         }
+    } else if req.code_challenge.is_none() && req.code_challenge_method.is_some() {
+        return error_redirect(
+            "invalid_request",
+            "code_challenge is required when method is specified",
+        );
     } else if req.code_challenge.is_some() && req.code_challenge_method.as_deref() != Some("S256") {
         return error_redirect("invalid_request", "code_challenge_method must be S256");
     }
@@ -125,14 +132,16 @@ pub async fn handle_authorize(
     }
 
     // 9. Return Redirect with code and state
-    let mut url = redirect_url;
-    let sep = if url.contains('?') { "&" } else { "?" };
-    url.push_str(&format!("{}code={}", sep, code_val));
-    if let Some(ref s) = state {
-        url.push_str(&format!("&state={}", s));
+    let mut url = parsed_uri;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("code", &code_val);
+        if let Some(ref s) = req.state {
+            query.append_pair("state", s);
+        }
     }
 
-    AuthorizeOutcome::Redirect(url)
+    AuthorizeOutcome::Redirect(url.into())
 }
 
 #[cfg(test)]
