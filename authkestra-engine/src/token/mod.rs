@@ -219,7 +219,11 @@ impl TokenManager {
         encode(&header, &claims, &self.encoding_key).map_err(|e| AuthError::Token(e.to_string()))
     }
 
-    pub fn validate_token(&self, token: &str, expected_aud: Option<&str>) -> Result<Claims, AuthError> {
+    pub fn validate_token(
+        &self,
+        token: &str,
+        expected_aud: Option<&str>,
+    ) -> Result<Claims, AuthError> {
         let mut validation = Validation::new(self.alg);
         if let Some(aud) = expected_aud {
             validation.set_audience(&[aud]);
@@ -417,7 +421,9 @@ a0QMqKUcs8+YTy5R5K6qtw==
         assert_eq!(claims.aud, Some("client-1".to_string()));
 
         // Validate with incorrect audience (should fail)
-        let err = manager.validate_token(&token, Some("client-2")).unwrap_err();
+        let err = manager
+            .validate_token(&token, Some("client-2"))
+            .unwrap_err();
         assert!(err.to_string().contains("InvalidAudience"));
     }
 }
