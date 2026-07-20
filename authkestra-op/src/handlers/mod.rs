@@ -14,6 +14,3 @@ pub use authorize::{handle_authorize, AuthorizeOutcome, AuthorizeRequest};
 pub mod token;
 pub use token::{handle_token, TokenErrorResponse, TokenRequest, TokenResponse};
 
-/// UserInfo endpoint handler (`/userinfo`).
-pub mod userinfo;
-pub use userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest, UserInfoResponse};
