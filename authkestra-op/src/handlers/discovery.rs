@@ -80,6 +80,7 @@ mod tests {
             grant_types_supported: vec!["authorization_code".to_string()],
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
+            access_token_ttl_secs: 3600,
         };
 
         let doc = OidcDiscovery::from_config(&config);

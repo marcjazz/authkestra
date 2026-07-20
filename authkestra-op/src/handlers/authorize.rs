@@ -21,8 +21,10 @@ pub struct AuthorizeRequest {
     pub state: Option<String>,
     /// PKCE code challenge.
     pub code_challenge: Option<String>,
-    /// PKCE code challenge method ("S256").
+    /// PKCE code_challenge_method ("S256").
     pub code_challenge_method: Option<String>,
+    /// OIDC nonce.
+    pub nonce: Option<String>,
 }
 
 /// The result of an authorization request handler.
@@ -149,6 +151,7 @@ pub async fn handle_authorize(
         scope: req.scope.clone(),
         code_challenge: req.code_challenge.clone(),
         code_challenge_method: req.code_challenge_method.clone(),
+        nonce: req.nonce.clone(),
         identity,
         expires_at,
         used: false,
@@ -188,6 +191,7 @@ mod tests {
             grant_types_supported: vec![],
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
+            access_token_ttl_secs: 3600,
         }
     }
 
@@ -215,6 +219,7 @@ mod tests {
             state: None,
             code_challenge: None,
             code_challenge_method: None,
+            nonce: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
@@ -248,6 +253,7 @@ mod tests {
             state: None,
             code_challenge: None,
             code_challenge_method: None,
+            nonce: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
@@ -280,6 +286,7 @@ mod tests {
             state: Some("xyz".to_string()),
             code_challenge: None,
             code_challenge_method: None,
+            nonce: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
@@ -315,6 +322,7 @@ mod tests {
             state: None,
             code_challenge: None, // Missing PKCE
             code_challenge_method: None,
+            nonce: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
@@ -348,6 +356,7 @@ mod tests {
             state: None,
             code_challenge: Some("challenge".to_string()),
             code_challenge_method: Some("plain".to_string()), // plain is rejected
+            nonce: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
@@ -381,6 +390,7 @@ mod tests {
             state: Some("abc".to_string()),
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
+            nonce: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
@@ -434,6 +444,7 @@ mod tests {
             state: Some(dangerous_state.to_string()),
             code_challenge: None,
             code_challenge_method: None,
+            nonce: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
@@ -485,6 +496,7 @@ mod tests {
             state: None,
             code_challenge: None,
             code_challenge_method: Some("S256".to_string()), // Method provided without challenge
+            nonce: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
