@@ -51,7 +51,7 @@ pub struct TokenErrorResponse {
 /// Handles token exchange requests (e.g. `grant_type=authorization_code`).
 pub async fn handle_token(
     req: TokenRequest,
-    _config: &OpConfig,
+    config: &OpConfig,
     clients: &dyn ClientStore,
     codes: &dyn AuthorizationCodeStore,
     tokens: &TokenManager,
@@ -185,7 +185,7 @@ pub async fn handle_token(
     }
 
     // 7. Issue tokens
-    let expires_in = 3600; // Typically would come from config or client settings
+    let expires_in = config.access_token_ttl_secs;
     let scope_opt = if auth_code.scope.is_empty() {
         None
     } else {
@@ -205,8 +205,12 @@ pub async fn handle_token(
         };
 
     let id_token = if auth_code.scope.contains("openid") {
-        // Here we just reissue a JWT for the ID token. In reality we might want a different audience, etc.
-        match tokens.issue_user_token(auth_code.identity, expires_in, scope_opt.clone()) {
+        match tokens.issue_id_token(
+            auth_code.identity,
+            &req.client_id,
+            auth_code.nonce,
+            expires_in,
+        ) {
             Ok(t) => Some(t),
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to issue id token");
@@ -251,6 +255,7 @@ mod tests {
             grant_types_supported: vec![],
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
+            access_token_ttl_secs: 3600,
         }
     }
 
@@ -314,6 +319,7 @@ mod tests {
                 scope: "openid".to_string(),
                 code_challenge: Some(challenge),
                 code_challenge_method: Some("S256".to_string()),
+                nonce: None,
                 identity: test_identity(),
                 expires_at: Utc::now() + Duration::seconds(60),
                 used: false,
@@ -363,6 +369,7 @@ mod tests {
                 scope: "openid".to_string(),
                 code_challenge: Some("some-challenge".to_string()),
                 code_challenge_method: Some("S256".to_string()),
+                nonce: None,
                 identity: test_identity(),
                 expires_at: Utc::now() + Duration::seconds(60),
                 used: false,
@@ -407,6 +414,7 @@ mod tests {
                 scope: "".to_string(),
                 code_challenge: None,
                 code_challenge_method: None,
+                nonce: None,
                 identity: test_identity(),
                 expires_at: Utc::now() + Duration::seconds(60),
                 used: false,
@@ -449,8 +457,8 @@ mod tests {
                 redirect_uri: "https://app.example.com/cb".to_string(),
                 scope: "openid".to_string(),
                 code_challenge: Some("some-challenge".to_string()),
-                // Deliberately malformed stored code using "plain" method
                 code_challenge_method: Some("plain".to_string()),
+                nonce: None,
                 identity: test_identity(),
                 expires_at: Utc::now() + Duration::seconds(60),
                 used: false,

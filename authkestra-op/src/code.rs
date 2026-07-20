@@ -28,6 +28,8 @@ pub struct AuthorizationCode {
     pub code_challenge: Option<String>,
     /// PKCE code_challenge_method (`plain` or `S256`).
     pub code_challenge_method: Option<String>,
+    /// OIDC nonce, if provided in the authorization request.
+    pub nonce: Option<String>,
     /// The authenticated identity this code represents.
     pub identity: Identity,
     /// When this code expires. Recommend issuing with a short lifetime

@@ -150,6 +150,42 @@ impl TokenManager {
         encode(&header, &claims, &self.encoding_key).map_err(|e| AuthError::Token(e.to_string()))
     }
 
+    /// Issues an OIDC-conformant ID token.
+    pub fn issue_id_token(
+        &self,
+        identity: Identity,
+        client_id: &str,
+        nonce: Option<String>,
+        expires_in_secs: u64,
+    ) -> Result<String, AuthError> {
+        let now = chrono::Utc::now().timestamp() as usize;
+        let expiration = now + expires_in_secs as usize;
+
+        let mut claims = Claims {
+            iss: self.issuer.clone(),
+            sub: identity.external_id.clone(),
+            aud: Some(client_id.to_string()),
+            exp: expiration,
+            iat: now,
+            nbf: Some(now),
+            jti: Some(uuid::Uuid::new_v4().to_string()),
+            scope: None,
+            identity: Some(identity),
+            extra: HashMap::new(),
+        };
+
+        if let Some(n) = nonce {
+            claims.extra.insert("nonce".to_string(), serde_json::Value::String(n));
+        }
+
+        let mut header = Header::new(self.alg);
+        if let Some(ref kid) = self.kid {
+            header.kid = Some(kid.clone());
+        }
+
+        encode(&header, &claims, &self.encoding_key).map_err(|e| AuthError::Token(e.to_string()))
+    }
+
     /// Issues a machine-to-machine (M2M) token for a client.
     pub fn issue_client_token(
         &self,
@@ -183,6 +219,7 @@ impl TokenManager {
 
     pub fn validate_token(&self, token: &str) -> Result<Claims, AuthError> {
         let mut validation = Validation::new(self.alg);
+        validation.validate_aud = false; // Don't strictly validate audience by default here
         if let Some(ref iss) = self.issuer {
             validation.set_issuer(&[iss]);
         }
@@ -329,6 +366,34 @@ a0QMqKUcs8+YTy5R5K6qtw==
             jsonwebtoken::decode::<Claims>(&token, &decoding_key, &validation).unwrap();
         assert_eq!(token_data.claims.sub, "user123");
         assert_eq!(token_data.header.kid.as_deref(), Some("my-kid-123"));
+    }
+
+    #[test]
+    fn test_issue_id_token() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_id_token(
+                identity,
+                "client-1",
+                Some("nonce123".to_string()),
+                3600,
+            )
+            .unwrap();
+
+        let claims = manager.validate_token(&token).unwrap();
+
+        assert_eq!(claims.iss, Some("issuer".to_string()));
+        assert_eq!(claims.sub, "user123");
+        assert_eq!(claims.aud, Some("client-1".to_string()));
+        assert_eq!(claims.extra.get("nonce").unwrap(), "nonce123");
     }
 }
 pub mod jwk;

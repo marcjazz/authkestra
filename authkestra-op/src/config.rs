@@ -27,6 +27,8 @@ pub struct OpConfig {
     /// Lifetime, in seconds, of issued authorization codes. Keep short
     /// (RFC-003 §7 recommends ≤60).
     pub authorization_code_ttl_secs: i64,
+    /// Lifetime, in seconds, of issued access tokens.
+    pub access_token_ttl_secs: u64,
 }
 
 impl OpConfig {
