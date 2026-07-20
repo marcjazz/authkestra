@@ -33,3 +33,5 @@ authkestra-resource = { version = "0.1.0", path = "authkestra-resource" }
 authkestra = { version = "0.1.2", path = "authkestra" }
 authkestra-examples = { version = "0.1.0", path = "authkestra-examples" }
 authkestra-op = { version = "0.1.0", path = "authkestra-op" }
+rand = "0.9.2"
+url = "2.5"

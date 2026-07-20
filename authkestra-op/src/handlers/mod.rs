@@ -5,3 +5,7 @@ pub use discovery::OidcDiscovery;
 /// JWKS endpoint handler (`/jwks.json`).
 pub mod jwks;
 pub use jwks::JwksResponse;
+
+/// Authorization endpoint handler (`/authorize`).
+pub mod authorize;
+pub use authorize::{handle_authorize, AuthorizeOutcome, AuthorizeRequest};
