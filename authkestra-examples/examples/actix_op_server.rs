@@ -10,6 +10,7 @@ use authkestra_op::{
     code::{AuthorizationCodeStore, InMemoryAuthorizationCodeStore},
     config::OpConfig,
 };
+use authkestra_session::memory::MemoryStore;
 use std::sync::Arc;
 
 struct AppState;
@@ -48,6 +49,13 @@ async fn main() -> std::io::Result<()> {
         authorization_code_ttl_secs: 600,
     };
 
+    let session_store: Arc<dyn authkestra_session::SessionStore> =
+        Arc::new(authkestra_session::memory::MemoryStore::new());
+    let session_config = authkestra_engine::SessionConfig {
+        cookie_name: "authkestra_sid".to_string(),
+        ..Default::default()
+    };
+
     println!("🚀 Actix OP Server running on http://localhost:8080");
     HttpServer::new(move || {
         App::new()
@@ -55,6 +63,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(actix_web::web::Data::new(clients.clone()))
             .app_data(actix_web::web::Data::new(codes.clone()))
             .app_data(actix_web::web::Data::new(config.clone()))
+            .app_data(actix_web::web::Data::new(session_store.clone()))
+            .app_data(actix_web::web::Data::new(session_config.clone()))
             .service(AppState.op_actix_scope())
     })
     .bind("0.0.0.0:8080")?

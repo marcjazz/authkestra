@@ -25,17 +25,20 @@ pub async fn actix_discovery_handler(config: web::Data<OpConfig>) -> impl Respon
 }
 
 pub async fn actix_authorize_handler(
-    req: web::Query<AuthorizeRequest>,
     clients: web::Data<Arc<dyn ClientStore>>,
     codes: web::Data<Arc<dyn AuthorizationCodeStore>>,
     config: web::Data<OpConfig>,
-) -> impl Responder {
-    let identity = authkestra_engine::auth::state::Identity {
-        provider_id: "test".to_string(),
-        external_id: "test".to_string(),
-        email: None,
-        username: None,
-        attributes: std::collections::HashMap::new(),
+    auth_session: Option<crate::AuthSession>,
+    req: web::Query<AuthorizeRequest>,
+) -> actix_web::HttpResponse {
+    let identity = match auth_session {
+        Some(session) => session.0.identity,
+        None => {
+            let login_url = String::from("/login");
+            // NOTE: We omit return_to encoding to avoid adding urlencoding dependency for now.
+            // login_url.push_str(&format!("?return_to=/authorize?..."));
+            return actix_web::HttpResponse::Found().insert_header(("Location", login_url)).finish();
+        }
     };
 
     match handle_authorize(

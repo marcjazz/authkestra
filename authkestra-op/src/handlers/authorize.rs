@@ -138,10 +138,12 @@ pub async fn handle_authorize(
     }
 
     // 7. Build an AuthorizationCode
-    let mut rng = rand::rng();
-    let mut code_bytes = [0u8; 32];
-    rng.fill_bytes(&mut code_bytes);
-    let code_val = URL_SAFE_NO_PAD.encode(code_bytes);
+    let code_val = {
+        let mut rng = rand::rng();
+        let mut code_bytes = [0u8; 32];
+        rng.fill_bytes(&mut code_bytes);
+        URL_SAFE_NO_PAD.encode(code_bytes)
+    };
 
     let expires_at = Utc::now() + Duration::seconds(config.authorization_code_ttl_secs);
 

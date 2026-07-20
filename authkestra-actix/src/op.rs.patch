@@ -1,0 +1,14 @@
+--- authkestra-actix/src/op.rs
++++ authkestra-actix/src/op.rs
+@@ -34,7 +34,10 @@
+     let identity = match auth_session {
+         Some(session) => session.0.identity,
+         None => {
+-            return actix_web::HttpResponse::Unauthorized().body("User must authenticate first")
++            let mut login_url = String::from("/login");
++            // NOTE: We omit return_to encoding to avoid adding urlencoding dependency for now.
++            // login_url.push_str(&format!("?return_to=/authorize?..."));
++            return actix_web::HttpResponse::Found().insert_header(("Location", login_url)).finish();
+         }
+     };
+ 

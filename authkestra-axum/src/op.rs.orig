@@ -5,7 +5,7 @@ use authkestra_op::{
     code::AuthorizationCodeStore,
     config::OpConfig,
     handlers::{
-        authorize::handle_authorize,
+        authorize::{handle_authorize, AuthorizeRequest},
         discovery::OidcDiscovery,
         jwks::JwksResponse,
         token::{handle_token, TokenRequest},
@@ -51,10 +51,10 @@ where
 /// Note: This is an initial implementation that directly calls `handle_authorize`.
 /// In a real scenario, we might also need to extract the logged-in user from the session
 /// and handle the consent screen redirect if identity is None.
-pub async fn axum_authorize_handler<AppState>(
+pub async fn axum_authorize_handler_bak<AppState>(
     State(state): State<AppState>,
     cookies: tower_cookies::Cookies,
-    Query(req): Query<authkestra_op::handlers::authorize::AuthorizeRequest>,
+    Query(req_map): Query<std::collections::HashMap<String, String>>,
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
@@ -64,6 +64,24 @@ where
     authkestra_engine::SessionConfig: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
+    let session_store =
+        match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
+    let session_config = authkestra_engine::SessionConfig::from_ref(&state);
+
+    let identity =
+        match crate::helpers::get_session(&session_store, &session_config, &cookies).await {
+            Ok(session) => session.identity,
+            Err(_) => {
+                return (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "User must authenticate first",
+                )
+                    .into_response()
+            }
+        };
     let clients = match <Result<Arc<dyn ClientStore>, AuthEngineAxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
@@ -75,17 +93,15 @@ where
         };
     let config = OpConfig::from_ref(&state);
 
-    let session_store = match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
-    let session_config = authkestra_engine::SessionConfig::from_ref(&state);
-    
-    let session_res = crate::helpers::get_session(&session_store, &session_config, &cookies).await;
-    
-    let identity = match session_res {
-        Ok(s) => s.identity,
-        Err(_) => return Redirect::to("/login").into_response(),
+    let req = AuthorizeRequest {
+        client_id: req_map.get("client_id").cloned().unwrap_or_default(),
+        redirect_uri: req_map.get("redirect_uri").cloned().unwrap_or_default(),
+        response_type: req_map.get("response_type").cloned().unwrap_or_default(),
+        scope: req_map.get("scope").cloned().unwrap_or_default(),
+        state: req_map.get("state").cloned(),
+        code_challenge: req_map.get("code_challenge").cloned(),
+        code_challenge_method: req_map.get("code_challenge_method").cloned(),
+        nonce: req_map.get("nonce").cloned(),
     };
 
     match handle_authorize(req, identity, &config, clients.as_ref(), codes.as_ref()).await {
@@ -242,5 +258,78 @@ impl<T> AuthEngineAxumOpExt for T {
                 "/userinfo",
                 get(axum_userinfo_handler::<AppState>).post(axum_userinfo_handler::<AppState>),
             )
+    }
+}
+
+pub async fn axum_authorize_handler<AppState>(
+    State(state): State<AppState>,
+    cookies: tower_cookies::Cookies,
+    Query(req_map): Query<std::collections::HashMap<String, String>>,
+) -> Response
+where
+    AppState: Clone + Send + Sync + 'static,
+    Result<Arc<dyn ClientStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
+    authkestra_engine::SessionConfig: FromRef<AppState>,
+    OpConfig: FromRef<AppState>,
+{
+    let identity = authkestra_engine::auth::state::Identity {
+        provider_id: "test".to_string(),
+        external_id: "test".to_string(),
+        email: None,
+        username: None,
+        attributes: std::collections::HashMap::new(),
+    };
+
+    let session_store =
+        match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
+    let session_config = authkestra_engine::SessionConfig::from_ref(&state);
+
+    let clients = match <Result<Arc<dyn ClientStore>, AuthEngineAxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
+    let codes =
+        match <Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
+    let config = OpConfig::from_ref(&state);
+
+    let req = authkestra_op::handlers::authorize::AuthorizeRequest {
+        client_id: req_map.get("client_id").cloned().unwrap_or_default(),
+        redirect_uri: req_map.get("redirect_uri").cloned().unwrap_or_default(),
+        response_type: req_map.get("response_type").cloned().unwrap_or_default(),
+        scope: req_map.get("scope").cloned().unwrap_or_default(),
+        state: req_map.get("state").cloned(),
+        code_challenge: req_map.get("code_challenge").cloned(),
+        code_challenge_method: req_map.get("code_challenge_method").cloned(),
+        nonce: req_map.get("nonce").cloned(),
+    };
+
+    match authkestra_op::handlers::authorize::handle_authorize(
+        req,
+        identity,
+        &config,
+        clients.as_ref(),
+        codes.as_ref(),
+    )
+    .await
+    {
+        authkestra_op::handlers::authorize::AuthorizeOutcome::Redirect(url) => {
+            Redirect::to(&url).into_response()
+        }
+        authkestra_op::handlers::authorize::AuthorizeOutcome::DirectError(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid_request",
+                "error_description": format!("{:?}", err)
+            })),
+        )
+            .into_response(),
     }
 }

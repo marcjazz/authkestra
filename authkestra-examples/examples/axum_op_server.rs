@@ -18,6 +18,8 @@ struct AppState {
     clients: Arc<dyn ClientStore>,
     codes: Arc<dyn AuthorizationCodeStore>,
     config: OpConfig,
+    session_store: Arc<dyn authkestra_session::SessionStore>,
+    session_config: authkestra_engine::SessionConfig,
 }
 
 impl FromRef<AppState> for Arc<TokenManager> {
@@ -64,6 +66,18 @@ impl FromRef<AppState> for OpConfig {
     }
 }
 
+impl FromRef<AppState> for Result<Arc<dyn authkestra_session::SessionStore>, AuthEngineAxumError> {
+    fn from_ref(state: &AppState) -> Self {
+        Ok(state.session_store.clone())
+    }
+}
+
+impl FromRef<AppState> for authkestra_engine::SessionConfig {
+    fn from_ref(state: &AppState) -> Self {
+        state.session_config.clone()
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let token_manager = Arc::new(TokenManager::new(
@@ -84,10 +98,19 @@ async fn main() {
 
     let codes: Arc<dyn AuthorizationCodeStore> = Arc::new(InMemoryAuthorizationCodeStore::new());
 
+    let session_store: Arc<dyn authkestra_session::SessionStore> =
+        Arc::new(authkestra_session::memory::MemoryStore::new());
+    let session_config = authkestra_engine::SessionConfig {
+        cookie_name: "authkestra_sid".to_string(),
+        ..Default::default()
+    };
+
     let state = AppState {
         token_manager,
         clients,
         codes,
+        session_store,
+        session_config,
         config: OpConfig {
             issuer: "http://localhost:3000".to_string(),
             scopes_supported: vec![
