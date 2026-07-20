@@ -428,4 +428,50 @@ mod tests {
         let result = handle_token(req, &config, &clients, &codes, &tokens).await;
         assert_eq!(result.unwrap_err().error, "invalid_grant");
     }
+    #[tokio::test]
+    async fn test_reject_plain_pkce_method() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client-1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://app.example.com/cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: true,
+        });
+
+        let codes = InMemoryAuthorizationCodeStore::new();
+        let code_val = "valid-code-123".to_string();
+        codes
+            .store_code(AuthorizationCode {
+                code: code_val.clone(),
+                client_id: "client-1".to_string(),
+                redirect_uri: "https://app.example.com/cb".to_string(),
+                scope: "openid".to_string(),
+                code_challenge: Some("some-challenge".to_string()),
+                // Deliberately malformed stored code using "plain" method
+                code_challenge_method: Some("plain".to_string()),
+                identity: test_identity(),
+                expires_at: Utc::now() + Duration::seconds(60),
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let config = test_config();
+        let tokens = test_tokens();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: code_val,
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            client_id: "client-1".to_string(),
+            code_verifier: Some("some-challenge".to_string()), // Even if it matches, it should be rejected
+        };
+
+        let result = handle_token(req, &config, &clients, &codes, &tokens).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.error, "server_error");
+        assert_eq!(err.error_description, "Unsupported PKCE challenge method");
+    }
 }
