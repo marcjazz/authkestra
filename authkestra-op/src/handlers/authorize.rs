@@ -43,21 +43,36 @@ pub async fn handle_authorize(
     codes: &dyn AuthorizationCodeStore,
 ) -> AuthorizeOutcome {
     // 1. Look up client_id
+    tracing::debug!(client_id = %req.client_id, "Looking up client for authorization request");
     let client = match clients.find_client(&req.client_id).await {
         Ok(Some(client)) => client,
-        Ok(None) => return AuthorizeOutcome::DirectError(OpError::UnknownClient(req.client_id)),
-        Err(e) => return AuthorizeOutcome::DirectError(e),
+        Ok(None) => {
+            tracing::warn!(client_id = %req.client_id, "Unknown client ID requested");
+            return AuthorizeOutcome::DirectError(OpError::UnknownClient(req.client_id));
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, "Error finding client");
+            return AuthorizeOutcome::DirectError(e);
+        }
     };
 
     // 2. Validate exact redirect_uri
     if !client.allows_redirect_uri(&req.redirect_uri) {
+        tracing::warn!(
+            client_id = %req.client_id,
+            requested_uri = %req.redirect_uri,
+            "Redirect URI mismatch"
+        );
         return AuthorizeOutcome::DirectError(OpError::RedirectUriMismatch);
     }
 
     // FROM HERE ON, all further errors are Redirect outcomes
     let parsed_uri = match url::Url::parse(&req.redirect_uri) {
         Ok(u) => u,
-        Err(_) => return AuthorizeOutcome::DirectError(OpError::RedirectUriMismatch),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to parse matched redirect URI");
+            return AuthorizeOutcome::DirectError(OpError::RedirectUriMismatch);
+        }
     };
 
     let error_redirect = |error: &str, description: &str| -> AuthorizeOutcome {
@@ -75,6 +90,11 @@ pub async fn handle_authorize(
 
     // 4. Check response_type == "code"
     if req.response_type != "code" {
+        tracing::warn!(
+            client_id = %req.client_id,
+            response_type = %req.response_type,
+            "Unsupported response type requested"
+        );
         return error_redirect(
             "unsupported_response_type",
             "Only response_type=code is supported",
@@ -83,6 +103,10 @@ pub async fn handle_authorize(
 
     // 5. Check client allows AuthorizationCode grant type
     if !client.allows_grant_type(GrantType::AuthorizationCode) {
+        tracing::warn!(
+            client_id = %req.client_id,
+            "Client is not permitted to use the authorization code grant"
+        );
         return error_redirect(
             "unauthorized_client",
             "Client is not permitted to use the authorization code grant",
@@ -92,17 +116,21 @@ pub async fn handle_authorize(
     // 6. PKCE requirements
     if client.require_pkce {
         if req.code_challenge.is_none() {
+            tracing::warn!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
             return error_redirect("invalid_request", "code_challenge is required");
         }
         if req.code_challenge_method.as_deref() != Some("S256") {
+            tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
             return error_redirect("invalid_request", "code_challenge_method must be S256");
         }
     } else if req.code_challenge.is_none() && req.code_challenge_method.is_some() {
+        tracing::warn!(client_id = %req.client_id, "code_challenge_method specified without code_challenge");
         return error_redirect(
             "invalid_request",
             "code_challenge is required when method is specified",
         );
     } else if req.code_challenge.is_some() && req.code_challenge_method.as_deref() != Some("S256") {
+        tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method provided (optional PKCE), S256 required");
         return error_redirect("invalid_request", "code_challenge_method must be S256");
     }
 
@@ -127,7 +155,8 @@ pub async fn handle_authorize(
     };
 
     // 8. Store the code
-    if codes.store_code(auth_code).await.is_err() {
+    if let Err(e) = codes.store_code(auth_code).await {
+        tracing::error!(error = ?e, client_id = %req.client_id, "Failed to store authorization code");
         return error_redirect("server_error", "Failed to store authorization code");
     }
 
@@ -141,6 +170,7 @@ pub async fn handle_authorize(
         }
     }
 
+    tracing::info!(client_id = %req.client_id, "Successfully issued authorization code");
     AuthorizeOutcome::Redirect(url.into())
 }
 
