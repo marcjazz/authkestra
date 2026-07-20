@@ -377,4 +377,92 @@ mod tests {
             panic!("Expected Redirect");
         }
     }
+
+    #[tokio::test]
+    async fn test_state_encoding() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client-1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://app.example.com/cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: false,
+        });
+
+        let codes = InMemoryAuthorizationCodeStore::new();
+        let config = test_config();
+
+        // State containing characters that require URL encoding
+        let dangerous_state = "foo&bar=baz#123";
+
+        let req = AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid".to_string(),
+            state: Some(dangerous_state.to_string()),
+            code_challenge: None,
+            code_challenge_method: None,
+        };
+
+        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            let parsed = url::Url::parse(&url).expect("Should be a valid URL");
+            
+            // Check that `state` is perfectly preserved and there are no injected query params
+            let mut state_found = false;
+            let mut code_found = false;
+            for (k, v) in parsed.query_pairs() {
+                if k == "state" {
+                    assert_eq!(v, dangerous_state);
+                    state_found = true;
+                }
+                if k == "code" {
+                    code_found = true;
+                }
+                if k == "error" || k == "bar" {
+                    panic!("Injected parameter found!");
+                }
+            }
+            assert!(state_found, "state parameter must be present");
+            assert!(code_found, "code parameter must be present");
+        } else {
+            panic!("Expected Redirect");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pkce_method_without_challenge_redirect_error() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client-1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://app.example.com/cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: false, // PKCE is optional
+        });
+
+        let codes = InMemoryAuthorizationCodeStore::new();
+        let config = test_config();
+
+        let req = AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid".to_string(),
+            state: None,
+            code_challenge: None,
+            code_challenge_method: Some("S256".to_string()), // Method provided without challenge
+        };
+
+        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.contains("error=invalid_request"));
+            assert!(url.contains("error_description=code_challenge+is+required+when+method+is+specified") || url.contains("code_challenge%20is%20required"));
+        } else {
+            panic!("Expected Redirect");
+        }
+    }
 }

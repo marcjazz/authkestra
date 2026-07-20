@@ -483,13 +483,16 @@ dependencies = [
  "async-trait",
  "authkestra-engine",
  "authkestra-resource",
+ "base64",
  "chrono",
  "jsonwebtoken",
+ "rand 0.9.4",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 
