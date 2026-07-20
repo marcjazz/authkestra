@@ -396,5 +396,29 @@ a0QMqKUcs8+YTy5R5K6qtw==
         assert_eq!(claims.aud, Some("client-1".to_string()));
         assert_eq!(claims.extra.get("nonce").unwrap(), "nonce123");
     }
+    #[test]
+    fn test_token_manager_audience_validation() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        // Issue token for "client-1"
+        let token = manager
+            .issue_id_token(identity, "client-1", None, 3600)
+            .unwrap();
+
+        // Validate with correct audience
+        let claims = manager.validate_token(&token, Some("client-1")).unwrap();
+        assert_eq!(claims.aud, Some("client-1".to_string()));
+
+        // Validate with incorrect audience (should fail)
+        let err = manager.validate_token(&token, Some("client-2")).unwrap_err();
+        assert!(err.to_string().contains("InvalidAudience"));
+    }
 }
 pub mod jwk;
