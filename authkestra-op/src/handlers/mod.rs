@@ -13,4 +13,3 @@ pub use authorize::{handle_authorize, AuthorizeOutcome, AuthorizeRequest};
 /// Token endpoint handler (`/token`).
 pub mod token;
 pub use token::{handle_token, TokenErrorResponse, TokenRequest, TokenResponse};
-
