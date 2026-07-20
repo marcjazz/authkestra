@@ -219,9 +219,13 @@ impl TokenManager {
         encode(&header, &claims, &self.encoding_key).map_err(|e| AuthError::Token(e.to_string()))
     }
 
-    pub fn validate_token(&self, token: &str) -> Result<Claims, AuthError> {
+    pub fn validate_token(&self, token: &str, expected_aud: Option<&str>) -> Result<Claims, AuthError> {
         let mut validation = Validation::new(self.alg);
-        validation.validate_aud = false; // Don't strictly validate audience by default here
+        if let Some(aud) = expected_aud {
+            validation.set_audience(&[aud]);
+        } else {
+            validation.validate_aud = false;
+        }
         if let Some(ref iss) = self.issuer {
             validation.set_issuer(&[iss]);
         }
@@ -240,7 +244,7 @@ impl TokenService for TokenManager {
     }
 
     async fn verify(&self, token: &str) -> Result<Identity, AuthError> {
-        let claims = self.validate_token(token)?;
+        let claims = self.validate_token(token, None)?;
         claims
             .identity
             .ok_or_else(|| AuthError::Token("No identity in token".to_string()))
@@ -300,7 +304,7 @@ mod tests {
         };
 
         let token = manager.issue_user_token(identity, 3600, None).unwrap();
-        let claims = manager.validate_token(&token).unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
 
         assert_eq!(claims.iss, Some("issuer".to_string()));
         assert_eq!(claims.sub, "user123");
@@ -385,7 +389,7 @@ a0QMqKUcs8+YTy5R5K6qtw==
             .issue_id_token(identity, "client-1", Some("nonce123".to_string()), 3600)
             .unwrap();
 
-        let claims = manager.validate_token(&token).unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
 
         assert_eq!(claims.iss, Some("issuer".to_string()));
         assert_eq!(claims.sub, "user123");

@@ -221,7 +221,7 @@ impl FromRequest for AuthToken {
             }
 
             let token = &auth_header[7..];
-            let claims = token_manager.get_ref().validate_token(token).map_err(|e| {
+            let claims = token_manager.get_ref().validate_token(token, None).map_err(|e| {
                 tracing::error!(error = %e, "failed to validate token");
                 actix_web::error::ErrorUnauthorized(format!("Invalid token: {e}"))
             })?;
