@@ -402,7 +402,7 @@ where
         })
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AuthEngineAxumError {
     Unauthorized(String),
     Internal(String),

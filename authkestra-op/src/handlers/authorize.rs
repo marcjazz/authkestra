@@ -8,6 +8,7 @@ use chrono::{Duration, Utc};
 use rand::RngCore;
 
 /// Represents an incoming OAuth2/OIDC authorization request.
+#[derive(Debug, serde::Deserialize)]
 pub struct AuthorizeRequest {
     /// Client ID requesting authorization.
     pub client_id: String,

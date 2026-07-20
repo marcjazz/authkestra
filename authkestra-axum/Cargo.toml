@@ -13,7 +13,8 @@ authkestra-engine = { workspace = true }
 authkestra-session = { workspace = true, optional = true }
 authkestra-resource = { workspace = true, optional = true }
 authkestra-macros = { workspace = true, optional = true, features = ["axum"] }
-axum = "0.8.8"
+authkestra-op = { workspace = true, optional = true }
+axum = { version = "0.8.8", features = ["macros"] }
 jsonwebtoken = "10.3.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -30,3 +31,4 @@ session = ["dep:authkestra-session", "authkestra-engine/session"]
 flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engine/token"]
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
+op = ["dep:authkestra-op", "authkestra-engine/token", "authkestra-engine/session"]
