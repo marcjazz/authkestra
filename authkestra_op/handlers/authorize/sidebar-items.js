@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AuthorizeOutcome"],"fn":["handle_authorize"],"struct":["AuthorizeRequest"]};
