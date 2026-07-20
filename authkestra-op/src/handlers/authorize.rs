@@ -409,7 +409,7 @@ mod tests {
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             let parsed = url::Url::parse(&url).expect("Should be a valid URL");
-            
+
             // Check that `state` is perfectly preserved and there are no injected query params
             let mut state_found = false;
             let mut code_found = false;
@@ -460,7 +460,11 @@ mod tests {
         let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.contains("error=invalid_request"));
-            assert!(url.contains("error_description=code_challenge+is+required+when+method+is+specified") || url.contains("code_challenge%20is%20required"));
+            assert!(
+                url.contains(
+                    "error_description=code_challenge+is+required+when+method+is+specified"
+                ) || url.contains("code_challenge%20is%20required")
+            );
         } else {
             panic!("Expected Redirect");
         }
