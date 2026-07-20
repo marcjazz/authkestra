@@ -43,7 +43,7 @@ pub async fn handle_userinfo(
     tracing::debug!("Processing userinfo request");
 
     // 1. Verify token
-    let claims = match tokens.validate_token(&req.access_token) {
+    let claims = match tokens.validate_token(&req.access_token, None) {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(error = ?e, "Invalid access token provided to userinfo endpoint");
