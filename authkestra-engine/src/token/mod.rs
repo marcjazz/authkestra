@@ -175,7 +175,9 @@ impl TokenManager {
         };
 
         if let Some(n) = nonce {
-            claims.extra.insert("nonce".to_string(), serde_json::Value::String(n));
+            claims
+                .extra
+                .insert("nonce".to_string(), serde_json::Value::String(n));
         }
 
         let mut header = Header::new(self.alg);
@@ -380,12 +382,7 @@ a0QMqKUcs8+YTy5R5K6qtw==
         };
 
         let token = manager
-            .issue_id_token(
-                identity,
-                "client-1",
-                Some("nonce123".to_string()),
-                3600,
-            )
+            .issue_id_token(identity, "client-1", Some("nonce123".to_string()), 3600)
             .unwrap();
 
         let claims = manager.validate_token(&token).unwrap();
