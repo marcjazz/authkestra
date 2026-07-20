@@ -43,21 +43,36 @@ pub async fn handle_authorize(
     codes: &dyn AuthorizationCodeStore,
 ) -> AuthorizeOutcome {
     // 1. Look up client_id
+    tracing::debug!(client_id = %req.client_id, "Looking up client for authorization request");
     let client = match clients.find_client(&req.client_id).await {
         Ok(Some(client)) => client,
-        Ok(None) => return AuthorizeOutcome::DirectError(OpError::UnknownClient(req.client_id)),
-        Err(e) => return AuthorizeOutcome::DirectError(e),
+        Ok(None) => {
+            tracing::warn!(client_id = %req.client_id, "Unknown client ID requested");
+            return AuthorizeOutcome::DirectError(OpError::UnknownClient(req.client_id));
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, "Error finding client");
+            return AuthorizeOutcome::DirectError(e);
+        }
     };
 
     // 2. Validate exact redirect_uri
     if !client.allows_redirect_uri(&req.redirect_uri) {
+        tracing::warn!(
+            client_id = %req.client_id,
+            requested_uri = %req.redirect_uri,
+            "Redirect URI mismatch"
+        );
         return AuthorizeOutcome::DirectError(OpError::RedirectUriMismatch);
     }
 
     // FROM HERE ON, all further errors are Redirect outcomes
     let parsed_uri = match url::Url::parse(&req.redirect_uri) {
         Ok(u) => u,
-        Err(_) => return AuthorizeOutcome::DirectError(OpError::RedirectUriMismatch),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to parse matched redirect URI");
+            return AuthorizeOutcome::DirectError(OpError::RedirectUriMismatch);
+        }
     };
 
     let error_redirect = |error: &str, description: &str| -> AuthorizeOutcome {

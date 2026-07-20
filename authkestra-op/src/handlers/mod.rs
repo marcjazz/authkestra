@@ -9,3 +9,7 @@ pub use jwks::JwksResponse;
 /// Authorization endpoint handler (`/authorize`).
 pub mod authorize;
 pub use authorize::{handle_authorize, AuthorizeOutcome, AuthorizeRequest};
+
+/// Token endpoint handler (`/token`).
+pub mod token;
+pub use token::{handle_token, TokenErrorResponse, TokenRequest, TokenResponse};
