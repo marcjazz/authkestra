@@ -152,32 +152,29 @@ pub async fn handle_token(
             });
         }
 
-        let method = auth_code
-            .code_challenge_method
-            .as_deref()
-            .unwrap_or("plain");
-        if method == "S256" {
-            let mut hasher = Sha256::new();
-            hasher.update(verifier.as_bytes());
-            let hash = hasher.finalize();
-            let computed_challenge = URL_SAFE_NO_PAD.encode(hash);
+        let method = auth_code.code_challenge_method.as_deref().unwrap_or("");
+        if method != "S256" {
+            tracing::error!(
+                method = %method,
+                "Unsupported PKCE challenge method in stored authorization code. Only S256 is allowed."
+            );
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Unsupported PKCE challenge method".to_string(),
+            });
+        }
 
-            if computed_challenge != *challenge {
-                tracing::warn!("PKCE S256 code challenge mismatch");
-                return Err(TokenErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: "code_verifier is invalid".to_string(),
-                });
-            }
-        } else {
-            // "plain" method
-            if verifier != challenge {
-                tracing::warn!("PKCE plain code challenge mismatch");
-                return Err(TokenErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: "code_verifier is invalid".to_string(),
-                });
-            }
+        let mut hasher = Sha256::new();
+        hasher.update(verifier.as_bytes());
+        let hash = hasher.finalize();
+        let computed_challenge = URL_SAFE_NO_PAD.encode(hash);
+
+        if computed_challenge != *challenge {
+            tracing::warn!("PKCE S256 code challenge mismatch");
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "code_verifier is invalid".to_string(),
+            });
         }
     } else if client.require_pkce {
         tracing::warn!("PKCE was required by client config but code lacks challenge");
