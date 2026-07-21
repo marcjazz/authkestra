@@ -19,6 +19,9 @@ use std::sync::Arc;
 
 pub mod helpers;
 
+#[cfg(feature = "op")]
+pub mod op;
+
 #[cfg(feature = "flow")]
 pub use helpers::actix_login_handler;
 #[cfg(all(feature = "flow", feature = "session"))]
@@ -26,6 +29,9 @@ pub use helpers::{actix_callback_handler, actix_logout_handler};
 
 #[cfg(all(feature = "flow", feature = "session"))]
 pub use AuthEngineActixExt as AuthkestraActixExt;
+
+#[cfg(feature = "op")]
+pub use op::AuthEngineActixOpExt;
 
 #[cfg(feature = "flow")]
 pub trait AuthEngineActixExt<S, T> {

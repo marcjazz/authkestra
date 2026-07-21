@@ -10,9 +10,10 @@ authkestra-engine = { workspace = true, features = ["flow", "token", "session"] 
 authkestra-session = { workspace = true, features = ["memory", "redis", "sql-sqlite"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
-authkestra-actix = { workspace = true, features = ["flow", "session", "token"] }
-authkestra-axum = { workspace = true, features = ["flow", "session", "token"] }
+authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op"] }
+authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op"] }
 authkestra-oidc = { workspace = true }
+authkestra-op = { workspace = true }
 
 actix-web = "4"
 axum = "0.8"
