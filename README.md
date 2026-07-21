@@ -29,27 +29,27 @@ For advanced users, individual crates are still available and can be used indepe
 
 | Crate                                                                    | Responsibility                                                            |
 | :----------------------------------------------------------------------- | :------------------------------------------------------------------------ |
-| [`authkestra`](authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
-| [`authkestra-engine`](authkestra-engine/README.md)                       | Foundational types, traits and the **AuthEngine** orchestrator.           |
-| [`authkestra-resource`](authkestra-resource/README.md)                   | Resource server enforcement and validation (JWT, etc).                    |
-| [`authkestra-session`](authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
-| [`authkestra-providers`](authkestra-providers/README.md)                 | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
-| [`authkestra-axum`](authkestra-axum/README.md)                           | Axum-specific integration, including `AuthSession` extractors.            |
-| [`authkestra-actix`](authkestra-actix/README.md)                         | Actix-specific integration (Second-tier adapter, no macro support yet).   |
-| [`authkestra-oidc`](authkestra-oidc/README.md)                           | OpenID Connect discovery and provider support.                            |
+| [`authkestra`](crates/authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
+| [`authkestra-engine`](crates/authkestra-engine/README.md)                       | Foundational types, traits and the **AuthEngine** orchestrator.           |
+| [`authkestra-resource`](crates/authkestra-resource/README.md)                   | Resource server enforcement and validation (JWT, etc).                    |
+| [`authkestra-session`](crates/authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
+| [`authkestra-providers`](crates/authkestra-providers/README.md)                 | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
+| [`authkestra-axum`](crates/authkestra-axum/README.md)                           | Axum-specific integration, including `AuthSession` extractors.            |
+| [`authkestra-actix`](crates/authkestra-actix/README.md)                         | Actix-specific integration (Second-tier adapter, no macro support yet).   |
+| [`authkestra-oidc`](crates/authkestra-oidc/README.md)                           | OpenID Connect discovery and provider support.                            |
 
 ## 🛠️ Usage
 
-To see Authkestra in action, check out the [examples](authkestra-examples/examples/) directory:
+To see Authkestra in action, check out the [examples](crates/authkestra-examples/examples/) directory:
 
-- [Axum Basic Setup](authkestra-examples/examples/axum_basic_setup.rs): `cargo run --example axum_basic_setup`
-- [Actix Basic Setup](authkestra-examples/examples/actix_basic_setup.rs): `cargo run --example actix_basic_setup`
-- [Axum with GitHub OAuth](authkestra-examples/examples/axum_oauth2_github.rs): `cargo run --example axum_oauth2_github`
-- [Axum with Google OIDC](authkestra-examples/examples/axum_oidc_google.rs): `cargo run --example axum_oidc_google`
-- [Axum with Redis Session](authkestra-examples/examples/axum_session_redis.rs): `cargo run --example axum_session_redis`
-- [Client Credentials Flow](authkestra-examples/examples/axum_client_credentials.rs): `cargo run --example axum_client_credentials`
-- [Device Flow](authkestra-examples/examples/axum_device_flow.rs): `cargo run --example axum_device_flow`
-- [Axum Resource Server](authkestra-examples/examples/axum_resource_server.rs): `cargo run --example axum_resource_server`
+- [Axum Basic Setup](crates/authkestra-examples/examples/axum_basic_setup.rs): `cargo run --example axum_basic_setup`
+- [Actix Basic Setup](crates/authkestra-examples/examples/actix_basic_setup.rs): `cargo run --example actix_basic_setup`
+- [Axum with GitHub OAuth](crates/authkestra-examples/examples/axum_oauth2_github.rs): `cargo run --example axum_oauth2_github`
+- [Axum with Google OIDC](crates/authkestra-examples/examples/axum_oidc_google.rs): `cargo run --example axum_oidc_google`
+- [Axum with Redis Session](crates/authkestra-examples/examples/axum_session_redis.rs): `cargo run --example axum_session_redis`
+- [Client Credentials Flow](crates/authkestra-examples/examples/axum_client_credentials.rs): `cargo run --example axum_client_credentials`
+- [Device Flow](crates/authkestra-examples/examples/axum_device_flow.rs): `cargo run --example axum_device_flow`
+- [Axum Resource Server](crates/authkestra-examples/examples/axum_resource_server.rs): `cargo run --example axum_resource_server`
 
 ## �️ Technical Design Principles
 
