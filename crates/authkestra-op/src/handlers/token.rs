@@ -266,16 +266,19 @@ async fn handle_device_code(
                     Some(session.scope.clone())
                 };
 
-                let access_token =
-                    match tokens.issue_user_token(identity.clone(), expires_in, scope_opt.clone()) {
-                        Ok(t) => t,
-                        Err(_) => {
-                            return Err(TokenErrorResponse {
-                                error: "server_error".to_string(),
-                                error_description: "Failed to issue access token".to_string(),
-                            });
-                        }
-                    };
+                let access_token = match tokens.issue_user_token(
+                    identity.clone(),
+                    expires_in,
+                    scope_opt.clone(),
+                ) {
+                    Ok(t) => t,
+                    Err(_) => {
+                        return Err(TokenErrorResponse {
+                            error: "server_error".to_string(),
+                            error_description: "Failed to issue access token".to_string(),
+                        });
+                    }
+                };
 
                 let id_token = if session.scope.contains("openid") {
                     match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
