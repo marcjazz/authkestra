@@ -46,9 +46,24 @@ impl ClientRegistration {
         self.redirect_uris.iter().any(|u| u == redirect_uri)
     }
 
-    /// Returns true if this client is permitted to use `grant_type`.
+    /// Checks if the client is allowed to use a specific grant type.
     pub fn allows_grant_type(&self, grant_type: GrantType) -> bool {
         self.grant_types.contains(&grant_type)
+    }
+
+    /// Verifies the provided secret against the stored hash.
+    /// In a real implementation, this would use a secure hashing algorithm (e.g. bcrypt/argon2).
+    /// For this prototype, we'll do a simple comparison if we don't have a real hash, or
+    /// assume the hash is a sha256.
+    pub fn verify_secret(&self, secret: &str) -> bool {
+        if let Some(hash) = &self.client_secret_hash {
+            // For now, simple string compare (assuming secret hash is the secret)
+            // or we could use sha256
+            hash == secret
+        } else {
+            // No secret stored means public client; shouldn't be used for confidential flows
+            false
+        }
     }
 }
 

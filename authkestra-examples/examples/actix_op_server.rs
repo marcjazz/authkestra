@@ -9,8 +9,8 @@ use authkestra_op::{
     client::{ClientRegistration, ClientStore, InMemoryClientStore},
     code::{AuthorizationCodeStore, InMemoryAuthorizationCodeStore},
     config::OpConfig,
+    refresh::{InMemoryRefreshTokenStore, RefreshTokenStore},
 };
-use authkestra_session::memory::MemoryStore;
 use std::sync::Arc;
 
 struct AppState;
@@ -34,6 +34,7 @@ async fn main() -> std::io::Result<()> {
     let clients: Arc<dyn ClientStore> = Arc::new(clients);
 
     let codes: Arc<dyn AuthorizationCodeStore> = Arc::new(InMemoryAuthorizationCodeStore::new());
+    let refresh_tokens: Arc<dyn RefreshTokenStore> = Arc::new(InMemoryRefreshTokenStore::new());
 
     let config = OpConfig {
         issuer: "http://localhost:8080".to_string(),
@@ -62,6 +63,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(actix_web::web::Data::new(token_manager.clone()))
             .app_data(actix_web::web::Data::new(clients.clone()))
             .app_data(actix_web::web::Data::new(codes.clone()))
+            .app_data(actix_web::web::Data::new(refresh_tokens.clone()))
             .app_data(actix_web::web::Data::new(config.clone()))
             .app_data(actix_web::web::Data::new(session_store.clone()))
             .app_data(actix_web::web::Data::new(session_config.clone()))

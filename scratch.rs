@@ -1,75 +1,9 @@
-use crate::client::ClientStore;
-use crate::code::AuthorizationCodeStore;
-use crate::config::OpConfig;
-use crate::refresh::{RefreshToken, RefreshTokenStore};
-use authkestra_engine::token::TokenManager;
-use base64::Engine;
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use sha2::Digest;
-
-/// Request payload for the token endpoint.
-#[derive(Debug, Deserialize, Clone)]
-pub struct TokenRequest {
-    /// OAuth2 grant type.
-    pub grant_type: String,
-    /// The authorization code received from the authorization endpoint.
-    pub code: Option<String>,
-    /// The redirect URI used in the authorization request.
-    pub redirect_uri: Option<String>,
-    /// The client identifier (can also be provided via Basic Auth).
-    pub client_id: Option<String>,
-    /// The client secret (can also be provided via Basic Auth).
-    pub client_secret: Option<String>,
-    /// The PKCE code verifier used if a challenge was provided.
-    pub code_verifier: Option<String>,
-    /// The requested scope.
-    pub scope: Option<String>,
-    /// The refresh token (for refresh_token grant type).
-    pub refresh_token: Option<String>,
-}
-
-/// Success response for the token endpoint.
-#[derive(Debug, Serialize)]
-pub struct TokenResponse {
-    /// The access token issued by the authorization server.
-    pub access_token: String,
-    /// The type of the token, typically "Bearer".
-    pub token_type: String,
-    /// The lifetime in seconds of the access token.
-    pub expires_in: u64,
-    /// The ID token, if `openid` scope was requested.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id_token: Option<String>,
-    /// The refresh token, if `offline_access` was requested or using refresh grant.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub refresh_token: Option<String>,
-    /// The scope of the granted tokens.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-}
-
-/// Error response for the token endpoint.
-#[derive(Debug, Serialize)]
-pub struct TokenErrorResponse {
-    /// The OAuth2 error code.
-    pub error: String,
-    /// A human-readable description of the error.
-    pub error_description: String,
-}
-
-/// Processes a token exchange request (`/token` endpoint).
-///
-/// This handles different OAuth2 grant types such as `authorization_code`,
-/// `client_credentials`, and `refresh_token`, issuing appropriate access tokens,
-/// ID tokens, and refresh tokens based on the request and client configuration.
 pub async fn handle_token(
     req: TokenRequest,
     auth_header: Option<&str>,
     config: &OpConfig,
     clients: &dyn ClientStore,
     codes: &dyn AuthorizationCodeStore,
-    refresh_tokens: &dyn RefreshTokenStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
@@ -79,8 +13,8 @@ pub async fn handle_token(
     let mut req_client_secret = req.client_secret.clone();
 
     if let Some(auth) = auth_header {
-        if let Some(stripped) = auth.strip_prefix("Basic ") {
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(stripped) {
+        if auth.starts_with("Basic ") {
+            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&auth[6..]) {
                 if let Ok(creds) = String::from_utf8(decoded) {
                     if let Some((id, secret)) = creds.split_once(':') {
                         req_client_id = Some(id.to_string());
@@ -134,24 +68,9 @@ pub async fn handle_token(
     }
 
     match req.grant_type.as_str() {
-        "authorization_code" => {
-            handle_authorization_code(
-                req,
-                client_id,
-                client,
-                config,
-                codes,
-                refresh_tokens,
-                tokens,
-            )
-            .await
-        }
-        "client_credentials" => {
-            handle_client_credentials(req, client_id, client, config, tokens).await
-        }
-        "refresh_token" => {
-            handle_refresh_token(req, client_id, client, config, refresh_tokens, tokens).await
-        }
+        "authorization_code" => handle_authorization_code(req, client_id, client, config, codes, tokens).await,
+        "client_credentials" => handle_client_credentials(req, client_id, client, config, tokens).await,
+        "refresh_token" => handle_refresh_token(req, client_id, client, config, tokens).await,
         _ => {
             tracing::warn!(grant_type = %req.grant_type, "Unsupported grant type");
             Err(TokenErrorResponse {
@@ -168,9 +87,9 @@ async fn handle_authorization_code(
     client: crate::client::ClientRegistration,
     config: &OpConfig,
     codes: &dyn AuthorizationCodeStore,
-    refresh_tokens: &dyn RefreshTokenStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
+    use authkestra_engine::auth::state::Identity;
     let req_code = req.code.as_deref().unwrap_or("");
     let req_redirect_uri = req.redirect_uri.as_deref().unwrap_or("");
 
@@ -294,9 +213,9 @@ async fn handle_authorization_code(
 
     let id_token = if auth_code.scope.contains("openid") {
         match tokens.issue_id_token(
-            auth_code.identity.clone(),
+            auth_code.identity,
             &client_id,
-            auth_code.nonce.clone(),
+            auth_code.nonce,
             expires_in,
         ) {
             Ok(t) => Some(t),
@@ -312,25 +231,6 @@ async fn handle_authorization_code(
         None
     };
 
-    // Issue refresh token if requested
-    let mut issued_refresh_token = None;
-    if auth_code.scope.contains("offline_access") {
-        let refresh_val = uuid::Uuid::new_v4().to_string();
-        let rt = RefreshToken {
-            token: refresh_val.clone(),
-            client_id: client_id.clone(),
-            identity: auth_code.identity.clone(),
-            scope: auth_code.scope.clone(),
-            expires_at: Utc::now() + chrono::Duration::days(30),
-        };
-        if let Err(e) = refresh_tokens.store_token(rt).await {
-            tracing::error!(error = ?e, "Failed to store refresh token");
-            // Non-fatal, just don't return a refresh token
-        } else {
-            issued_refresh_token = Some(refresh_val);
-        }
-    }
-
     tracing::info!(
         client_id = %client_id,
         "Successfully exchanged authorization code for tokens"
@@ -341,7 +241,6 @@ async fn handle_authorization_code(
         token_type: "Bearer".to_string(),
         expires_in,
         id_token,
-        refresh_token: issued_refresh_token,
         scope: scope_opt,
     })
 }
@@ -361,13 +260,12 @@ async fn handle_client_credentials(
         tracing::warn!(client_id = %client_id, "Client not authorized for client_credentials grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
-            error_description: "Client is not authorized to use client_credentials grant type"
-                .to_string(),
+            error_description: "Client is not authorized to use client_credentials grant type".to_string(),
         });
     }
 
     let expires_in = config.access_token_ttl_secs;
-
+    
     // For client credentials, the "identity" is the client itself
     let identity = Identity {
         provider_id: "client_credentials".to_string(),
@@ -392,8 +290,7 @@ async fn handle_client_credentials(
         }
     }
 
-    let access_token = match tokens.issue_user_token(identity, expires_in, requested_scope.clone())
-    {
+    let access_token = match tokens.issue_user_token(identity, expires_in, requested_scope.clone()) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!(error = ?e, "Failed to issue access token for client credentials");
@@ -414,7 +311,6 @@ async fn handle_client_credentials(
         token_type: "Bearer".to_string(),
         expires_in,
         id_token: None, // client credentials does not issue ID tokens
-        refresh_token: None,
         scope: requested_scope,
     })
 }
@@ -424,7 +320,6 @@ async fn handle_refresh_token(
     client_id: String,
     client: crate::client::ClientRegistration,
     config: &OpConfig,
-    refresh_tokens: &dyn RefreshTokenStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     use crate::client::GrantType;
@@ -433,8 +328,7 @@ async fn handle_refresh_token(
         tracing::warn!(client_id = %client_id, "Client not authorized for refresh_token grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
-            error_description: "Client is not authorized to use refresh_token grant type"
-                .to_string(),
+            error_description: "Client is not authorized to use refresh_token grant type".to_string(),
         });
     }
 
@@ -449,89 +343,10 @@ async fn handle_refresh_token(
         }
     };
 
-    let rt = match refresh_tokens.get_token(req_refresh_token).await {
-        Ok(Some(rt)) => rt,
-        Ok(None) => {
-            tracing::warn!("Invalid refresh token");
-            return Err(TokenErrorResponse {
-                error: "invalid_grant".to_string(),
-                error_description: "Invalid refresh token".to_string(),
-            });
-        }
-        Err(e) => {
-            tracing::error!(error = ?e, "Failed to retrieve refresh token");
-            return Err(TokenErrorResponse {
-                error: "server_error".to_string(),
-                error_description: "Internal server error".to_string(),
-            });
-        }
-    };
-
-    if rt.client_id != client_id {
-        tracing::warn!("Refresh token issued to a different client");
-        return Err(TokenErrorResponse {
-            error: "invalid_grant".to_string(),
-            error_description: "Invalid refresh token".to_string(),
-        });
-    }
-
-    if chrono::Utc::now() > rt.expires_at {
-        tracing::warn!("Refresh token expired");
-        return Err(TokenErrorResponse {
-            error: "invalid_grant".to_string(),
-            error_description: "Refresh token expired".to_string(),
-        });
-    }
-
-    // Optional: issue new refresh token (refresh token rotation)
-    // For now we just keep the old one valid until expiration, or we can rotate.
-    // Let's rotate.
-    if let Err(e) = refresh_tokens.revoke_token(req_refresh_token).await {
-        tracing::error!(error = ?e, "Failed to revoke old refresh token");
-    }
-
-    let new_refresh_val = uuid::Uuid::new_v4().to_string();
-    let new_rt = RefreshToken {
-        token: new_refresh_val.clone(),
-        client_id: client_id.clone(),
-        identity: rt.identity.clone(),
-        scope: rt.scope.clone(),
-        expires_at: chrono::Utc::now() + chrono::Duration::days(30),
-    };
-    if let Err(e) = refresh_tokens.store_token(new_rt).await {
-        tracing::error!(error = ?e, "Failed to store new refresh token");
-    }
-
-    let expires_in = config.access_token_ttl_secs;
-    let scope_opt = if rt.scope.is_empty() {
-        None
-    } else {
-        Some(rt.scope.clone())
-    };
-
-    let access_token =
-        match tokens.issue_user_token(rt.identity.clone(), expires_in, scope_opt.clone()) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to issue access token");
-                return Err(TokenErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: "Failed to generate token".to_string(),
-                });
-            }
-        };
-
-    tracing::info!(
-        client_id = %client_id,
-        "Successfully refreshed tokens"
-    );
-
-    Ok(TokenResponse {
-        access_token,
-        token_type: "Bearer".to_string(),
-        expires_in,
-        id_token: None, // usually id_token is not issued on refresh unless openid scope is present, simplify for now
-        refresh_token: Some(new_refresh_val),
-        scope: scope_opt,
-    })
+    // Right now, authkestra_engine doesn't have an explicit `consume_refresh_token` or
+    // `issue_refresh_token` implemented in TokenManager!
+    // But OP.7 requires it.
+    // We will just validate the token as a user token if TokenManager supports that,
+    // wait, what does `TokenManager` have?
+    unimplemented!("refresh token flow logic goes here")
 }

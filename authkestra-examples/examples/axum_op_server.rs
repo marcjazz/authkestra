@@ -8,6 +8,7 @@ use authkestra_op::{
     client::{ClientRegistration, ClientStore, InMemoryClientStore},
     code::{AuthorizationCodeStore, InMemoryAuthorizationCodeStore},
     config::OpConfig,
+    refresh::{InMemoryRefreshTokenStore, RefreshTokenStore},
 };
 use axum::{extract::FromRef, Router};
 use std::sync::Arc;
@@ -20,6 +21,7 @@ struct AppState {
     config: OpConfig,
     session_store: Arc<dyn authkestra_session::SessionStore>,
     session_config: authkestra_engine::SessionConfig,
+    refresh_tokens: Arc<dyn RefreshTokenStore>,
 }
 
 impl FromRef<AppState> for Arc<TokenManager> {
@@ -66,6 +68,12 @@ impl FromRef<AppState> for OpConfig {
     }
 }
 
+impl FromRef<AppState> for Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumError> {
+    fn from_ref(app_state: &AppState) -> Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumError> {
+        Ok(app_state.refresh_tokens.clone())
+    }
+}
+
 impl FromRef<AppState> for Result<Arc<dyn authkestra_session::SessionStore>, AuthEngineAxumError> {
     fn from_ref(state: &AppState) -> Self {
         Ok(state.session_store.clone())
@@ -97,6 +105,7 @@ async fn main() {
     let clients: Arc<dyn ClientStore> = Arc::new(clients);
 
     let codes: Arc<dyn AuthorizationCodeStore> = Arc::new(InMemoryAuthorizationCodeStore::new());
+    let refresh_tokens: Arc<dyn RefreshTokenStore> = Arc::new(InMemoryRefreshTokenStore::new());
 
     let session_store: Arc<dyn authkestra_session::SessionStore> =
         Arc::new(authkestra_session::memory::MemoryStore::new());
@@ -109,6 +118,7 @@ async fn main() {
         token_manager,
         clients,
         codes,
+        refresh_tokens,
         session_store,
         session_config,
         config: OpConfig {
