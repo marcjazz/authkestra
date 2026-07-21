@@ -449,17 +449,17 @@ async fn handle_refresh_token(
         }
     };
 
-    let rt = match refresh_tokens.get_token(req_refresh_token).await {
+    let rt = match refresh_tokens.consume_token(req_refresh_token).await {
         Ok(Some(rt)) => rt,
         Ok(None) => {
-            tracing::warn!("Invalid refresh token");
+            tracing::warn!("Invalid refresh token (possibly replayed)");
             return Err(TokenErrorResponse {
                 error: "invalid_grant".to_string(),
                 error_description: "Invalid refresh token".to_string(),
             });
         }
         Err(e) => {
-            tracing::error!(error = ?e, "Failed to retrieve refresh token");
+            tracing::error!(error = ?e, "Failed to consume refresh token");
             return Err(TokenErrorResponse {
                 error: "server_error".to_string(),
                 error_description: "Internal server error".to_string(),
@@ -483,13 +483,6 @@ async fn handle_refresh_token(
         });
     }
 
-    // Optional: issue new refresh token (refresh token rotation)
-    // For now we just keep the old one valid until expiration, or we can rotate.
-    // Let's rotate.
-    if let Err(e) = refresh_tokens.revoke_token(req_refresh_token).await {
-        tracing::error!(error = ?e, "Failed to revoke old refresh token");
-    }
-
     let new_refresh_val = uuid::Uuid::new_v4().to_string();
     let new_rt = RefreshToken {
         token: new_refresh_val.clone(),
@@ -498,6 +491,7 @@ async fn handle_refresh_token(
         scope: rt.scope.clone(),
         expires_at: chrono::Utc::now() + chrono::Duration::days(30),
     };
+
     if let Err(e) = refresh_tokens.store_token(new_rt).await {
         tracing::error!(error = ?e, "Failed to store new refresh token");
     }

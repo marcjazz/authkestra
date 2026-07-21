@@ -31,6 +31,13 @@ pub trait RefreshTokenStore: Send + Sync {
 
     /// Revokes a refresh token (and potentially its lineage).
     async fn revoke_token(&self, token: &str) -> Result<(), crate::error::OpError>;
+
+    /// Atomically retrieves and revokes a refresh token.
+    /// This prevents replay attacks by ensuring a token can only be successfully rotated once.
+    async fn consume_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<RefreshToken>, crate::error::OpError>;
 }
 
 /// A minimal in-memory `RefreshTokenStore` for development and tests.
@@ -68,5 +75,13 @@ impl RefreshTokenStore for InMemoryRefreshTokenStore {
     async fn revoke_token(&self, token: &str) -> Result<(), crate::error::OpError> {
         self.tokens.write().expect("lock poisoned").remove(token);
         Ok(())
+    }
+
+    async fn consume_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<RefreshToken>, crate::error::OpError> {
+        let mut map = self.tokens.write().expect("lock poisoned");
+        Ok(map.remove(token))
     }
 }
