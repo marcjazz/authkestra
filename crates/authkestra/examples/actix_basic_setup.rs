@@ -8,7 +8,7 @@ use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra::flow::AuthEngine;
 use authkestra_actix::{AuthSession, AuthkestraActixExt};
 use authkestra_engine::SessionConfig;
-use authkestra_session::SessionStore;
+use authkestra_engine::auth::SessionStore;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ use std::sync::Arc;
 async fn main() -> std::io::Result<()> {
     // Session Store
     let session_store: Arc<dyn SessionStore> =
-        Arc::new(authkestra_session::memory::MemoryStore::default());
+        Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
     let auth_engine = AuthEngine::builder()
         .session_store(session_store)

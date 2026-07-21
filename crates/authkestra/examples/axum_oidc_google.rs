@@ -10,7 +10,7 @@ use authkestra::flow::{AuthEngine, OAuth2Flow};
 use authkestra_axum::{AuthSession, AuthkestraAxumError, AuthkestraAxumExt, AuthkestraState};
 use authkestra_engine::{Configured, SessionConfig};
 use authkestra_providers::google::GoogleProvider;
-use authkestra_session::SessionStore;
+use authkestra_engine::auth::SessionStore;
 use axum::{
     response::{IntoResponse, Json},
     routing::get,
@@ -40,7 +40,7 @@ async fn main() {
 
     // Session Store
     let session_store: Arc<dyn SessionStore> =
-        Arc::new(authkestra_session::memory::MemoryStore::default());
+        Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
     let auth_engine = AuthEngine::builder()
         .provider(OAuth2Flow::new(google_provider))

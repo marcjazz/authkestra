@@ -10,7 +10,6 @@ categories.workspace = true
 
 [dependencies]
 authkestra-engine = { workspace = true }
-authkestra-session = { workspace = true, optional = true }
 authkestra-oidc = { workspace = true, optional = true }
 authkestra-axum = { workspace = true, optional = true }
 authkestra-actix = { workspace = true, optional = true }
@@ -19,8 +18,7 @@ authkestra-resource = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-authkestra-engine = { workspace = true, features = ["flow", "token", "session"] }
-authkestra-session = { workspace = true, features = ["memory", "redis", "sql-sqlite"] }
+authkestra-engine = { workspace = true, features = ["flow", "token", "session", "memory", "redis", "sql-sqlite"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
 authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op"] }
@@ -53,7 +51,7 @@ full = ["flow", "session", "token", "oidc", "axum", "actix", "github", "google",
 
 # Core features
 flow = ["authkestra-engine/flow"]
-session = ["dep:authkestra-session", "authkestra-engine/session"]
+session = ["authkestra-engine/session"]
 token = ["authkestra-engine/token"]
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]

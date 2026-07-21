@@ -50,8 +50,8 @@ async fn main() -> std::io::Result<()> {
         authorization_code_ttl_secs: 600,
     };
 
-    let session_store: Arc<dyn authkestra_session::SessionStore> =
-        Arc::new(authkestra_session::memory::MemoryStore::new());
+    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::new());
     let session_config = authkestra_engine::SessionConfig {
         cookie_name: "authkestra_sid".to_string(),
         ..Default::default()

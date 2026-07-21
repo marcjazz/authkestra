@@ -65,3 +65,20 @@ pub trait SessionStore: Send + Sync + 'static {
     /// Delete a session by its ID.
     async fn delete_session(&self, id: &str) -> Result<(), AuthError>;
 }
+
+#[async_trait]
+impl<S: crate::store::KvStore<Session>> SessionStore for S {
+    async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError> {
+        self.get(id).await.map_err(|e| AuthError::Session(e.to_string()))
+    }
+
+    async fn save_session(&self, session: &Session) -> Result<(), AuthError> {
+        let ttl_secs = (session.expires_at - chrono::Utc::now()).num_seconds();
+        let ttl = std::time::Duration::from_secs(if ttl_secs > 0 { ttl_secs as u64 } else { 0 });
+        self.set(&session.id, session.clone(), ttl).await.map_err(|e| AuthError::Session(e.to_string()))
+    }
+
+    async fn delete_session(&self, id: &str) -> Result<(), AuthError> {
+        self.delete(id).await.map_err(|e| AuthError::Session(e.to_string()))
+    }
+}

@@ -7,7 +7,7 @@ use authkestra_engine::SessionConfig;
 #[cfg(feature = "flow")]
 use authkestra_engine::{state::OAuth2State, AuthEngine, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "session")]
-pub use authkestra_session::{Session, SessionConfig, SessionStore};
+pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 #[allow(unused_imports)]
 use std::sync::Arc;
 

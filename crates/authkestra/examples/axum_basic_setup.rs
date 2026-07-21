@@ -6,7 +6,7 @@
 use authkestra::flow::AuthEngine;
 use authkestra_axum::{AuthSession, AuthkestraAxumError, AuthkestraAxumExt, AuthkestraState};
 use authkestra_engine::{Configured, SessionConfig};
-use authkestra_session::SessionStore;
+use authkestra_engine::auth::SessionStore;
 use axum::{
     response::{IntoResponse, Json},
     routing::get,
@@ -24,7 +24,7 @@ type AppState = AuthkestraState<Configured<Arc<dyn SessionStore>>>;
 async fn main() {
     // Session Store
     let session_store: Arc<dyn SessionStore> =
-        Arc::new(authkestra_session::memory::MemoryStore::default());
+        Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
     let auth_engine = AuthEngine::builder()
         .session_store(session_store)

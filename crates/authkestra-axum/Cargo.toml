@@ -9,8 +9,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-authkestra-engine = { workspace = true }
-authkestra-session = { workspace = true, optional = true }
+authkestra-engine = { workspace = true, optional = true }
 authkestra-resource = { workspace = true, optional = true }
 authkestra-macros = { workspace = true, optional = true, features = ["axum"] }
 authkestra-op = { workspace = true, optional = true }
@@ -27,7 +26,7 @@ tracing = "0.1"
 [features]
 default = ["macros"]
 macros = ["authkestra-macros"]
-session = ["dep:authkestra-session", "authkestra-engine/session"]
+session = ["authkestra-engine/session"]
 flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engine/token"]
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]

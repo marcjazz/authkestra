@@ -19,7 +19,7 @@ struct AppState {
     clients: Arc<dyn ClientStore>,
     codes: Arc<dyn AuthorizationCodeStore>,
     config: OpConfig,
-    session_store: Arc<dyn authkestra_session::SessionStore>,
+    session_store: Arc<dyn authkestra_engine::auth::SessionStore>,
     session_config: authkestra_engine::SessionConfig,
     refresh_tokens: Arc<dyn RefreshTokenStore>,
 }
@@ -74,7 +74,7 @@ impl FromRef<AppState> for Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumErro
     }
 }
 
-impl FromRef<AppState> for Result<Arc<dyn authkestra_session::SessionStore>, AuthEngineAxumError> {
+impl FromRef<AppState> for Result<Arc<dyn authkestra_engine::auth::SessionStore>, AuthEngineAxumError> {
     fn from_ref(state: &AppState) -> Self {
         Ok(state.session_store.clone())
     }
@@ -107,8 +107,8 @@ async fn main() {
     let codes: Arc<dyn AuthorizationCodeStore> = Arc::new(InMemoryAuthorizationCodeStore::new());
     let refresh_tokens: Arc<dyn RefreshTokenStore> = Arc::new(InMemoryRefreshTokenStore::new());
 
-    let session_store: Arc<dyn authkestra_session::SessionStore> =
-        Arc::new(authkestra_session::memory::MemoryStore::new());
+    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::new());
     let session_config = authkestra_engine::SessionConfig {
         cookie_name: "authkestra_sid".to_string(),
         ..Default::default()

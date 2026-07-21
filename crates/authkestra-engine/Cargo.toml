@@ -30,9 +30,16 @@ tokio = { version = "1.0", features = ["full"] }
 aes-gcm = "0.10.3"
 rsa = "0.9.6"
 
+redis = { version = "0.27", features = ["tokio-comp"], optional = true }
+sqlx = { version = "0.8.2", optional = true }
+
 [features]
 default = ["token", "flow"]
 token = []
 flow = []
 session = []
-
+memory = []
+redis = ["dep:redis"]
+sql-postgres = ["sqlx/postgres", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
+sql-mysql = ["sqlx/mysql", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
+sql-sqlite = ["sqlx/sqlite", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]

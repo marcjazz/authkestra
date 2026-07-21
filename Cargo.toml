@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/authkestra-engine",
-    "crates/authkestra-session",
     "crates/authkestra-providers",
     "crates/authkestra-axum",
     "crates/authkestra-macros",
@@ -23,7 +22,6 @@ categories = ["authentication"]
 
 [workspace.dependencies]
 authkestra-engine = { version = "0.1.2", path = "crates/authkestra-engine" }
-authkestra-session = { version = "0.1.1", path = "crates/authkestra-session" }
 authkestra-providers = { version = "0.1.1", path = "crates/authkestra-providers" }
 authkestra-axum = { version = "0.1.3", path = "crates/authkestra-axum" }
 authkestra-macros = { version = "0.1.0", path = "crates/authkestra-macros" }

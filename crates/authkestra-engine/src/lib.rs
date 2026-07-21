@@ -2,6 +2,7 @@ pub mod auth;
 pub mod engine;
 pub mod flow;
 pub mod protocol;
+pub mod store;
 pub mod token;
 
 pub use auth::*;

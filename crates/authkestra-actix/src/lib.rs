@@ -11,7 +11,7 @@ pub use authkestra_engine::{AuthEngine, SessionConfig};
 #[cfg(all(feature = "flow", any(feature = "session", feature = "token")))]
 pub use authkestra_engine::{Configured, Missing};
 #[cfg(feature = "session")]
-pub use authkestra_session::{Session, SessionStore};
+pub use authkestra_engine::auth::{Session, SessionStore};
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use futures::future::LocalBoxFuture;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
