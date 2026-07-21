@@ -194,7 +194,12 @@ mod tests {
 
         // Issue token with openid, profile scopes (NO email)
         let access_token = tokens
-            .issue_user_token(test_identity(), 3600, Some("openid profile".to_string()), None)
+            .issue_user_token(
+                test_identity(),
+                3600,
+                Some("openid profile".to_string()),
+                None,
+            )
             .unwrap();
 
         let req = UserInfoRequest {

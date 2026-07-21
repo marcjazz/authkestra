@@ -297,17 +297,21 @@ async fn handle_authorization_code(
         Some(auth_code.scope.clone())
     };
 
-    let access_token =
-        match tokens.issue_user_token(auth_code.identity.clone(), expires_in, scope_opt.clone(), Some(client_id.clone())) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to issue access token");
-                return Err(TokenErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: "Failed to generate token".to_string(),
-                });
-            }
-        };
+    let access_token = match tokens.issue_user_token(
+        auth_code.identity.clone(),
+        expires_in,
+        scope_opt.clone(),
+        Some(client_id.clone()),
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to issue access token");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to generate token".to_string(),
+            });
+        }
+    };
 
     let id_token = if auth_code.scope.contains("openid") {
         match tokens.issue_id_token(
@@ -397,8 +401,12 @@ async fn handle_client_credentials(
         }
     }
 
-    let access_token = match tokens.issue_client_token(&client_id, expires_in, requested_scope.clone(), Some(client_id.clone()))
-    {
+    let access_token = match tokens.issue_client_token(
+        &client_id,
+        expires_in,
+        requested_scope.clone(),
+        Some(client_id.clone()),
+    ) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!(error = ?e, "Failed to issue access token for client credentials");
@@ -508,17 +516,21 @@ async fn handle_refresh_token(
         Some(rt.scope.clone())
     };
 
-    let access_token =
-        match tokens.issue_user_token(rt.identity.clone(), expires_in, scope_opt.clone(), Some(client_id.clone())) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to issue access token");
-                return Err(TokenErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: "Failed to generate token".to_string(),
-                });
-            }
-        };
+    let access_token = match tokens.issue_user_token(
+        rt.identity.clone(),
+        expires_in,
+        scope_opt.clone(),
+        Some(client_id.clone()),
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to issue access token");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to generate token".to_string(),
+            });
+        }
+    };
 
     tracing::info!(
         client_id = %client_id,
@@ -549,7 +561,8 @@ async fn handle_token_exchange(
         tracing::warn!("Token exchange is disabled globally");
         return Err(TokenErrorResponse {
             error: "unsupported_grant_type".to_string(),
-            error_description: "Token exchange is not enabled on this authorization server".to_string(),
+            error_description: "Token exchange is not enabled on this authorization server"
+                .to_string(),
         });
     }
 
@@ -557,7 +570,8 @@ async fn handle_token_exchange(
         tracing::warn!(client_id = %client_id, "Client not authorized for token_exchange grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
-            error_description: "Client is not authorized to use token_exchange grant type".to_string(),
+            error_description: "Client is not authorized to use token_exchange grant type"
+                .to_string(),
         });
     }
 
@@ -570,7 +584,9 @@ async fn handle_token_exchange(
     }
 
     let subject_token_type = req.subject_token_type.as_deref().unwrap_or("");
-    if subject_token_type != "urn:ietf:params:oauth:token-type:access_token" && subject_token_type != "urn:ietf:params:oauth:token-type:id_token" {
+    if subject_token_type != "urn:ietf:params:oauth:token-type:access_token"
+        && subject_token_type != "urn:ietf:params:oauth:token-type:id_token"
+    {
         tracing::warn!(subject_token_type = %subject_token_type, "Unsupported subject_token_type");
         return Err(TokenErrorResponse {
             error: "invalid_request".to_string(),
@@ -578,12 +594,16 @@ async fn handle_token_exchange(
         });
     }
 
-    let requested_token_type = req.requested_token_type.as_deref().unwrap_or("urn:ietf:params:oauth:token-type:access_token");
+    let requested_token_type = req
+        .requested_token_type
+        .as_deref()
+        .unwrap_or("urn:ietf:params:oauth:token-type:access_token");
     if requested_token_type != "urn:ietf:params:oauth:token-type:access_token" {
         tracing::warn!(requested_token_type = %requested_token_type, "Unsupported requested_token_type");
         return Err(TokenErrorResponse {
             error: "invalid_request".to_string(),
-            error_description: "Unsupported requested_token_type. Only access_token is supported.".to_string(),
+            error_description: "Unsupported requested_token_type. Only access_token is supported."
+                .to_string(),
         });
     }
 
@@ -685,16 +705,17 @@ async fn handle_token_exchange(
     };
 
     let expires_in = config.access_token_ttl_secs;
-    let access_token = match tokens.issue_user_token(identity, expires_in, final_scope_str.clone(), new_aud) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!(error = ?e, "Failed to issue access token during exchange");
-            return Err(TokenErrorResponse {
-                error: "server_error".to_string(),
-                error_description: "Failed to generate token".to_string(),
-            });
-        }
-    };
+    let access_token =
+        match tokens.issue_user_token(identity, expires_in, final_scope_str.clone(), new_aud) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(error = ?e, "Failed to issue access token during exchange");
+                return Err(TokenErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: "Failed to generate token".to_string(),
+                });
+            }
+        };
 
     tracing::info!(
         client_id = %client_id,

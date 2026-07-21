@@ -309,7 +309,9 @@ mod tests {
             attributes: HashMap::new(),
         };
 
-        let token = manager.issue_user_token(identity, 3600, None, None).unwrap();
+        let token = manager
+            .issue_user_token(identity, 3600, None, None)
+            .unwrap();
         let claims = manager.validate_token(&token, None).unwrap();
 
         assert_eq!(claims.iss, Some("issuer".to_string()));
@@ -364,7 +366,9 @@ a0QMqKUcs8+YTy5R5K6qtw==
             attributes: HashMap::new(),
         };
 
-        let token = manager.issue_user_token(identity, 3600, None, None).unwrap();
+        let token = manager
+            .issue_user_token(identity, 3600, None, None)
+            .unwrap();
 
         // Decode directly via jsonwebtoken to prove independent verification
         let jwk = manager.public_jwk().unwrap();
