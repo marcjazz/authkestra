@@ -18,12 +18,13 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 🚀 Features
 
-- **Modular Design**: Concerns are strictly separated into crates: `authkestra-engine`, `authkestra-resource`, `authkestra-session`, and framework adapters like `authkestra-axum` and `authkestra-actix`.
-- **Explicit Flow Control**: Dependencies and authentication context are injected explicitly via **Extractors** (Axum/Actix) or constructor arguments, eliminating "magic" middleware.
-- **Flexible Chaining**: Use the `AuthEngineGuard` to chain multiple authentication strategies (Token, Session, Basic, Custom) in any order.
-- **Provider Agnostic**: Easily integrate new OAuth providers by implementing the `OAuthProvider` trait.
-- **Session Management**: Flexible session storage via the `SessionStore` trait, with built-in support for in-memory, Redis, and SQL via `sqlx`.
-- **Stateless Tokens**: Comprehensive JWT support and offline validation.
+- **Modular & Unified Core**: Following our RFC-001 architecture, core concerns are unified in `authkestra-engine` while adapters like `authkestra-axum` and `authkestra-actix` provide seamless framework integrations.
+- **Stateless OAuth**: OAuth `state` and `nonce` are stored securely in encrypted cookies—never in your database—keeping your architecture clean and horizontally scalable.
+- **Performant OIDC Discovery**: OIDC discovery documents are cached via background `tokio::spawn` tasks, completely eliminating per-request latency for fetching keys.
+- **Database Agnostic**: Authkestra never enforces schemas. All data access is strictly defined via traits (e.g., `UserStore`, `SessionStore`), allowing you to use any database or ORM.
+- **Flexible Chaining**: Chain multiple authentication strategies (Token, Session, Basic, Custom) seamlessly.
+- **OpenID Connect Provider (OP)**: Build your own identity provider and authorization server using `authkestra-op`.
+- **Session Management**: Built-in support for in-memory, Redis, and SQL via `sqlx`.
 
 ## 📦 Workspace Crates
 
@@ -42,7 +43,21 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 🛠️ Usage
 
-To see Authkestra in action, check out the [examples](crates/authkestra-examples/examples/) directory:
+Authkestra utilizes a powerful **Typestate Builder Pattern** (`Authkestra::builder()`). This enforces at compile-time that certain methods are only available if their prerequisites are met (e.g., you can only call session methods if a `SessionStore` was provided).
+
+### Quick Start Example
+
+```rust
+use authkestra::Authkestra;
+
+// The builder ensures compile-time safety for your authentication stack
+let auth_engine = Authkestra::builder()
+    .with_session_store(redis_store)
+    .with_oauth_provider(github_provider)
+    .build();
+```
+
+To see complete, runnable examples for various frameworks and flows, check out the [examples](crates/authkestra-examples/examples/) directory:
 
 - [Axum Basic Setup](crates/authkestra-examples/examples/axum_basic_setup.rs): `cargo run --example axum_basic_setup`
 - [Actix Basic Setup](crates/authkestra-examples/examples/actix_basic_setup.rs): `cargo run --example actix_basic_setup`
@@ -53,14 +68,15 @@ To see Authkestra in action, check out the [examples](crates/authkestra-examples
 - [Device Flow](crates/authkestra-examples/examples/axum_device_flow.rs): `cargo run --example axum_device_flow`
 - [Axum Resource Server](crates/authkestra-examples/examples/axum_resource_server.rs): `cargo run --example axum_resource_server`
 
-## �️ Technical Design Principles
+## 🏗️ Technical Design Principles
 
-The architecture favors compile-time guarantees over runtime flexibility:
+Our architecture enforces strict design principles to guarantee compile-time safety and optimal Developer Experience (DX):
 
-- **Trait-Based Extension**: Customization is achieved by implementing traits, not by configuring dynamic strategies.
-- **Explicit Injection**: Authentication context is never implicitly available; users must explicitly request it via extractors (e.g., `AuthSession(session): AuthSession`).
-- **Framework Agnostic Core**: `authkestra-engine` is pure Rust logic, completely independent of any web framework.
-- **Typestate Builder Pattern**: The `AuthEngine` is built using typestates to enforce compile-time safety (e.g., session methods are only available if a session store is configured).
+- **Typestate Builder Pattern**: The `Authkestra::builder()` uses Rust's typestate pattern. This makes misconfigurations a compile-time error rather than a runtime surprise.
+- **Trait Objects over Generics**: For I/O bound paths, we prefer `Box<dyn Trait>` (e.g., `Box<dyn AuthMethod>`) over heavy monomorphized generics. This drastically optimizes compilation times without sacrificing meaningful runtime performance.
+- **Framework Agnostic Core**: The `authkestra-engine` is pure Rust logic. Axum and Actix integrations are entirely isolated in separate adapter crates, utilizing explicit Extractors like `AuthSession(session)`.
+- **Plugin Interfaces**: We extend functionality via strict plugin interfaces (`AuthMethod`, `Flow`) rather than opaque, ordering-dependent middleware.
+- **Production-Ready Tracing**: Every handler, endpoint, and logical branch is deeply instrumented with the `tracing` crate, ensuring request flows and errors are fully visible in production without code changes.
 
 ## 📜 License
 
