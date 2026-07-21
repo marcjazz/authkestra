@@ -4,9 +4,9 @@
     feature = "sql-mysql"
 ))]
 use async_trait::async_trait;
+use serde::{de::DeserializeOwned, Serialize};
 use sqlx::Database;
 use std::time::Duration;
-use serde::{de::DeserializeOwned, Serialize};
 
 use crate::store::{KvStore, StoreError};
 
@@ -43,7 +43,9 @@ impl<DB: Database> SqlKvStore<DB> {
 
 #[cfg(feature = "sql-postgres")]
 #[async_trait]
-impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for SqlKvStore<sqlx::Postgres> {
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
+    for SqlKvStore<sqlx::Postgres>
+{
     #[tracing::instrument(skip(self))]
     async fn get(&self, key: &str) -> Result<Option<T>, StoreError> {
         tracing::debug!(key = %key, "loading from Postgres store");
@@ -85,7 +87,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Sql
              value = $2, expires_at = $3",
             self.table_name
         );
-        
+
         let json = serde_json::to_string(&value).map_err(|e| {
             tracing::error!(error = %e, "Serialization error");
             StoreError::Serialization(format!("Serialization error: {e}"))
@@ -125,7 +127,9 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Sql
 
 #[cfg(feature = "sql-sqlite")]
 #[async_trait]
-impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for SqlKvStore<sqlx::Sqlite> {
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
+    for SqlKvStore<sqlx::Sqlite>
+{
     #[tracing::instrument(skip(self))]
     async fn get(&self, key: &str) -> Result<Option<T>, StoreError> {
         tracing::debug!(key = %key, "loading from Sqlite store");
@@ -167,7 +171,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Sql
              value = ?2, expires_at = ?3",
             self.table_name
         );
-        
+
         let json = serde_json::to_string(&value).map_err(|e| {
             tracing::error!(error = %e, "Serialization error");
             StoreError::Serialization(format!("Serialization error: {e}"))
@@ -207,7 +211,9 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Sql
 
 #[cfg(feature = "sql-mysql")]
 #[async_trait]
-impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for SqlKvStore<sqlx::MySql> {
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
+    for SqlKvStore<sqlx::MySql>
+{
     #[tracing::instrument(skip(self))]
     async fn get(&self, key: &str) -> Result<Option<T>, StoreError> {
         tracing::debug!(key = %key, "loading from MySql store");
@@ -250,7 +256,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Sql
              expires_at = VALUES(expires_at)",
             self.table_name
         );
-        
+
         let json = serde_json::to_string(&value).map_err(|e| {
             tracing::error!(error = %e, "Serialization error");
             StoreError::Serialization(format!("Serialization error: {e}"))

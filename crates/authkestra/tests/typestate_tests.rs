@@ -10,7 +10,9 @@ async fn test_typestate_session_flow() {
 
     // Configure session store -> transitions to Configured, Missing
     let auth = builder
-        .session_store(Arc::new(authkestra_engine::store::memory::MemoryStore::default()))
+        .session_store(Arc::new(
+            authkestra_engine::store::memory::MemoryStore::default(),
+        ))
         .build();
 
     // create_session should be available
@@ -56,7 +58,9 @@ fn test_typestate_token_flow() {
 #[tokio::test]
 async fn test_typestate_full_flow() {
     let auth = Authkestra::builder()
-        .session_store(Arc::new(authkestra_engine::store::memory::MemoryStore::default()))
+        .session_store(Arc::new(
+            authkestra_engine::store::memory::MemoryStore::default(),
+        ))
         .jwt_secret(b"secret")
         .build();
 

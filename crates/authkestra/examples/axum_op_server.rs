@@ -74,7 +74,9 @@ impl FromRef<AppState> for Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumErro
     }
 }
 
-impl FromRef<AppState> for Result<Arc<dyn authkestra_engine::auth::SessionStore>, AuthEngineAxumError> {
+impl FromRef<AppState>
+    for Result<Arc<dyn authkestra_engine::auth::SessionStore>, AuthEngineAxumError>
+{
     fn from_ref(state: &AppState) -> Self {
         Ok(state.session_store.clone())
     }

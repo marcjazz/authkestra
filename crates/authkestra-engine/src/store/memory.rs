@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use crate::store::{KvStore, StoreError};
+use async_trait::async_trait;
 
 /// An in-memory implementation of [`KvStore`].
 ///

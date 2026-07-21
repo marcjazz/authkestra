@@ -7,8 +7,8 @@ use actix_files::Files;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra::flow::AuthEngine;
 use authkestra_actix::{AuthSession, AuthkestraActixExt};
-use authkestra_engine::SessionConfig;
 use authkestra_engine::auth::SessionStore;
+use authkestra_engine::SessionConfig;
 use serde_json::json;
 use std::sync::Arc;
 

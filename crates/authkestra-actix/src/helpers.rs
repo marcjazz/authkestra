@@ -1,13 +1,13 @@
 #[cfg(any(feature = "flow", feature = "session", feature = "token"))]
 use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
+#[cfg(feature = "session")]
+pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "flow")]
 use authkestra_engine::pkce::Pkce;
 #[cfg(all(feature = "flow", not(feature = "session")))]
 use authkestra_engine::SessionConfig;
 #[cfg(feature = "flow")]
 use authkestra_engine::{state::OAuth2State, AuthEngine, ErasedOAuthFlow, OAuth2Flow};
-#[cfg(feature = "session")]
-pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 #[allow(unused_imports)]
 use std::sync::Arc;
 

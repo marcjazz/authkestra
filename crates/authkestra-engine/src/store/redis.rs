@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::store::{KvStore, StoreError};
+use async_trait::async_trait;
 use redis::AsyncCommands;
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
