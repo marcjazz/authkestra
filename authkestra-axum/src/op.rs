@@ -75,14 +75,15 @@ where
         };
     let config = OpConfig::from_ref(&state);
 
-    let session_store = match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let session_store =
+        match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let session_config = authkestra_engine::SessionConfig::from_ref(&state);
-    
+
     let session_res = crate::helpers::get_session(&session_store, &session_config, &cookies).await;
-    
+
     let identity = match session_res {
         Ok(s) => s.identity,
         Err(_) => return Redirect::to("/login").into_response(),
