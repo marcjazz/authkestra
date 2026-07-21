@@ -37,6 +37,7 @@ pub async fn actix_authorize_handler(
     let identity = match auth_session {
         Some(session) => session.0.identity,
         None => {
+            tracing::info!("Unauthenticated user on /authorize, redirecting to /login");
             let login_url = String::from("/login");
             // NOTE: We omit return_to encoding to avoid adding urlencoding dependency for now.
             // login_url.push_str(&format!("?return_to=/authorize?..."));
