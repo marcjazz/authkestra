@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["actix_authorize_handler","actix_discovery_handler","actix_jwks_handler","actix_token_handler","actix_userinfo_handler"],"trait":["AuthEngineActixOpExt"]};

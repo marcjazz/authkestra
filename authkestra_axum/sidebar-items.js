@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"derive":["AuthkestraFromRef"],"mod":["helpers"],"struct":["Auth","AuthEngine","AuthEngineGuard","AuthEngineState","AuthSession","AuthToken","Jwt","Missing","Session","SessionConfig","TokenManager"],"trait":["AuthEngineAxumExt","SessionStore"]};
+window.SIDEBAR_ITEMS = {"derive":["AuthkestraFromRef"],"mod":["helpers","op"],"struct":["Auth","AuthEngine","AuthEngineGuard","AuthEngineState","AuthSession","AuthToken","Jwt","Missing","Session","SessionConfig","TokenManager"],"trait":["AuthEngineAxumExt","SessionStore"]};

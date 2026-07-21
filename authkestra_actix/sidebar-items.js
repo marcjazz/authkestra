@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["helpers"],"struct":["AuthEngine","AuthSession","AuthToken","Configured","Jwt","Missing","Session","SessionConfig","TokenManager"],"trait":["AuthEngineActixExt","SessionStore","SessionStoreState","TokenManagerState"]};
+window.SIDEBAR_ITEMS = {"mod":["helpers","op"],"struct":["AuthEngine","AuthSession","AuthToken","Configured","Jwt","Missing","Session","SessionConfig","TokenManager"],"trait":["AuthEngineActixExt","SessionStore","SessionStoreState","TokenManagerState"]};
