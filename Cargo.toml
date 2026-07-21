@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "authkestra-engine",
-    "authkestra-session",
-    "authkestra-providers",
-    "authkestra-axum",
-    "authkestra-macros",
-    "authkestra-oidc",
-    "authkestra-actix",
-    "authkestra-resource",
-    "authkestra",
-    "authkestra-examples",
-    "authkestra-op",
+    "crates/authkestra-engine",
+    "crates/authkestra-session",
+    "crates/authkestra-providers",
+    "crates/authkestra-axum",
+    "crates/authkestra-macros",
+    "crates/authkestra-oidc",
+    "crates/authkestra-actix",
+    "crates/authkestra-resource",
+    "crates/authkestra",
+    "crates/authkestra-examples",
+    "crates/authkestra-op",
 ]
 
 [workspace.package]
@@ -22,17 +22,17 @@ keywords = ["auth", "authentication", "oauth2", "oidc"]
 categories = ["authentication"]
 
 [workspace.dependencies]
-authkestra-engine = { version = "0.1.2", path = "authkestra-engine" }
-authkestra-session = { version = "0.1.1", path = "authkestra-session" }
-authkestra-providers = { version = "0.1.1", path = "authkestra-providers" }
-authkestra-axum = { version = "0.1.3", path = "authkestra-axum" }
-authkestra-macros = { version = "0.1.0", path = "authkestra-macros" }
-authkestra-oidc = { version = "0.1.2", path = "authkestra-oidc" }
-authkestra-actix = { version = "0.1.3", path = "authkestra-actix" }
-authkestra-resource = { version = "0.1.0", path = "authkestra-resource" }
-authkestra = { version = "0.1.2", path = "authkestra" }
-authkestra-examples = { version = "0.1.0", path = "authkestra-examples" }
-authkestra-op = { version = "0.1.0", path = "authkestra-op" }
+authkestra-engine = { version = "0.1.2", path = "crates/authkestra-engine" }
+authkestra-session = { version = "0.1.1", path = "crates/authkestra-session" }
+authkestra-providers = { version = "0.1.1", path = "crates/authkestra-providers" }
+authkestra-axum = { version = "0.1.3", path = "crates/authkestra-axum" }
+authkestra-macros = { version = "0.1.0", path = "crates/authkestra-macros" }
+authkestra-oidc = { version = "0.1.2", path = "crates/authkestra-oidc" }
+authkestra-actix = { version = "0.1.3", path = "crates/authkestra-actix" }
+authkestra-resource = { version = "0.1.0", path = "crates/authkestra-resource" }
+authkestra = { version = "0.1.2", path = "crates/authkestra" }
+authkestra-examples = { version = "0.1.0", path = "crates/authkestra-examples" }
+authkestra-op = { version = "0.1.0", path = "crates/authkestra-op" }
 rand = "0.9.2"
 url = "2.5"
 sha2 = "0.10"
