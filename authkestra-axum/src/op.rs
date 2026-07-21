@@ -30,6 +30,7 @@ where
         Ok(t) => t,
         Err(e) => return e.into_response(),
     };
+    tracing::debug!("Handling JWKS request");
     (
         StatusCode::OK,
         Json(JwksResponse::new(token_manager.public_jwk())),
@@ -43,6 +44,7 @@ where
     AppState: Clone + Send + Sync + 'static,
     OpConfig: FromRef<AppState>,
 {
+    tracing::debug!("Handling OIDC discovery request");
     let config = OpConfig::from_ref(&state);
     (StatusCode::OK, Json(OidcDiscovery::from_config(&config))).into_response()
 }
@@ -64,6 +66,7 @@ where
     authkestra_engine::SessionConfig: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
+    tracing::debug!(client_id = %req.client_id, "Handling OP authorize request (axum)");
     let clients = match <Result<Arc<dyn ClientStore>, AuthEngineAxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
@@ -86,7 +89,10 @@ where
 
     let identity = match session_res {
         Ok(s) => s.identity,
-        Err(_) => return Redirect::to("/login").into_response(),
+        Err(e) => {
+            tracing::info!(error = ?e, "Unauthenticated user on /authorize, redirecting to /login");
+            return Redirect::to("/login").into_response();
+        }
     };
 
     match handle_authorize(req, identity, &config, clients.as_ref(), codes.as_ref()).await {
@@ -117,6 +123,7 @@ where
     Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
+    tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (axum)");
     let clients = match <Result<Arc<dyn ClientStore>, AuthEngineAxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
@@ -164,6 +171,7 @@ where
     Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
+    tracing::debug!("Handling OP userinfo request (axum)");
     let tokens = match <Result<Arc<TokenManager>, AuthEngineAxumError>>::from_ref(&state) {
         Ok(t) => t,
         Err(e) => return e.into_response(),

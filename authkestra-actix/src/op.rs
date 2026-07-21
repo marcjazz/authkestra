@@ -15,11 +15,13 @@ use authkestra_op::{
 use std::sync::Arc;
 
 pub async fn actix_jwks_handler(token_manager: web::Data<Arc<TokenManager>>) -> impl Responder {
+    tracing::debug!("Handling JWKS request (actix)");
     let resp = JwksResponse::new(token_manager.public_jwk());
     HttpResponse::Ok().json(resp)
 }
 
 pub async fn actix_discovery_handler(config: web::Data<OpConfig>) -> impl Responder {
+    tracing::debug!("Handling OIDC discovery request (actix)");
     let resp = OidcDiscovery::from_config(config.get_ref());
     HttpResponse::Ok().json(resp)
 }
@@ -31,6 +33,7 @@ pub async fn actix_authorize_handler(
     auth_session: Option<crate::AuthSession>,
     req: web::Query<AuthorizeRequest>,
 ) -> actix_web::HttpResponse {
+    tracing::debug!(client_id = %req.client_id, "Handling OP authorize request (actix)");
     let identity = match auth_session {
         Some(session) => session.0.identity,
         None => {
@@ -69,6 +72,7 @@ pub async fn actix_token_handler(
     tokens: web::Data<Arc<TokenManager>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
+    tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (actix)");
     let req_with_auth = req.into_inner();
 
     match handle_token(
@@ -96,6 +100,7 @@ pub async fn actix_userinfo_handler(
     config: web::Data<OpConfig>,
     tokens: web::Data<Arc<TokenManager>>,
 ) -> impl Responder {
+    tracing::debug!("Handling OP userinfo request (actix)");
     let auth_header = match http_req
         .headers()
         .get(actix_web::http::header::AUTHORIZATION)
