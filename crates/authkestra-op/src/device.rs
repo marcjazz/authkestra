@@ -58,6 +58,11 @@ pub trait DeviceCodeStore: Send + Sync {
     async fn update_device_code(&self, session: DeviceCodeSession) -> Result<(), OpError>;
     /// Delete a device code session.
     async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError>;
+    /// Atomically consume (get and delete) a device code session.
+    async fn consume_device_code(
+        &self,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeSession>, OpError>;
 }
 
 /// An in-memory implementation of `DeviceCodeStore` for testing and development.
@@ -112,5 +117,12 @@ impl DeviceCodeStore for InMemoryDeviceCodeStore {
     async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
         self.sessions.write().unwrap().remove(device_code);
         Ok(())
+    }
+
+    async fn consume_device_code(
+        &self,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeSession>, OpError> {
+        Ok(self.sessions.write().unwrap().remove(device_code))
     }
 }

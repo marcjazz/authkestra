@@ -246,69 +246,80 @@ async fn handle_device_code(
             error: "authorization_pending".to_string(),
             error_description: "User has not yet approved the request".to_string(),
         }),
-        DeviceCodeStatus::Denied => Err(TokenErrorResponse {
-            error: "access_denied".to_string(),
-            error_description: "User denied the request".to_string(),
-        }),
-        DeviceCodeStatus::Approved(identity) => {
-            // Delete the device code (single use)
-            let _ = devices.delete_device_code(req_device_code).await;
-
-            let expires_in = config.access_token_ttl_secs;
-            let scope_opt = if session.scope.is_empty() {
-                None
-            } else {
-                Some(session.scope.clone())
+        DeviceCodeStatus::Denied | DeviceCodeStatus::Approved(_) => {
+            // Atomically consume to prevent race conditions
+            let consumed = match devices.consume_device_code(req_device_code).await {
+                Ok(Some(s)) => s,
+                _ => {
+                    return Err(TokenErrorResponse {
+                        error: "invalid_grant".to_string(),
+                        error_description: "Device code is invalid or already consumed".to_string(),
+                    });
+                }
             };
 
-            let access_token =
-                match tokens.issue_user_token(identity.clone(), expires_in, scope_opt.clone()) {
-                    Ok(t) => t,
-                    Err(_) => {
-                        return Err(TokenErrorResponse {
-                            error: "server_error".to_string(),
-                            error_description: "Failed to issue access token".to_string(),
-                        });
-                    }
+            if let DeviceCodeStatus::Approved(identity) = consumed.status {
+                let expires_in = config.access_token_ttl_secs;
+                let scope_opt = if session.scope.is_empty() {
+                    None
+                } else {
+                    Some(session.scope.clone())
                 };
 
-            let id_token = if session.scope.contains("openid") {
-                match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
-                    Ok(t) => Some(t),
-                    Err(_) => {
-                        return Err(TokenErrorResponse {
-                            error: "server_error".to_string(),
-                            error_description: "Failed to issue ID token".to_string(),
-                        });
+                let access_token =
+                    match tokens.issue_user_token(identity.clone(), expires_in, scope_opt.clone()) {
+                        Ok(t) => t,
+                        Err(_) => {
+                            return Err(TokenErrorResponse {
+                                error: "server_error".to_string(),
+                                error_description: "Failed to issue access token".to_string(),
+                            });
+                        }
+                    };
+
+                let id_token = if session.scope.contains("openid") {
+                    match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+                        Ok(t) => Some(t),
+                        Err(_) => {
+                            return Err(TokenErrorResponse {
+                                error: "server_error".to_string(),
+                                error_description: "Failed to issue ID token".to_string(),
+                            });
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let mut issued_refresh_token = None;
+                if session.scope.contains("offline_access") {
+                    let refresh_val = uuid::Uuid::new_v4().to_string();
+                    let rt = crate::refresh::RefreshToken {
+                        token: refresh_val.clone(),
+                        client_id: client_id.clone(),
+                        identity,
+                        scope: session.scope,
+                        expires_at: Utc::now() + chrono::Duration::days(30),
+                    };
+                    if refresh_tokens.store_token(rt).await.is_ok() {
+                        issued_refresh_token = Some(refresh_val);
                     }
                 }
+
+                Ok(TokenResponse {
+                    access_token,
+                    token_type: "Bearer".to_string(),
+                    expires_in,
+                    id_token,
+                    refresh_token: issued_refresh_token,
+                    scope: scope_opt,
+                })
             } else {
-                None
-            };
-
-            let mut issued_refresh_token = None;
-            if session.scope.contains("offline_access") {
-                let refresh_val = uuid::Uuid::new_v4().to_string();
-                let rt = crate::refresh::RefreshToken {
-                    token: refresh_val.clone(),
-                    client_id: client_id.clone(),
-                    identity,
-                    scope: session.scope,
-                    expires_at: Utc::now() + chrono::Duration::days(30),
-                };
-                if refresh_tokens.store_token(rt).await.is_ok() {
-                    issued_refresh_token = Some(refresh_val);
-                }
+                Err(TokenErrorResponse {
+                    error: "access_denied".to_string(),
+                    error_description: "User denied the request".to_string(),
+                })
             }
-
-            Ok(TokenResponse {
-                access_token,
-                token_type: "Bearer".to_string(),
-                expires_in,
-                id_token,
-                refresh_token: issued_refresh_token,
-                scope: scope_opt,
-            })
         }
     }
 }
