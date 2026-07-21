@@ -195,6 +195,7 @@ mod tests {
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
             access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 600,
         }
     }
 

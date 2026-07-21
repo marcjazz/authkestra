@@ -27,6 +27,9 @@ pub use client::{ClientRegistration, ClientStore, GrantType};
 pub mod code;
 pub use code::{AuthorizationCode, AuthorizationCodeStore};
 
+/// Device Authorization Grant related types.
+pub mod device;
+
 /// HTTP handlers for OP endpoints (discovery, jwks, authorize, token).
 pub mod handlers;
 

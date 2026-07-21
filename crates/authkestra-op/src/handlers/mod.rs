@@ -10,6 +10,12 @@ pub use jwks::JwksResponse;
 pub mod authorize;
 pub use authorize::{handle_authorize, AuthorizeOutcome, AuthorizeRequest};
 
+/// Device Authorization endpoint handler (`/device_authorization`).
+pub mod device_authorization;
+pub use device_authorization::{
+    handle_device_authorization, DeviceAuthorizationRequest, DeviceAuthorizationResponse,
+};
+
 /// Token endpoint handler (`/token`).
 pub mod token;
 pub use token::{handle_token, TokenErrorResponse, TokenRequest, TokenResponse};

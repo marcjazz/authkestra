@@ -1,6 +1,7 @@
 use crate::client::ClientStore;
 use crate::code::AuthorizationCodeStore;
 use crate::config::OpConfig;
+use crate::device::DeviceCodeStore;
 use crate::refresh::{RefreshToken, RefreshTokenStore};
 use authkestra_engine::token::TokenManager;
 use base64::Engine;
@@ -15,6 +16,8 @@ pub struct TokenRequest {
     pub grant_type: String,
     /// The authorization code received from the authorization endpoint.
     pub code: Option<String>,
+    /// The device code received from the device authorization endpoint.
+    pub device_code: Option<String>,
     /// The redirect URI used in the authorization request.
     pub redirect_uri: Option<String>,
     /// The client identifier (can also be provided via Basic Auth).
@@ -63,6 +66,7 @@ pub struct TokenErrorResponse {
 /// This handles different OAuth2 grant types such as `authorization_code`,
 /// `client_credentials`, and `refresh_token`, issuing appropriate access tokens,
 /// ID tokens, and refresh tokens based on the request and client configuration.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_token(
     req: TokenRequest,
     auth_header: Option<&str>,
@@ -70,6 +74,7 @@ pub async fn handle_token(
     clients: &dyn ClientStore,
     codes: &dyn AuthorizationCodeStore,
     refresh_tokens: &dyn RefreshTokenStore,
+    devices: &dyn DeviceCodeStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
@@ -152,6 +157,18 @@ pub async fn handle_token(
         "refresh_token" => {
             handle_refresh_token(req, client_id, client, config, refresh_tokens, tokens).await
         }
+        "urn:ietf:params:oauth:grant-type:device_code" => {
+            handle_device_code(
+                req,
+                client_id,
+                client,
+                config,
+                devices,
+                refresh_tokens,
+                tokens,
+            )
+            .await
+        }
         _ => {
             tracing::warn!(grant_type = %req.grant_type, "Unsupported grant type");
             Err(TokenErrorResponse {
@@ -162,6 +179,141 @@ pub async fn handle_token(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn handle_device_code(
+    req: TokenRequest,
+    client_id: String,
+    client: crate::client::ClientRegistration,
+    config: &OpConfig,
+    devices: &dyn DeviceCodeStore,
+    refresh_tokens: &dyn RefreshTokenStore,
+    tokens: &TokenManager,
+) -> Result<TokenResponse, TokenErrorResponse> {
+    use crate::client::GrantType;
+    use crate::device::DeviceCodeStatus;
+
+    if !client.allows_grant_type(GrantType::DeviceCode) {
+        tracing::warn!(client_id = %client_id, "Client not authorized for device_code grant");
+        return Err(TokenErrorResponse {
+            error: "unauthorized_client".to_string(),
+            error_description: "Client is not authorized to use device_code grant type".to_string(),
+        });
+    }
+
+    let req_device_code = match req.device_code.as_deref() {
+        Some(c) => c,
+        None => {
+            tracing::warn!("Missing device_code in request");
+            return Err(TokenErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "device_code is required".to_string(),
+            });
+        }
+    };
+
+    let session = match devices.get_device_code(req_device_code).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Invalid device code".to_string(),
+            });
+        }
+        Err(_) => {
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Internal server error".to_string(),
+            });
+        }
+    };
+
+    if session.client_id != client_id {
+        return Err(TokenErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "Device code issued to a different client".to_string(),
+        });
+    }
+
+    if session.is_expired(Utc::now()) {
+        return Err(TokenErrorResponse {
+            error: "expired_token".to_string(),
+            error_description: "Device code expired".to_string(),
+        });
+    }
+
+    match session.status {
+        DeviceCodeStatus::Pending => Err(TokenErrorResponse {
+            error: "authorization_pending".to_string(),
+            error_description: "User has not yet approved the request".to_string(),
+        }),
+        DeviceCodeStatus::Denied => Err(TokenErrorResponse {
+            error: "access_denied".to_string(),
+            error_description: "User denied the request".to_string(),
+        }),
+        DeviceCodeStatus::Approved(identity) => {
+            // Delete the device code (single use)
+            let _ = devices.delete_device_code(req_device_code).await;
+
+            let expires_in = config.access_token_ttl_secs;
+            let scope_opt = if session.scope.is_empty() {
+                None
+            } else {
+                Some(session.scope.clone())
+            };
+
+            let access_token =
+                match tokens.issue_user_token(identity.clone(), expires_in, scope_opt.clone()) {
+                    Ok(t) => t,
+                    Err(_) => {
+                        return Err(TokenErrorResponse {
+                            error: "server_error".to_string(),
+                            error_description: "Failed to issue access token".to_string(),
+                        });
+                    }
+                };
+
+            let id_token = if session.scope.contains("openid") {
+                match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+                    Ok(t) => Some(t),
+                    Err(_) => {
+                        return Err(TokenErrorResponse {
+                            error: "server_error".to_string(),
+                            error_description: "Failed to issue ID token".to_string(),
+                        });
+                    }
+                }
+            } else {
+                None
+            };
+
+            let mut issued_refresh_token = None;
+            if session.scope.contains("offline_access") {
+                let refresh_val = uuid::Uuid::new_v4().to_string();
+                let rt = crate::refresh::RefreshToken {
+                    token: refresh_val.clone(),
+                    client_id: client_id.clone(),
+                    identity,
+                    scope: session.scope,
+                    expires_at: Utc::now() + chrono::Duration::days(30),
+                };
+                if refresh_tokens.store_token(rt).await.is_ok() {
+                    issued_refresh_token = Some(refresh_val);
+                }
+            }
+
+            Ok(TokenResponse {
+                access_token,
+                token_type: "Bearer".to_string(),
+                expires_in,
+                id_token,
+                refresh_token: issued_refresh_token,
+                scope: scope_opt,
+            })
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_authorization_code(
     req: TokenRequest,
     client_id: String,
@@ -419,6 +571,7 @@ async fn handle_client_credentials(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_refresh_token(
     req: TokenRequest,
     client_id: String,

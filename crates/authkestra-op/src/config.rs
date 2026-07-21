@@ -29,6 +29,8 @@ pub struct OpConfig {
     pub authorization_code_ttl_secs: i64,
     /// Lifetime, in seconds, of issued access tokens.
     pub access_token_ttl_secs: u64,
+    /// Lifetime, in seconds, of issued device codes.
+    pub device_code_ttl_secs: u64,
 }
 
 impl OpConfig {
@@ -55,5 +57,15 @@ impl OpConfig {
     /// Builds the userinfo endpoint URL for this issuer.
     pub fn userinfo_endpoint(&self) -> String {
         format!("{}/userinfo", self.issuer)
+    }
+
+    /// Builds the device authorization endpoint URL for this issuer.
+    pub fn device_authorization_endpoint(&self) -> String {
+        format!("{}/device_authorization", self.issuer)
+    }
+
+    /// Builds the verification URI for the device flow.
+    pub fn device_verification_uri(&self) -> String {
+        format!("{}/device", self.issuer)
     }
 }
