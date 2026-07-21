@@ -129,7 +129,12 @@ async fn main() {
                 "email".to_string(),
             ],
             response_types_supported: vec!["code".to_string()],
-            grant_types_supported: vec!["authorization_code".to_string()],
+            grant_types_supported: vec![
+                "authorization_code".to_string(),
+                "client_credentials".to_string(),
+                "refresh_token".to_string(),
+                "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
+            ],
             id_token_signing_alg: "RS256".to_string(),
             access_token_ttl_secs: 3600,
             authorization_code_ttl_secs: 600,

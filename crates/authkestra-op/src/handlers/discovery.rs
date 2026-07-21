@@ -77,7 +77,10 @@ mod tests {
             issuer: "https://auth.example.com".to_string(),
             scopes_supported: vec!["openid".to_string(), "profile".to_string()],
             response_types_supported: vec!["code".to_string()],
-            grant_types_supported: vec!["authorization_code".to_string()],
+            grant_types_supported: vec![
+                "authorization_code".to_string(),
+                "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
+            ],
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
             access_token_ttl_secs: 3600,
