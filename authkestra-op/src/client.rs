@@ -1,4 +1,8 @@
 use crate::error::OpError;
+use argon2::{
+    password_hash::{PasswordHash, PasswordVerifier},
+    Argon2,
+};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -46,9 +50,28 @@ impl ClientRegistration {
         self.redirect_uris.iter().any(|u| u == redirect_uri)
     }
 
-    /// Returns true if this client is permitted to use `grant_type`.
+    /// Checks if the client is allowed to use a specific grant type.
     pub fn allows_grant_type(&self, grant_type: GrantType) -> bool {
         self.grant_types.contains(&grant_type)
+    }
+
+    /// Verifies the provided secret against the stored argon2 hash in constant time.
+    pub fn verify_secret(&self, secret: &str) -> bool {
+        if let Some(hash_str) = &self.client_secret_hash {
+            let parsed_hash = match PasswordHash::new(hash_str) {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to parse client secret hash");
+                    return false;
+                }
+            };
+            Argon2::default()
+                .verify_password(secret.as_bytes(), &parsed_hash)
+                .is_ok()
+        } else {
+            // No secret stored means public client; shouldn't be used for confidential flows
+            false
+        }
     }
 }
 
@@ -104,5 +127,70 @@ impl ClientStore for InMemoryClientStore {
             })?
             .get(client_id)
             .cloned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use argon2::{
+        password_hash::{rand_core::OsRng, SaltString},
+        PasswordHasher,
+    };
+
+    #[test]
+    fn test_verify_secret_valid() {
+        let password = b"super_secret";
+        let salt = SaltString::generate(&mut OsRng);
+        let password_hash = Argon2::default()
+            .hash_password(password, &salt)
+            .unwrap()
+            .to_string();
+
+        let client = ClientRegistration {
+            client_id: "test".to_string(),
+            client_secret_hash: Some(password_hash),
+            redirect_uris: vec![],
+            grant_types: vec![],
+            scopes: vec![],
+            require_pkce: false,
+        };
+
+        assert!(client.verify_secret("super_secret"));
+    }
+
+    #[test]
+    fn test_verify_secret_invalid() {
+        let password = b"super_secret";
+        let salt = SaltString::generate(&mut OsRng);
+        let password_hash = Argon2::default()
+            .hash_password(password, &salt)
+            .unwrap()
+            .to_string();
+
+        let client = ClientRegistration {
+            client_id: "test".to_string(),
+            client_secret_hash: Some(password_hash),
+            redirect_uris: vec![],
+            grant_types: vec![],
+            scopes: vec![],
+            require_pkce: false,
+        };
+
+        assert!(!client.verify_secret("wrong_secret"));
+    }
+
+    #[test]
+    fn test_verify_secret_public_client() {
+        let client = ClientRegistration {
+            client_id: "test".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![],
+            scopes: vec![],
+            require_pkce: false,
+        };
+
+        assert!(!client.verify_secret("some_secret"));
     }
 }

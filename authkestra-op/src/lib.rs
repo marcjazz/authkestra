@@ -30,6 +30,9 @@ pub use code::{AuthorizationCode, AuthorizationCodeStore};
 /// HTTP handlers for OP endpoints (discovery, jwks, authorize, token).
 pub mod handlers;
 
+/// Refresh tokens and rotation logic.
+pub mod refresh;
+
 /// Provider-level configuration (issuer URL, supported scopes/response
 /// types).
 pub mod config;

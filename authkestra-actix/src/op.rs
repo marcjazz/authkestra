@@ -11,6 +11,7 @@ use authkestra_op::{
         token::{handle_token, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
+    refresh::RefreshTokenStore,
 };
 use std::sync::Arc;
 
@@ -67,20 +68,28 @@ pub async fn actix_authorize_handler(
 }
 
 pub async fn actix_token_handler(
+    http_req: HttpRequest,
     req: web::Form<TokenRequest>,
     clients: web::Data<Arc<dyn ClientStore>>,
     codes: web::Data<Arc<dyn AuthorizationCodeStore>>,
+    refresh_tokens: web::Data<Arc<dyn RefreshTokenStore>>,
     tokens: web::Data<Arc<TokenManager>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
     tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (actix)");
-    let req_with_auth = req.into_inner();
+
+    let auth_header = http_req
+        .headers()
+        .get(actix_web::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok());
 
     match handle_token(
-        req_with_auth,
+        req.into_inner(),
+        auth_header,
         config.get_ref(),
         clients.get_ref().as_ref(),
         codes.get_ref().as_ref(),
+        refresh_tokens.get_ref().as_ref(),
         tokens.get_ref().as_ref(),
     )
     .await
