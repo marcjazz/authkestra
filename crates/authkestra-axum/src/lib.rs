@@ -4,6 +4,7 @@ pub use authkestra_engine::TokenManager;
 pub use authkestra_engine::{AuthEngine, Missing, SessionConfig};
 #[cfg(feature = "resource")]
 pub use authkestra_resource::AuthEngineGuard;
+#[allow(unused_imports)]
 use axum::extract::FromRef;
 #[cfg(feature = "session")]
 use axum::extract::FromRequestParts;

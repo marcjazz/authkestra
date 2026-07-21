@@ -11,11 +11,13 @@ use authkestra_engine::{AuthEngine, ErasedOAuthFlow, OAuth2Flow};
 pub use authkestra_session::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "token")]
 use axum::Json;
+#[allow(unused_imports)]
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
+#[allow(unused_imports)]
 use std::sync::Arc;
 #[cfg(any(feature = "flow", feature = "session"))]
 use tower_cookies::cookie::SameSite;

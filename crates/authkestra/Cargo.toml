@@ -19,7 +19,33 @@ authkestra-resource = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-authkestra-session = { workspace = true }
+authkestra-engine = { workspace = true, features = ["flow", "token", "session"] }
+authkestra-session = { workspace = true, features = ["memory", "redis", "sql-sqlite"] }
+authkestra-resource = { workspace = true }
+authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
+authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op"] }
+authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op"] }
+authkestra-oidc = { workspace = true }
+authkestra-op = { workspace = true }
+actix-web = "4"
+axum = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tower-cookies = "0.11"
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+redis = { version = "0.27", features = ["tokio-comp"] }
+reqwest = { version = "0.13", features = ["json"] }
+async-trait = "0.1"
+jsonwebtoken = "10.3.0"
+base64 = "0.22.1"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs"] }
+actix-files = "0.6"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [features]
 default = []
@@ -41,3 +67,55 @@ actix = ["dep:authkestra-actix", "authkestra-actix/flow", "authkestra-actix/sess
 github = ["authkestra-providers/github"]
 google = ["authkestra-providers/google"]
 discord = ["authkestra-providers/discord"]
+
+[[example]]
+name = "actix_basic_setup"
+required-features = ["full"]
+
+[[example]]
+name = "actix_op_server"
+required-features = ["full"]
+
+[[example]]
+name = "axum_basic_setup"
+required-features = ["full"]
+
+[[example]]
+name = "axum_client_credentials"
+required-features = ["full"]
+
+[[example]]
+name = "axum_device_flow"
+required-features = ["full"]
+
+[[example]]
+name = "axum_oauth2_github"
+required-features = ["full"]
+
+[[example]]
+name = "axum_oauth_stateless"
+required-features = ["full"]
+
+[[example]]
+name = "axum_oidc_google"
+required-features = ["full"]
+
+[[example]]
+name = "axum_op_server"
+required-features = ["full"]
+
+[[example]]
+name = "axum_resource_server"
+required-features = ["full"]
+
+[[example]]
+name = "axum_resource_server_strategy"
+required-features = ["full"]
+
+[[example]]
+name = "axum_session_redis"
+required-features = ["full"]
+
+[[test]]
+name = "typestate_tests"
+required-features = ["full"]
