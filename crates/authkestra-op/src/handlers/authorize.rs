@@ -188,13 +188,14 @@ mod tests {
 
     fn test_config() -> OpConfig {
         OpConfig {
-            issuer: "https://auth.example.com".to_string(),
-            scopes_supported: vec![],
-            response_types_supported: vec![],
-            grant_types_supported: vec![],
+            issuer: "https://op.example.com".to_string(),
+            scopes_supported: vec!["openid".to_string(), "profile".to_string()],
+            response_types_supported: vec!["code".to_string()],
+            grant_types_supported: vec!["authorization_code".to_string()],
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
             access_token_ttl_secs: 3600,
+            token_exchange_enabled: false,
         }
     }
 
@@ -242,6 +243,7 @@ mod tests {
             grant_types: vec![GrantType::AuthorizationCode],
             scopes: vec![],
             require_pkce: false,
+            allowed_audiences: vec![],
         });
 
         let codes = InMemoryAuthorizationCodeStore::new();
@@ -276,6 +278,7 @@ mod tests {
             grant_types: vec![GrantType::AuthorizationCode],
             scopes: vec![],
             require_pkce: false,
+            allowed_audiences: vec![],
         });
 
         let codes = InMemoryAuthorizationCodeStore::new();
@@ -312,6 +315,7 @@ mod tests {
             grant_types: vec![GrantType::AuthorizationCode],
             scopes: vec![],
             require_pkce: true,
+            allowed_audiences: vec![],
         });
 
         let codes = InMemoryAuthorizationCodeStore::new();
@@ -346,6 +350,7 @@ mod tests {
             grant_types: vec![GrantType::AuthorizationCode],
             scopes: vec![],
             require_pkce: true,
+            allowed_audiences: vec![],
         });
 
         let codes = InMemoryAuthorizationCodeStore::new();
@@ -380,6 +385,7 @@ mod tests {
             grant_types: vec![GrantType::AuthorizationCode],
             scopes: vec![],
             require_pkce: true,
+            allowed_audiences: vec![],
         });
 
         let codes = InMemoryAuthorizationCodeStore::new();
@@ -431,6 +437,7 @@ mod tests {
             grant_types: vec![GrantType::AuthorizationCode],
             scopes: vec![],
             require_pkce: false,
+            allowed_audiences: vec![],
         });
 
         let codes = InMemoryAuthorizationCodeStore::new();
@@ -486,6 +493,7 @@ mod tests {
             grant_types: vec![GrantType::AuthorizationCode],
             scopes: vec![],
             require_pkce: false, // PKCE is optional
+            allowed_audiences: vec![],
         });
 
         let codes = InMemoryAuthorizationCodeStore::new();

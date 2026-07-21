@@ -125,6 +125,7 @@ impl TokenManager {
         identity: Identity,
         expires_in_secs: u64,
         scope: Option<String>,
+        aud: Option<String>,
     ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
@@ -132,7 +133,7 @@ impl TokenManager {
         let claims = Claims {
             iss: self.issuer.clone(),
             sub: identity.external_id.clone(),
-            aud: None,
+            aud,
             exp: expiration,
             iat: now,
             nbf: Some(now),
@@ -194,6 +195,7 @@ impl TokenManager {
         client_id: &str,
         expires_in_secs: u64,
         scope: Option<String>,
+        aud: Option<String>,
     ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
@@ -201,7 +203,7 @@ impl TokenManager {
         let claims = Claims {
             iss: self.issuer.clone(),
             sub: client_id.to_string(),
-            aud: None,
+            aud,
             exp: expiration,
             iat: now,
             nbf: Some(now),
@@ -244,7 +246,7 @@ impl TokenManager {
 #[async_trait]
 impl TokenService for TokenManager {
     async fn issue(&self, identity: &Identity, expires_in_secs: u64) -> Result<String, AuthError> {
-        self.issue_user_token(identity.clone(), expires_in_secs, None)
+        self.issue_user_token(identity.clone(), expires_in_secs, None, None)
     }
 
     async fn verify(&self, token: &str) -> Result<Identity, AuthError> {
@@ -307,7 +309,7 @@ mod tests {
             attributes: HashMap::new(),
         };
 
-        let token = manager.issue_user_token(identity, 3600, None).unwrap();
+        let token = manager.issue_user_token(identity, 3600, None, None).unwrap();
         let claims = manager.validate_token(&token, None).unwrap();
 
         assert_eq!(claims.iss, Some("issuer".to_string()));
@@ -362,7 +364,7 @@ a0QMqKUcs8+YTy5R5K6qtw==
             attributes: HashMap::new(),
         };
 
-        let token = manager.issue_user_token(identity, 3600, None).unwrap();
+        let token = manager.issue_user_token(identity, 3600, None, None).unwrap();
 
         // Decode directly via jsonwebtoken to prove independent verification
         let jwk = manager.public_jwk().unwrap();

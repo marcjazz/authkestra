@@ -106,13 +106,14 @@ mod tests {
 
     fn test_config() -> OpConfig {
         OpConfig {
-            issuer: "https://auth.example.com".to_string(),
-            scopes_supported: vec![],
-            response_types_supported: vec![],
-            grant_types_supported: vec![],
+            issuer: "https://op.example.com".to_string(),
+            scopes_supported: vec!["openid".to_string(), "profile".to_string()],
+            response_types_supported: vec!["code".to_string()],
+            grant_types_supported: vec!["authorization_code".to_string()],
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
             access_token_ttl_secs: 3600,
+            token_exchange_enabled: false,
         }
     }
 
@@ -136,12 +137,12 @@ mod tests {
         let tokens = test_tokens();
 
         // Issue token without openid scope
-        let token = tokens
-            .issue_user_token(test_identity(), 3600, Some("profile".to_string()))
+        let access_token = tokens
+            .issue_user_token(test_identity(), 3600, Some("profile".to_string()), None)
             .unwrap();
 
         let req = UserInfoRequest {
-            access_token: token,
+            access_token: access_token,
         };
 
         let result = handle_userinfo(req, &config, &tokens).await;
@@ -167,16 +168,17 @@ mod tests {
         let tokens = test_tokens();
 
         // Issue token with openid, profile, email scopes
-        let token = tokens
+        let access_token = tokens
             .issue_user_token(
                 test_identity(),
                 3600,
                 Some("openid profile email".to_string()),
+                None,
             )
             .unwrap();
 
         let req = UserInfoRequest {
-            access_token: token,
+            access_token: access_token,
         };
 
         let result = handle_userinfo(req, &config, &tokens).await.unwrap();
@@ -191,12 +193,12 @@ mod tests {
         let tokens = test_tokens();
 
         // Issue token with openid, profile scopes (NO email)
-        let token = tokens
-            .issue_user_token(test_identity(), 3600, Some("openid profile".to_string()))
+        let access_token = tokens
+            .issue_user_token(test_identity(), 3600, Some("openid profile".to_string()), None)
             .unwrap();
 
         let req = UserInfoRequest {
-            access_token: token,
+            access_token: access_token,
         };
 
         let result = handle_userinfo(req, &config, &tokens).await.unwrap();

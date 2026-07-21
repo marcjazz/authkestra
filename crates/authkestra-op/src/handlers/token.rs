@@ -27,6 +27,20 @@ pub struct TokenRequest {
     pub scope: Option<String>,
     /// The refresh token (for refresh_token grant type).
     pub refresh_token: Option<String>,
+
+    // Token Exchange fields (RFC 8693)
+    /// The subject token being exchanged.
+    pub subject_token: Option<String>,
+    /// An identifier that indicates the type of the security token in the `subject_token` parameter.
+    pub subject_token_type: Option<String>,
+    /// The actor token being used for delegation.
+    pub actor_token: Option<String>,
+    /// An identifier that indicates the type of the security token in the `actor_token` parameter.
+    pub actor_token_type: Option<String>,
+    /// An identifier for the type of the requested security token.
+    pub requested_token_type: Option<String>,
+    /// The logical name of the target service where the client intends to use the requested security token.
+    pub audience: Option<String>,
 }
 
 /// Success response for the token endpoint.
@@ -151,6 +165,9 @@ pub async fn handle_token(
         }
         "refresh_token" => {
             handle_refresh_token(req, client_id, client, config, refresh_tokens, tokens).await
+        }
+        "urn:ietf:params:oauth:grant-type:token-exchange" => {
+            handle_token_exchange(req, client_id, client, config, tokens).await
         }
         _ => {
             tracing::warn!(grant_type = %req.grant_type, "Unsupported grant type");
@@ -281,7 +298,7 @@ async fn handle_authorization_code(
     };
 
     let access_token =
-        match tokens.issue_user_token(auth_code.identity.clone(), expires_in, scope_opt.clone()) {
+        match tokens.issue_user_token(auth_code.identity.clone(), expires_in, scope_opt.clone(), Some(client_id.clone())) {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to issue access token");
@@ -354,8 +371,6 @@ async fn handle_client_credentials(
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     use crate::client::GrantType;
-    use authkestra_engine::auth::state::Identity;
-    use std::collections::HashMap;
 
     if !client.allows_grant_type(GrantType::ClientCredentials) {
         tracing::warn!(client_id = %client_id, "Client not authorized for client_credentials grant");
@@ -367,16 +382,6 @@ async fn handle_client_credentials(
     }
 
     let expires_in = config.access_token_ttl_secs;
-
-    // For client credentials, the "identity" is the client itself
-    let identity = Identity {
-        provider_id: "client_credentials".to_string(),
-        external_id: client_id.clone(),
-        username: Some(client_id.clone()),
-        email: None,
-        attributes: HashMap::new(),
-    };
-
     let requested_scope = req.scope.clone();
     // Validate that requested scopes are allowed for this client
     if let Some(ref scopes) = requested_scope {
@@ -392,7 +397,7 @@ async fn handle_client_credentials(
         }
     }
 
-    let access_token = match tokens.issue_user_token(identity, expires_in, requested_scope.clone())
+    let access_token = match tokens.issue_client_token(&client_id, expires_in, requested_scope.clone(), Some(client_id.clone()))
     {
         Ok(t) => t,
         Err(e) => {
@@ -504,7 +509,7 @@ async fn handle_refresh_token(
     };
 
     let access_token =
-        match tokens.issue_user_token(rt.identity.clone(), expires_in, scope_opt.clone()) {
+        match tokens.issue_user_token(rt.identity.clone(), expires_in, scope_opt.clone(), Some(client_id.clone())) {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to issue access token");
@@ -527,5 +532,181 @@ async fn handle_refresh_token(
         id_token: None, // usually id_token is not issued on refresh unless openid scope is present, simplify for now
         refresh_token: Some(new_refresh_val),
         scope: scope_opt,
+    })
+}
+
+async fn handle_token_exchange(
+    req: TokenRequest,
+    client_id: String,
+    client: crate::client::ClientRegistration,
+    config: &OpConfig,
+    tokens: &TokenManager,
+) -> Result<TokenResponse, TokenErrorResponse> {
+    use crate::client::GrantType;
+    use authkestra_engine::token::Claims;
+
+    if !config.token_exchange_enabled {
+        tracing::warn!("Token exchange is disabled globally");
+        return Err(TokenErrorResponse {
+            error: "unsupported_grant_type".to_string(),
+            error_description: "Token exchange is not enabled on this authorization server".to_string(),
+        });
+    }
+
+    if !client.allows_grant_type(GrantType::TokenExchange) {
+        tracing::warn!(client_id = %client_id, "Client not authorized for token_exchange grant");
+        return Err(TokenErrorResponse {
+            error: "unauthorized_client".to_string(),
+            error_description: "Client is not authorized to use token_exchange grant type".to_string(),
+        });
+    }
+
+    if req.actor_token.is_some() || req.actor_token_type.is_some() {
+        tracing::warn!("Delegation (actor_token) is not supported");
+        return Err(TokenErrorResponse {
+            error: "invalid_request".to_string(),
+            error_description: "actor_token is not supported".to_string(),
+        });
+    }
+
+    let subject_token_type = req.subject_token_type.as_deref().unwrap_or("");
+    if subject_token_type != "urn:ietf:params:oauth:token-type:access_token" && subject_token_type != "urn:ietf:params:oauth:token-type:id_token" {
+        tracing::warn!(subject_token_type = %subject_token_type, "Unsupported subject_token_type");
+        return Err(TokenErrorResponse {
+            error: "invalid_request".to_string(),
+            error_description: "Unsupported subject_token_type".to_string(),
+        });
+    }
+
+    let requested_token_type = req.requested_token_type.as_deref().unwrap_or("urn:ietf:params:oauth:token-type:access_token");
+    if requested_token_type != "urn:ietf:params:oauth:token-type:access_token" {
+        tracing::warn!(requested_token_type = %requested_token_type, "Unsupported requested_token_type");
+        return Err(TokenErrorResponse {
+            error: "invalid_request".to_string(),
+            error_description: "Unsupported requested_token_type. Only access_token is supported.".to_string(),
+        });
+    }
+
+    let subject_token_str = match req.subject_token.as_deref() {
+        Some(t) => t,
+        None => {
+            tracing::warn!("Missing subject_token in request");
+            return Err(TokenErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "subject_token is required".to_string(),
+            });
+        }
+    };
+
+    let claims: Claims = match tokens.validate_token(subject_token_str, None) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = ?e, "Failed to validate subject_token");
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "subject_token is invalid".to_string(),
+            });
+        }
+    };
+
+    // Audience Binding: either the subject token was issued TO this client (azp or aud = client_id)
+    // or this client is in the intended audience.
+    let is_intended_aud = claims.aud.as_deref() == Some(client_id.as_str());
+    if !is_intended_aud {
+        tracing::warn!(
+            client_id = %client_id,
+            "Client is not authorized to exchange this token"
+        );
+        return Err(TokenErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "Client is not authorized to exchange this token".to_string(),
+        });
+    }
+
+    // Determine the resource audience for the new token
+    let new_aud = if let Some(requested_aud) = req.audience {
+        if !client.allowed_audiences.contains(&requested_aud) {
+            tracing::warn!(
+                client_id = %client_id,
+                audience = %requested_aud,
+                "Requested audience is not allowed for this client"
+            );
+            return Err(TokenErrorResponse {
+                error: "invalid_target".to_string(),
+                error_description: "Requested audience is not allowed".to_string(),
+            });
+        }
+        Some(requested_aud)
+    } else {
+        Some(config.issuer.clone())
+    };
+
+    // Scope narrowing logic
+    let original_scope = claims.scope.unwrap_or_default();
+    let original_scopes: Vec<&str> = original_scope.split_whitespace().collect();
+    let requested_scope = req.scope.unwrap_or_default();
+    let requested_scopes: Vec<&str> = if requested_scope.is_empty() {
+        original_scopes.clone()
+    } else {
+        requested_scope.split_whitespace().collect()
+    };
+
+    let mut intersected_scopes = Vec::new();
+    for s in requested_scopes {
+        if original_scopes.contains(&s) && client.scopes.contains(&s.to_string()) {
+            intersected_scopes.push(s.to_string());
+        }
+    }
+
+    // If a scope was requested but intersection is empty, it's an error.
+    if !requested_scope.is_empty() && intersected_scopes.is_empty() {
+        tracing::warn!("Requested scope resulted in empty intersection");
+        return Err(TokenErrorResponse {
+            error: "invalid_scope".to_string(),
+            error_description: "Requested scope is invalid, unknown, or malformed".to_string(),
+        });
+    }
+
+    let final_scope_str = if intersected_scopes.is_empty() {
+        None
+    } else {
+        Some(intersected_scopes.join(" "))
+    };
+
+    let identity = match claims.identity {
+        Some(id) => id,
+        None => {
+            tracing::warn!("subject_token does not contain an identity");
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "subject_token is missing identity".to_string(),
+            });
+        }
+    };
+
+    let expires_in = config.access_token_ttl_secs;
+    let access_token = match tokens.issue_user_token(identity, expires_in, final_scope_str.clone(), new_aud) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to issue access token during exchange");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to generate token".to_string(),
+            });
+        }
+    };
+
+    tracing::info!(
+        client_id = %client_id,
+        "Successfully exchanged token"
+    );
+
+    Ok(TokenResponse {
+        access_token,
+        token_type: "Bearer".to_string(),
+        expires_in,
+        id_token: None,
+        refresh_token: None,
+        scope: final_scope_str,
     })
 }
