@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["axum_authorize_handler","axum_discovery_handler","axum_jwks_handler","axum_token_handler","axum_userinfo_handler"],"trait":["AuthEngineAxumOpExt"]};

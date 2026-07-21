@@ -1,9 +1,9 @@
 (function() {
-    const implementors = Object.fromEntries([["authkestra_oidc",[["impl <a class=\"trait\" href=\"authkestra_engine/auth/trait.OAuthProvider.html\" title=\"trait authkestra_engine::auth::OAuthProvider\">OAuthProvider</a> for <a class=\"struct\" href=\"authkestra_oidc/provider/struct.OidcProvider.html\" title=\"struct authkestra_oidc::provider::OidcProvider\">OidcProvider</a>",0]]],["authkestra_providers",[["impl <a class=\"trait\" href=\"authkestra_engine/auth/trait.OAuthProvider.html\" title=\"trait authkestra_engine::auth::OAuthProvider\">OAuthProvider</a> for <a class=\"struct\" href=\"authkestra_providers/discord/struct.DiscordProvider.html\" title=\"struct authkestra_providers::discord::DiscordProvider\">DiscordProvider</a>",0],["impl <a class=\"trait\" href=\"authkestra_engine/auth/trait.OAuthProvider.html\" title=\"trait authkestra_engine::auth::OAuthProvider\">OAuthProvider</a> for <a class=\"struct\" href=\"authkestra_providers/github/struct.GithubProvider.html\" title=\"struct authkestra_providers::github::GithubProvider\">GithubProvider</a>",0],["impl <a class=\"trait\" href=\"authkestra_engine/auth/trait.OAuthProvider.html\" title=\"trait authkestra_engine::auth::OAuthProvider\">OAuthProvider</a> for <a class=\"struct\" href=\"authkestra_providers/google/struct.GoogleProvider.html\" title=\"struct authkestra_providers::google::GoogleProvider\">GoogleProvider</a>",0]]]]);
+    const implementors = Object.fromEntries([["authkestra_oidc",[["impl <a class=\"trait\" href=\"authkestra_engine/auth/trait.OAuthProvider.html\" title=\"trait authkestra_engine::auth::OAuthProvider\">OAuthProvider</a> for <a class=\"struct\" href=\"authkestra_oidc/provider/struct.OidcProvider.html\" title=\"struct authkestra_oidc::provider::OidcProvider\">OidcProvider</a>",0]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":59,"fragment_lengths":[338,1019]}
+//{"start":59,"fragment_lengths":[338]}

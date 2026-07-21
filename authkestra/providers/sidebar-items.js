@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["discord","github","google"]};
+window.SIDEBAR_ITEMS = {};
