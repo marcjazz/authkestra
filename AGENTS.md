@@ -7,3 +7,4 @@
 - **Stateless OAuth**: Store OAuth `state` and `nonce` in encrypted cookies, never in the database.
 - **OIDC Discovery**: Cache discovery documents via background `tokio::spawn` tasks, avoid per-request fetching.
 - **Database Agnosticism**: Never enforce schemas; always define data access via traits (e.g., `UserStore`, `SessionStore`).
+- **Definition of Done (DoD) - Tracing**: Every new handler, endpoint, or significant logical branch MUST include adequate `tracing` instrumentation (`tracing::debug!`, `tracing::info!`, `tracing::warn!`, `tracing::error!`) to ensure request flows and errors are fully visible in production without requiring code changes.
