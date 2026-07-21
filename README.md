@@ -43,17 +43,20 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 🛠️ Usage
 
-Authkestra utilizes a powerful **Typestate Builder Pattern** (`Authkestra::builder()`). This enforces at compile-time that certain methods are only available if their prerequisites are met (e.g., you can only call session methods if a `SessionStore` was provided).
+Authkestra utilizes a powerful **Typestate Builder Pattern** (`AuthEngine::builder()`). This enforces at compile-time that certain methods are only available if their prerequisites are met (e.g., you can only call session methods if a `SessionStore` was provided).
 
 ### Quick Start Example
 
 ```rust
-use authkestra::Authkestra;
+use authkestra::flow::{AuthEngine, OAuth2Flow};
+use authkestra_providers::github::GithubProvider;
 
 // The builder ensures compile-time safety for your authentication stack
-let auth_engine = Authkestra::builder()
-    .with_session_store(redis_store)
-    .with_oauth_provider(github_provider)
+let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
+
+let auth_engine = AuthEngine::builder()
+    .provider(OAuth2Flow::new(github_provider))
+    .session_store(session_store)
     .build();
 ```
 
@@ -72,7 +75,7 @@ To see complete, runnable examples for various frameworks and flows, check out t
 
 Our architecture enforces strict design principles to guarantee compile-time safety and optimal Developer Experience (DX):
 
-- **Typestate Builder Pattern**: The `Authkestra::builder()` uses Rust's typestate pattern. This makes misconfigurations a compile-time error rather than a runtime surprise.
+- **Typestate Builder Pattern**: The `AuthEngine::builder()` uses Rust's typestate pattern. This makes misconfigurations a compile-time error rather than a runtime surprise.
 - **Trait Objects over Generics**: For I/O bound paths, we prefer `Box<dyn Trait>` (e.g., `Box<dyn AuthMethod>`) over heavy monomorphized generics. This drastically optimizes compilation times without sacrificing meaningful runtime performance.
 - **Framework Agnostic Core**: The `authkestra-engine` is pure Rust logic. Axum and Actix integrations are entirely isolated in separate adapter crates, utilizing explicit Extractors like `AuthSession(session)`.
 - **Plugin Interfaces**: We extend functionality via strict plugin interfaces (`AuthMethod`, `Flow`) rather than opaque, ordering-dependent middleware.
