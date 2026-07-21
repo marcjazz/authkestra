@@ -31,7 +31,8 @@ To properly scope exchanged tokens to specific downstream resources (Step 6), we
 ### 4. Scope Narrowing
 Token Exchange is for delegation and narrowing access, never escalation.
 - **Action**: Validate the requested `scope` against both the presenting `client.scopes` (the client's registered limits) AND the `subject_token`'s existing scopes.
-- **Rule**: The resulting scope must be the intersection of the requested scope, the client's allowed scopes, and the original token's scopes. If the client requests a scope not present in the `subject_token`, the OP MUST reject it or omit it (narrowing). It must NEVER grant a scope the `subject_token` did not possess.
+- **Rule**: The resulting scope must be the intersection of the requested scope, the client's allowed scopes, and the original token's scopes.
+- **Behavior (resolved)**: If the client requests a scope not present in the `subject_token`, the OP MUST silently narrow — issue the token with the intersected (reduced) scope, not an error. A client asking for a superset it wasn't entitled to gets a smaller, usable token rather than a hard failure. The OP MUST NEVER grant a scope the `subject_token` did not possess, under any circumstance. If the intersection is empty (no requested scope overlaps what the subject token and client are both permitted), reject with `invalid_scope` rather than issuing a token with no scope at all.
 
 ### 5. Explicit Rejection of Unsupported Token Types
 RFC 8693 defines `actor_token` for delegation (adding an `act` claim) and specifies `subject_token_type` and `requested_token_type`.
@@ -54,7 +55,13 @@ The request may contain `audience` and/or `resource` parameters to scope the new
 - Explicit tests for:
   - Happy path (valid exchange).
   - Cross-client exchange attempt (Client A tries to exchange Client B's token) -> MUST FAIL.
-  - Scope escalation attempt -> MUST FAIL or strictly narrow.
-  - Feature disabled -> MUST FAIL.
+  - Scope escalation attempt (requested scope exceeds subject_token's scope) -> MUST silently narrow to the intersection, not fail.
+  - Scope request with zero overlap with subject_token's scope -> MUST FAIL with `invalid_scope`.
+  - Feature disabled (`token_exchange_enabled: false`) -> MUST FAIL with `unsupported_grant_type`.
   - Inclusion of unsupported `actor_token` -> MUST FAIL.
+  - Unsupported `subject_token_type` (not an access/ID token URN we issue) -> MUST FAIL with `invalid_request`, not a generic validation error.
+  - Unsupported `requested_token_type` (e.g. `:refresh_token`, `:id_token`) -> MUST FAIL with `invalid_request`.
+  - Requested `audience` not present in the client's `allowed_audiences` -> MUST FAIL.
+  - Requested `audience` present in `allowed_audiences` -> exchanged token's `aud` matches the requested audience.
+  - No `audience` provided -> exchanged token defaults to the OP itself (or configured default) per step 6.
 - CI passes locally.
