@@ -29,6 +29,10 @@ pub struct OpConfig {
     pub authorization_code_ttl_secs: i64,
     /// Lifetime, in seconds, of issued access tokens.
     pub access_token_ttl_secs: u64,
+    /// Whether the Token Exchange grant type (RFC 8693) is enabled.
+    /// Default is false to prevent accidental exposure of delegation endpoints.
+    #[serde(default)]
+    pub token_exchange_enabled: bool,
 }
 
 impl OpConfig {
