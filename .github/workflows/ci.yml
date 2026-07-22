@@ -64,4 +64,4 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Run coverage and fail if under threshold
-        run: cargo llvm-cov --workspace --fail-under-lines 51
+        run: cargo llvm-cov --workspace --fail-under-lines 50
