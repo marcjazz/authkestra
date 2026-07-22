@@ -237,6 +237,9 @@ impl<T> AuthEngineActixOpExt for T {
             .route("/token", web::post().to(actix_token_handler))
             .route("/userinfo", web::get().to(actix_userinfo_handler))
             .route("/userinfo", web::post().to(actix_userinfo_handler))
-            .route("/device/verify", web::post().to(actix_device_verify_handler))
+            .route(
+                "/device/verify",
+                web::post().to(actix_device_verify_handler),
+            )
     }
 }

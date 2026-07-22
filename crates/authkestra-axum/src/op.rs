@@ -315,7 +315,13 @@ where
         }
     };
 
-    match authkestra_op::handlers::device_verify::handle_device_verify(req, identity, devices.as_ref()).await {
+    match authkestra_op::handlers::device_verify::handle_device_verify(
+        req,
+        identity,
+        devices.as_ref(),
+    )
+    .await
+    {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(err) => (
             StatusCode::BAD_REQUEST,
@@ -373,6 +379,9 @@ impl<T> AuthEngineAxumOpExt for T {
                 "/userinfo",
                 get(axum_userinfo_handler::<AppState>).post(axum_userinfo_handler::<AppState>),
             )
-            .route("/device/verify", post(axum_device_verify_handler::<AppState>))
+            .route(
+                "/device/verify",
+                post(axum_device_verify_handler::<AppState>),
+            )
     }
 }
