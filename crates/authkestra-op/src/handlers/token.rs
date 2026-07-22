@@ -287,6 +287,7 @@ async fn handle_device_code(
                     identity.clone(),
                     expires_in,
                     scope_opt.clone(),
+                    Some(client_id.clone()),
                 ) {
                     Ok(t) => t,
                     Err(_) => {
@@ -923,6 +924,7 @@ mod tests {
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
             access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 600,
             token_exchange_enabled,
         }
     }
@@ -966,6 +968,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -991,6 +994,7 @@ mod tests {
             &clients,
             &codes,
             &refresh,
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1042,6 +1046,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1055,6 +1060,7 @@ mod tests {
             &clients,
             &codes,
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1101,6 +1107,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1113,6 +1120,7 @@ mod tests {
             &clients,
             &codes,
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1159,6 +1167,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1171,6 +1180,7 @@ mod tests {
             &clients,
             &codes,
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1217,6 +1227,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1229,6 +1240,7 @@ mod tests {
             &clients,
             &codes,
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1258,6 +1270,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1270,6 +1283,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1311,6 +1325,7 @@ mod tests {
             refresh_token: Some("rt1".to_string()),
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1323,6 +1338,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &refresh,
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1342,6 +1358,7 @@ mod tests {
             code_verifier: None,
             scope: None,
             refresh_token: None,
+            device_code: None,
             subject_token: Some(subject_token.to_string()),
             subject_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
             actor_token: None,
@@ -1376,6 +1393,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1408,6 +1426,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1441,6 +1460,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1471,6 +1491,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1502,6 +1523,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1533,6 +1555,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1564,6 +1587,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1595,6 +1619,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1630,6 +1655,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1661,6 +1687,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1701,6 +1728,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;

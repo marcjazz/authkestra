@@ -146,6 +146,7 @@ mod tests {
             authorization_code_ttl_secs: 60,
             access_token_ttl_secs: 3600,
             device_code_ttl_secs: 600,
+            token_exchange_enabled: false,
         }
     }
 
@@ -165,6 +166,7 @@ mod tests {
             grant_types: vec![GrantType::DeviceCode],
             scopes: vec!["openid".to_string()],
             require_pkce: false,
+            allowed_audiences: vec![],
         });
 
         // 1. Initiate device flow
@@ -191,6 +193,12 @@ mod tests {
             code_verifier: None,
             scope: None,
             refresh_token: None,
+            actor_token: None,
+            actor_token_type: None,
+            audience: None,
+            requested_token_type: None,
+            subject_token: None,
+            subject_token_type: None,
         };
 
         let token_res = handle_token(
