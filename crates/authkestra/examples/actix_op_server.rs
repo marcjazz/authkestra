@@ -48,6 +48,7 @@ async fn main() -> std::io::Result<()> {
         id_token_signing_alg: "RS256".to_string(),
         access_token_ttl_secs: 3600,
         authorization_code_ttl_secs: 600,
+        device_code_ttl_secs: 600,
     };
 
     let session_store: Arc<dyn authkestra_session::SessionStore> =
@@ -56,6 +57,9 @@ async fn main() -> std::io::Result<()> {
         cookie_name: "authkestra_sid".to_string(),
         ..Default::default()
     };
+
+    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> =
+        Arc::new(authkestra_op::device::InMemoryDeviceCodeStore::new());
 
     println!("🚀 Actix OP Server running on http://localhost:8080");
     HttpServer::new(move || {
@@ -67,6 +71,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(actix_web::web::Data::new(config.clone()))
             .app_data(actix_web::web::Data::new(session_store.clone()))
             .app_data(actix_web::web::Data::new(session_config.clone()))
+            .app_data(actix_web::web::Data::new(device_code_store.clone()))
             .service(AppState.op_actix_scope())
     })
     .bind("0.0.0.0:8080")?

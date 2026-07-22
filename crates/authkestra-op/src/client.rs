@@ -17,6 +17,8 @@ pub enum GrantType {
     RefreshToken,
     /// Client credentials grant (machine-to-machine). See RFC-003 §9, `OP.7`.
     ClientCredentials,
+    /// Device Code grant (RFC 8628).
+    DeviceCode,
     /// Token Exchange grant (RFC 8693).
     TokenExchange,
 }

@@ -1,6 +1,7 @@
 use crate::client::ClientStore;
 use crate::code::AuthorizationCodeStore;
 use crate::config::OpConfig;
+use crate::device::DeviceCodeStore;
 use crate::refresh::{RefreshToken, RefreshTokenStore};
 use authkestra_engine::token::TokenManager;
 use base64::Engine;
@@ -15,6 +16,8 @@ pub struct TokenRequest {
     pub grant_type: String,
     /// The authorization code received from the authorization endpoint.
     pub code: Option<String>,
+    /// The device code received from the device authorization endpoint.
+    pub device_code: Option<String>,
     /// The redirect URI used in the authorization request.
     pub redirect_uri: Option<String>,
     /// The client identifier (can also be provided via Basic Auth).
@@ -77,6 +80,7 @@ pub struct TokenErrorResponse {
 /// This handles different OAuth2 grant types such as `authorization_code`,
 /// `client_credentials`, and `refresh_token`, issuing appropriate access tokens,
 /// ID tokens, and refresh tokens based on the request and client configuration.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_token(
     req: TokenRequest,
     auth_header: Option<&str>,
@@ -84,6 +88,7 @@ pub async fn handle_token(
     clients: &dyn ClientStore,
     codes: &dyn AuthorizationCodeStore,
     refresh_tokens: &dyn RefreshTokenStore,
+    devices: &dyn DeviceCodeStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
@@ -166,6 +171,18 @@ pub async fn handle_token(
         "refresh_token" => {
             handle_refresh_token(req, client_id, client, config, refresh_tokens, tokens).await
         }
+        "urn:ietf:params:oauth:grant-type:device_code" => {
+            handle_device_code(
+                req,
+                client_id,
+                client,
+                config,
+                devices,
+                refresh_tokens,
+                tokens,
+            )
+            .await
+        }
         "urn:ietf:params:oauth:grant-type:token-exchange" => {
             handle_token_exchange(req, client_id, client, config, tokens).await
         }
@@ -179,6 +196,172 @@ pub async fn handle_token(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn handle_device_code(
+    req: TokenRequest,
+    client_id: String,
+    client: crate::client::ClientRegistration,
+    config: &OpConfig,
+    devices: &dyn DeviceCodeStore,
+    refresh_tokens: &dyn RefreshTokenStore,
+    tokens: &TokenManager,
+) -> Result<TokenResponse, TokenErrorResponse> {
+    use crate::client::GrantType;
+    use crate::device::DeviceCodeStatus;
+
+    if !client.allows_grant_type(GrantType::DeviceCode) {
+        tracing::warn!(client_id = %client_id, "Client not authorized for device_code grant");
+        return Err(TokenErrorResponse {
+            error: "unauthorized_client".to_string(),
+            error_description: "Client is not authorized to use device_code grant type".to_string(),
+        });
+    }
+
+    let req_device_code = match req.device_code.as_deref() {
+        Some(c) => c,
+        None => {
+            tracing::warn!("Missing device_code in request");
+            return Err(TokenErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "device_code is required".to_string(),
+            });
+        }
+    };
+
+    let session = match devices.get_device_code(req_device_code).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Invalid device code".to_string(),
+            });
+        }
+        Err(_) => {
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Internal server error".to_string(),
+            });
+        }
+    };
+
+    if session.client_id != client_id {
+        return Err(TokenErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "Device code issued to a different client".to_string(),
+        });
+    }
+
+    if session.is_expired(Utc::now()) {
+        return Err(TokenErrorResponse {
+            error: "expired_token".to_string(),
+            error_description: "Device code expired".to_string(),
+        });
+    }
+
+    match session.status {
+        DeviceCodeStatus::Pending => {
+            let now = Utc::now();
+            let mut updated = session.clone();
+            updated.last_polled_at = Some(now);
+            let _ = devices.update_device_code(updated).await;
+
+            if let Some(last_poll) = session.last_polled_at {
+                if now < last_poll + chrono::Duration::seconds(5) {
+                    return Err(TokenErrorResponse {
+                        error: "slow_down".to_string(),
+                        error_description: "Polling too frequently".to_string(),
+                    });
+                }
+            }
+
+            Err(TokenErrorResponse {
+                error: "authorization_pending".to_string(),
+                error_description: "User has not yet approved the request".to_string(),
+            })
+        }
+        DeviceCodeStatus::Denied | DeviceCodeStatus::Approved(_) => {
+            // Atomically consume to prevent race conditions
+            let consumed = match devices.consume_device_code(req_device_code).await {
+                Ok(Some(s)) => s,
+                _ => {
+                    return Err(TokenErrorResponse {
+                        error: "invalid_grant".to_string(),
+                        error_description: "Device code is invalid or already consumed".to_string(),
+                    });
+                }
+            };
+
+            if let DeviceCodeStatus::Approved(identity) = consumed.status {
+                let expires_in = config.access_token_ttl_secs;
+                let scope_opt = if session.scope.is_empty() {
+                    None
+                } else {
+                    Some(session.scope.clone())
+                };
+
+                let access_token = match tokens.issue_user_token(
+                    identity.clone(),
+                    expires_in,
+                    scope_opt.clone(),
+                    Some(client_id.clone()),
+                ) {
+                    Ok(t) => t,
+                    Err(_) => {
+                        return Err(TokenErrorResponse {
+                            error: "server_error".to_string(),
+                            error_description: "Failed to issue access token".to_string(),
+                        });
+                    }
+                };
+
+                let id_token = if session.scope.contains("openid") {
+                    match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+                        Ok(t) => Some(t),
+                        Err(_) => {
+                            return Err(TokenErrorResponse {
+                                error: "server_error".to_string(),
+                                error_description: "Failed to issue ID token".to_string(),
+                            });
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let mut issued_refresh_token = None;
+                if session.scope.contains("offline_access") {
+                    let refresh_val = uuid::Uuid::new_v4().to_string();
+                    let rt = crate::refresh::RefreshToken {
+                        token: refresh_val.clone(),
+                        client_id: client_id.clone(),
+                        identity,
+                        scope: session.scope,
+                        expires_at: Utc::now() + chrono::Duration::days(30),
+                    };
+                    if refresh_tokens.store_token(rt).await.is_ok() {
+                        issued_refresh_token = Some(refresh_val);
+                    }
+                }
+
+                Ok(TokenResponse {
+                    access_token,
+                    token_type: "Bearer".to_string(),
+                    expires_in,
+                    id_token,
+                    refresh_token: issued_refresh_token,
+                    scope: scope_opt,
+                })
+            } else {
+                Err(TokenErrorResponse {
+                    error: "access_denied".to_string(),
+                    error_description: "User denied the request".to_string(),
+                })
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_authorization_code(
     req: TokenRequest,
     client_id: String,
@@ -432,6 +615,7 @@ async fn handle_client_credentials(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_refresh_token(
     req: TokenRequest,
     client_id: String,
@@ -743,7 +927,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use std::collections::HashMap;
 
-    fn test_config(token_exchange_enabled: bool) -> OpConfig {
+    pub(crate) fn test_config(token_exchange_enabled: bool) -> OpConfig {
         OpConfig {
             issuer: "https://auth.example.com".to_string(),
             scopes_supported: vec![
@@ -756,11 +940,12 @@ mod tests {
             id_token_signing_alg: "RS256".to_string(),
             authorization_code_ttl_secs: 60,
             access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 600,
             token_exchange_enabled,
         }
     }
 
-    fn test_tokens() -> TokenManager {
+    pub(crate) fn test_tokens() -> TokenManager {
         TokenManager::new(b"super_secret_key_that_is_long_enough_for_hmac", None)
     }
 
@@ -799,6 +984,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -824,6 +1010,7 @@ mod tests {
             &clients,
             &codes,
             &refresh,
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -875,6 +1062,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -888,6 +1076,7 @@ mod tests {
             &clients,
             &codes,
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -934,6 +1123,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -946,6 +1136,7 @@ mod tests {
             &clients,
             &codes,
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -992,6 +1183,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1004,6 +1196,7 @@ mod tests {
             &clients,
             &codes,
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1050,6 +1243,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1062,6 +1256,7 @@ mod tests {
             &clients,
             &codes,
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1091,6 +1286,7 @@ mod tests {
             refresh_token: None,
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1103,6 +1299,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1144,6 +1341,7 @@ mod tests {
             refresh_token: Some("rt1".to_string()),
             subject_token: None,
             subject_token_type: None,
+            device_code: None,
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
@@ -1156,6 +1354,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &refresh,
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &test_tokens(),
         )
         .await;
@@ -1175,6 +1374,7 @@ mod tests {
             code_verifier: None,
             scope: None,
             refresh_token: None,
+            device_code: None,
             subject_token: Some(subject_token.to_string()),
             subject_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
             actor_token: None,
@@ -1209,6 +1409,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1241,6 +1442,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1274,6 +1476,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1304,6 +1507,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1335,6 +1539,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1366,6 +1571,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1397,6 +1603,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1428,6 +1635,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1463,6 +1671,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1494,6 +1703,7 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
@@ -1534,9 +1744,13 @@ mod tests {
             &clients,
             &InMemoryAuthorizationCodeStore::new(),
             &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
             &tokens,
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_grant");
     }
 }
+
+#[cfg(test)]
+mod device_tests;
