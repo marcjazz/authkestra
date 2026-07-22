@@ -185,6 +185,38 @@ pub async fn actix_userinfo_handler(
     }
 }
 
+pub async fn actix_device_verify_handler(
+    req: web::Form<authkestra_op::handlers::device_verify::DeviceVerifyRequest>,
+    devices: web::Data<Arc<dyn DeviceCodeStore>>,
+    auth_session: Option<crate::AuthSession>,
+) -> actix_web::HttpResponse {
+    tracing::debug!("Handling OP device verify request (actix)");
+    let identity = match auth_session {
+        Some(session) => session.0.identity,
+        None => {
+            tracing::info!("Unauthenticated user on /device/verify, redirecting to /login");
+            let login_url = String::from("/login");
+            return actix_web::HttpResponse::Found()
+                .insert_header(("Location", login_url))
+                .finish();
+        }
+    };
+
+    match authkestra_op::handlers::device_verify::handle_device_verify(
+        req.into_inner(),
+        identity,
+        devices.get_ref().as_ref(),
+    )
+    .await
+    {
+        Ok(resp) => actix_web::HttpResponse::Ok().json(resp),
+        Err(err) => actix_web::HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "invalid_request",
+            "error_description": err.to_string()
+        })),
+    }
+}
+
 pub trait AuthEngineActixOpExt {
     fn op_actix_scope(&self) -> actix_web::Scope;
 }
@@ -205,5 +237,6 @@ impl<T> AuthEngineActixOpExt for T {
             .route("/token", web::post().to(actix_token_handler))
             .route("/userinfo", web::get().to(actix_userinfo_handler))
             .route("/userinfo", web::post().to(actix_userinfo_handler))
+            .route("/device/verify", web::post().to(actix_device_verify_handler))
     }
 }

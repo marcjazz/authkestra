@@ -280,6 +280,54 @@ where
     }
 }
 
+/// Handler for the device verify endpoint.
+pub async fn axum_device_verify_handler<AppState>(
+    State(state): State<AppState>,
+    cookies: tower_cookies::Cookies,
+    Form(req): Form<authkestra_op::handlers::device_verify::DeviceVerifyRequest>,
+) -> Response
+where
+    AppState: Clone + Send + Sync + 'static,
+    Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
+    authkestra_engine::SessionConfig: FromRef<AppState>,
+{
+    tracing::debug!("Handling OP device verify request (axum)");
+    let devices = match <Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
+
+    let session_store =
+        match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
+    let session_config = authkestra_engine::SessionConfig::from_ref(&state);
+
+    let session_res = crate::helpers::get_session(&session_store, &session_config, &cookies).await;
+
+    let identity = match session_res {
+        Ok(s) => s.identity,
+        Err(e) => {
+            tracing::info!(error = ?e, "Unauthenticated user on /device/verify, redirecting to /login");
+            return Redirect::to("/login").into_response();
+        }
+    };
+
+    match authkestra_op::handlers::device_verify::handle_device_verify(req, identity, devices.as_ref()).await {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid_request",
+                "error_description": err.to_string()
+            })),
+        )
+            .into_response(),
+    }
+}
+
 pub trait AuthEngineAxumOpExt {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
@@ -325,5 +373,6 @@ impl<T> AuthEngineAxumOpExt for T {
                 "/userinfo",
                 get(axum_userinfo_handler::<AppState>).post(axum_userinfo_handler::<AppState>),
             )
+            .route("/device/verify", post(axum_device_verify_handler::<AppState>))
     }
 }
