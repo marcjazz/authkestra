@@ -32,6 +32,8 @@ pub struct DeviceCodeSession {
     pub expires_at: DateTime<Utc>,
     /// The current status of the authorization request.
     pub status: DeviceCodeStatus,
+    /// The last time the client polled the token endpoint.
+    pub last_polled_at: Option<DateTime<Utc>>,
 }
 
 impl DeviceCodeSession {

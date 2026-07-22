@@ -94,7 +94,10 @@ pub async fn handle_device_authorization(
     let scope = req.scope.unwrap_or_default();
 
     // Generate codes
-    let device_code = uuid::Uuid::new_v4().to_string();
+    let mut buf = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rng(), &mut buf);
+    let device_code = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf);
+
     // Simple 8-character alphanumeric string
     let user_code = uuid::Uuid::new_v4().to_string()[0..8].to_uppercase();
 
@@ -105,6 +108,7 @@ pub async fn handle_device_authorization(
         scope,
         expires_at: Utc::now() + Duration::seconds(config.device_code_ttl_secs as i64),
         status: DeviceCodeStatus::Pending,
+        last_polled_at: None,
     };
 
     if devices.store_device_code(session).await.is_err() {

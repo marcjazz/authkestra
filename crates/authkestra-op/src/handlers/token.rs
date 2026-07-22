@@ -259,10 +259,26 @@ async fn handle_device_code(
     }
 
     match session.status {
-        DeviceCodeStatus::Pending => Err(TokenErrorResponse {
-            error: "authorization_pending".to_string(),
-            error_description: "User has not yet approved the request".to_string(),
-        }),
+        DeviceCodeStatus::Pending => {
+            let now = Utc::now();
+            let mut updated = session.clone();
+            updated.last_polled_at = Some(now);
+            let _ = devices.update_device_code(updated).await;
+
+            if let Some(last_poll) = session.last_polled_at {
+                if now < last_poll + chrono::Duration::seconds(5) {
+                    return Err(TokenErrorResponse {
+                        error: "slow_down".to_string(),
+                        error_description: "Polling too frequently".to_string(),
+                    });
+                }
+            }
+
+            Err(TokenErrorResponse {
+                error: "authorization_pending".to_string(),
+                error_description: "User has not yet approved the request".to_string(),
+            })
+        }
         DeviceCodeStatus::Denied | DeviceCodeStatus::Approved(_) => {
             // Atomically consume to prevent race conditions
             let consumed = match devices.consume_device_code(req_device_code).await {
@@ -911,7 +927,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use std::collections::HashMap;
 
-    fn test_config(token_exchange_enabled: bool) -> OpConfig {
+    pub(crate) fn test_config(token_exchange_enabled: bool) -> OpConfig {
         OpConfig {
             issuer: "https://auth.example.com".to_string(),
             scopes_supported: vec![
@@ -929,7 +945,7 @@ mod tests {
         }
     }
 
-    fn test_tokens() -> TokenManager {
+    pub(crate) fn test_tokens() -> TokenManager {
         TokenManager::new(b"super_secret_key_that_is_long_enough_for_hmac", None)
     }
 
@@ -1735,3 +1751,6 @@ mod tests {
         assert_eq!(res.unwrap_err().error, "invalid_grant");
     }
 }
+
+#[cfg(test)]
+mod device_tests;

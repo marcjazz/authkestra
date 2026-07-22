@@ -23,3 +23,7 @@ pub use token::{handle_token, TokenErrorResponse, TokenRequest, TokenResponse};
 /// UserInfo endpoint handler (`/userinfo`).
 pub mod userinfo;
 pub use userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest, UserInfoResponse};
+
+/// Device Verification endpoint handler (`/device/verify`).
+pub mod device_verify;
+pub use device_verify::{handle_device_verify, DeviceVerifyRequest, DeviceVerifyResponse};
