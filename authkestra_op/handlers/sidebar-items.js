@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["authorize","discovery","jwks","token","userinfo"]};
+window.SIDEBAR_ITEMS = {"mod":["authorize","device_authorization","device_verify","discovery","jwks","token","userinfo"]};

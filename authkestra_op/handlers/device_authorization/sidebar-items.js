@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["handle_device_authorization"],"struct":["DeviceAuthorizationErrorResponse","DeviceAuthorizationRequest","DeviceAuthorizationResponse"]};
