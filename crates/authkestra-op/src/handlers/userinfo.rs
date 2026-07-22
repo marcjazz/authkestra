@@ -143,7 +143,7 @@ mod tests {
             .unwrap();
 
         let req = UserInfoRequest {
-            access_token: access_token,
+            access_token,
         };
 
         let result = handle_userinfo(req, &config, &tokens).await;
@@ -179,7 +179,7 @@ mod tests {
             .unwrap();
 
         let req = UserInfoRequest {
-            access_token: access_token,
+            access_token,
         };
 
         let result = handle_userinfo(req, &config, &tokens).await.unwrap();
@@ -204,7 +204,7 @@ mod tests {
             .unwrap();
 
         let req = UserInfoRequest {
-            access_token: access_token,
+            access_token,
         };
 
         let result = handle_userinfo(req, &config, &tokens).await.unwrap();

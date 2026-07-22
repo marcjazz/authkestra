@@ -232,7 +232,7 @@ async fn test_device_concurrency() {
                 &InMemoryAuthorizationCodeStore::new(),
                 &InMemoryRefreshTokenStore::new(),
                 &*devices,
-                &*tokens,
+                &tokens,
             )
             .await
         }));
