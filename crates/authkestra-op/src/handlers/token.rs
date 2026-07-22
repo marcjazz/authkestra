@@ -1,6 +1,7 @@
 use crate::client::ClientStore;
 use crate::code::AuthorizationCodeStore;
 use crate::config::OpConfig;
+use crate::device::DeviceCodeStore;
 use crate::refresh::{RefreshToken, RefreshTokenStore};
 use authkestra_engine::token::TokenManager;
 use base64::Engine;
@@ -15,6 +16,8 @@ pub struct TokenRequest {
     pub grant_type: String,
     /// The authorization code received from the authorization endpoint.
     pub code: Option<String>,
+    /// The device code received from the device authorization endpoint.
+    pub device_code: Option<String>,
     /// The redirect URI used in the authorization request.
     pub redirect_uri: Option<String>,
     /// The client identifier (can also be provided via Basic Auth).
@@ -27,6 +30,20 @@ pub struct TokenRequest {
     pub scope: Option<String>,
     /// The refresh token (for refresh_token grant type).
     pub refresh_token: Option<String>,
+
+    // Token Exchange fields (RFC 8693)
+    /// The subject token being exchanged.
+    pub subject_token: Option<String>,
+    /// An identifier that indicates the type of the security token in the `subject_token` parameter.
+    pub subject_token_type: Option<String>,
+    /// The actor token being used for delegation.
+    pub actor_token: Option<String>,
+    /// An identifier that indicates the type of the security token in the `actor_token` parameter.
+    pub actor_token_type: Option<String>,
+    /// An identifier for the type of the requested security token.
+    pub requested_token_type: Option<String>,
+    /// The logical name of the target service where the client intends to use the requested security token.
+    pub audience: Option<String>,
 }
 
 /// Success response for the token endpoint.
@@ -63,6 +80,7 @@ pub struct TokenErrorResponse {
 /// This handles different OAuth2 grant types such as `authorization_code`,
 /// `client_credentials`, and `refresh_token`, issuing appropriate access tokens,
 /// ID tokens, and refresh tokens based on the request and client configuration.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_token(
     req: TokenRequest,
     auth_header: Option<&str>,
@@ -70,6 +88,7 @@ pub async fn handle_token(
     clients: &dyn ClientStore,
     codes: &dyn AuthorizationCodeStore,
     refresh_tokens: &dyn RefreshTokenStore,
+    devices: &dyn DeviceCodeStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
@@ -152,6 +171,21 @@ pub async fn handle_token(
         "refresh_token" => {
             handle_refresh_token(req, client_id, client, config, refresh_tokens, tokens).await
         }
+        "urn:ietf:params:oauth:grant-type:device_code" => {
+            handle_device_code(
+                req,
+                client_id,
+                client,
+                config,
+                devices,
+                refresh_tokens,
+                tokens,
+            )
+            .await
+        }
+        "urn:ietf:params:oauth:grant-type:token-exchange" => {
+            handle_token_exchange(req, client_id, client, config, tokens).await
+        }
         _ => {
             tracing::warn!(grant_type = %req.grant_type, "Unsupported grant type");
             Err(TokenErrorResponse {
@@ -162,6 +196,172 @@ pub async fn handle_token(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn handle_device_code(
+    req: TokenRequest,
+    client_id: String,
+    client: crate::client::ClientRegistration,
+    config: &OpConfig,
+    devices: &dyn DeviceCodeStore,
+    refresh_tokens: &dyn RefreshTokenStore,
+    tokens: &TokenManager,
+) -> Result<TokenResponse, TokenErrorResponse> {
+    use crate::client::GrantType;
+    use crate::device::DeviceCodeStatus;
+
+    if !client.allows_grant_type(GrantType::DeviceCode) {
+        tracing::warn!(client_id = %client_id, "Client not authorized for device_code grant");
+        return Err(TokenErrorResponse {
+            error: "unauthorized_client".to_string(),
+            error_description: "Client is not authorized to use device_code grant type".to_string(),
+        });
+    }
+
+    let req_device_code = match req.device_code.as_deref() {
+        Some(c) => c,
+        None => {
+            tracing::warn!("Missing device_code in request");
+            return Err(TokenErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "device_code is required".to_string(),
+            });
+        }
+    };
+
+    let session = match devices.get_device_code(req_device_code).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Invalid device code".to_string(),
+            });
+        }
+        Err(_) => {
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Internal server error".to_string(),
+            });
+        }
+    };
+
+    if session.client_id != client_id {
+        return Err(TokenErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "Device code issued to a different client".to_string(),
+        });
+    }
+
+    if session.is_expired(Utc::now()) {
+        return Err(TokenErrorResponse {
+            error: "expired_token".to_string(),
+            error_description: "Device code expired".to_string(),
+        });
+    }
+
+    match session.status {
+        DeviceCodeStatus::Pending => {
+            let now = Utc::now();
+            let mut updated = session.clone();
+            updated.last_polled_at = Some(now);
+            let _ = devices.update_device_code(updated).await;
+
+            if let Some(last_poll) = session.last_polled_at {
+                if now < last_poll + chrono::Duration::seconds(5) {
+                    return Err(TokenErrorResponse {
+                        error: "slow_down".to_string(),
+                        error_description: "Polling too frequently".to_string(),
+                    });
+                }
+            }
+
+            Err(TokenErrorResponse {
+                error: "authorization_pending".to_string(),
+                error_description: "User has not yet approved the request".to_string(),
+            })
+        }
+        DeviceCodeStatus::Denied | DeviceCodeStatus::Approved(_) => {
+            // Atomically consume to prevent race conditions
+            let consumed = match devices.consume_device_code(req_device_code).await {
+                Ok(Some(s)) => s,
+                _ => {
+                    return Err(TokenErrorResponse {
+                        error: "invalid_grant".to_string(),
+                        error_description: "Device code is invalid or already consumed".to_string(),
+                    });
+                }
+            };
+
+            if let DeviceCodeStatus::Approved(identity) = consumed.status {
+                let expires_in = config.access_token_ttl_secs;
+                let scope_opt = if session.scope.is_empty() {
+                    None
+                } else {
+                    Some(session.scope.clone())
+                };
+
+                let access_token = match tokens.issue_user_token(
+                    identity.clone(),
+                    expires_in,
+                    scope_opt.clone(),
+                    Some(client_id.clone()),
+                ) {
+                    Ok(t) => t,
+                    Err(_) => {
+                        return Err(TokenErrorResponse {
+                            error: "server_error".to_string(),
+                            error_description: "Failed to issue access token".to_string(),
+                        });
+                    }
+                };
+
+                let id_token = if session.scope.contains("openid") {
+                    match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+                        Ok(t) => Some(t),
+                        Err(_) => {
+                            return Err(TokenErrorResponse {
+                                error: "server_error".to_string(),
+                                error_description: "Failed to issue ID token".to_string(),
+                            });
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let mut issued_refresh_token = None;
+                if session.scope.contains("offline_access") {
+                    let refresh_val = uuid::Uuid::new_v4().to_string();
+                    let rt = crate::refresh::RefreshToken {
+                        token: refresh_val.clone(),
+                        client_id: client_id.clone(),
+                        identity,
+                        scope: session.scope,
+                        expires_at: Utc::now() + chrono::Duration::days(30),
+                    };
+                    if refresh_tokens.store_token(rt).await.is_ok() {
+                        issued_refresh_token = Some(refresh_val);
+                    }
+                }
+
+                Ok(TokenResponse {
+                    access_token,
+                    token_type: "Bearer".to_string(),
+                    expires_in,
+                    id_token,
+                    refresh_token: issued_refresh_token,
+                    scope: scope_opt,
+                })
+            } else {
+                Err(TokenErrorResponse {
+                    error: "access_denied".to_string(),
+                    error_description: "User denied the request".to_string(),
+                })
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_authorization_code(
     req: TokenRequest,
     client_id: String,
@@ -280,17 +480,21 @@ async fn handle_authorization_code(
         Some(auth_code.scope.clone())
     };
 
-    let access_token =
-        match tokens.issue_user_token(auth_code.identity.clone(), expires_in, scope_opt.clone()) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to issue access token");
-                return Err(TokenErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: "Failed to generate token".to_string(),
-                });
-            }
-        };
+    let access_token = match tokens.issue_user_token(
+        auth_code.identity.clone(),
+        expires_in,
+        scope_opt.clone(),
+        Some(client_id.clone()),
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to issue access token");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to generate token".to_string(),
+            });
+        }
+    };
 
     let id_token = if auth_code.scope.contains("openid") {
         match tokens.issue_id_token(
@@ -354,8 +558,6 @@ async fn handle_client_credentials(
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     use crate::client::GrantType;
-    use authkestra_engine::auth::state::Identity;
-    use std::collections::HashMap;
 
     if !client.allows_grant_type(GrantType::ClientCredentials) {
         tracing::warn!(client_id = %client_id, "Client not authorized for client_credentials grant");
@@ -367,16 +569,6 @@ async fn handle_client_credentials(
     }
 
     let expires_in = config.access_token_ttl_secs;
-
-    // For client credentials, the "identity" is the client itself
-    let identity = Identity {
-        provider_id: "client_credentials".to_string(),
-        external_id: client_id.clone(),
-        username: Some(client_id.clone()),
-        email: None,
-        attributes: HashMap::new(),
-    };
-
     let requested_scope = req.scope.clone();
     // Validate that requested scopes are allowed for this client
     if let Some(ref scopes) = requested_scope {
@@ -392,8 +584,12 @@ async fn handle_client_credentials(
         }
     }
 
-    let access_token = match tokens.issue_user_token(identity, expires_in, requested_scope.clone())
-    {
+    let access_token = match tokens.issue_client_token(
+        &client_id,
+        expires_in,
+        requested_scope.clone(),
+        Some(client_id.clone()),
+    ) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!(error = ?e, "Failed to issue access token for client credentials");
@@ -419,6 +615,7 @@ async fn handle_client_credentials(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_refresh_token(
     req: TokenRequest,
     client_id: String,
@@ -503,17 +700,21 @@ async fn handle_refresh_token(
         Some(rt.scope.clone())
     };
 
-    let access_token =
-        match tokens.issue_user_token(rt.identity.clone(), expires_in, scope_opt.clone()) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to issue access token");
-                return Err(TokenErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: "Failed to generate token".to_string(),
-                });
-            }
-        };
+    let access_token = match tokens.issue_user_token(
+        rt.identity.clone(),
+        expires_in,
+        scope_opt.clone(),
+        Some(client_id.clone()),
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to issue access token");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to generate token".to_string(),
+            });
+        }
+    };
 
     tracing::info!(
         client_id = %client_id,
@@ -529,3 +730,1027 @@ async fn handle_refresh_token(
         scope: scope_opt,
     })
 }
+
+async fn handle_token_exchange(
+    req: TokenRequest,
+    client_id: String,
+    client: crate::client::ClientRegistration,
+    config: &OpConfig,
+    tokens: &TokenManager,
+) -> Result<TokenResponse, TokenErrorResponse> {
+    use crate::client::GrantType;
+    use authkestra_engine::token::Claims;
+
+    if !config.token_exchange_enabled {
+        tracing::warn!("Token exchange is disabled globally");
+        return Err(TokenErrorResponse {
+            error: "unsupported_grant_type".to_string(),
+            error_description: "Token exchange is not enabled on this authorization server"
+                .to_string(),
+        });
+    }
+
+    if !client.allows_grant_type(GrantType::TokenExchange) {
+        tracing::warn!(client_id = %client_id, "Client not authorized for token_exchange grant");
+        return Err(TokenErrorResponse {
+            error: "unauthorized_client".to_string(),
+            error_description: "Client is not authorized to use token_exchange grant type"
+                .to_string(),
+        });
+    }
+
+    if req.actor_token.is_some() || req.actor_token_type.is_some() {
+        tracing::warn!("Delegation (actor_token) is not supported");
+        return Err(TokenErrorResponse {
+            error: "invalid_request".to_string(),
+            error_description: "actor_token is not supported".to_string(),
+        });
+    }
+
+    let subject_token_type = req.subject_token_type.as_deref().unwrap_or("");
+    if subject_token_type != "urn:ietf:params:oauth:token-type:access_token"
+        && subject_token_type != "urn:ietf:params:oauth:token-type:id_token"
+    {
+        tracing::warn!(subject_token_type = %subject_token_type, "Unsupported subject_token_type");
+        return Err(TokenErrorResponse {
+            error: "invalid_request".to_string(),
+            error_description: "Unsupported subject_token_type".to_string(),
+        });
+    }
+
+    let requested_token_type = req
+        .requested_token_type
+        .as_deref()
+        .unwrap_or("urn:ietf:params:oauth:token-type:access_token");
+    if requested_token_type != "urn:ietf:params:oauth:token-type:access_token" {
+        tracing::warn!(requested_token_type = %requested_token_type, "Unsupported requested_token_type");
+        return Err(TokenErrorResponse {
+            error: "invalid_request".to_string(),
+            error_description: "Unsupported requested_token_type. Only access_token is supported."
+                .to_string(),
+        });
+    }
+
+    let subject_token_str = match req.subject_token.as_deref() {
+        Some(t) => t,
+        None => {
+            tracing::warn!("Missing subject_token in request");
+            return Err(TokenErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "subject_token is required".to_string(),
+            });
+        }
+    };
+
+    let claims: Claims = match tokens.validate_token(subject_token_str, None) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = ?e, "Failed to validate subject_token");
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "subject_token is invalid".to_string(),
+            });
+        }
+    };
+
+    // Audience Binding: either the subject token was issued TO this client (azp or aud = client_id)
+    // or this client is in the intended audience.
+    let is_intended_aud = claims.aud.as_deref() == Some(client_id.as_str());
+    if !is_intended_aud {
+        tracing::warn!(
+            client_id = %client_id,
+            "Client is not authorized to exchange this token"
+        );
+        return Err(TokenErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "Client is not authorized to exchange this token".to_string(),
+        });
+    }
+
+    // Determine the resource audience for the new token
+    let new_aud = if let Some(requested_aud) = req.audience {
+        if !client.allowed_audiences.contains(&requested_aud) {
+            tracing::warn!(
+                client_id = %client_id,
+                audience = %requested_aud,
+                "Requested audience is not allowed for this client"
+            );
+            return Err(TokenErrorResponse {
+                error: "invalid_target".to_string(),
+                error_description: "Requested audience is not allowed".to_string(),
+            });
+        }
+        Some(requested_aud)
+    } else {
+        Some(config.issuer.clone())
+    };
+
+    // Scope narrowing logic
+    let original_scope = claims.scope.unwrap_or_default();
+    let original_scopes: Vec<&str> = original_scope.split_whitespace().collect();
+    let requested_scope = req.scope.unwrap_or_default();
+    let requested_scopes: Vec<&str> = if requested_scope.is_empty() {
+        original_scopes.clone()
+    } else {
+        requested_scope.split_whitespace().collect()
+    };
+
+    let mut intersected_scopes = Vec::new();
+    for s in requested_scopes {
+        if original_scopes.contains(&s) && client.scopes.contains(&s.to_string()) {
+            intersected_scopes.push(s.to_string());
+        }
+    }
+
+    // If a scope was requested but intersection is empty, it's an error.
+    if !requested_scope.is_empty() && intersected_scopes.is_empty() {
+        tracing::warn!("Requested scope resulted in empty intersection");
+        return Err(TokenErrorResponse {
+            error: "invalid_scope".to_string(),
+            error_description: "Requested scope is invalid, unknown, or malformed".to_string(),
+        });
+    }
+
+    let final_scope_str = if intersected_scopes.is_empty() {
+        None
+    } else {
+        Some(intersected_scopes.join(" "))
+    };
+
+    let identity = match claims.identity {
+        Some(id) => id,
+        None => {
+            tracing::warn!("subject_token does not contain an identity");
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "subject_token is missing identity".to_string(),
+            });
+        }
+    };
+
+    let expires_in = config.access_token_ttl_secs;
+    let access_token =
+        match tokens.issue_user_token(identity, expires_in, final_scope_str.clone(), new_aud) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(error = ?e, "Failed to issue access token during exchange");
+                return Err(TokenErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: "Failed to generate token".to_string(),
+                });
+            }
+        };
+
+    tracing::info!(
+        client_id = %client_id,
+        "Successfully exchanged token"
+    );
+
+    Ok(TokenResponse {
+        access_token,
+        token_type: "Bearer".to_string(),
+        expires_in,
+        id_token: None,
+        refresh_token: None,
+        scope: final_scope_str,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::{ClientRegistration, GrantType, InMemoryClientStore};
+    use crate::code::{AuthorizationCode, InMemoryAuthorizationCodeStore};
+    use crate::refresh::{InMemoryRefreshTokenStore, RefreshToken};
+    use authkestra_engine::auth::state::Identity;
+    use authkestra_engine::token::TokenManager;
+    use chrono::{Duration, Utc};
+    use std::collections::HashMap;
+
+    pub(crate) fn test_config(token_exchange_enabled: bool) -> OpConfig {
+        OpConfig {
+            issuer: "https://auth.example.com".to_string(),
+            scopes_supported: vec![
+                "openid".to_string(),
+                "profile".to_string(),
+                "custom".to_string(),
+            ],
+            response_types_supported: vec!["code".to_string()],
+            grant_types_supported: vec!["authorization_code".to_string()],
+            id_token_signing_alg: "RS256".to_string(),
+            authorization_code_ttl_secs: 60,
+            access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 600,
+            token_exchange_enabled,
+        }
+    }
+
+    pub(crate) fn test_tokens() -> TokenManager {
+        TokenManager::new(b"super_secret_key_that_is_long_enough_for_hmac", None)
+    }
+
+    fn test_identity() -> Identity {
+        Identity {
+            provider_id: "test".to_string(),
+            external_id: "user123".to_string(),
+            username: Some("user123".to_string()),
+            email: None,
+            attributes: HashMap::new(),
+        }
+    }
+
+    fn issue_subject_token(
+        tokens: &TokenManager,
+        client_id: &str,
+        scope: Option<String>,
+    ) -> String {
+        tokens
+            .issue_user_token(test_identity(), 3600, scope, Some(client_id.to_string()))
+            .unwrap()
+    }
+
+    // --- Pre-existing restored tests ---
+
+    #[tokio::test]
+    async fn test_invalid_grant_type() {
+        let req = TokenRequest {
+            grant_type: "invalid".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+        let codes = InMemoryAuthorizationCodeStore::new();
+        let refresh = InMemoryRefreshTokenStore::new();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &refresh,
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "unsupported_grant_type");
+    }
+
+    #[tokio::test]
+    async fn test_successful_exchange_with_pkce() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec!["openid".to_string()],
+            require_pkce: true,
+            allowed_audiences: vec![],
+        });
+        let verifier = "test_verifier";
+        let mut hasher = sha2::Sha256::new();
+        sha2::Digest::update(&mut hasher, verifier.as_bytes());
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+        let codes = InMemoryAuthorizationCodeStore::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "openid".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: Some(challenge),
+                code_challenge_method: Some("S256".to_string()),
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: Some(verifier.to_string()),
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_pkce_verifier() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec!["openid".to_string()],
+            require_pkce: true,
+            allowed_audiences: vec![],
+        });
+        let codes = InMemoryAuthorizationCodeStore::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "openid".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: Some("valid_challenge".to_string()),
+                code_challenge_method: Some("S256".to_string()),
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: Some("wrong_verifier".to_string()),
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_redirect_uri_mismatch() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+        let codes = InMemoryAuthorizationCodeStore::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: None,
+                code_challenge_method: None,
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://wrong".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_reject_plain_pkce_method() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: true,
+            allowed_audiences: vec![],
+        });
+        let codes = InMemoryAuthorizationCodeStore::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: Some("challenge".to_string()),
+                code_challenge_method: Some("plain".to_string()),
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: Some("challenge".to_string()),
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "server_error");
+    }
+
+    #[tokio::test]
+    async fn test_client_credentials() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::ClientCredentials],
+            scopes: vec!["custom".to_string()],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+        let req = TokenRequest {
+            grant_type: "client_credentials".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: Some("custom".to_string()),
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::RefreshToken],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+        let refresh = InMemoryRefreshTokenStore::new();
+        refresh
+            .store_token(RefreshToken {
+                token: "rt1".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                scope: "openid".to_string(),
+                expires_at: Utc::now() + Duration::days(1),
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "refresh_token".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: Some("rt1".to_string()),
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &refresh,
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert!(res.is_ok());
+        assert!(res.unwrap().refresh_token.is_some());
+    }
+
+    // --- Token Exchange DoD Tests ---
+
+    fn default_tx_req(subject_token: &str) -> TokenRequest {
+        TokenRequest {
+            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            device_code: None,
+            subject_token: Some(subject_token.to_string()),
+            subject_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
+            audience: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tx_cross_client_rejection() {
+        let tokens = test_tokens();
+        // Issued to 'client2'
+        let subject_token = issue_subject_token(&tokens, "client2", None);
+        let req = default_tx_req(&subject_token);
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_tx_scope_escalation_narrow() {
+        let tokens = test_tokens();
+        let subject_token =
+            issue_subject_token(&tokens, "client1", Some("scopeA scopeB".to_string()));
+        let mut req = default_tx_req(&subject_token);
+        req.scope = Some("scopeA scopeC".to_string()); // requesting scopeC which token doesn't have
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec!["scopeA".to_string(), "scopeC".to_string()],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        let res = res.unwrap();
+        // Should only grant scopeA
+        assert_eq!(res.scope.unwrap(), "scopeA");
+    }
+
+    #[tokio::test]
+    async fn test_tx_zero_overlap_reject() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", Some("scopeA".to_string()));
+        let mut req = default_tx_req(&subject_token);
+        req.scope = Some("scopeB".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec!["scopeB".to_string()],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_scope");
+    }
+
+    #[tokio::test]
+    async fn test_tx_feature_disabled() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let req = default_tx_req(&subject_token);
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "unsupported_grant_type");
+    }
+
+    #[tokio::test]
+    async fn test_tx_actor_token_rejected() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.actor_token = Some("some_actor_token".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_tx_subject_token_type_invalid() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.subject_token_type = Some("urn:ietf:params:oauth:token-type:saml2".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_tx_requested_token_type_invalid() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.requested_token_type = Some("urn:ietf:params:oauth:token-type:saml2".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_tx_audience_allowed() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.audience = Some("serviceA".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec!["serviceA".to_string()],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert!(res.is_ok());
+        let claim = tokens
+            .validate_token(&res.unwrap().access_token, None)
+            .unwrap();
+        assert_eq!(claim.aud.unwrap(), "serviceA");
+    }
+
+    #[tokio::test]
+    async fn test_tx_audience_disallowed() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.audience = Some("serviceB".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec!["serviceA".to_string()],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_target");
+    }
+
+    #[tokio::test]
+    async fn test_tx_default_audience() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let req = default_tx_req(&subject_token);
+        // No audience requested
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert!(res.is_ok());
+        let claim = tokens
+            .validate_token(&res.unwrap().access_token, None)
+            .unwrap();
+        // default aud should be config.issuer
+        assert_eq!(claim.aud.unwrap(), "https://auth.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_tx_missing_identity_reject() {
+        let tokens = test_tokens();
+        // Issue token WITHOUT identity (using raw token creation or simulating it)
+        // Since test_tokens().issue_user_token always embeds identity, we just simulate by passing a token with valid signature but no identity
+        // Actually, we can just use `issue_client_token` which creates a token with no `identity` claim!
+        let subject_token = tokens
+            .issue_client_token("client2", 3600, None, Some("client1".to_string()))
+            .unwrap();
+        let req = default_tx_req(&subject_token);
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &crate::device::InMemoryDeviceCodeStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+}
+
+#[cfg(test)]
+mod device_tests;

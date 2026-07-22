@@ -321,7 +321,7 @@ pub async fn handle_oauth_callback_jwt_erased(
         .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
 
     let jwt = token_manager
-        .issue_user_token(identity, expires_in_secs, None)
+        .issue_user_token(identity, expires_in_secs, None, None)
         .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Token error: {e}")))?;
 
     let mut res = HttpResponse::Ok();

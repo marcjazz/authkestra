@@ -4,8 +4,10 @@ use authkestra_op::{
     client::ClientStore,
     code::AuthorizationCodeStore,
     config::OpConfig,
+    device::DeviceCodeStore,
     handlers::{
         authorize::{handle_authorize, AuthorizeOutcome, AuthorizeRequest},
+        device_authorization::{handle_device_authorization, DeviceAuthorizationRequest},
         discovery::OidcDiscovery,
         jwks::JwksResponse,
         token::{handle_token, TokenRequest},
@@ -67,12 +69,50 @@ pub async fn actix_authorize_handler(
     }
 }
 
+pub async fn actix_device_authorization_handler(
+    http_req: HttpRequest,
+    req: web::Form<DeviceAuthorizationRequest>,
+    clients: web::Data<Arc<dyn ClientStore>>,
+    devices: web::Data<Arc<dyn DeviceCodeStore>>,
+    config: web::Data<OpConfig>,
+) -> impl Responder {
+    tracing::debug!("Handling OP device authorization request (actix)");
+
+    let auth_header = http_req
+        .headers()
+        .get(actix_web::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok());
+
+    match handle_device_authorization(
+        req.into_inner(),
+        auth_header,
+        config.get_ref(),
+        clients.get_ref().as_ref(),
+        devices.get_ref().as_ref(),
+    )
+    .await
+    {
+        Ok(resp) => HttpResponse::Ok().json(resp),
+        Err(err) => {
+            let status = match err.error.as_str() {
+                "invalid_client" | "unauthorized_client" => {
+                    actix_web::http::StatusCode::UNAUTHORIZED
+                }
+                _ => actix_web::http::StatusCode::BAD_REQUEST,
+            };
+            HttpResponse::build(status).json(err)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn actix_token_handler(
     http_req: HttpRequest,
     req: web::Form<TokenRequest>,
     clients: web::Data<Arc<dyn ClientStore>>,
     codes: web::Data<Arc<dyn AuthorizationCodeStore>>,
     refresh_tokens: web::Data<Arc<dyn RefreshTokenStore>>,
+    devices: web::Data<Arc<dyn DeviceCodeStore>>,
     tokens: web::Data<Arc<TokenManager>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
@@ -90,6 +130,7 @@ pub async fn actix_token_handler(
         clients.get_ref().as_ref(),
         codes.get_ref().as_ref(),
         refresh_tokens.get_ref().as_ref(),
+        devices.get_ref().as_ref(),
         tokens.get_ref().as_ref(),
     )
     .await
@@ -144,6 +185,38 @@ pub async fn actix_userinfo_handler(
     }
 }
 
+pub async fn actix_device_verify_handler(
+    req: web::Form<authkestra_op::handlers::device_verify::DeviceVerifyRequest>,
+    devices: web::Data<Arc<dyn DeviceCodeStore>>,
+    auth_session: Option<crate::AuthSession>,
+) -> actix_web::HttpResponse {
+    tracing::debug!("Handling OP device verify request (actix)");
+    let identity = match auth_session {
+        Some(session) => session.0.identity,
+        None => {
+            tracing::info!("Unauthenticated user on /device/verify, redirecting to /login");
+            let login_url = String::from("/login");
+            return actix_web::HttpResponse::Found()
+                .insert_header(("Location", login_url))
+                .finish();
+        }
+    };
+
+    match authkestra_op::handlers::device_verify::handle_device_verify(
+        req.into_inner(),
+        identity,
+        devices.get_ref().as_ref(),
+    )
+    .await
+    {
+        Ok(resp) => actix_web::HttpResponse::Ok().json(resp),
+        Err(err) => actix_web::HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "invalid_request",
+            "error_description": err.to_string()
+        })),
+    }
+}
+
 pub trait AuthEngineActixOpExt {
     fn op_actix_scope(&self) -> actix_web::Scope;
 }
@@ -157,8 +230,16 @@ impl<T> AuthEngineActixOpExt for T {
                 web::get().to(actix_discovery_handler),
             )
             .route("/authorize", web::get().to(actix_authorize_handler))
+            .route(
+                "/device_authorization",
+                web::post().to(actix_device_authorization_handler),
+            )
             .route("/token", web::post().to(actix_token_handler))
             .route("/userinfo", web::get().to(actix_userinfo_handler))
             .route("/userinfo", web::post().to(actix_userinfo_handler))
+            .route(
+                "/device/verify",
+                web::post().to(actix_device_verify_handler),
+            )
     }
 }

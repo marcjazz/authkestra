@@ -22,6 +22,7 @@ struct AppState {
     session_store: Arc<dyn authkestra_engine::auth::SessionStore>,
     session_config: authkestra_engine::SessionConfig,
     refresh_tokens: Arc<dyn RefreshTokenStore>,
+    pub device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore>,
 }
 
 impl FromRef<AppState> for Arc<TokenManager> {
@@ -88,6 +89,20 @@ impl FromRef<AppState> for authkestra_engine::SessionConfig {
     }
 }
 
+impl FromRef<AppState> for Arc<dyn authkestra_op::device::DeviceCodeStore> {
+    fn from_ref(state: &AppState) -> Self {
+        state.device_code_store.clone()
+    }
+}
+
+impl FromRef<AppState>
+    for Result<Arc<dyn authkestra_op::device::DeviceCodeStore>, AuthEngineAxumError>
+{
+    fn from_ref(state: &AppState) -> Self {
+        Ok(state.device_code_store.clone())
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let token_manager = Arc::new(TokenManager::new(
@@ -103,11 +118,14 @@ async fn main() {
         require_pkce: true,
         scopes: vec!["openid".to_string(), "profile".to_string()],
         grant_types: vec![authkestra_op::client::GrantType::AuthorizationCode],
+        allowed_audiences: vec![],
     });
     let clients: Arc<dyn ClientStore> = Arc::new(clients);
 
     let codes: Arc<dyn AuthorizationCodeStore> = Arc::new(InMemoryAuthorizationCodeStore::new());
     let refresh_tokens: Arc<dyn RefreshTokenStore> = Arc::new(InMemoryRefreshTokenStore::new());
+    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> =
+        Arc::new(authkestra_op::device::InMemoryDeviceCodeStore::new());
 
     let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::new());
@@ -121,6 +139,7 @@ async fn main() {
         clients,
         codes,
         refresh_tokens,
+        device_code_store,
         session_store,
         session_config,
         config: OpConfig {
@@ -135,6 +154,8 @@ async fn main() {
             id_token_signing_alg: "RS256".to_string(),
             access_token_ttl_secs: 3600,
             authorization_code_ttl_secs: 600,
+            device_code_ttl_secs: 600,
+            token_exchange_enabled: true,
         },
     };
 
