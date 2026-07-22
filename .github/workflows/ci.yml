@@ -49,3 +49,19 @@ jobs:
         uses: swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Cache cargo registry and build
+        uses: swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run coverage and fail if under threshold
+        run: cargo llvm-cov --workspace --fail-under-lines 51

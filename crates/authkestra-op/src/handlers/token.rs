@@ -731,3 +731,812 @@ async fn handle_token_exchange(
         scope: final_scope_str,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::{ClientRegistration, GrantType, InMemoryClientStore};
+    use crate::code::{AuthorizationCode, InMemoryAuthorizationCodeStore};
+    use crate::refresh::{InMemoryRefreshTokenStore, RefreshToken};
+    use authkestra_engine::auth::state::Identity;
+    use authkestra_engine::token::TokenManager;
+    use chrono::{Duration, Utc};
+    use std::collections::HashMap;
+
+    fn test_config(token_exchange_enabled: bool) -> OpConfig {
+        OpConfig {
+            issuer: "https://auth.example.com".to_string(),
+            scopes_supported: vec![
+                "openid".to_string(),
+                "profile".to_string(),
+                "custom".to_string(),
+            ],
+            response_types_supported: vec!["code".to_string()],
+            grant_types_supported: vec!["authorization_code".to_string()],
+            id_token_signing_alg: "RS256".to_string(),
+            authorization_code_ttl_secs: 60,
+            access_token_ttl_secs: 3600,
+            token_exchange_enabled,
+        }
+    }
+
+    fn test_tokens() -> TokenManager {
+        TokenManager::new(b"super_secret_key_that_is_long_enough_for_hmac", None)
+    }
+
+    fn test_identity() -> Identity {
+        Identity {
+            provider_id: "test".to_string(),
+            external_id: "user123".to_string(),
+            username: Some("user123".to_string()),
+            email: None,
+            attributes: HashMap::new(),
+        }
+    }
+
+    fn issue_subject_token(
+        tokens: &TokenManager,
+        client_id: &str,
+        scope: Option<String>,
+    ) -> String {
+        tokens
+            .issue_user_token(test_identity(), 3600, scope, Some(client_id.to_string()))
+            .unwrap()
+    }
+
+    // --- Pre-existing restored tests ---
+
+    #[tokio::test]
+    async fn test_invalid_grant_type() {
+        let req = TokenRequest {
+            grant_type: "invalid".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+        let codes = InMemoryAuthorizationCodeStore::new();
+        let refresh = InMemoryRefreshTokenStore::new();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &refresh,
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "unsupported_grant_type");
+    }
+
+    #[tokio::test]
+    async fn test_successful_exchange_with_pkce() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec!["openid".to_string()],
+            require_pkce: true,
+            allowed_audiences: vec![],
+        });
+        let verifier = "test_verifier";
+        let mut hasher = sha2::Sha256::new();
+        sha2::Digest::update(&mut hasher, verifier.as_bytes());
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+        let codes = InMemoryAuthorizationCodeStore::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "openid".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: Some(challenge),
+                code_challenge_method: Some("S256".to_string()),
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: Some(verifier.to_string()),
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &InMemoryRefreshTokenStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_pkce_verifier() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec!["openid".to_string()],
+            require_pkce: true,
+            allowed_audiences: vec![],
+        });
+        let codes = InMemoryAuthorizationCodeStore::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "openid".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: Some("valid_challenge".to_string()),
+                code_challenge_method: Some("S256".to_string()),
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: Some("wrong_verifier".to_string()),
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &InMemoryRefreshTokenStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_redirect_uri_mismatch() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+        let codes = InMemoryAuthorizationCodeStore::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: None,
+                code_challenge_method: None,
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://wrong".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &InMemoryRefreshTokenStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_reject_plain_pkce_method() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: true,
+            allowed_audiences: vec![],
+        });
+        let codes = InMemoryAuthorizationCodeStore::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: Some("challenge".to_string()),
+                code_challenge_method: Some("plain".to_string()),
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: Some("challenge".to_string()),
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &codes,
+            &InMemoryRefreshTokenStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "server_error");
+    }
+
+    #[tokio::test]
+    async fn test_client_credentials() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::ClientCredentials],
+            scopes: vec!["custom".to_string()],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+        let req = TokenRequest {
+            grant_type: "client_credentials".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: Some("custom".to_string()),
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &test_tokens(),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token() {
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::RefreshToken],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+        let refresh = InMemoryRefreshTokenStore::new();
+        refresh
+            .store_token(RefreshToken {
+                token: "rt1".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                scope: "openid".to_string(),
+                expires_at: Utc::now() + Duration::days(1),
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "refresh_token".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: Some("rt1".to_string()),
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &refresh,
+            &test_tokens(),
+        )
+        .await;
+        assert!(res.is_ok());
+        assert!(res.unwrap().refresh_token.is_some());
+    }
+
+    // --- Token Exchange DoD Tests ---
+
+    fn default_tx_req(subject_token: &str) -> TokenRequest {
+        TokenRequest {
+            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: Some(subject_token.to_string()),
+            subject_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
+            audience: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tx_cross_client_rejection() {
+        let tokens = test_tokens();
+        // Issued to 'client2'
+        let subject_token = issue_subject_token(&tokens, "client2", None);
+        let req = default_tx_req(&subject_token);
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_tx_scope_escalation_narrow() {
+        let tokens = test_tokens();
+        let subject_token =
+            issue_subject_token(&tokens, "client1", Some("scopeA scopeB".to_string()));
+        let mut req = default_tx_req(&subject_token);
+        req.scope = Some("scopeA scopeC".to_string()); // requesting scopeC which token doesn't have
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec!["scopeA".to_string(), "scopeC".to_string()],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        let res = res.unwrap();
+        // Should only grant scopeA
+        assert_eq!(res.scope.unwrap(), "scopeA");
+    }
+
+    #[tokio::test]
+    async fn test_tx_zero_overlap_reject() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", Some("scopeA".to_string()));
+        let mut req = default_tx_req(&subject_token);
+        req.scope = Some("scopeB".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec!["scopeB".to_string()],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_scope");
+    }
+
+    #[tokio::test]
+    async fn test_tx_feature_disabled() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let req = default_tx_req(&subject_token);
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "unsupported_grant_type");
+    }
+
+    #[tokio::test]
+    async fn test_tx_actor_token_rejected() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.actor_token = Some("some_actor_token".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_tx_subject_token_type_invalid() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.subject_token_type = Some("urn:ietf:params:oauth:token-type:saml2".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_tx_requested_token_type_invalid() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.requested_token_type = Some("urn:ietf:params:oauth:token-type:saml2".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_tx_audience_allowed() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.audience = Some("serviceA".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec!["serviceA".to_string()],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert!(res.is_ok());
+        let claim = tokens
+            .validate_token(&res.unwrap().access_token, None)
+            .unwrap();
+        assert_eq!(claim.aud.unwrap(), "serviceA");
+    }
+
+    #[tokio::test]
+    async fn test_tx_audience_disallowed() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let mut req = default_tx_req(&subject_token);
+        req.audience = Some("serviceB".to_string());
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec!["serviceA".to_string()],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_target");
+    }
+
+    #[tokio::test]
+    async fn test_tx_default_audience() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", None);
+        let req = default_tx_req(&subject_token);
+        // No audience requested
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert!(res.is_ok());
+        let claim = tokens
+            .validate_token(&res.unwrap().access_token, None)
+            .unwrap();
+        // default aud should be config.issuer
+        assert_eq!(claim.aud.unwrap(), "https://auth.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_tx_missing_identity_reject() {
+        let tokens = test_tokens();
+        // Issue token WITHOUT identity (using raw token creation or simulating it)
+        // Since test_tokens().issue_user_token always embeds identity, we just simulate by passing a token with valid signature but no identity
+        // Actually, we can just use `issue_client_token` which creates a token with no `identity` claim!
+        let subject_token = tokens
+            .issue_client_token("client2", 3600, None, Some("client1".to_string()))
+            .unwrap();
+        let req = default_tx_req(&subject_token);
+
+        let clients = InMemoryClientStore::new();
+        clients.register(ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::TokenExchange],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        });
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &clients,
+            &InMemoryAuthorizationCodeStore::new(),
+            &InMemoryRefreshTokenStore::new(),
+            &tokens,
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+}
