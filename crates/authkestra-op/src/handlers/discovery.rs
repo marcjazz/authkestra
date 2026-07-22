@@ -82,6 +82,7 @@ mod tests {
             authorization_code_ttl_secs: 60,
             access_token_ttl_secs: 3600,
             device_code_ttl_secs: 600,
+            token_exchange_enabled: false,
         };
 
         let doc = OidcDiscovery::from_config(&config);

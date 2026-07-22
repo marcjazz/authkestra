@@ -224,7 +224,7 @@ pub async fn handle_oauth_callback_jwt_erased(
         finalize_callback_erased(flow, &cookies, &params, &config).await?;
 
     let jwt = token_manager
-        .issue_user_token(identity, expires_in_secs, None)
+        .issue_user_token(identity, expires_in_secs, None, None)
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

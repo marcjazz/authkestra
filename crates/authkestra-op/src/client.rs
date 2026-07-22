@@ -19,6 +19,8 @@ pub enum GrantType {
     ClientCredentials,
     /// Device Code grant (RFC 8628).
     DeviceCode,
+    /// Token Exchange grant (RFC 8693).
+    TokenExchange,
 }
 
 /// A registered OAuth2/OIDC client application.
@@ -42,6 +44,10 @@ pub struct ClientRegistration {
     /// Whether this client must use PKCE (mandatory for public clients,
     /// recommended for all — see RFC-003 §7 / OAuth 2.1).
     pub require_pkce: bool,
+    /// Downstream audiences (resources) this client is permitted to target
+    /// during token exchange.
+    #[serde(default)]
+    pub allowed_audiences: Vec<String>,
 }
 
 impl ClientRegistration {
@@ -156,6 +162,7 @@ mod tests {
             grant_types: vec![],
             scopes: vec![],
             require_pkce: false,
+            allowed_audiences: vec![],
         };
 
         assert!(client.verify_secret("super_secret"));
@@ -177,6 +184,7 @@ mod tests {
             grant_types: vec![],
             scopes: vec![],
             require_pkce: false,
+            allowed_audiences: vec![],
         };
 
         assert!(!client.verify_secret("wrong_secret"));
@@ -191,6 +199,7 @@ mod tests {
             grant_types: vec![],
             scopes: vec![],
             require_pkce: false,
+            allowed_audiences: vec![],
         };
 
         assert!(!client.verify_secret("some_secret"));

@@ -210,7 +210,7 @@ impl<S> AuthEngine<S, Configured<Arc<TokenManager>>> {
         tracing::debug!("issuing token for user");
         self.token_manager
             .0
-            .issue_user_token(identity, expires_in_secs, None)
+            .issue_user_token(identity, expires_in_secs, None, None)
             .map_err(|e| {
                 tracing::error!(error = %e, "failed to issue token");
                 AuthError::Token(e.to_string())
