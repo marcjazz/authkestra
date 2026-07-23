@@ -203,11 +203,11 @@ pub async fn actix_device_verify_handler(
     }
 }
 
-pub trait AkActixOpExt {
+pub trait AuthEngineActixOpExt {
     fn op_actix_scope(&self) -> actix_web::Scope;
 }
 
-impl<T> AkActixOpExt for T {
+impl<T> AuthEngineActixOpExt for T {
     fn op_actix_scope(&self) -> actix_web::Scope {
         web::scope("")
             .route("/jwks.json", web::get().to(actix_jwks_handler))

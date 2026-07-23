@@ -1,10 +1,10 @@
 //! # Axum Basic Setup Example
 //!
-//! This example demonstrates the most basic setup of AkBase with Axum.
+//! This example demonstrates the most basic setup of AuthEngine with Axum.
 //! It uses an in-memory session store and a mock authentication provider.
 
-use authkestra::flow::AkBase;
-use authkestra_axum::{AkAxumError, AkAxumExt, AkState, AuthSession};
+use authkestra::flow::AuthEngine;
+use authkestra_axum::{AuthEngineAxumError, AuthEngineAxumExt, AuthEngineState, AuthSession};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{Configured, SessionConfig};
 use axum::{
@@ -17,8 +17,8 @@ use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 
-/// AkBase state with support for session only.
-type AppState = AkState<Configured<Arc<dyn SessionStore>>>;
+/// AuthEngine state with support for session only.
+type AppState = AuthEngineState<Configured<Arc<dyn SessionStore>>>;
 
 #[tokio::main]
 async fn main() {
@@ -26,7 +26,7 @@ async fn main() {
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
-    let auth_engine = AkBase::builder()
+    let auth_engine = AuthEngine::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false, // For local development
@@ -53,7 +53,7 @@ async fn main() {
 }
 
 /// API endpoint to get current user info from session
-async fn get_user(session: Result<AuthSession, AkAxumError>) -> impl IntoResponse {
+async fn get_user(session: Result<AuthSession, AuthEngineAxumError>) -> impl IntoResponse {
     match session {
         Ok(AuthSession(session)) => Json(json!({
             "id": session.identity.external_id,

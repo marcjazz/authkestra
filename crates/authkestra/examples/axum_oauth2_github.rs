@@ -1,13 +1,13 @@
 //! # Axum GitHub OAuth2 Example
 //!
-//! This example demonstrates how to set up AkBase with Axum for GitHub OAuth2 login.
+//! This example demonstrates how to set up AuthEngine with Axum for GitHub OAuth2 login.
 //!
 //! To run this example, you'll need:
 //! - `AUTHKESTRA_GITHUB_CLIENT_ID`
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
-use authkestra::flow::{AkBase, OAuth2Flow};
-use authkestra_axum::{AkAxumError, AkAxumExt, AkState, AuthSession};
+use authkestra::flow::{AuthEngine, OAuth2Flow};
+use authkestra_axum::{AuthEngineAxumError, AuthEngineAxumExt, AuthEngineState, AuthSession};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{Configured, SessionConfig};
 use authkestra_providers::github::GithubProvider;
@@ -21,8 +21,8 @@ use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 
-/// AkBase state with support for session only.
-type AppState = AkState<Configured<Arc<dyn SessionStore>>>;
+/// AuthEngine state with support for session only.
+type AppState = AuthEngineState<Configured<Arc<dyn SessionStore>>>;
 
 #[tokio::main]
 async fn main() {
@@ -57,7 +57,7 @@ async fn main() {
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
-    let auth_engine = AkBase::builder()
+    let auth_engine = AuthEngine::builder()
         .provider(OAuth2Flow::new(github_provider))
         .session_store(session_store)
         .session_config(SessionConfig {
@@ -82,7 +82,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_user(session: Result<AuthSession, AkAxumError>) -> impl IntoResponse {
+async fn get_user(session: Result<AuthSession, AuthEngineAxumError>) -> impl IntoResponse {
     match session {
         Ok(AuthSession(session)) => Json(json!({
             "id": session.identity.external_id,

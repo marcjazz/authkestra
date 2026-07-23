@@ -14,7 +14,7 @@ The digital identity landscape is shifting towards:
 
 ### 3.1. GNAP & OAuth 2.1 Implementation
 - **OAuth 2.1**: Mandate PKCE, deprecate Implicit/Password grants, enforce DPoP/MTLS for sender-constraint.
-- **GNAP (RFC 9635)**: Implement the `AkBase` to handle unified JSON requests for multiple tokens, bypassing the rigid "redirect-only" model. Support dynamic client instance keys.
+- **GNAP (RFC 9635)**: Implement the `AuthEngine` to handle unified JSON requests for multiple tokens, bypassing the rigid "redirect-only" model. Support dynamic client instance keys.
 
 ### 3.2. Verifiable Credentials & Privacy
 - **Data Model**: Adopt W3C Verifiable Credentials Data Model v2.0.
@@ -39,6 +39,6 @@ The digital identity landscape is shifting towards:
 - **authkestra-ssf**: New crate for Shared Signals Framework.
 
 ## 5. Timeline
-- **Immediate**: Update `AkBase` traits to be "Future-Proof" (RFC-001 completion).
+- **Immediate**: Update `AuthEngine` traits to be "Future-Proof" (RFC-001 completion).
 - **Mid-Term**: Implement PQC WebAuthn and SD-JWT.
 - **Long-Term**: Full GNAP and CAEP event bus integration.

@@ -7,8 +7,8 @@
 //! it automatically generates the implementations for the data layer traits by delegating
 //! to the internal unified `SqlKvStore`.
 
-use authkestra::flow::AkBase;
-use authkestra_axum::{AkAxumError, AkAxumExt, AuthSession, AuthkestraState};
+use authkestra::flow::AuthEngine;
+use authkestra_axum::{AuthEngineAxumError, AuthEngineAxumExt, AuthSession, AuthkestraState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{Configured, SessionConfig};
 use authkestra_macros::AuthkestraKvStore;
@@ -36,7 +36,7 @@ pub struct MySqliteSessionStore(authkestra_engine::store::sql::SqlKvStore<sqlx::
 struct AppState {
     // Automatically extracts SessionStore and SessionConfig
     #[authkestra(engine)]
-    auth: AkBase<Configured<Arc<dyn SessionStore>>, authkestra_engine::Missing>,
+    auth: AuthEngine<Configured<Arc<dyn SessionStore>>, authkestra_engine::Missing>,
 }
 
 // ============================================================================
@@ -73,7 +73,7 @@ async fn main() {
 
     let session_store_arc: Arc<dyn SessionStore> = Arc::new(session_store);
 
-    let auth_engine = AkBase::builder()
+    let auth_engine = AuthEngine::builder()
         .session_store(session_store_arc)
         .session_config(SessionConfig {
             secure: false,

@@ -9,7 +9,7 @@ pub use authkestra_engine::TokenManager;
 #[cfg(all(feature = "flow", feature = "token"))]
 pub use authkestra_engine::TokenManagerState;
 #[cfg(feature = "flow")]
-pub use authkestra_engine::{AkBase, SessionConfig};
+pub use authkestra_engine::{AuthEngine, SessionConfig};
 #[cfg(all(feature = "flow", any(feature = "session", feature = "token")))]
 pub use authkestra_engine::{Configured, Missing};
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
@@ -28,16 +28,20 @@ pub use helpers::actix_login_handler;
 pub use helpers::{actix_callback_handler, actix_logout_handler};
 
 #[cfg(feature = "op")]
-pub use op::AkActixOpExt;
+pub use op::AuthEngineActixOpExt;
 
 #[cfg(feature = "flow")]
-pub trait AkActixExt<S, T> {
+pub trait AuthEngineActixExt<S, T> {
     fn actix_scope(&self) -> actix_web::Scope;
 }
 
+// Keep for backwards compatibility if needed
+#[cfg(feature = "flow")]
+pub use AuthEngineActixExt as AuthkestraActixExt;
+
 #[cfg(feature = "flow")]
 #[cfg(all(feature = "flow", feature = "session"))]
-impl<S, T> AkActixExt<S, T> for AkBase<S, T>
+impl<S, T> AuthEngineActixExt<S, T> for AuthEngine<S, T>
 where
     S: Clone + SessionStoreState + 'static,
     T: Clone + 'static,
@@ -73,14 +77,14 @@ impl FromRequest for AuthSession {
             .app_data::<web::Data<Arc<dyn SessionStore>>>()
             .cloned()
             .or_else(|| {
-                req.app_data::<web::Data<AkBase<Configured<Arc<dyn SessionStore>>, Missing>>>()
+                req.app_data::<web::Data<AuthEngine<Configured<Arc<dyn SessionStore>>, Missing>>>()
                     .map(|a| web::Data::new(a.session_store.get_store()))
             })
             .or_else(|| {
                 #[cfg(feature = "token")]
                 {
                     req.app_data::<web::Data<
-                        AkBase<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
+                        AuthEngine<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
                     >>()
                     .map(|a| web::Data::new(a.session_store.get_store()))
                 }
@@ -95,7 +99,7 @@ impl FromRequest for AuthSession {
             .cloned()
             .or_else(|| {
                 req.app_data::<web::Data<
-                    AkBase<authkestra_engine::Configured<Arc<dyn SessionStore>>, Missing>,
+                    AuthEngine<authkestra_engine::Configured<Arc<dyn SessionStore>>, Missing>,
                 >>()
                 .map(|a| web::Data::new(a.session_config.clone()))
             })
@@ -103,7 +107,7 @@ impl FromRequest for AuthSession {
                 #[cfg(feature = "token")]
                 {
                     req.app_data::<web::Data<
-                        AkBase<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
+                        AuthEngine<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
                     >>()
                     .map(|a| web::Data::new(a.session_config.clone()))
                 }
@@ -173,14 +177,14 @@ impl FromRequest for AuthToken {
             .app_data::<web::Data<Arc<TokenManager>>>()
             .cloned()
             .or_else(|| {
-                req.app_data::<web::Data<AkBase<Missing, Configured<Arc<TokenManager>>>>>()
+                req.app_data::<web::Data<AuthEngine<Missing, Configured<Arc<TokenManager>>>>>()
                     .map(|a| web::Data::new(a.token_manager.get_manager()))
             })
             .or_else(|| {
                 #[cfg(feature = "session")]
                 {
                     req.app_data::<web::Data<
-                        AkBase<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
+                        AuthEngine<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
                     >>()
                     .map(|a| web::Data::new(a.token_manager.get_manager()))
                 }

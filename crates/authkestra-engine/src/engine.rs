@@ -13,7 +13,7 @@ pub struct Missing;
 #[derive(Clone, Debug)]
 pub struct Configured<T>(pub T);
 
-/// Trait for the session store state in the `AkBase`.
+/// Trait for the session store state in the `AuthEngine`.
 pub trait SessionStoreState: Send + Sync + Clone {
     /// Returns the session store if configured.
     fn get_store(&self) -> Arc<dyn SessionStore>;
@@ -25,7 +25,7 @@ impl SessionStoreState for Configured<Arc<dyn SessionStore>> {
     }
 }
 
-/// Trait for the token manager state in the `AkBase`.
+/// Trait for the token manager state in the `AuthEngine`.
 pub trait TokenManagerState: Send + Sync + Clone {
     /// Returns the token manager if configured.
     #[cfg(feature = "token")]
@@ -41,10 +41,10 @@ impl TokenManagerState for Configured<Arc<TokenManager>> {
 
 /// The central orchestrator for Authkestra.
 ///
-/// `AkBase` ties together authentication methods, session management, and flows.
-/// It is constructed using the [`AkEngineBuilder`] which uses the Typestate pattern
+/// `AuthEngine` ties together authentication methods, session management, and flows.
+/// It is constructed using the [`AuthEngineBuilder`] which uses the Typestate pattern
 /// to ensure that certain methods are only available when the necessary components are configured.
-pub struct AkBase<S = Missing, T = Missing> {
+pub struct AuthEngine<S = Missing, T = Missing> {
     /// Map of registered OAuth providers.
     pub providers: HashMap<String, Arc<dyn ErasedOAuthFlow>>,
     /// The session storage backend.
@@ -56,7 +56,7 @@ pub struct AkBase<S = Missing, T = Missing> {
     pub token_manager: T,
 }
 
-impl<S, T> Clone for AkBase<S, T>
+impl<S, T> Clone for AuthEngine<S, T>
 where
     S: Clone,
     T: Clone,
@@ -72,10 +72,10 @@ where
     }
 }
 
-impl AkBase<Missing, Missing> {
-    /// Start building a new `AkBase`.
-    pub fn builder() -> AkEngineBuilder<Missing, Missing> {
-        AkEngineBuilder {
+impl AuthEngine<Missing, Missing> {
+    /// Start building a new `AuthEngine`.
+    pub fn builder() -> AuthEngineBuilder<Missing, Missing> {
+        AuthEngineBuilder {
             providers: HashMap::new(),
             session_store: Missing,
             session_config: SessionConfig::default(),
@@ -85,8 +85,8 @@ impl AkBase<Missing, Missing> {
     }
 }
 
-/// A builder for configuring and creating an [`AkBase`] instance.
-pub struct AkEngineBuilder<S = Missing, T = Missing> {
+/// A builder for configuring and creating an [`AuthEngine`] instance.
+pub struct AuthEngineBuilder<S = Missing, T = Missing> {
     providers: HashMap<String, Arc<dyn ErasedOAuthFlow>>,
     session_store: S,
     session_config: SessionConfig,
@@ -94,7 +94,7 @@ pub struct AkEngineBuilder<S = Missing, T = Missing> {
     token_manager: T,
 }
 
-impl<S, T> AkEngineBuilder<S, T> {
+impl<S, T> AuthEngineBuilder<S, T> {
     /// Register an OAuth provider flow.
     pub fn provider<F>(mut self, flow: F) -> Self
     where
@@ -109,8 +109,8 @@ impl<S, T> AkEngineBuilder<S, T> {
     pub fn session_store(
         self,
         store: Arc<dyn SessionStore>,
-    ) -> AkEngineBuilder<Configured<Arc<dyn SessionStore>>, T> {
-        AkEngineBuilder {
+    ) -> AuthEngineBuilder<Configured<Arc<dyn SessionStore>>, T> {
+        AuthEngineBuilder {
             providers: self.providers,
             session_store: Configured(store),
             session_config: self.session_config,
@@ -124,8 +124,8 @@ impl<S, T> AkEngineBuilder<S, T> {
     pub fn token_manager(
         self,
         manager: Arc<TokenManager>,
-    ) -> AkEngineBuilder<S, Configured<Arc<TokenManager>>> {
-        AkEngineBuilder {
+    ) -> AuthEngineBuilder<S, Configured<Arc<TokenManager>>> {
+        AuthEngineBuilder {
             providers: self.providers,
             session_store: self.session_store,
             session_config: self.session_config,
@@ -135,7 +135,7 @@ impl<S, T> AkEngineBuilder<S, T> {
 
     /// Set the JWT secret for the default token manager.
     #[cfg(feature = "token")]
-    pub fn jwt_secret(self, secret: &[u8]) -> AkEngineBuilder<S, Configured<Arc<TokenManager>>> {
+    pub fn jwt_secret(self, secret: &[u8]) -> AuthEngineBuilder<S, Configured<Arc<TokenManager>>> {
         self.token_manager(Arc::new(TokenManager::new(secret, None)))
     }
 
@@ -145,9 +145,9 @@ impl<S, T> AkEngineBuilder<S, T> {
         self
     }
 
-    /// Build the `AkBase`.
-    pub fn build(self) -> AkBase<S, T> {
-        AkBase {
+    /// Build the `AuthEngine`.
+    pub fn build(self) -> AuthEngine<S, T> {
+        AuthEngine {
             providers: self.providers,
             session_store: self.session_store,
             session_config: self.session_config,
@@ -158,7 +158,7 @@ impl<S, T> AkEngineBuilder<S, T> {
 }
 
 // Methods available only when a session store is present
-impl<T> AkBase<Configured<Arc<dyn SessionStore>>, T> {
+impl<T> AuthEngine<Configured<Arc<dyn SessionStore>>, T> {
     /// Get the session store.
     pub fn session_store(&self) -> Arc<dyn SessionStore> {
         self.session_store.0.clone()
@@ -194,7 +194,7 @@ impl<T> AkBase<Configured<Arc<dyn SessionStore>>, T> {
 }
 
 #[cfg(feature = "token")]
-impl<S> AkBase<S, Configured<Arc<TokenManager>>> {
+impl<S> AuthEngine<S, Configured<Arc<TokenManager>>> {
     /// Get the token manager.
     pub fn token_manager(&self) -> Arc<TokenManager> {
         self.token_manager.0.clone()
@@ -227,7 +227,7 @@ pub trait HasSessionStore {
     fn session_store(&self) -> Arc<dyn SessionStore>;
 }
 
-impl<T> HasSessionStore for AkBase<Configured<Arc<dyn SessionStore>>, T> {
+impl<T> HasSessionStore for AuthEngine<Configured<Arc<dyn SessionStore>>, T> {
     fn session_store(&self) -> Arc<dyn SessionStore> {
         self.session_store.0.clone()
     }
@@ -241,7 +241,7 @@ pub trait HasTokenManager {
 }
 
 #[cfg(feature = "token")]
-impl<S> HasTokenManager for AkBase<S, Configured<Arc<TokenManager>>> {
+impl<S> HasTokenManager for AuthEngine<S, Configured<Arc<TokenManager>>> {
     fn token_manager(&self) -> Arc<TokenManager> {
         self.token_manager.0.clone()
     }
