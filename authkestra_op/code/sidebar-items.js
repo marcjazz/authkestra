@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AuthorizationCode","InMemoryAuthorizationCodeStore"],"trait":["AuthorizationCodeStore"]};
+window.SIDEBAR_ITEMS = {"struct":["AuthorizationCode"],"trait":["AuthorizationCodeStore"]};

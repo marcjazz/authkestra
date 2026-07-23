@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AuthError","SameSite"],"struct":["Identity","Session","SessionConfig"],"trait":["SessionStore"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DeviceCodeStatus"],"struct":["DeviceCodeSession","InMemoryDeviceCodeStore"],"trait":["DeviceCodeStore"]};
+window.SIDEBAR_ITEMS = {"enum":["DeviceCodeStatus"],"struct":["DeviceCodeSession"],"trait":["DeviceCodeStore"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["InMemoryRefreshTokenStore","RefreshToken"],"trait":["RefreshTokenStore"]};
+window.SIDEBAR_ITEMS = {"struct":["RefreshToken"],"trait":["RefreshTokenStore"]};

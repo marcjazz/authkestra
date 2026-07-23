@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["auth","engine","flow","protocol","token"]};
+window.SIDEBAR_ITEMS = {"mod":["auth","engine","flow","protocol","store","token"]};
