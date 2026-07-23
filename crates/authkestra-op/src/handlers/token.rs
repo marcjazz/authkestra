@@ -892,7 +892,7 @@ mod tests {
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
     use crate::code::{AuthorizationCode, AuthorizationCodeStore};
-    use crate::device::DeviceCodeStore;
+
     use crate::refresh::{RefreshToken, RefreshTokenStore};
     use authkestra_engine::auth::state::Identity;
     use authkestra_engine::store::KvStore;

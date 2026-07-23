@@ -1,4 +1,3 @@
-
 use crate::config::OpConfig;
 use crate::device::{DeviceCodeSession, DeviceCodeStatus};
 use crate::store::OpStore;
@@ -134,7 +133,7 @@ mod tests {
     use crate::client::{ClientRegistration, GrantType};
     use authkestra_engine::store::KvStore;
 
-    use crate::device::DeviceCodeStatus;
+    use crate::device::{DeviceCodeStatus, DeviceCodeStore};
     use crate::handlers::token::{handle_token, TokenRequest};
 
     use authkestra_engine::auth::state::Identity;

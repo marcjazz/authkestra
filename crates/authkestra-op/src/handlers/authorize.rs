@@ -183,7 +183,7 @@ pub async fn handle_authorize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{ClientRegistration, ClientStore, GrantType};
+    use crate::client::{ClientRegistration, GrantType};
     use crate::code::AuthorizationCodeStore;
     use authkestra_engine::store::KvStore;
 
