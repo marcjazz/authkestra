@@ -10,7 +10,7 @@
 use authkestra::flow::AuthEngine;
 use authkestra_axum::{AuthSession, AuthkestraAxumError, AuthkestraAxumExt, AuthkestraState};
 use authkestra_engine::auth::SessionStore;
-use authkestra_engine::store::{KvStore, Repository};
+use authkestra_engine::store::Repository;
 use authkestra_engine::{Configured, SessionConfig};
 use authkestra_macros::{AuthkestraKvStore, AuthkestraRepository};
 use axum::{
