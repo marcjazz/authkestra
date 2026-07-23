@@ -46,4 +46,4 @@ sql-sqlite = ["sqlx/sqlite", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/j
 
 [dev-dependencies]
 testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["redis"] }
+testcontainers-modules = { version = "0.15.0", features = ["mysql", "postgres", "redis"] }

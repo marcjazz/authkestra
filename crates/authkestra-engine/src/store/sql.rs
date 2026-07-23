@@ -126,6 +126,35 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
 }
 
 #[cfg(feature = "sql-postgres")]
+impl SqlKvStore<sqlx::Postgres> {
+    /// Creates the necessary table and index if they do not exist.
+    pub async fn migrate(&self) -> Result<(), StoreError> {
+        let query1 = format!(
+            "CREATE TABLE IF NOT EXISTS {table} (
+                key TEXT PRIMARY KEY,
+                index_key TEXT,
+                value TEXT NOT NULL,
+                expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+            )",
+            table = self.table_name
+        );
+        let query2 = format!(
+            "CREATE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key)",
+            table = self.table_name
+        );
+        sqlx::query(&query1)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StoreError::Internal(format!("Postgres migration error: {e}")))?;
+        sqlx::query(&query2)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StoreError::Internal(format!("Postgres migration index error: {e}")))?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "sql-postgres")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::AtomicConsume<T>
     for SqlKvStore<sqlx::Postgres>
@@ -235,6 +264,28 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
             }
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(feature = "sql-sqlite")]
+impl SqlKvStore<sqlx::Sqlite> {
+    /// Creates the necessary table and index if they do not exist.
+    pub async fn migrate(&self) -> Result<(), StoreError> {
+        let query = format!(
+            "CREATE TABLE IF NOT EXISTS {table} (
+                key TEXT PRIMARY KEY,
+                index_key TEXT,
+                value TEXT NOT NULL,
+                expires_at DATETIME NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key);",
+            table = self.table_name
+        );
+        sqlx::query(&query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StoreError::Internal(format!("Sqlite migration error: {e}")))?;
+        Ok(())
     }
 }
 
@@ -436,6 +487,28 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
 }
 
 #[cfg(feature = "sql-mysql")]
+impl SqlKvStore<sqlx::MySql> {
+    /// Creates the necessary table and index if they do not exist.
+    pub async fn migrate(&self) -> Result<(), StoreError> {
+        let query = format!(
+            "CREATE TABLE IF NOT EXISTS {table} (
+                `key` VARCHAR(255) PRIMARY KEY,
+                index_key VARCHAR(255),
+                value TEXT NOT NULL,
+                expires_at DATETIME NOT NULL,
+                INDEX {table}_idx (index_key)
+            )",
+            table = self.table_name
+        );
+        sqlx::query(&query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StoreError::Internal(format!("MySql migration error: {e}")))?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "sql-mysql")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
     for SqlKvStore<sqlx::MySql>
@@ -444,7 +517,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
     async fn get(&self, key: &str) -> Result<Option<T>, StoreError> {
         tracing::debug!(key = %key, "loading from MySql store");
         let query = format!(
-            "SELECT key, value, expires_at FROM {} WHERE key = ? AND expires_at > ?",
+            "SELECT `key`, value, expires_at FROM {} WHERE `key` = ? AND expires_at > ?",
             self.table_name
         );
         let now = chrono::Utc::now();
@@ -475,7 +548,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
     async fn set(&self, key: &str, value: T, ttl: Duration) -> Result<(), StoreError> {
         tracing::debug!("saving to MySql store");
         let query = format!(
-            "INSERT INTO {} (key, value, expires_at)
+            "INSERT INTO {} (`key`, value, expires_at)
              VALUES (?, ?, ?)
              ON DUPLICATE KEY UPDATE
              value = VALUES(value),
@@ -507,7 +580,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
     #[tracing::instrument(skip(self))]
     async fn delete(&self, key: &str) -> Result<(), StoreError> {
         tracing::debug!(key = %key, "deleting from MySql store");
-        let query = format!("DELETE FROM {} WHERE key = ?", self.table_name);
+        let query = format!("DELETE FROM {} WHERE `key` = ?", self.table_name);
         sqlx::query(&query)
             .bind(key)
             .execute(&self.pool)
@@ -534,7 +607,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Atom
         })?;
 
         let select_query = format!(
-            "SELECT key, value, expires_at FROM {} WHERE key = ? AND expires_at > ? FOR UPDATE",
+            "SELECT `key`, value, expires_at FROM {} WHERE `key` = ? AND expires_at > ? FOR UPDATE",
             self.table_name
         );
         let now = chrono::Utc::now();
@@ -550,7 +623,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Atom
             })?;
 
         if let Some(model) = row {
-            let delete_query = format!("DELETE FROM {} WHERE key = ?", self.table_name);
+            let delete_query = format!("DELETE FROM {} WHERE `key` = ?", self.table_name);
             sqlx::query(&delete_query)
                 .bind(key)
                 .execute(&mut *tx)
@@ -595,7 +668,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
     ) -> Result<(), StoreError> {
         tracing::debug!("saving indexed to MySql store");
         let query = format!(
-            "INSERT INTO {} (key, index_key, value, expires_at)
+            "INSERT INTO {} (`key`, index_key, value, expires_at)
              VALUES (?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
              index_key = VALUES(index_key),
@@ -630,7 +703,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
     async fn get_by_index(&self, index: &str) -> Result<Option<T>, StoreError> {
         tracing::debug!(index = %index, "loading by index from MySql store");
         let query = format!(
-            "SELECT key, value, expires_at FROM {} WHERE index_key = ? AND expires_at > ?",
+            "SELECT `key`, value, expires_at FROM {} WHERE index_key = ? AND expires_at > ?",
             self.table_name
         );
         let now = chrono::Utc::now();
@@ -671,19 +744,9 @@ mod tests {
             .await
             .unwrap();
 
-        sqlx::query(
-            "CREATE TABLE authkestra_kv (
-                key TEXT PRIMARY KEY,
-                index_key TEXT,
-                value TEXT NOT NULL,
-                expires_at DATETIME NOT NULL
-            )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        SqlKvStore::new(pool)
+        let store = SqlKvStore::new(pool);
+        store.migrate().await.unwrap();
+        store
     }
 
     #[tokio::test]
@@ -729,15 +792,181 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store.get("pk1").await.unwrap(), Some("value1".to_string()));
-        assert_eq!(
-            store.get_by_index("sk1").await.unwrap(),
-            Some("value1".to_string())
-        );
+        let res: Option<String> = store.get("pk1").await.unwrap();
+        assert_eq!(res, Some("value1".to_string()));
+        let sk_res: Option<String> = store.get_by_index("sk1").await.unwrap();
+        assert_eq!(sk_res, Some("value1".to_string()));
 
         // In SQL, index is a column on the primary record. Deleting the record deletes the index.
         KvStore::<String>::delete(&store, "pk1").await.unwrap();
+        let sk_res_none: Option<String> = store.get_by_index("sk1").await.unwrap();
+        assert_eq!(sk_res_none, None);
+    }
+}
+
+#[cfg(all(test, feature = "sql-postgres"))]
+mod postgres_tests {
+    use super::*;
+    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+    use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
+    use testcontainers_modules::postgres::Postgres;
+
+    async fn setup_db() -> (SqlKvStore<sqlx::Postgres>, ContainerAsync<Postgres>) {
+        let container = Postgres::default()
+            .with_env_var("POSTGRES_PASSWORD", "postgres")
+            .with_env_var("POSTGRES_USER", "postgres")
+            .with_env_var("POSTGRES_DB", "postgres")
+            .start()
+            .await
+            .unwrap();
+        let port = container.get_host_port_ipv4(5432).await.unwrap();
+        let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+
+        let pool = PgPoolOptions::new().connect(&url).await.unwrap();
+
+        let store = SqlKvStore::new(pool);
+        store.migrate().await.unwrap();
+
+        (store, container)
+    }
+
+    #[tokio::test]
+    async fn test_postgres_get_set_delete() {
+        let (store, _c) = setup_db().await;
+
+        let res: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(res, None);
+
+        store
+            .set("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let res2: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(res2, Some("value1".to_string()));
+
+        KvStore::<String>::delete(&store, "key1").await.unwrap();
+        let res3: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(res3, None);
+    }
+
+    #[tokio::test]
+    async fn test_postgres_atomic_consume() {
+        let (store, _c) = setup_db().await;
+
+        store
+            .set("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let val: Option<String> = store.consume("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+
+        let val2: Option<String> = store.consume("key1").await.unwrap();
+        assert_eq!(val2, None);
+    }
+
+    #[tokio::test]
+    async fn test_postgres_indexed_store() {
+        let (store, _c) = setup_db().await;
+
+        store
+            .set_indexed("pk1", "sk1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let res: Option<String> = store.get("pk1").await.unwrap();
+        assert_eq!(res, Some("value1".to_string()));
         let sk_res: Option<String> = store.get_by_index("sk1").await.unwrap();
-        assert_eq!(sk_res, None);
+        assert_eq!(sk_res, Some("value1".to_string()));
+
+        KvStore::<String>::delete(&store, "pk1").await.unwrap();
+        let sk_res_none: Option<String> = store.get_by_index("sk1").await.unwrap();
+        assert_eq!(sk_res_none, None);
+    }
+}
+
+#[cfg(all(test, feature = "sql-mysql"))]
+mod mysql_tests {
+    use super::*;
+    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
+    use sqlx::mysql::MySqlPoolOptions;
+    use std::time::Duration;
+    use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
+    use testcontainers_modules::mysql::Mysql;
+
+    async fn setup_db() -> (SqlKvStore<sqlx::MySql>, ContainerAsync<Mysql>) {
+        let container = Mysql::default()
+            .with_env_var("MYSQL_ROOT_PASSWORD", "root")
+            .with_env_var("MYSQL_DATABASE", "testdb")
+            .start()
+            .await
+            .unwrap();
+        let port = container.get_host_port_ipv4(3306).await.unwrap();
+        let url = format!("mysql://root:root@127.0.0.1:{port}/testdb");
+
+        let pool = MySqlPoolOptions::new().connect(&url).await.unwrap();
+
+        let store = SqlKvStore::new(pool);
+        store.migrate().await.unwrap();
+
+        (store, container)
+    }
+
+    #[tokio::test]
+    async fn test_mysql_get_set_delete() {
+        let (store, _c) = setup_db().await;
+
+        let res: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(res, None);
+
+        store
+            .set("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let res2: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(res2, Some("value1".to_string()));
+
+        KvStore::<String>::delete(&store, "key1").await.unwrap();
+        let res3: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(res3, None);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_atomic_consume() {
+        let (store, _c) = setup_db().await;
+
+        store
+            .set("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let val: Option<String> = store.consume("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+
+        let val2: Option<String> = store.consume("key1").await.unwrap();
+        assert_eq!(val2, None);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_indexed_store() {
+        let (store, _c) = setup_db().await;
+
+        store
+            .set_indexed("pk1", "sk1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let res: Option<String> = store.get("pk1").await.unwrap();
+        assert_eq!(res, Some("value1".to_string()));
+        let sk_res: Option<String> = store.get_by_index("sk1").await.unwrap();
+        assert_eq!(sk_res, Some("value1".to_string()));
+
+        KvStore::<String>::delete(&store, "pk1").await.unwrap();
+        let sk_res_none: Option<String> = store.get_by_index("sk1").await.unwrap();
+        assert_eq!(sk_res_none, None);
     }
 }
