@@ -43,3 +43,7 @@ redis = ["dep:redis"]
 sql-postgres = ["sqlx/postgres", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
 sql-mysql = ["sqlx/mysql", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
 sql-sqlite = ["sqlx/sqlite", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
+
+[dev-dependencies]
+testcontainers = "0.27.3"
+testcontainers-modules = { version = "0.15.0", features = ["redis"] }
