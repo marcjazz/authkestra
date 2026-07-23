@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"derive":["AuthkestraFromRef"]};
+window.SIDEBAR_ITEMS = {"derive":["AuthkestraFromRef","AuthkestraKvStore","AuthkestraState"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["StoreError"],"mod":["memory"],"trait":["AtomicConsume","IndexedKvStore","KvStore","Repository"]};
+window.SIDEBAR_ITEMS = {"enum":["StoreError"],"mod":["memory"],"trait":["AtomicConsume","IndexedKvStore","KvStore"]};

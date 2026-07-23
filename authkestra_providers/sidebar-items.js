@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {};
+window.SIDEBAR_ITEMS = {"macro":[["define_oauth_provider",1]],"mod":["macros"]};
