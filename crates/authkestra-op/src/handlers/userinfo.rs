@@ -142,9 +142,7 @@ mod tests {
             .issue_user_token(test_identity(), 3600, Some("profile".to_string()), None)
             .unwrap();
 
-        let req = UserInfoRequest {
-            access_token,
-        };
+        let req = UserInfoRequest { access_token };
 
         let result = handle_userinfo(req, &config, &tokens).await;
         assert_eq!(result.unwrap_err().error, "insufficient_scope");
@@ -178,9 +176,7 @@ mod tests {
             )
             .unwrap();
 
-        let req = UserInfoRequest {
-            access_token,
-        };
+        let req = UserInfoRequest { access_token };
 
         let result = handle_userinfo(req, &config, &tokens).await.unwrap();
         assert_eq!(result.sub, "user-123");
@@ -203,9 +199,7 @@ mod tests {
             )
             .unwrap();
 
-        let req = UserInfoRequest {
-            access_token,
-        };
+        let req = UserInfoRequest { access_token };
 
         let result = handle_userinfo(req, &config, &tokens).await.unwrap();
         assert_eq!(result.sub, "user-123");
