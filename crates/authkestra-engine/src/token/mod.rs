@@ -259,6 +259,7 @@ impl TokenService for TokenManager {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::auth::state::Identity;
     use std::collections::HashMap;

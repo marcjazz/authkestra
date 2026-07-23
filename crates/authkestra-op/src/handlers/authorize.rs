@@ -182,9 +182,9 @@ pub async fn handle_authorize(
 
 #[cfg(test)]
 mod tests {
+    use authkestra_engine::store::KvStore;
     use super::*;
-    use crate::client::{ClientRegistration, InMemoryClientStore};
-    use crate::code::InMemoryAuthorizationCodeStore;
+    use crate::client::ClientRegistration;
 
     fn test_config() -> OpConfig {
         OpConfig {
@@ -212,8 +212,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_unknown_client_direct_error() {
-        let clients = InMemoryClientStore::new();
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
         let req = AuthorizeRequest {
@@ -236,18 +239,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_mismatched_redirect_uri_direct_error() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client-1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://app.example.com/cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
         // Exact match required, this has a trailing slash difference
@@ -271,18 +284,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_unsupported_response_type_redirect_error() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client-1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://app.example.com/cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
         let req = AuthorizeRequest {
@@ -308,18 +331,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_pkce_redirect_error() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client-1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://app.example.com/cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: true,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: true,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
         let req = AuthorizeRequest {
@@ -343,18 +376,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_plain_pkce_redirect_error() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client-1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://app.example.com/cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: true,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: true,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
         let req = AuthorizeRequest {
@@ -378,18 +421,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_successful_authorization() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client-1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://app.example.com/cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: true,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: true,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
         let req = AuthorizeRequest {
@@ -430,18 +483,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_state_encoding() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client-1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://app.example.com/cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
         // State containing characters that require URL encoding
@@ -486,18 +549,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_pkce_method_without_challenge_redirect_error() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client-1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://app.example.com/cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: false, // PKCE is optional
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false, // PKCE is optional
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
         let req = AuthorizeRequest {

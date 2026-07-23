@@ -48,14 +48,17 @@ pub async fn handle_device_verify(
 
 #[cfg(test)]
 mod tests {
+    use authkestra_engine::store::KvStore;
     use super::*;
-    use crate::device::{DeviceCodeSession, InMemoryDeviceCodeStore};
+    use crate::device::DeviceCodeSession;
     use chrono::{Duration, Utc};
     use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_handle_device_verify_approve() {
-        let devices = InMemoryDeviceCodeStore::new();
+        let devices = authkestra_engine::store::memory::MemoryStore::<
+            crate::device::DeviceCodeSession,
+        >::new();
         let session = DeviceCodeSession {
             device_code: "dev123".to_string(),
             user_code: "USER123".to_string(),

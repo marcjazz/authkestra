@@ -19,19 +19,34 @@ A standard Key-Value store (`KvStore<T>`) is designed for Primary Key lookups (`
 `AuthorizationCodeStore` and `DeviceCodeStore` both require **atomic** consumption of codes. An authorization code must be checked, fetched, and invalidated in one indivisible operation.
 * If implemented naively on top of `KvStore` as `get(key)` followed by `delete(key)`, there is a Time-Of-Check to Time-Of-Use (TOCTOU) race condition. A concurrent replay attack could theoretically fetch the code twice before the first thread deletes it.
 
-## Proposed Resolution
+## The Resolution: Extension Traits over KvStore
 
-To securely unify the data layer while adhering to strict OAuth security invariants, we have two primary paths:
+To securely unify the data layer while adhering to strict OAuth security invariants without bloating the base `KvStore` interface, we will use small, composable extension traits:
 
-### Path A: Extend `KvStore` (Recommended)
-1. **Add `async fn consume(&self, key: &str) -> Result<Option<T>, StoreError>` to `KvStore`**.
-   * In Redis, this is implemented as an atomic Lua script (`GET` then `DEL`).
-   * In SQL, this is a transaction with `SELECT ... FOR UPDATE` followed by `DELETE`.
-2. **Dual-write inside OP**: Implement `DeviceCodeStore` using `KvStore<DeviceCodeSession> + KvStore<String>`. The OP will handle writing the secondary index pointer and cleaning it up after `consume`.
+1. **`AtomicConsume<T>`**: Backends that can natively and atomically fetch-and-remove a value implement this.
+2. **`IndexedKvStore<T>`**: Backends that can atomically write a value under a primary key while simultaneously maintaining a secondary lookup key implement this.
 
-### Path B: The Adapter/Provider Crate
-1. Leave `KvStore` as a pure, simple Key-Value trait in `authkestra-engine`.
-2. Create native SQL/Redis implementations for `AuthorizationCodeStore` and `DeviceCodeStore` in a dedicated adapter crate (e.g. `authkestra-op-stores` or utilizing the existing `authkestra-providers` infrastructure).
-3. These native implementations use database-specific features (like `UPDATE ... RETURNING` in Postgres) to ensure atomicity and can perform proper SQL secondary indexing without application-level dual writes.
+```rust
+#[async_trait]
+pub trait AtomicConsume<T>: KvStore<T> {
+    async fn consume(&self, key: &str) -> Result<Option<T>, StoreError>;
+}
 
-*Decision pending review before proceeding with implementation.*
+#[async_trait]
+pub trait IndexedKvStore<T>: KvStore<T> {
+    async fn set_indexed(&self, primary_key: &str, secondary_key: &str, value: T, ttl: std::time::Duration) -> Result<(), StoreError>;
+    async fn get_by_index(&self, secondary_key: &str) -> Result<Option<T>, StoreError>;
+}
+```
+
+### Why this is the chosen path:
+1. **Compile-Time Safety**: The atomicity requirement becomes a compile-time trait bound in `authkestra-op` (`impl<S: KvStore<T> + AtomicConsume<T>>`). A backend that cannot prove atomicity simply fails to compile when wired up, rather than exposing a subtle runtime race.
+2. **Native Atomicity**: `set_indexed` pushes the responsibility of atomic dual-writes down to the storage engine (e.g., SQL `UNIQUE` index or Redis Lua scripts), avoiding brittle multi-step orchestrations in application code.
+3. **No Interface Bloat**: The base `KvStore` remains plain and simple for generic use cases like `SessionStore`.
+4. **Preserved Goals**: Everything remains inside `authkestra-engine::store` and OP's hand-rolled `InMemory*` stores can be deleted in favor of a clean blanket impl.
+
+### Rollout Strategy
+We will implement these traits iteratively per backend to maintain focus and high test quality:
+1. **Memory Backend**: Prove the trait design and swap out OP's hand-rolled `InMemory*` stores.
+2. **Redis Backend**: Implement atomic `EVAL` scripts and transaction logic.
+3. **SQL Backend**: Implement `SELECT ... FOR UPDATE` and schema constraints.

@@ -22,6 +22,7 @@ impl JwksResponse {
 
 #[cfg(test)]
 mod tests {
+    use authkestra_engine::store::KvStore;
     use super::*;
 
     #[test]
