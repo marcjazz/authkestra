@@ -23,8 +23,7 @@ async fn main() -> std::io::Result<()> {
         Some("issuer".to_string()),
     ));
 
-    let clients =
-        authkestra_engine::store::memory::MemoryStore::<crate::client::ClientRegistration>::new();
+    let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
     clients
         .set(
             "test-client",
@@ -45,11 +44,11 @@ async fn main() -> std::io::Result<()> {
 
     let codes: Arc<dyn AuthorizationCodeStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            crate::code::AuthorizationCode,
+            authkestra_op::code::AuthorizationCode,
         >::new());
     let refresh_tokens: Arc<dyn RefreshTokenStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            crate::refresh::RefreshToken,
+            authkestra_op::refresh::RefreshToken,
         >::new());
 
     let config = OpConfig {
@@ -75,11 +74,10 @@ async fn main() -> std::io::Result<()> {
         ..Default::default()
     };
 
-    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> = Arc::new(
-        authkestra_op::device::authkestra_engine::store::memory::MemoryStore::<
-            crate::device::DeviceCodeSession,
-        >::new(),
-    );
+    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            authkestra_op::device::DeviceCodeSession,
+        >::new());
 
     println!("🚀 Actix OP Server running on http://localhost:8080");
     HttpServer::new(move || {
