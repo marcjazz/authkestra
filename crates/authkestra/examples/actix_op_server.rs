@@ -7,10 +7,8 @@ use actix_web::{App, HttpServer};
 use authkestra_actix::AuthEngineActixOpExt;
 use authkestra_engine::TokenManager;
 use authkestra_op::{
-    client::{ClientRegistration, ClientStore},
-    code::AuthorizationCodeStore,
+    client::ClientRegistration,
     config::OpConfig,
-    refresh::RefreshTokenStore,
 };
 use std::sync::Arc;
 
@@ -40,16 +38,12 @@ async fn main() -> std::io::Result<()> {
         )
         .await
         .unwrap();
-    let clients: Arc<dyn ClientStore> = Arc::new(clients);
-
-    let codes: Arc<dyn AuthorizationCodeStore> =
-        Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            authkestra_op::code::AuthorizationCode,
-        >::new());
-    let refresh_tokens: Arc<dyn RefreshTokenStore> =
-        Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            authkestra_op::refresh::RefreshToken,
-        >::new());
+    let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(authkestra_op::store::CompositeOpStore::new(
+        clients,
+        authkestra_engine::store::memory::MemoryStore::<authkestra_op::code::AuthorizationCode>::new(),
+        authkestra_engine::store::memory::MemoryStore::<authkestra_op::refresh::RefreshToken>::new(),
+        authkestra_engine::store::memory::MemoryStore::<authkestra_op::device::DeviceCodeSession>::new(),
+    ));
 
     let config = OpConfig {
         issuer: "http://localhost:8080".to_string(),
@@ -74,22 +68,16 @@ async fn main() -> std::io::Result<()> {
         ..Default::default()
     };
 
-    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> =
-        Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            authkestra_op::device::DeviceCodeSession,
-        >::new());
+
 
     println!("🚀 Actix OP Server running on http://localhost:8080");
     HttpServer::new(move || {
         App::new()
             .app_data(actix_web::web::Data::new(token_manager.clone()))
-            .app_data(actix_web::web::Data::new(clients.clone()))
-            .app_data(actix_web::web::Data::new(codes.clone()))
-            .app_data(actix_web::web::Data::new(refresh_tokens.clone()))
+            .app_data(actix_web::web::Data::new(op_store.clone()))
             .app_data(actix_web::web::Data::new(config.clone()))
             .app_data(actix_web::web::Data::new(session_store.clone()))
             .app_data(actix_web::web::Data::new(session_config.clone()))
-            .app_data(actix_web::web::Data::new(device_code_store.clone()))
             .service(AppState.op_actix_scope())
     })
     .bind("0.0.0.0:8080")?

@@ -1,5 +1,6 @@
-use crate::client::{ClientStore, GrantType};
-use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+use crate::client::GrantType;
+use crate::code::AuthorizationCode;
+use crate::store::OpStore;
 use crate::config::OpConfig;
 use crate::error::OpError;
 use authkestra_engine::auth::state::Identity;
@@ -42,12 +43,11 @@ pub async fn handle_authorize(
     req: AuthorizeRequest,
     identity: Identity,
     config: &OpConfig,
-    clients: &dyn ClientStore,
-    codes: &dyn AuthorizationCodeStore,
+    op_store: &dyn OpStore,
 ) -> AuthorizeOutcome {
     // 1. Look up client_id
     tracing::debug!(client_id = %req.client_id, "Looking up client for authorization request");
-    let client = match clients.find_client(&req.client_id).await {
+    let client = match op_store.find_client(&req.client_id).await {
         Ok(Some(client)) => client,
         Ok(None) => {
             tracing::warn!(client_id = %req.client_id, "Unknown client ID requested");
@@ -161,7 +161,7 @@ pub async fn handle_authorize(
     };
 
     // 8. Store the code
-    if let Err(e) = codes.store_code(auth_code).await {
+    if let Err(e) = op_store.store_code(auth_code).await {
         tracing::error!(error = ?e, client_id = %req.client_id, "Failed to store authorization code");
         return error_redirect("server_error", "Failed to store authorization code");
     }
@@ -183,7 +183,8 @@ pub async fn handle_authorize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::ClientRegistration;
+    use crate::client::{ClientRegistration, ClientStore, GrantType};
+    use crate::code::AuthorizationCodeStore;
     use authkestra_engine::store::KvStore;
 
     fn test_config() -> OpConfig {
@@ -230,7 +231,7 @@ mod tests {
             nonce: None,
         };
 
-        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         assert!(matches!(
             outcome,
             AuthorizeOutcome::DirectError(OpError::UnknownClient(_))
@@ -275,7 +276,7 @@ mod tests {
             nonce: None,
         };
 
-        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         assert!(matches!(
             outcome,
             AuthorizeOutcome::DirectError(OpError::RedirectUriMismatch)
@@ -319,7 +320,7 @@ mod tests {
             nonce: None,
         };
 
-        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.contains("error=unsupported_response_type"));
             assert!(url.contains("state=xyz"));
@@ -366,7 +367,7 @@ mod tests {
             nonce: None,
         };
 
-        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.contains("error=invalid_request"));
         } else {
@@ -411,7 +412,7 @@ mod tests {
             nonce: None,
         };
 
-        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.contains("error=invalid_request"));
         } else {
@@ -456,7 +457,7 @@ mod tests {
             nonce: None,
         };
 
-        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes.clone(), authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.starts_with("https://app.example.com/cb?code="));
             assert!(url.contains("&state=abc"));
@@ -521,7 +522,7 @@ mod tests {
             nonce: None,
         };
 
-        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             let parsed = url::Url::parse(&url).expect("Should be a valid URL");
 
@@ -584,7 +585,7 @@ mod tests {
             nonce: None,
         };
 
-        let outcome = handle_authorize(req, test_identity(), &config, &clients, &codes).await;
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.contains("error=invalid_request"));
             assert!(

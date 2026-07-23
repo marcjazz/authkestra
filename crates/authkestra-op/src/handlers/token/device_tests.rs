@@ -2,7 +2,7 @@ use super::*;
 use crate::client::{ClientRegistration, GrantType};
 use authkestra_engine::store::KvStore;
 
-use crate::device::{DeviceCodeSession, DeviceCodeStatus};
+use crate::device::{DeviceCodeSession, DeviceCodeStatus, DeviceCodeStore};
 use crate::handlers::token::tests::{test_config, test_tokens};
 
 use authkestra_engine::auth::state::Identity;
@@ -91,10 +91,12 @@ async fn test_device_denied() {
         req,
         None,
         &test_config(false),
-        &clients,
-        &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-        &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-        &devices,
+        &crate::store::CompositeOpStore::new(
+            clients.clone(),
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            devices.clone(),
+        ),
         &test_tokens(),
     )
     .await;
@@ -117,10 +119,12 @@ async fn test_device_wrong_client() {
         req,
         None,
         &test_config(false),
-        &clients,
-        &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-        &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-        &devices,
+        &crate::store::CompositeOpStore::new(
+            clients.clone(),
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            devices.clone(),
+        ),
         &test_tokens(),
     )
     .await;
@@ -169,10 +173,12 @@ async fn test_device_expired() {
         req,
         None,
         &test_config(false),
-        &clients,
-        &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-        &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-        &devices,
+        &crate::store::CompositeOpStore::new(
+            clients.clone(),
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            devices.clone(),
+        ),
         &test_tokens(),
     )
     .await;
@@ -195,10 +201,12 @@ async fn test_device_offline_access() {
         req,
         None,
         &test_config(false),
-        &clients,
-        &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-        &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-        &devices,
+        &crate::store::CompositeOpStore::new(
+            clients.clone(),
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            devices.clone(),
+        ),
         &test_tokens(),
     )
     .await;
@@ -261,10 +269,12 @@ async fn test_device_concurrency() {
                 req,
                 None,
                 &config,
-                &*clients,
-                &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-                &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-                &*devices,
+                &crate::store::CompositeOpStore::new(
+                    (*clients).clone(),
+                    authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                    authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                    (*devices).clone(),
+                ),
                 &tokens,
             )
             .await

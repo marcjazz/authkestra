@@ -30,8 +30,7 @@ pub async fn actix_discovery_handler(config: web::Data<OpConfig>) -> impl Respon
 }
 
 pub async fn actix_authorize_handler(
-    clients: web::Data<Arc<dyn ClientStore>>,
-    codes: web::Data<Arc<dyn AuthorizationCodeStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
     config: web::Data<OpConfig>,
     auth_session: Option<crate::AuthSession>,
     req: web::Query<AuthorizeRequest>,
@@ -54,8 +53,7 @@ pub async fn actix_authorize_handler(
         req.into_inner(),
         identity,
         config.get_ref(),
-        clients.get_ref().as_ref(),
-        codes.get_ref().as_ref(),
+        op_store.get_ref().as_ref(),
     )
     .await
     {
@@ -72,8 +70,7 @@ pub async fn actix_authorize_handler(
 pub async fn actix_device_authorization_handler(
     http_req: HttpRequest,
     req: web::Form<DeviceAuthorizationRequest>,
-    clients: web::Data<Arc<dyn ClientStore>>,
-    devices: web::Data<Arc<dyn DeviceCodeStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
     tracing::debug!("Handling OP device authorization request (actix)");
@@ -87,8 +84,7 @@ pub async fn actix_device_authorization_handler(
         req.into_inner(),
         auth_header,
         config.get_ref(),
-        clients.get_ref().as_ref(),
-        devices.get_ref().as_ref(),
+        op_store.get_ref().as_ref(),
     )
     .await
     {
@@ -109,10 +105,7 @@ pub async fn actix_device_authorization_handler(
 pub async fn actix_token_handler(
     http_req: HttpRequest,
     req: web::Form<TokenRequest>,
-    clients: web::Data<Arc<dyn ClientStore>>,
-    codes: web::Data<Arc<dyn AuthorizationCodeStore>>,
-    refresh_tokens: web::Data<Arc<dyn RefreshTokenStore>>,
-    devices: web::Data<Arc<dyn DeviceCodeStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
     tokens: web::Data<Arc<TokenManager>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
@@ -127,10 +120,7 @@ pub async fn actix_token_handler(
         req.into_inner(),
         auth_header,
         config.get_ref(),
-        clients.get_ref().as_ref(),
-        codes.get_ref().as_ref(),
-        refresh_tokens.get_ref().as_ref(),
-        devices.get_ref().as_ref(),
+        op_store.get_ref().as_ref(),
         tokens.get_ref().as_ref(),
     )
     .await
@@ -187,7 +177,7 @@ pub async fn actix_userinfo_handler(
 
 pub async fn actix_device_verify_handler(
     req: web::Form<authkestra_op::handlers::device_verify::DeviceVerifyRequest>,
-    devices: web::Data<Arc<dyn DeviceCodeStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
     auth_session: Option<crate::AuthSession>,
 ) -> actix_web::HttpResponse {
     tracing::debug!("Handling OP device verify request (actix)");
@@ -205,7 +195,7 @@ pub async fn actix_device_verify_handler(
     match authkestra_op::handlers::device_verify::handle_device_verify(
         req.into_inner(),
         identity,
-        devices.get_ref().as_ref(),
+        op_store.get_ref().as_ref(),
     )
     .await
     {

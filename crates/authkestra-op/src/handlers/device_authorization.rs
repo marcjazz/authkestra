@@ -1,6 +1,7 @@
 use crate::client::ClientStore;
 use crate::config::OpConfig;
 use crate::device::{DeviceCodeSession, DeviceCodeStatus, DeviceCodeStore};
+use crate::store::OpStore;
 use base64::Engine;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -46,8 +47,7 @@ pub async fn handle_device_authorization(
     req: DeviceAuthorizationRequest,
     auth_header: Option<&str>,
     config: &OpConfig,
-    clients: &dyn ClientStore,
-    devices: &dyn DeviceCodeStore,
+    op_store: &dyn OpStore,
 ) -> Result<DeviceAuthorizationResponse, DeviceAuthorizationErrorResponse> {
     let mut client_id = req.client_id.clone();
 
@@ -74,7 +74,7 @@ pub async fn handle_device_authorization(
         }
     };
 
-    let client = match clients.find_client(&client_id).await {
+    let client = match op_store.find_client(&client_id).await {
         Ok(Some(c)) => c,
         _ => {
             return Err(DeviceAuthorizationErrorResponse {
@@ -111,7 +111,7 @@ pub async fn handle_device_authorization(
         last_polled_at: None,
     };
 
-    if devices.store_device_code(session).await.is_err() {
+    if op_store.store_device_code(session).await.is_err() {
         return Err(DeviceAuthorizationErrorResponse {
             error: "server_error".to_string(),
             error_description: "Internal server error".to_string(),
@@ -193,7 +193,12 @@ mod tests {
             scope: Some("openid".to_string()),
         };
 
-        let res = handle_device_authorization(req, None, &config, &clients, &devices)
+        let res = handle_device_authorization(req, None, &config, &crate::store::CompositeOpStore::new(
+            clients.clone(),
+            codes.clone(),
+            refresh_tokens.clone(),
+            devices.clone(),
+        ))
             .await
             .unwrap();
 
@@ -223,10 +228,12 @@ mod tests {
             token_req.clone(),
             None,
             &config,
-            &clients,
-            &codes,
-            &refresh_tokens,
-            &devices,
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                refresh_tokens.clone(),
+                devices.clone(),
+            ),
             &tokens,
         )
         .await;
@@ -256,10 +263,12 @@ mod tests {
             token_req,
             None,
             &config,
-            &clients,
-            &codes,
-            &refresh_tokens,
-            &devices,
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                refresh_tokens.clone(),
+                devices.clone(),
+            ),
             &tokens,
         )
         .await
