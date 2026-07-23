@@ -41,25 +41,17 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             Fields::Named(fields) => {
                 for field in &fields.named {
                     for attr in &field.attrs {
-                        let is_legacy = attr.path().is_ident("auth_engine");
                         let is_authkestra = attr.path().is_ident("authkestra");
 
-                        if is_legacy {
-                            engine_field = Some(field);
-                        } else if is_authkestra {
-                            if let syn::Meta::Path(_) = attr.meta {
-                                // Backward compatibility: #[authkestra] implies engine
-                                engine_field = Some(field);
-                            } else {
-                                let _ = attr.parse_nested_meta(|meta| {
-                                    if meta.path.is_ident("engine") {
-                                        engine_field = Some(field);
-                                    } else if meta.path.is_ident("store") {
-                                        store_fields.push(field);
-                                    }
-                                    Ok(())
-                                });
-                            }
+                        if is_authkestra {
+                            let _ = attr.parse_nested_meta(|meta| {
+                                if meta.path.is_ident("engine") {
+                                    engine_field = Some(field);
+                                } else if meta.path.is_ident("store") {
+                                    store_fields.push(field);
+                                }
+                                Ok(())
+                            });
                         }
                     }
                 }
@@ -109,7 +101,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                         syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>>),
                         syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<authkestra_engine::TokenManager>>)
                     )
-                } else if ident_str == "Authkestra" || ident_str == "AkBase" {
+                } else if ident_str == "AkBase" {
                     match &last_segment.arguments {
                         syn::PathArguments::AngleBracketed(args) => {
                             if args.args.len() != 2 {

@@ -4,7 +4,7 @@
 //! It also demonstrates how to manage the database table lifecycle by calling `.migrate().await`.
 
 use authkestra::flow::AkBase;
-use authkestra_axum::{AuthSession, AkAxumError, AkAxumExt, AuthkestraState};
+use authkestra_axum::{AuthSession, AkAxumError, AkAxumExt, AkState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::store::sql::SqlKvStore;
 use authkestra_engine::{Configured, SessionConfig};
@@ -20,7 +20,7 @@ use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 
 /// AkBase state with support for session only.
-type AppState = AuthkestraState<Configured<Arc<dyn SessionStore>>>;
+type AppState = AkState<Configured<Arc<dyn SessionStore>>>;
 
 #[tokio::main]
 async fn main() {

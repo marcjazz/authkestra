@@ -23,26 +23,21 @@ pub use helpers::{Session, SessionStore};
 #[cfg(feature = "op")]
 pub use op::AkAxumOpExt;
 
-#[cfg(feature = "flow")]
-pub use AuthEngineState as AuthkestraState;
-
 #[cfg(feature = "macros")]
 extern crate self as authkestra_axum;
 
 #[cfg(feature = "macros")]
-pub use authkestra_macros::AuthkestraFromRef;
-#[cfg(feature = "macros")]
-pub use authkestra_macros::AuthkestraState; // Keep for backwards compatibility if needed
+pub use authkestra_macros::AuthkestraState;
 
 #[cfg(feature = "flow")]
 #[derive(Clone, AuthkestraState)]
-pub struct AuthEngineState<S = Missing, T = Missing> {
+pub struct AkState<S = Missing, T = Missing> {
     #[authkestra(engine)]
     pub authkestra: AkBase<S, T>,
 }
 
 #[cfg(feature = "flow")]
-impl<S, T> From<AkBase<S, T>> for AuthEngineState<S, T> {
+impl<S, T> From<AkBase<S, T>> for AkState<S, T> {
     fn from(authkestra: AkBase<S, T>) -> Self {
         Self { authkestra }
     }
