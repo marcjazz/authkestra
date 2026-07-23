@@ -38,9 +38,9 @@ struct AppState {
 
 This macro eliminates the need to manually implement `FromRef` for:
 - `Authkestra<S, T>`
-- `Result<Arc<dyn SessionStore>, AuthkestraAxumError>` (if sessions are configured)
+- `Result<Arc<dyn SessionStore>, AkAxumError>` (if sessions are configured)
 - `SessionConfig`
-- `Result<Arc<TokenManager>, AuthkestraAxumError>` (if tokens are configured)
+- `Result<Arc<TokenManager>, AkAxumError>` (if tokens are configured)
 
 ## Part of authkestra
 

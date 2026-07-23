@@ -7,7 +7,7 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
 ## Features
 
 - **Extractors**:
-  - `Auth<I>`: Unified extractor that uses a configured `AuthkestraGuard` to validate the request.
+  - `Auth<I>`: Unified extractor that uses a configured `AkResourceGuard` to validate the request.
   - `AuthSession`: Extracts a validated session from cookies.
   - `AuthToken`: Extracts and validates a JWT from the `Authorization: Bearer` header.
 - **OAuth Helpers**:
@@ -70,7 +70,7 @@ If you prefer not to use the macro or need more control, you can manually implem
 
 ```rust
 use axum::{routing::get, Router, extract::FromRef};
-use authkestra_axum::{AuthSession, SessionConfig, AuthkestraAxumError};
+use authkestra_axum::{AuthSession, SessionConfig, AkAxumError};
 use authkestra_session::SessionStore;
 use tower_cookies::CookieManagerLayer;
 use std::sync::Arc;
@@ -96,12 +96,12 @@ impl FromRef<AppState> for SessionConfig {
 
 ### Example: Unified Authentication (Chained Strategies)
 
-The `Auth<I>` extractor allows you to use a central `AuthkestraGuard` that can try multiple authentication methods in order.
+The `Auth<I>` extractor allows you to use a central `AkResourceGuard` that can try multiple authentication methods in order.
 
 ```rust
 use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::Auth;
-use authkestra_resource::{AuthEngineGuard, AuthPolicy};
+use authkestra_resource::{AkResourceGuard, AuthPolicy};
 use authkestra_resource::jwt::JwtStrategy;
 use authkestra_session::SessionStrategy;
 use std::sync::Arc;
@@ -111,17 +111,17 @@ struct User { id: String }
 
 #[derive(Clone)]
 struct AppState {
-    guard: Arc<AuthkestraGuard<User>>,
+    guard: Arc<AkResourceGuard<User>>,
 }
 
-impl FromRef<AppState> for Arc<AuthkestraGuard<User>> {
+impl FromRef<AppState> for Arc<AkResourceGuard<User>> {
     fn from_ref(state: &AppState) -> Self {
         state.guard.clone()
     }
 }
 
 fn app() -> Router {
-    let guard = AuthkestraGuard::builder()
+    let guard = AkResourceGuard::builder()
         .strategy(JwtStrategy::new(jwt_config))
         .strategy(SessionStrategy::new(session_store, "session_cookie"))
         .policy(AuthPolicy::FirstSuccess)

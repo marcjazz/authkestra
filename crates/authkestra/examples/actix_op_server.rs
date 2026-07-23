@@ -4,7 +4,7 @@
 use authkestra_engine::store::KvStore;
 
 use actix_web::{App, HttpServer};
-use authkestra_actix::AuthEngineActixOpExt;
+use authkestra_actix::AkActixOpExt;
 use authkestra_engine::TokenManager;
 use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use std::sync::Arc;

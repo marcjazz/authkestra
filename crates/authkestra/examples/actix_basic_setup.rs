@@ -1,12 +1,12 @@
 //! # Actix Basic Setup Example
 //!
-//! This example demonstrates the most basic setup of AuthEngine with Actix.
+//! This example demonstrates the most basic setup of AkBase with Actix.
 //! It uses an in-memory session store.
 
 use actix_files::Files;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use authkestra::flow::AuthEngine;
-use authkestra_actix::{AuthSession, AuthkestraActixExt};
+use authkestra::flow::AkBase;
+use authkestra_actix::{AuthSession, AkActixExt};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::SessionConfig;
 use serde_json::json;
@@ -18,7 +18,7 @@ async fn main() -> std::io::Result<()> {
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
-    let auth_engine = AuthEngine::builder()
+    let auth_engine = AkBase::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false, // For local development

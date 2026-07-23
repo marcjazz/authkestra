@@ -7,12 +7,12 @@
 //!
 //! ```rust,ignore
 //! use authkestra_axum::AuthkestraState;
-//! use authkestra::flow::AuthEngine;
+//! use authkestra::flow::AkBase;
 //!
 //! #[derive(Clone, AuthkestraState)]
 //! struct AppState {
 //!     #[authkestra(engine)]
-//!     auth: AuthEngine<Configured<Arc<dyn SessionStore>>, Missing>,
+//!     auth: AkBase<Configured<Arc<dyn SessionStore>>, Missing>,
 //!     
 //!     #[authkestra(store)]
 //!     clients: Arc<dyn ClientStore>,
@@ -109,13 +109,13 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                         syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>>),
                         syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<authkestra_engine::TokenManager>>)
                     )
-                } else if ident_str == "Authkestra" || ident_str == "AuthEngine" {
+                } else if ident_str == "Authkestra" || ident_str == "AkBase" {
                     match &last_segment.arguments {
                         syn::PathArguments::AngleBracketed(args) => {
                             if args.args.len() != 2 {
                                 return syn::Error::new_spanned(
                                     &field.ty,
-                                    "AuthEngine must have exactly 2 type parameters: AuthEngine<S, T>",
+                                    "AkBase must have exactly 2 type parameters: AkBase<S, T>",
                                 )
                                 .to_compile_error()
                                 .into();
@@ -127,7 +127,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                         _ => {
                             return syn::Error::new_spanned(
                                 &field.ty,
-                                "AuthEngine must have type parameters: AuthEngine<S, T>",
+                                "AkBase must have type parameters: AkBase<S, T>",
                             )
                             .to_compile_error()
                             .into();
@@ -136,7 +136,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                 } else {
                     return syn::Error::new_spanned(
                         &field.ty,
-                        "Field marked with #[authkestra(engine)] must be of type AuthEngine<S, T>, AkWebAppEngine, AkApiEngine, or AkEngine",
+                        "Field marked with #[authkestra(engine)] must be of type AkBase<S, T>, AkWebAppEngine, AkApiEngine, or AkEngine",
                     )
                     .to_compile_error()
                     .into();
@@ -153,7 +153,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
         };
 
         generated_impls.push(quote! {
-            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::AuthEngine<#s_param, #t_param>
+            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::AkBase<#s_param, #t_param>
             where
                 #s_param: Clone,
                 #t_param: Clone,
@@ -168,7 +168,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             use authkestra_engine::{SessionStoreState as _, TokenManagerState as _};
 
             impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-                for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::AuthkestraAxumError>
+                for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::AkAxumError>
             where
                 #s_param: authkestra_engine::SessionStoreState,
                 #where_clause
@@ -191,7 +191,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
         if !t_param_str.contains("Missing") {
             generated_impls.push(quote! {
                 impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-                    for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::AuthkestraAxumError>
+                    for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::AkAxumError>
                 where
                     #t_param: authkestra_engine::TokenManagerState,
                     #where_clause
@@ -218,7 +218,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                 }
             }
 
-            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for ::std::result::Result<#field_ty, authkestra_axum::AuthkestraAxumError>
+            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for ::std::result::Result<#field_ty, authkestra_axum::AkAxumError>
             #where_clause
             {
                 fn from_ref(state: &#struct_name #ty_generics) -> Self {
@@ -231,7 +231,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
     if engine_field.is_none() && generated_impls.is_empty() {
         return syn::Error::new_spanned(
             &input,
-            "No field marked with #[authkestra(engine)] found. Add #[authkestra(engine)] to your AuthEngine field."
+            "No field marked with #[authkestra(engine)] found. Add #[authkestra(engine)] to your AkBase field."
         )
         .to_compile_error()
         .into();

@@ -4,8 +4,8 @@ use http::request::Parts;
 
 pub mod jwt;
 
-pub use AuthEngineGuard as ResourceEnforcer;
-pub use AuthEngineGuardBuilder as ResourceEnforcerBuilder;
+pub use AkResourceGuard as ResourceEnforcer;
+pub use AkResourceGuardBuilder as ResourceEnforcerBuilder;
 
 /// Policy for controlling the behavior of chained authentication strategies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -23,15 +23,15 @@ pub enum AuthPolicy {
 }
 
 /// A service that orchestrates multiple authentication strategies.
-pub struct AuthEngineGuard<I> {
+pub struct AkResourceGuard<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
 }
 
-impl<I> AuthEngineGuard<I> {
+impl<I> AkResourceGuard<I> {
     /// Create a new builder for the Guard.
-    pub fn builder() -> AuthEngineGuardBuilder<I> {
-        AuthEngineGuardBuilder::default()
+    pub fn builder() -> AkResourceGuardBuilder<I> {
+        AkResourceGuardBuilder::default()
     }
 
     /// Attempt to authenticate the request using the configured strategies and policy.
@@ -69,13 +69,13 @@ impl<I> AuthEngineGuard<I> {
     }
 }
 
-/// Builder for the `AuthEngineGuard`.
-pub struct AuthEngineGuardBuilder<I> {
+/// Builder for the `AkResourceGuard`.
+pub struct AkResourceGuardBuilder<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
 }
 
-impl<I> Default for AuthEngineGuardBuilder<I> {
+impl<I> Default for AkResourceGuardBuilder<I> {
     fn default() -> Self {
         Self {
             strategies: Vec::new(),
@@ -84,7 +84,7 @@ impl<I> Default for AuthEngineGuardBuilder<I> {
     }
 }
 
-impl<I> AuthEngineGuardBuilder<I>
+impl<I> AkResourceGuardBuilder<I>
 where
     I: Send + Sync + 'static,
 {
@@ -103,9 +103,9 @@ where
         self
     }
 
-    /// Build the `AuthEngineGuard`.
-    pub fn build(self) -> AuthEngineGuard<I> {
-        AuthEngineGuard {
+    /// Build the `AkResourceGuard`.
+    pub fn build(self) -> AkResourceGuard<I> {
+        AkResourceGuard {
             strategies: self.strategies,
             policy: self.policy,
         }

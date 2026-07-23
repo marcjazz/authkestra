@@ -1,13 +1,13 @@
 //! # Axum Google OIDC Example
 //!
-//! This example demonstrates how to set up AuthEngine with Axum for Google OIDC login.
+//! This example demonstrates how to set up AkBase with Axum for Google OIDC login.
 //!
 //! To run this example, you'll need:
 //! - `AUTHKESTRA_GOOGLE_CLIENT_ID`
 //! - `AUTHKESTRA_GOOGLE_CLIENT_SECRET`
 
-use authkestra::flow::{AuthEngine, OAuth2Flow};
-use authkestra_axum::{AuthSession, AuthkestraAxumError, AuthkestraAxumExt, AuthkestraState};
+use authkestra::flow::{AkBase, OAuth2Flow};
+use authkestra_axum::{AuthSession, AkAxumError, AkAxumExt, AuthkestraState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{Configured, SessionConfig};
 use authkestra_providers::google::GoogleProvider;
@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 
-/// AuthEngine state with support for session only.
+/// AkBase state with support for session only.
 type AppState = AuthkestraState<Configured<Arc<dyn SessionStore>>>;
 
 #[tokio::main]
@@ -42,7 +42,7 @@ async fn main() {
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
-    let auth_engine = AuthEngine::builder()
+    let auth_engine = AkBase::builder()
         .provider(OAuth2Flow::new(google_provider))
         .session_store(session_store)
         .session_config(SessionConfig {
@@ -67,7 +67,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_user(session: Result<AuthSession, AuthkestraAxumError>) -> impl IntoResponse {
+async fn get_user(session: Result<AuthSession, AkAxumError>) -> impl IntoResponse {
     match session {
         Ok(AuthSession(session)) => Json(json!({
             "id": session.identity.external_id,

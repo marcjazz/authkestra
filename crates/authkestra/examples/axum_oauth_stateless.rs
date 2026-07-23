@@ -1,14 +1,14 @@
 //! # Axum Stateless OAuth Example
 //!
-//! This example demonstrates how to set up AuthEngine for OAuth2 in stateless mode,
+//! This example demonstrates how to set up AkBase for OAuth2 in stateless mode,
 //! where the callback returns a JWT instead of creating a server-side session.
 //!
 //! To run this example, you'll need:
 //! - `AUTHKESTRA_GITHUB_CLIENT_ID`
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
-use authkestra::flow::{AuthEngine, OAuth2Flow};
-use authkestra_axum::{helpers, AuthToken, AuthkestraAxumError};
+use authkestra::flow::{AkBase, OAuth2Flow};
+use authkestra_axum::{helpers, AuthToken, AkAxumError};
 use authkestra_engine::{token::TokenManager, Configured, Missing};
 use authkestra_providers::github::GithubProvider;
 use axum::{
@@ -22,21 +22,21 @@ use serde_json::json;
 use std::sync::Arc;
 use tower_cookies::Cookies;
 
-/// AuthEngine state with support for tokens (stateless mode).
+/// AkBase state with support for tokens (stateless mode).
 #[derive(Clone)]
 struct AppState {
-    authkestra: AuthEngine<Missing, Configured<Arc<TokenManager>>>,
+    authkestra: AkBase<Missing, Configured<Arc<TokenManager>>>,
 }
 
 /// Required for the `AuthToken` extractor and internal helpers.
-impl FromRef<AppState> for Result<Arc<TokenManager>, AuthkestraAxumError> {
+impl FromRef<AppState> for Result<Arc<TokenManager>, AkAxumError> {
     fn from_ref(state: &AppState) -> Self {
         Ok(state.authkestra.token_manager.0.clone())
     }
 }
 
-/// Required for the `AuthEngine` to be used in generic handlers.
-impl FromRef<AppState> for AuthEngine<Missing, Configured<Arc<TokenManager>>> {
+/// Required for the `AkBase` to be used in generic handlers.
+impl FromRef<AppState> for AkBase<Missing, Configured<Arc<TokenManager>>> {
     fn from_ref(state: &AppState) -> Self {
         state.authkestra.clone()
     }
@@ -64,7 +64,7 @@ async fn main() {
     let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
 
     // Initialize Authkestra in stateless mode (JWT only).
-    let auth_engine = AuthEngine::builder()
+    let auth_engine = AkBase::builder()
         .provider(OAuth2Flow::new(github_provider))
         .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
         .build();
@@ -90,7 +90,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-/// Custom login handler using AuthEngine helpers.
+/// Custom login handler using AkBase helpers.
 async fn login_handler(
     Path(provider): Path<String>,
     State(state): State<AppState>,
@@ -112,12 +112,12 @@ async fn callback_handler(
     State(state): State<AppState>,
     Query(params): Query<helpers::OAuthCallbackParams>,
     cookies: Cookies,
-) -> Result<impl IntoResponse, AuthkestraAxumError> {
-    let token_manager = <Result<Arc<TokenManager>, AuthkestraAxumError>>::from_ref(&state)?;
+) -> Result<impl IntoResponse, AkAxumError> {
+    let token_manager = <Result<Arc<TokenManager>, AkAxumError>>::from_ref(&state)?;
 
     let flow =
         state.authkestra.providers.get(&provider).ok_or_else(|| {
-            AuthkestraAxumError::Internal(format!("Provider {} not found", provider))
+            AkAxumError::Internal(format!("Provider {} not found", provider))
         })?;
 
     // We use the JWT-specific callback helper
@@ -132,15 +132,15 @@ async fn callback_handler(
     .await
     .map_err(|(status, msg)| {
         if status == StatusCode::UNAUTHORIZED {
-            AuthkestraAxumError::Unauthorized(msg)
+            AkAxumError::Unauthorized(msg)
         } else {
-            AuthkestraAxumError::Internal(msg)
+            AkAxumError::Internal(msg)
         }
     })
 }
 
 /// Protected endpoint using `AuthToken` extractor.
-async fn get_user(auth: Result<AuthToken, AuthkestraAxumError>) -> impl IntoResponse {
+async fn get_user(auth: Result<AuthToken, AkAxumError>) -> impl IntoResponse {
     match auth {
         Ok(AuthToken(claims)) => {
             let identity = claims.identity.as_ref().unwrap();

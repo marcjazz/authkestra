@@ -46,7 +46,7 @@ This roadmap outlines the evolution of Authkestra into a next-generation identit
 
 ### Phase 1: Engine Consolidation & GNAP Prep
 - Merge `core`, `flow`, `token` into `authkestra-engine`.
-- Implement `AuthEngine` builder with Typestate pattern.
+- Implement `AkBase` builder with Typestate pattern.
 - Update `Flow` trait for GNAP compatibility.
 
 ### Phase 2: Quantum-Safe & Privacy-Preserving Auth

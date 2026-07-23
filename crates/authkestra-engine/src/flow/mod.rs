@@ -53,7 +53,7 @@ pub trait Flow: Send + Sync {
 use std::collections::HashMap;
 
 pub use crate::engine::{
-    AuthEngine, AuthEngineBuilder, Configured, Missing,
+    AkBase, AkEngineBuilder, Configured, Missing,
 };
 
 /// Client Credentials flow implementation.

@@ -1,6 +1,6 @@
 # Chapter 2: Core Engine and Identity
 
-The `AuthEngine` is the heart of Authkestra. It orchestrates the various components (session stores, auth methods) and produces a unified, verifiable `Identity`.
+The `AkBase` is the heart of Authkestra. It orchestrates the various components (session stores, auth methods) and produces a unified, verifiable `Identity`.
 
 ## Identity and Verifiable Claims
 
@@ -38,13 +38,13 @@ pub struct Claims {
 }
 ```
 
-## The AuthEngine (Orchestrator)
+## The AkBase (Orchestrator)
 
-The `AuthEngine` uses the **Typestate Builder Pattern** to ensure that critical components (like a `SessionStore` or `TokenService`) are configured at compile-time before the engine can be used.
+The `AkBase` uses the **Typestate Builder Pattern** to ensure that critical components (like a `SessionStore` or `TokenService`) are configured at compile-time before the engine can be used.
 
 ### Quantum Readiness
 
-The `AuthEngine` is designed to be **PQC-ready**. This means the `TokenService` and `Authenticator` traits are defined to handle larger signature and key sizes associated with Module-Lattice-Based algorithms like **ML-DSA** (FIPS 204).
+The `AkBase` is designed to be **PQC-ready**. This means the `TokenService` and `Authenticator` traits are defined to handle larger signature and key sizes associated with Module-Lattice-Based algorithms like **ML-DSA** (FIPS 204).
 
 ## Architectural Decisions
 
