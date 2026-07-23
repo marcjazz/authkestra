@@ -1,7 +1,6 @@
 use crate::auth::session::{Session, SessionStore};
 use crate::auth::{AuthError, AuthInput, AuthMethod, Identity, Provider, ProviderConfig};
 use crate::flow::{Flow, FlowContext, FlowResult};
-use crate::token::TokenService;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -65,26 +64,6 @@ impl SessionStore for MockSessionStore {
     }
 }
 
-struct MockTokenService;
-#[async_trait]
-impl TokenService for MockTokenService {
-    async fn issue(
-        &self,
-        _identity: &Identity,
-        _expires_in_secs: u64,
-    ) -> Result<String, AuthError> {
-        Ok("mock-token".to_string())
-    }
-    async fn verify(&self, _token: &str) -> Result<Identity, AuthError> {
-        Ok(Identity {
-            provider_id: "mock".to_string(),
-            external_id: "user123".to_string(),
-            email: Some("mock@example.com".to_string()),
-            username: Some("Mock User".to_string()),
-            attributes: HashMap::new(),
-        })
-    }
-}
 
 #[tokio::test]
 async fn test_auth_method_mock() {
@@ -117,21 +96,7 @@ async fn test_flow_mock() {
     }
 }
 
-#[tokio::test]
-async fn test_token_service_mock() {
-    let service = MockTokenService;
-    let identity = Identity {
-        provider_id: "mock".to_string(),
-        external_id: "user123".to_string(),
-        email: None,
-        username: None,
-        attributes: HashMap::new(),
-    };
-    let token = service.issue(&identity, 3600).await.unwrap();
-    assert_eq!(token, "mock-token");
-    let verified = service.verify(&token).await.unwrap();
-    assert_eq!(verified.external_id, "user123");
-}
+
 
 #[tokio::test]
 async fn test_session_store_mock() {

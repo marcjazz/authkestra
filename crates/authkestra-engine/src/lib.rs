@@ -5,10 +5,13 @@ pub mod protocol;
 pub mod store;
 pub mod token;
 
+pub mod aliases;
+
 pub use auth::*;
 pub use engine::*;
 pub use flow::*;
 pub use token::*;
+pub use aliases::*;
 
 #[cfg(test)]
 mod tests;

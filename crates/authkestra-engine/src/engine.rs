@@ -247,27 +247,4 @@ impl<S> HasTokenManager for AuthEngine<S, Configured<Arc<TokenManager>>> {
     }
 }
 
-/// Marker for a configured session store.
-pub type HasSessionStoreMarker = Configured<Arc<dyn SessionStore>>;
-/// Marker for a missing session store.
-pub type NoSessionStoreMarker = Missing;
 
-#[cfg(feature = "token")]
-/// Marker for a configured token manager.
-pub type HasTokenManagerMarker = Configured<Arc<TokenManager>>;
-#[cfg(feature = "token")]
-/// Marker for a missing token manager.
-pub type NoTokenManagerMarker = Missing;
-
-/// Authkestra with session support only.
-pub type StatefulAuthEngine = AuthEngine<HasSessionStoreMarker, Missing>;
-pub type StatefullAuthkestra = StatefulAuthEngine;
-
-#[cfg(feature = "token")]
-/// Authkestra with token support only.
-pub type StatelessAuthEngine = AuthEngine<Missing, HasTokenManagerMarker>;
-#[cfg(feature = "token")]
-pub type StatelessAuthkestra = StatelessAuthEngine;
-
-/// Deprecated alias for `AuthEngine`.
-pub type Authkestra<S = Missing, T = Missing> = AuthEngine<S, T>;

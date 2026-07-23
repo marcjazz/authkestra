@@ -89,45 +89,63 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
     if let Some(field) = engine_field {
         let field_name = field.ident.as_ref().unwrap();
 
-        let (s_param, t_param) = match &field.ty {
+        let (s_param, t_param): (syn::Type, syn::Type) = match &field.ty {
             Type::Path(type_path) => {
                 let last_segment = type_path.path.segments.last().unwrap();
-                if last_segment.ident != "Authkestra" && last_segment.ident != "AuthEngine" {
-                    return syn::Error::new_spanned(
-                        &field.ty,
-                        "Field marked with #[authkestra(engine)] must be of type AuthEngine<S, T> or Authkestra<S, T>",
-                    )
-                    .to_compile_error()
-                    .into();
-                }
+                let ident_str = last_segment.ident.to_string();
 
-                match &last_segment.arguments {
-                    syn::PathArguments::AngleBracketed(args) => {
-                        if args.args.len() != 2 {
+                if ident_str == "AkWebAppEngine" {
+                    (
+                        syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>>),
+                        syn::parse_quote!(authkestra_engine::Missing)
+                    )
+                } else if ident_str == "AkApiEngine" {
+                    (
+                        syn::parse_quote!(authkestra_engine::Missing),
+                        syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<authkestra_engine::TokenManager>>)
+                    )
+                } else if ident_str == "AkEngine" {
+                    (
+                        syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>>),
+                        syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<authkestra_engine::TokenManager>>)
+                    )
+                } else if ident_str == "Authkestra" || ident_str == "AuthEngine" {
+                    match &last_segment.arguments {
+                        syn::PathArguments::AngleBracketed(args) => {
+                            if args.args.len() != 2 {
+                                return syn::Error::new_spanned(
+                                    &field.ty,
+                                    "AuthEngine must have exactly 2 type parameters: AuthEngine<S, T>",
+                                )
+                                .to_compile_error()
+                                .into();
+                            }
+                            let s = &args.args[0];
+                            let t = &args.args[1];
+                            (syn::parse_quote!(#s), syn::parse_quote!(#t))
+                        }
+                        _ => {
                             return syn::Error::new_spanned(
                                 &field.ty,
-                                "AuthEngine must have exactly 2 type parameters: AuthEngine<S, T>",
+                                "AuthEngine must have type parameters: AuthEngine<S, T>",
                             )
                             .to_compile_error()
                             .into();
                         }
-
-                        (&args.args[0], &args.args[1])
                     }
-                    _ => {
-                        return syn::Error::new_spanned(
-                            &field.ty,
-                            "AuthEngine must have type parameters: AuthEngine<S, T>",
-                        )
-                        .to_compile_error()
-                        .into();
-                    }
+                } else {
+                    return syn::Error::new_spanned(
+                        &field.ty,
+                        "Field marked with #[authkestra(engine)] must be of type AuthEngine<S, T>, AkWebAppEngine, AkApiEngine, or AkEngine",
+                    )
+                    .to_compile_error()
+                    .into();
                 }
             }
             _ => {
                 return syn::Error::new_spanned(
                     &field.ty,
-                    "Field marked with #[authkestra(engine)] must be of type AuthEngine<S, T> or Authkestra<S, T>",
+                    "Field marked with #[authkestra(engine)] must be a valid path type",
                 )
                 .to_compile_error()
                 .into();

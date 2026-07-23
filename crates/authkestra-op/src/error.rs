@@ -35,7 +35,7 @@ pub enum OpError {
     #[error("storage error")]
     Storage,
 
-    /// Token issuance failed at the `authkestra_engine::TokenService` layer.
+    /// Token issuance failed at the `authkestra_engine::TokenManager` layer.
     #[error("token issuance failed: {0}")]
     TokenIssuance(String),
 }
