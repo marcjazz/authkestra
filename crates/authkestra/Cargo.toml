@@ -119,6 +119,10 @@ required-features = ["full"]
 name = "axum_session_redis"
 required-features = ["full"]
 
+[[example]]
+name = "axum_sql_store"
+required-features = ["full"]
+
 [[test]]
 name = "typestate_tests"
 required-features = ["full"]
