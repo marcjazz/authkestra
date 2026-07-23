@@ -918,12 +918,12 @@ async fn handle_token_exchange(
 
 #[cfg(test)]
 mod tests {
-    use authkestra_engine::store::KvStore;
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
     use crate::code::AuthorizationCode;
     use crate::refresh::RefreshToken;
     use authkestra_engine::auth::state::Identity;
+    use authkestra_engine::store::KvStore;
     use authkestra_engine::token::TokenManager;
     use chrono::{Duration, Utc};
     use std::collections::HashMap;

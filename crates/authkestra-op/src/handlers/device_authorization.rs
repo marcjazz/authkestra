@@ -130,9 +130,9 @@ pub async fn handle_device_authorization(
 
 #[cfg(test)]
 mod tests {
-    use authkestra_engine::store::KvStore;
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
+    use authkestra_engine::store::KvStore;
 
     use crate::device::DeviceCodeStatus;
     use crate::handlers::token::{handle_token, TokenRequest};

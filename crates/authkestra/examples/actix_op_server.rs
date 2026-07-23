@@ -8,9 +8,9 @@ use authkestra_actix::AuthEngineActixOpExt;
 use authkestra_engine::TokenManager;
 use authkestra_op::{
     client::{ClientRegistration, ClientStore},
-    code::{AuthorizationCodeStore, authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>},
+    code::AuthorizationCodeStore,
     config::OpConfig,
-    refresh::{authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>, RefreshTokenStore},
+    refresh::RefreshTokenStore,
 };
 use std::sync::Arc;
 
@@ -23,22 +23,34 @@ async fn main() -> std::io::Result<()> {
         Some("issuer".to_string()),
     ));
 
-    let clients = authkestra_engine::store::memory::MemoryStore::<crate::client::ClientRegistration>::new();
-    clients.set("test-client", ClientRegistration {
-
-        client_id: "test-client".to_string(),
-        client_secret_hash: None,
-        redirect_uris: vec!["http://localhost:8080/callback".to_string()],
-        require_pkce: true,
-        scopes: vec!["openid".to_string(), "profile".to_string()],
-        grant_types: vec![authkestra_op::client::GrantType::AuthorizationCode],
-        allowed_audiences: vec![],
-    
-    }, std::time::Duration::from_secs(31536000)).await.unwrap();
+    let clients =
+        authkestra_engine::store::memory::MemoryStore::<crate::client::ClientRegistration>::new();
+    clients
+        .set(
+            "test-client",
+            ClientRegistration {
+                client_id: "test-client".to_string(),
+                client_secret_hash: None,
+                redirect_uris: vec!["http://localhost:8080/callback".to_string()],
+                require_pkce: true,
+                scopes: vec!["openid".to_string(), "profile".to_string()],
+                grant_types: vec![authkestra_op::client::GrantType::AuthorizationCode],
+                allowed_audiences: vec![],
+            },
+            std::time::Duration::from_secs(31536000),
+        )
+        .await
+        .unwrap();
     let clients: Arc<dyn ClientStore> = Arc::new(clients);
 
-    let codes: Arc<dyn AuthorizationCodeStore> = Arc::new(authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new());
-    let refresh_tokens: Arc<dyn RefreshTokenStore> = Arc::new(authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new());
+    let codes: Arc<dyn AuthorizationCodeStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            crate::code::AuthorizationCode,
+        >::new());
+    let refresh_tokens: Arc<dyn RefreshTokenStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            crate::refresh::RefreshToken,
+        >::new());
 
     let config = OpConfig {
         issuer: "http://localhost:8080".to_string(),
@@ -63,8 +75,11 @@ async fn main() -> std::io::Result<()> {
         ..Default::default()
     };
 
-    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> =
-        Arc::new(authkestra_op::device::authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new());
+    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> = Arc::new(
+        authkestra_op::device::authkestra_engine::store::memory::MemoryStore::<
+            crate::device::DeviceCodeSession,
+        >::new(),
+    );
 
     println!("🚀 Actix OP Server running on http://localhost:8080");
     HttpServer::new(move || {

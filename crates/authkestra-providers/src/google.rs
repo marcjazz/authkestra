@@ -281,8 +281,8 @@ impl OAuthProvider for GoogleProvider {
 
 #[cfg(test)]
 mod tests {
-    use authkestra_engine::store::KvStore;
     use super::*;
+
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

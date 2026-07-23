@@ -182,9 +182,9 @@ pub async fn handle_authorize(
 
 #[cfg(test)]
 mod tests {
-    use authkestra_engine::store::KvStore;
     use super::*;
     use crate::client::ClientRegistration;
+    use authkestra_engine::store::KvStore;
 
     fn test_config() -> OpConfig {
         OpConfig {

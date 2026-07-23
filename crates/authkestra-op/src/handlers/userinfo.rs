@@ -101,7 +101,7 @@ pub async fn handle_userinfo(
 
 #[cfg(test)]
 mod tests {
-    use authkestra_engine::store::KvStore;
+
     use super::*;
     use authkestra_engine::auth::state::Identity;
 

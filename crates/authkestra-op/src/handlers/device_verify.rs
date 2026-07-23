@@ -48,7 +48,7 @@ pub async fn handle_device_verify(
 
 #[cfg(test)]
 mod tests {
-    use authkestra_engine::store::KvStore;
+
     use super::*;
     use crate::device::DeviceCodeSession;
     use chrono::{Duration, Utc};

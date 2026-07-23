@@ -111,7 +111,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use authkestra_engine::store::KvStore;
+
     use super::*;
     use argon2::{
         password_hash::{rand_core::OsRng, SaltString},
