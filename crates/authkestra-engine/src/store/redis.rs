@@ -236,4 +236,3 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> IndexedKvStore<T> 
         }
     }
 }
-

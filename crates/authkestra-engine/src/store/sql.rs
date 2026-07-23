@@ -125,7 +125,6 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
     }
 }
 
-
 #[cfg(feature = "sql-postgres")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::AtomicConsume<T>
@@ -239,7 +238,6 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
     }
 }
 
-
 #[cfg(feature = "sql-sqlite")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
@@ -323,7 +321,6 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
         Ok(())
     }
 }
-
 
 #[cfg(feature = "sql-sqlite")]
 #[async_trait]
@@ -438,7 +435,6 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
     }
 }
 
-
 #[cfg(feature = "sql-mysql")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
@@ -523,7 +519,6 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
         Ok(())
     }
 }
-
 
 #[cfg(feature = "sql-mysql")]
 #[async_trait]
@@ -663,3 +658,83 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
     }
 }
 
+#[cfg(all(test, feature = "sql-sqlite"))]
+mod tests {
+    use super::*;
+    use crate::store::{KvStore, AtomicConsume, IndexedKvStore};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::time::Duration;
+
+    async fn setup_db() -> SqlKvStore<sqlx::Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE authkestra_kv (
+                key TEXT PRIMARY KEY,
+                index_key TEXT,
+                value TEXT NOT NULL,
+                expires_at DATETIME NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        SqlKvStore::new(pool)
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_get_set_delete() {
+        let store = setup_db().await;
+
+        let res: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(res, None);
+
+        store
+            .set("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(store.get("key1").await.unwrap(), Some("value1".to_string()));
+
+        KvStore::<String>::delete(&store, "key1").await.unwrap();
+        let res2: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(res2, None);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_atomic_consume() {
+        let store = setup_db().await;
+
+        store
+            .set("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let val: Option<String> = store.consume("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+
+        let val2: Option<String> = store.consume("key1").await.unwrap();
+        assert_eq!(val2, None);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_indexed_store() {
+        let store = setup_db().await;
+
+        store
+            .set_indexed("pk1", "sk1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        assert_eq!(store.get("pk1").await.unwrap(), Some("value1".to_string()));
+        assert_eq!(store.get_by_index("sk1").await.unwrap(), Some("value1".to_string()));
+
+        // In SQL, index is a column on the primary record. Deleting the record deletes the index.
+        KvStore::<String>::delete(&store, "pk1").await.unwrap();
+        let sk_res: Option<String> = store.get_by_index("sk1").await.unwrap();
+        assert_eq!(sk_res, None);
+    }
+}
