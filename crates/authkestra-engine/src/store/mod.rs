@@ -38,13 +38,6 @@ pub trait IndexedKvStore<T>: KvStore<T> {
     async fn get_by_index(&self, secondary_key: &str) -> Result<Option<T>, StoreError>;
 }
 
-#[async_trait]
-pub trait Repository<T, ID>: Send + Sync + 'static {
-    async fn find_by_id(&self, id: &ID) -> Result<Option<T>, StoreError>;
-    async fn save(&self, entity: &T) -> Result<(), StoreError>;
-    async fn delete(&self, id: &ID) -> Result<(), StoreError>;
-}
-
 #[cfg(feature = "memory")]
 pub mod memory;
 

@@ -55,7 +55,6 @@ async fn test_google_oauth_flow() {
         format!("{}/auth", server.uri()),
         format!("{}/token", server.uri()),
         format!("{}/userinfo", server.uri()),
-        format!("{}/revoke", server.uri()),
     );
 
     // Simulate the authorization URL generation

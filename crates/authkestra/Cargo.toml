@@ -25,6 +25,7 @@ authkestra-actix = { workspace = true, features = ["flow", "session", "token", "
 authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op"] }
 authkestra-oidc = { workspace = true }
 authkestra-op = { workspace = true }
+authkestra-macros = { workspace = true }
 actix-web = "4"
 axum = "0.8"
 serde = { version = "1.0", features = ["derive"] }
@@ -96,6 +97,10 @@ required-features = ["full"]
 
 [[example]]
 name = "axum_oidc_google"
+required-features = ["full"]
+
+[[example]]
+name = "axum_data_layer_macros"
 required-features = ["full"]
 
 [[example]]

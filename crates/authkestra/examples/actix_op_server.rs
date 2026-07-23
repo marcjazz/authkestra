@@ -30,7 +30,7 @@ async fn main() -> std::io::Result<()> {
             ClientRegistration {
                 client_id: "test-client".to_string(),
                 client_secret_hash: None,
-                redirect_uris: vec!["http://localhost:8080/callback".to_string()],
+                redirect_uris: vec!["http://localhost:3000/callback".to_string()],
                 require_pkce: true,
                 scopes: vec!["openid".to_string(), "profile".to_string()],
                 grant_types: vec![authkestra_op::client::GrantType::AuthorizationCode],

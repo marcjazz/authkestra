@@ -399,6 +399,7 @@ dependencies = [
  "authkestra-actix",
  "authkestra-axum",
  "authkestra-engine",
+ "authkestra-macros",
  "authkestra-oidc",
  "authkestra-op",
  "authkestra-providers",

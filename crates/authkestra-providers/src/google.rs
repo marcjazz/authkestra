@@ -1,346 +1,37 @@
-use async_trait::async_trait;
-use authkestra_engine::{
-    auth::{Provider, ProviderConfig},
-    error::AuthError,
-    state::{Identity, OAuthToken},
-    OAuthProvider,
-};
-use serde::Deserialize;
-use std::collections::HashMap;
-
-pub struct GoogleProvider {
-    client_id: String,
-    client_secret: String,
-    redirect_uri: String,
-    http_client: reqwest::Client,
-    auth_url: String,
-    token_url: String,
-    userinfo_url: String,
-    revoke_url: String,
-}
-
-impl GoogleProvider {
-    pub fn new(client_id: String, client_secret: String, redirect_uri: String) -> Self {
-        Self {
-            client_id,
-            client_secret,
-            redirect_uri,
-            http_client: reqwest::Client::new(),
-            auth_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
-            token_url: "https://oauth2.googleapis.com/token".to_string(),
-            userinfo_url: "https://www.googleapis.com/oauth2/v3/userinfo".to_string(),
-            revoke_url: "https://oauth2.googleapis.com/revoke".to_string(),
-        }
-    }
-
-    pub fn with_test_urls(
-        mut self,
-        auth_url: String,
-        token_url: String,
-        userinfo_url: String,
-        revoke_url: String,
-    ) -> Self {
-        self.auth_url = auth_url;
-        self.token_url = token_url;
-        self.userinfo_url = userinfo_url;
-        self.revoke_url = revoke_url;
-        self
-    }
-}
-
-#[async_trait]
-impl Provider for GoogleProvider {
-    async fn config(&self) -> ProviderConfig {
-        ProviderConfig {
-            id: "google".to_string(),
-            name: "Google".to_string(),
-            extra: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct GoogleTokenResponse {
-    access_token: String,
-    token_type: String,
-    expires_in: Option<u64>,
-    refresh_token: Option<String>,
-    scope: Option<String>,
-    id_token: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GoogleUserResponse {
-    sub: String,
-    email: Option<String>,
-    name: Option<String>,
-    picture: Option<String>,
-    email_verified: Option<bool>,
-    locale: Option<String>,
-}
-
-#[async_trait]
-impl OAuthProvider for GoogleProvider {
-    fn provider_id(&self) -> &str {
-        "google"
-    }
-
-    fn get_authorization_url(
-        &self,
-        state: &str,
-        scopes: &[&str],
-        code_challenge: Option<&str>,
-        nonce: Option<&str>,
-    ) -> String {
-        let scope_param = if scopes.is_empty() {
-            "openid email profile".to_string()
-        } else {
-            scopes.join(" ")
-        };
-
-        let mut url = format!(
-            "{auth_url}?client_id={client_id}&redirect_uri={redirect_uri}&state={state}&scope={scope_param}&response_type=code&access_type=offline&prompt=consent",
-            auth_url = self.auth_url,
-            client_id = self.client_id,
-            redirect_uri = urlencoding::encode(&self.redirect_uri),
-            state = state,
-            scope_param = urlencoding::encode(&scope_param)
-        );
-
-        if let Some(challenge) = code_challenge {
-            url.push_str(&format!(
-                "&code_challenge={challenge}&code_challenge_method=S256"
-            ));
-        }
-
-        if let Some(n) = nonce {
-            url.push_str(&format!("&nonce={n}"));
-        }
-
-        url
-    }
-
-    #[tracing::instrument(skip(self, code, code_verifier, _nonce))]
-    async fn exchange_code_for_identity(
-        &self,
-        code: &str,
-        code_verifier: Option<&str>,
-        _nonce: Option<&str>,
-    ) -> Result<(Identity, OAuthToken), AuthError> {
-        tracing::debug!("exchanging Google code for access token");
-        // 1. Exchange code for access token
-        let mut params = vec![
-            ("code", code.to_string()),
-            ("client_id", self.client_id.clone()),
-            ("client_secret", self.client_secret.clone()),
-            ("redirect_uri", self.redirect_uri.clone()),
-            ("grant_type", "authorization_code".to_string()),
-        ];
-
-        if let Some(verifier) = code_verifier {
-            params.push(("code_verifier", verifier.to_string()));
-        }
-
-        let token_response = self
-            .http_client
-            .post(&self.token_url)
-            .form(&params)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "network error while exchanging Google code");
-                AuthError::Network
-            })?
-            .json::<GoogleTokenResponse>()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "failed to parse Google token response");
-                AuthError::Provider(format!("Failed to parse token response: {e}"))
-            })?;
-
-        tracing::debug!("fetching Google user information");
-        // 2. Get user information
-        let user_response = self
-            .http_client
-            .get(&self.userinfo_url)
-            .header(
-                "Authorization",
-                format!("Bearer {token}", token = token_response.access_token),
-            )
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "network error while fetching Google user");
-                AuthError::Network
-            })?
-            .json::<GoogleUserResponse>()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "failed to parse Google user response");
-                AuthError::Provider(format!("Failed to parse user response: {e}"))
-            })?;
-
-        // 3. Map to Identity
-        let mut attributes = HashMap::new();
-        if let Some(picture) = user_response.picture {
+crate::define_oauth_provider! {
+    GoogleProvider,
+    "google",
+    "Google",
+    "https://accounts.google.com/o/oauth2/v2/auth",
+    "https://oauth2.googleapis.com/token",
+    "https://www.googleapis.com/oauth2/v3/userinfo",
+    vec!["openid", "email", "profile"],
+    GoogleUserResponse {
+        sub: String,
+        email: Option<String>,
+        name: Option<String>,
+        picture: Option<String>,
+        email_verified: Option<bool>,
+        locale: Option<String>,
+    },
+    |user| {
+        let mut attributes = std::collections::HashMap::new();
+        if let Some(picture) = user.picture {
             attributes.insert("picture".to_string(), picture);
         }
-        if let Some(verified) = user_response.email_verified {
+        if let Some(verified) = user.email_verified {
             attributes.insert("email_verified".to_string(), verified.to_string());
         }
-        if let Some(locale) = user_response.locale {
+        if let Some(locale) = user.locale {
             attributes.insert("locale".to_string(), locale);
         }
 
-        let identity = Identity {
+        authkestra_engine::state::Identity {
             provider_id: "google".to_string(),
-            external_id: user_response.sub,
-            email: user_response.email,
-            username: user_response.name,
+            external_id: user.sub,
+            email: user.email,
+            username: user.name,
             attributes,
-        };
-
-        let token = OAuthToken {
-            access_token: token_response.access_token,
-            token_type: token_response.token_type,
-            expires_in: token_response.expires_in,
-            refresh_token: token_response.refresh_token,
-            scope: token_response.scope,
-            id_token: token_response.id_token,
-        };
-
-        tracing::info!(external_id = %identity.external_id, "successfully exchanged Google code for identity");
-        Ok((identity, token))
-    }
-
-    #[tracing::instrument(skip(self, refresh_token))]
-    async fn refresh_token(&self, refresh_token: &str) -> Result<OAuthToken, AuthError> {
-        tracing::debug!("refreshing Google access token");
-        let token_response = self
-            .http_client
-            .post(&self.token_url)
-            .form(&[
-                ("refresh_token", refresh_token),
-                ("client_id", &self.client_id),
-                ("client_secret", &self.client_secret),
-                ("grant_type", "refresh_token"),
-            ])
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "network error while refreshing Google token");
-                AuthError::Network
-            })?
-            .json::<GoogleTokenResponse>()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "failed to parse Google refresh token response");
-                AuthError::Provider(format!("Failed to parse refresh token response: {e}"))
-            })?;
-
-        tracing::info!("successfully refreshed Google access token");
-        Ok(OAuthToken {
-            access_token: token_response.access_token,
-            token_type: token_response.token_type,
-            expires_in: token_response.expires_in,
-            refresh_token: token_response.refresh_token,
-            scope: token_response.scope,
-            id_token: token_response.id_token,
-        })
-    }
-
-    #[tracing::instrument(skip(self, token))]
-    async fn revoke_token(&self, token: &str) -> Result<(), AuthError> {
-        tracing::debug!("revoking Google access token");
-        let response = self
-            .http_client
-            .post(&self.revoke_url)
-            .form(&[("token", token)])
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "network error while revoking Google token");
-                AuthError::Network
-            })?;
-
-        if response.status().is_success() {
-            tracing::info!("successfully revoked Google access token");
-            Ok(())
-        } else {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            tracing::error!(error = %error_text, "failed to revoke Google access token");
-            Err(AuthError::Provider(format!(
-                "Failed to revoke token: {error_text}"
-            )))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    #[tokio::test]
-    async fn test_exchange_code_for_identity() {
-        let server = MockServer::start().await;
-        let auth_url = format!("{uri}/auth", uri = server.uri());
-        let token_url = format!("{uri}/token", uri = server.uri());
-        let userinfo_url = format!("{uri}/userinfo", uri = server.uri());
-
-        Mock::given(method("POST"))
-            .and(path("/token"))
-            .respond_with(ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({"access_token": "test_token", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "test_refresh_token"})))
-            .mount(&server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path("/userinfo"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "sub": "google-123",
-                "email": "test@google.com",
-                "name": "Google User",
-                "picture": "http://picture",
-                "email_verified": true,
-                "locale": "en"
-            })))
-            .mount(&server)
-            .await;
-
-        let provider = GoogleProvider::new(
-            "client_id".to_string(),
-            "client_secret".to_string(),
-            "http://localhost/callback".to_string(),
-        )
-        .with_test_urls(
-            auth_url,
-            token_url,
-            userinfo_url,
-            format!("{}/revoke", server.uri()),
-        );
-
-        let (identity, token) = provider
-            .exchange_code_for_identity("test_code", None, None)
-            .await
-            .unwrap();
-
-        assert_eq!(identity.provider_id, "google");
-        assert_eq!(identity.external_id, "google-123");
-        assert_eq!(identity.username, Some("Google User".to_string()));
-        assert_eq!(identity.email, Some("test@google.com".to_string()));
-        assert_eq!(
-            identity.attributes.get("picture").unwrap(),
-            "http://picture"
-        );
-        assert_eq!(identity.attributes.get("email_verified").unwrap(), "true");
-        assert_eq!(identity.attributes.get("locale").unwrap(), "en");
-        assert_eq!(token.access_token, "test_token");
-        assert_eq!(token.refresh_token, Some("test_refresh_token".to_string()));
     }
 }
