@@ -125,6 +125,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
     }
 }
 
+
 #[cfg(feature = "sql-postgres")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::AtomicConsume<T>
@@ -238,6 +239,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
     }
 }
 
+
 #[cfg(feature = "sql-sqlite")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
@@ -321,6 +323,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
         Ok(())
     }
 }
+
 
 #[cfg(feature = "sql-sqlite")]
 #[async_trait]
@@ -435,6 +438,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
     }
 }
 
+
 #[cfg(feature = "sql-mysql")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
@@ -519,6 +523,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
         Ok(())
     }
 }
+
 
 #[cfg(feature = "sql-mysql")]
 #[async_trait]
@@ -657,3 +662,4 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
         }
     }
 }
+
