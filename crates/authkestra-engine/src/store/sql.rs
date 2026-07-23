@@ -139,7 +139,7 @@ impl SqlKvStore<sqlx::Postgres> {
             table = self.table_name
         );
         let query2 = format!(
-            "CREATE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key)",
             table = self.table_name
         );
         sqlx::query(&query1)
@@ -278,7 +278,7 @@ impl SqlKvStore<sqlx::Sqlite> {
                 value TEXT NOT NULL,
                 expires_at DATETIME NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key);",
+            CREATE UNIQUE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key);",
             table = self.table_name
         );
         sqlx::query(&query)
@@ -496,7 +496,7 @@ impl SqlKvStore<sqlx::MySql> {
                 index_key VARCHAR(255),
                 value TEXT NOT NULL,
                 expires_at DATETIME NOT NULL,
-                INDEX {table}_idx (index_key)
+                UNIQUE INDEX {table}_idx (index_key)
             )",
             table = self.table_name
         );

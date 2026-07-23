@@ -114,6 +114,11 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicConsume<T> f
     #[tracing::instrument(skip(self))]
     async fn consume(&self, key: &str) -> Result<Option<T>, StoreError> {
         tracing::debug!(key = %key, "atomically consuming from redis store");
+
+        // Note: We atomically consume the primary key using a Lua script.
+        // The associated index_key (if any) is not deleted here because it is not provided
+        // to `consume()`. This is benign: the stale index will expire simultaneously
+        // via its matching TTL, and `get_by_index` gracefully cleans up any orphaned pointers.
         let mut conn = self
             .client
             .get_multiplexed_async_connection()
