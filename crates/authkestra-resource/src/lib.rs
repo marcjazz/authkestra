@@ -4,8 +4,8 @@ use http::request::Parts;
 
 pub mod jwt;
 
-pub use AuthEngineGuard as ResourceEnforcer;
-pub use AuthEngineGuardBuilder as ResourceEnforcerBuilder;
+pub use Guard as ResourceEnforcer;
+pub use GuardBuilder as ResourceEnforcerBuilder;
 
 /// Policy for controlling the behavior of chained authentication strategies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -23,15 +23,15 @@ pub enum AuthPolicy {
 }
 
 /// A service that orchestrates multiple authentication strategies.
-pub struct AuthEngineGuard<I> {
+pub struct Guard<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
 }
 
-impl<I> AuthEngineGuard<I> {
+impl<I> Guard<I> {
     /// Create a new builder for the Guard.
-    pub fn builder() -> AuthEngineGuardBuilder<I> {
-        AuthEngineGuardBuilder::default()
+    pub fn builder() -> GuardBuilder<I> {
+        GuardBuilder::default()
     }
 
     /// Attempt to authenticate the request using the configured strategies and policy.
@@ -69,13 +69,13 @@ impl<I> AuthEngineGuard<I> {
     }
 }
 
-/// Builder for the `AuthEngineGuard`.
-pub struct AuthEngineGuardBuilder<I> {
+/// Builder for the `Guard`.
+pub struct GuardBuilder<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
 }
 
-impl<I> Default for AuthEngineGuardBuilder<I> {
+impl<I> Default for GuardBuilder<I> {
     fn default() -> Self {
         Self {
             strategies: Vec::new(),
@@ -84,7 +84,7 @@ impl<I> Default for AuthEngineGuardBuilder<I> {
     }
 }
 
-impl<I> AuthEngineGuardBuilder<I>
+impl<I> GuardBuilder<I>
 where
     I: Send + Sync + 'static,
 {
@@ -103,9 +103,9 @@ where
         self
     }
 
-    /// Build the `AuthEngineGuard`.
-    pub fn build(self) -> AuthEngineGuard<I> {
-        AuthEngineGuard {
+    /// Build the `Guard`.
+    pub fn build(self) -> Guard<I> {
+        Guard {
             strategies: self.strategies,
             policy: self.policy,
         }

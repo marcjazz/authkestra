@@ -7,7 +7,7 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
 ## Features
 
 - **Extractors**:
-  - `Auth<I>`: Unified extractor that uses a configured `AuthEngineGuard` to validate the request.
+  - `Auth<I>`: Unified extractor that uses a configured `Guard` to validate the request.
   - `AuthSession`: Extracts a validated session from cookies.
   - `AuthToken`: Extracts and validates a JWT from the `Authorization: Bearer` header.
 - **OAuth Helpers**:
@@ -20,7 +20,7 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
   - `logout`: Clears the session cookie and removes it from the store.
   - `SessionConfig`: Customizable session settings (cookie name, secure, http_only, etc.).
 - **Macros**:
-  - `AuthkestraFromRef`: Automatically generate `FromRef` implementations for your application state.
+  - `FromRef`: Automatically generate `FromRef` implementations for your application state.
 
 ## Usage
 
@@ -32,20 +32,20 @@ authkestra-axum = { version = "0.1.3", features = ["macros"] }
 tower-cookies = "0.10" # Required for session support
 ```
 
-### Quick Start with AuthkestraFromRef (Recommended)
+### Quick Start with FromRef (Recommended)
 
-The easiest way to integrate Authkestra with custom Axum state is using the `AuthkestraFromRef` macro:
+The easiest way to integrate Authkestra with custom Axum state is using the `FromRef` macro:
 
 ```rust
 use axum::{routing::get, Router};
-use authkestra_axum::{AuthSession, AuthkestraFromRef};
+use authkestra_axum::{AuthSession, FromRef};
 use authkestra::flow::Authkestra;
 use authkestra_flow::{Configured, Missing};
 use authkestra_session::SessionStore;
 use tower_cookies::CookieManagerLayer;
 use std::sync::Arc;
 
-#[derive(Clone, AuthkestraFromRef)]
+#[derive(Clone, FromRef)]
 struct AppState {
     #[authkestra]
     auth: Authkestra<Configured<Arc<dyn SessionStore>>, Missing>,
@@ -70,7 +70,7 @@ If you prefer not to use the macro or need more control, you can manually implem
 
 ```rust
 use axum::{routing::get, Router, extract::FromRef};
-use authkestra_axum::{AuthSession, SessionConfig, AuthEngineAxumError};
+use authkestra_axum::{AuthSession, SessionConfig, Error};
 use authkestra_session::SessionStore;
 use tower_cookies::CookieManagerLayer;
 use std::sync::Arc;
@@ -96,12 +96,12 @@ impl FromRef<AppState> for SessionConfig {
 
 ### Example: Unified Authentication (Chained Strategies)
 
-The `Auth<I>` extractor allows you to use a central `AuthEngineGuard` that can try multiple authentication methods in order.
+The `Auth<I>` extractor allows you to use a central `Guard` that can try multiple authentication methods in order.
 
 ```rust
 use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::Auth;
-use authkestra_resource::{AuthEngineGuard, AuthPolicy};
+use authkestra_resource::{Guard, AuthPolicy};
 use authkestra_resource::jwt::JwtStrategy;
 use authkestra_session::SessionStrategy;
 use std::sync::Arc;
@@ -111,17 +111,17 @@ struct User { id: String }
 
 #[derive(Clone)]
 struct AppState {
-    guard: Arc<AuthEngineGuard<User>>,
+    guard: Arc<Guard<User>>,
 }
 
-impl FromRef<AppState> for Arc<AuthEngineGuard<User>> {
+impl FromRef<AppState> for Arc<Guard<User>> {
     fn from_ref(state: &AppState) -> Self {
         state.guard.clone()
     }
 }
 
 fn app() -> Router {
-    let guard = AuthEngineGuard::builder()
+    let guard = Guard::builder()
         .strategy(JwtStrategy::new(jwt_config))
         .strategy(SessionStrategy::new(session_store, "session_cookie"))
         .policy(AuthPolicy::FirstSuccess)

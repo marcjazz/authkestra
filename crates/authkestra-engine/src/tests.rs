@@ -104,14 +104,14 @@ async fn test_session_store_mock() {
 
 #[test]
 fn test_auth_engine_builder_typestate() {
-    use crate::engine::AuthEngine;
+    use crate::engine::Engine;
     use std::sync::Arc;
 
-    let builder = AuthEngine::builder();
+    let builder = Engine::builder();
     let _engine = builder.build();
 
     let store = MockSessionStore;
-    let engine_with_session = AuthEngine::builder().session_store(Arc::new(store)).build();
+    let engine_with_session = Engine::builder().session_store(Arc::new(store)).build();
 
     let _s = engine_with_session.session_store();
 }

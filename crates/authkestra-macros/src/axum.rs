@@ -6,13 +6,13 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use authkestra_axum::AuthkestraState;
-//! use authkestra::flow::AuthEngine;
+//! use authkestra_axum::State;
+//! use authkestra::flow::Engine;
 //!
-//! #[derive(Clone, AuthkestraState)]
+//! #[derive(Clone, State)]
 //! struct AppState {
 //!     #[authkestra(engine)]
-//!     auth: AuthEngine<Configured<Arc<dyn SessionStore>>, Missing>,
+//!     auth: Engine<Configured<Arc<dyn SessionStore>>, Missing>,
 //!     
 //!     #[authkestra(store)]
 //!     clients: Arc<dyn ClientStore>,
@@ -41,25 +41,17 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             Fields::Named(fields) => {
                 for field in &fields.named {
                     for attr in &field.attrs {
-                        let is_legacy = attr.path().is_ident("auth_engine");
                         let is_authkestra = attr.path().is_ident("authkestra");
 
-                        if is_legacy {
-                            engine_field = Some(field);
-                        } else if is_authkestra {
-                            if let syn::Meta::Path(_) = attr.meta {
-                                // Backward compatibility: #[authkestra] implies engine
-                                engine_field = Some(field);
-                            } else {
-                                let _ = attr.parse_nested_meta(|meta| {
-                                    if meta.path.is_ident("engine") {
-                                        engine_field = Some(field);
-                                    } else if meta.path.is_ident("store") {
-                                        store_fields.push(field);
-                                    }
-                                    Ok(())
-                                });
-                            }
+                        if is_authkestra {
+                            let _ = attr.parse_nested_meta(|meta| {
+                                if meta.path.is_ident("engine") {
+                                    engine_field = Some(field);
+                                } else if meta.path.is_ident("store") {
+                                    store_fields.push(field);
+                                }
+                                Ok(())
+                            });
                         }
                     }
                 }
@@ -67,7 +59,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             _ => {
                 return syn::Error::new_spanned(
                     &input,
-                    "AuthkestraState can only be derived for structs with named fields",
+                    "State can only be derived for structs with named fields",
                 )
                 .to_compile_error()
                 .into();
@@ -76,7 +68,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
         _ => {
             return syn::Error::new_spanned(
                 &input,
-                "AuthkestraState can only be derived for structs",
+                "State can only be derived for structs",
             )
             .to_compile_error()
             .into();
@@ -125,13 +117,13 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                             >
                         ),
                     )
-                } else if ident_str == "Authkestra" || ident_str == "AuthEngine" {
+                } else if ident_str == "Authkestra" || ident_str == "Engine" {
                     match &last_segment.arguments {
                         syn::PathArguments::AngleBracketed(args) => {
                             if args.args.len() != 2 {
                                 return syn::Error::new_spanned(
                                     &field.ty,
-                                    "AuthEngine must have exactly 2 type parameters: AuthEngine<S, T>",
+                                    "Engine must have exactly 2 type parameters: Engine<S, T>",
                                 )
                                 .to_compile_error()
                                 .into();
@@ -143,7 +135,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                         _ => {
                             return syn::Error::new_spanned(
                                 &field.ty,
-                                "AuthEngine must have type parameters: AuthEngine<S, T>",
+                                "Engine must have type parameters: Engine<S, T>",
                             )
                             .to_compile_error()
                             .into();
@@ -152,7 +144,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                 } else {
                     return syn::Error::new_spanned(
                         &field.ty,
-                        "Field marked with #[authkestra(engine)] must be of type AuthEngine<S, T>, AkWebAppEngine, AkApiEngine, or AkEngine",
+                        "Field marked with #[authkestra(engine)] must be of type Engine<S, T>, AkWebAppEngine, AkApiEngine, or AkEngine",
                     )
                     .to_compile_error()
                     .into();
@@ -169,7 +161,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
         };
 
         generated_impls.push(quote! {
-            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::AuthEngine<#s_param, #t_param>
+            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::Engine<#s_param, #t_param>
             where
                 #s_param: Clone,
                 #t_param: Clone,
@@ -184,7 +176,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             use authkestra_engine::{SessionStoreState as _, TokenManagerState as _};
 
             impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-                for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::AuthEngineAxumError>
+                for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::Error>
             where
                 #s_param: authkestra_engine::SessionStoreState,
                 #where_clause
@@ -207,7 +199,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
         if !t_param_str.contains("Missing") {
             generated_impls.push(quote! {
                 impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-                    for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::AuthEngineAxumError>
+                    for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::Error>
                 where
                     #t_param: authkestra_engine::TokenManagerState,
                     #where_clause
@@ -234,7 +226,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                 }
             }
 
-            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for ::std::result::Result<#field_ty, authkestra_axum::AuthEngineAxumError>
+            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for ::std::result::Result<#field_ty, authkestra_axum::Error>
             #where_clause
             {
                 fn from_ref(state: &#struct_name #ty_generics) -> Self {
@@ -247,7 +239,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
     if engine_field.is_none() && generated_impls.is_empty() {
         return syn::Error::new_spanned(
             &input,
-            "No field marked with #[authkestra(engine)] found. Add #[authkestra(engine)] to your AuthEngine field."
+            "No field marked with #[authkestra(engine)] found. Add #[authkestra(engine)] to your Engine field."
         )
         .to_compile_error()
         .into();

@@ -1,6 +1,6 @@
 # Chapter 8: Getting Started Tutorial
 
-Welcome to the Authkestra getting started guide! This chapter provides a highly practical "Hello World" tutorial that walks you through setting up `AuthEngine` in a basic web application. We'll use the popular `axum` framework for this example, but the concepts apply similarly to `actix-web`.
+Welcome to the Authkestra getting started guide! This chapter provides a highly practical "Hello World" tutorial that walks you through setting up `Engine` in a basic web application. We'll use the popular `axum` framework for this example, but the concepts apply similarly to `actix-web`.
 
 ## Prerequisites
 
@@ -29,13 +29,13 @@ authkestra-core = { version = "0.1", features = ["axum"] }
 # authkestra-providers-github = "0.1"
 ```
 
-## Step 2: Initialize AuthEngine
+## Step 2: Initialize Engine
 
-The core of Authkestra is the `AuthEngine`. Let's initialize it in our `main.rs`. For this tutorial, we will set up a basic in-memory configuration.
+The core of Authkestra is the `Engine`. Let's initialize it in our `main.rs`. For this tutorial, we will set up a basic in-memory configuration.
 
 ```rust
 use axum::{routing::get, Router};
-use authkestra_core::engine::{AuthEngine, EngineConfig};
+use authkestra_core::engine::{Engine, EngineConfig};
 use authkestra_core::providers::LocalProvider;
 use std::sync::Arc;
 
@@ -46,7 +46,7 @@ async fn main() {
         .with_secret_key("super_secret_development_key_do_not_use_in_prod");
 
     // 2. Instantiate the engine and add providers
-    let mut engine = AuthEngine::new(config);
+    let mut engine = Engine::new(config);
 
     // Add a local email/password provider for demonstration
     engine.add_provider(LocalProvider::new());
