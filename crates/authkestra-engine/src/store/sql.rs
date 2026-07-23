@@ -234,8 +234,8 @@ impl_sql_store! {
     "SELECT key, value, expires_at FROM {} WHERE key = $1 AND expires_at > $2",
     "INSERT INTO {} (key, value, expires_at) VALUES ($1, $2, $3) ON CONFLICT(key) DO UPDATE SET value = $2, expires_at = $3",
     "DELETE FROM {} WHERE key = $1",
-    "CREATE TABLE IF NOT EXISTS {table} (key TEXT PRIMARY KEY, index_key TEXT UNIQUE, value TEXT NOT NULL, expires_at TIMESTAMP WITH TIME ZONE NOT NULL)",
-    "CREATE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key)",
+    "CREATE TABLE IF NOT EXISTS {table} (key TEXT PRIMARY KEY, index_key TEXT, value TEXT NOT NULL, expires_at TIMESTAMP WITH TIME ZONE NOT NULL)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key)",
     "INSERT INTO {} (key, index_key, value, expires_at) VALUES ($1, $2, $3, $4) ON CONFLICT(key) DO UPDATE SET index_key = $2, value = $3, expires_at = $4",
     "SELECT key, value, expires_at FROM {} WHERE index_key = $1 AND expires_at > $2",
     #[tracing::instrument(skip(self))]
@@ -278,8 +278,8 @@ impl_sql_store! {
     "SELECT key, value, expires_at FROM {} WHERE key = ?1 AND expires_at > ?2",
     "INSERT INTO {} (key, value, expires_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = ?2, expires_at = ?3",
     "DELETE FROM {} WHERE key = ?1",
-    "CREATE TABLE IF NOT EXISTS {table} (key TEXT PRIMARY KEY, index_key TEXT UNIQUE, value TEXT NOT NULL, expires_at DATETIME NOT NULL)",
-    "CREATE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key)",
+    "CREATE TABLE IF NOT EXISTS {table} (key TEXT PRIMARY KEY, index_key TEXT, value TEXT NOT NULL, expires_at DATETIME NOT NULL)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS {table}_idx ON {table}(index_key)",
     "INSERT INTO {} (key, index_key, value, expires_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(key) DO UPDATE SET index_key = ?2, value = ?3, expires_at = ?4",
     "SELECT key, value, expires_at FROM {} WHERE index_key = ?1 AND expires_at > ?2",
     #[tracing::instrument(skip(self))]
@@ -322,8 +322,8 @@ impl_sql_store! {
     "SELECT `key`, value, expires_at FROM {} WHERE `key` = ? AND expires_at > ?",
     "INSERT INTO {} (`key`, value, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value), expires_at = VALUES(expires_at)",
     "DELETE FROM {} WHERE `key` = ?",
-    "CREATE TABLE IF NOT EXISTS {table} (`key` VARCHAR(255) PRIMARY KEY, index_key VARCHAR(255) UNIQUE, value TEXT NOT NULL, expires_at DATETIME NOT NULL)",
-    "CREATE INDEX {table}_idx ON {table}(index_key)",
+    "CREATE TABLE IF NOT EXISTS {table} (`key` VARCHAR(255) PRIMARY KEY, index_key VARCHAR(255), value TEXT NOT NULL, expires_at TIMESTAMP NOT NULL)",
+    "CREATE UNIQUE INDEX {table}_idx ON {table}(index_key)",
     "INSERT INTO {} (`key`, index_key, value, expires_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE index_key = VALUES(index_key), value = VALUES(value), expires_at = VALUES(expires_at)",
     "SELECT `key`, value, expires_at FROM {} WHERE index_key = ? AND expires_at > ?",
     #[tracing::instrument(skip(self))]
