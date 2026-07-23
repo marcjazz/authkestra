@@ -88,18 +88,34 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
 
                 if ident_str == "AkWebAppEngine" {
                     (
-                        syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>>),
-                        syn::parse_quote!(authkestra_engine::Missing)
+                        syn::parse_quote!(
+                            authkestra_engine::Configured<
+                                ::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>,
+                            >
+                        ),
+                        syn::parse_quote!(authkestra_engine::Missing),
                     )
                 } else if ident_str == "AkApiEngine" {
                     (
                         syn::parse_quote!(authkestra_engine::Missing),
-                        syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<authkestra_engine::TokenManager>>)
+                        syn::parse_quote!(
+                            authkestra_engine::Configured<
+                                ::std::sync::Arc<authkestra_engine::TokenManager>,
+                            >
+                        ),
                     )
                 } else if ident_str == "AkEngine" {
                     (
-                        syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>>),
-                        syn::parse_quote!(authkestra_engine::Configured<::std::sync::Arc<authkestra_engine::TokenManager>>)
+                        syn::parse_quote!(
+                            authkestra_engine::Configured<
+                                ::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>,
+                            >
+                        ),
+                        syn::parse_quote!(
+                            authkestra_engine::Configured<
+                                ::std::sync::Arc<authkestra_engine::TokenManager>,
+                            >
+                        ),
                     )
                 } else if ident_str == "AkBase" {
                     match &last_segment.arguments {

@@ -4,7 +4,7 @@
 //! It also demonstrates how to manage the database table lifecycle by calling `.migrate().await`.
 
 use authkestra::flow::AkBase;
-use authkestra_axum::{AuthSession, AkAxumError, AkAxumExt, AkState};
+use authkestra_axum::{AkAxumError, AkAxumExt, AkState, AuthSession};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::store::sql::SqlKvStore;
 use authkestra_engine::{Configured, SessionConfig};

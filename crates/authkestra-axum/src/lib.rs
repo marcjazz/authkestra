@@ -143,9 +143,7 @@ where
             .headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| {
-                AkAxumError::Unauthorized("Missing Authorization header".to_string())
-            })?;
+            .ok_or_else(|| AkAxumError::Unauthorized("Missing Authorization header".to_string()))?;
 
         if !auth_header.starts_with("Bearer ") {
             return Err(AkAxumError::Unauthorized(

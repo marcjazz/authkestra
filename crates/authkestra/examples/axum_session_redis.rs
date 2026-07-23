@@ -7,7 +7,7 @@
 //! - `REDIS_URL` environment variable (e.g., `redis://127.0.0.1/`)
 
 use authkestra::flow::AkBase;
-use authkestra_axum::{AuthSession, AkAxumError, AkAxumExt, AkState};
+use authkestra_axum::{AkAxumError, AkAxumExt, AkState, AuthSession};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::store::redis::RedisStore;
 use authkestra_engine::{Configured, SessionConfig};

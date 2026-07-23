@@ -246,5 +246,3 @@ impl<S> HasTokenManager for AkBase<S, Configured<Arc<TokenManager>>> {
         self.token_manager.0.clone()
     }
 }
-
-

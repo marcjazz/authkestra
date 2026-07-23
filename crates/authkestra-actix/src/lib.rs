@@ -27,7 +27,6 @@ pub use helpers::actix_login_handler;
 #[cfg(all(feature = "flow", feature = "session"))]
 pub use helpers::{actix_callback_handler, actix_logout_handler};
 
-
 #[cfg(feature = "op")]
 pub use op::AkActixOpExt;
 
@@ -81,10 +80,7 @@ impl FromRequest for AuthSession {
                 #[cfg(feature = "token")]
                 {
                     req.app_data::<web::Data<
-                        AkBase<
-                            Configured<Arc<dyn SessionStore>>,
-                            Configured<Arc<TokenManager>>,
-                        >,
+                        AkBase<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
                     >>()
                     .map(|a| web::Data::new(a.session_store.get_store()))
                 }
@@ -107,10 +103,7 @@ impl FromRequest for AuthSession {
                 #[cfg(feature = "token")]
                 {
                     req.app_data::<web::Data<
-                        AkBase<
-                            Configured<Arc<dyn SessionStore>>,
-                            Configured<Arc<TokenManager>>,
-                        >,
+                        AkBase<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
                     >>()
                     .map(|a| web::Data::new(a.session_config.clone()))
                 }
@@ -187,10 +180,7 @@ impl FromRequest for AuthToken {
                 #[cfg(feature = "session")]
                 {
                     req.app_data::<web::Data<
-                        AkBase<
-                            Configured<Arc<dyn SessionStore>>,
-                            Configured<Arc<TokenManager>>,
-                        >,
+                        AkBase<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
                     >>()
                     .map(|a| web::Data::new(a.token_manager.get_manager()))
                 }

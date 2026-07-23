@@ -7,7 +7,7 @@
 //! - `AUTHKESTRA_GOOGLE_CLIENT_SECRET`
 
 use authkestra::flow::{AkBase, OAuth2Flow};
-use authkestra_axum::{AuthSession, AkAxumError, AkAxumExt, AkState};
+use authkestra_axum::{AkAxumError, AkAxumExt, AkState, AuthSession};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{Configured, SessionConfig};
 use authkestra_providers::google::GoogleProvider;

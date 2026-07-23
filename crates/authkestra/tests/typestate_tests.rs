@@ -76,4 +76,3 @@ async fn test_typestate_full_flow() {
     assert!(auth.create_session(identity.clone()).await.is_ok());
     assert!(auth.issue_token(identity, 3600).is_ok());
 }
-

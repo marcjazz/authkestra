@@ -311,9 +311,7 @@ where
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AkAxumError::Internal(
-                "Provider not found".to_string(),
-            ));
+            return Err(AkAxumError::Internal("Provider not found".to_string()));
         }
     };
 
@@ -355,9 +353,7 @@ where
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AkAxumError::Internal(
-                "Provider not found".to_string(),
-            ));
+            return Err(AkAxumError::Internal("Provider not found".to_string()));
         }
     };
 

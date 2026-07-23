@@ -64,7 +64,6 @@ impl SessionStore for MockSessionStore {
     }
 }
 
-
 #[tokio::test]
 async fn test_auth_method_mock() {
     let method = MockAuthMethod;
@@ -95,8 +94,6 @@ async fn test_flow_mock() {
         panic!("Expected FlowResult::Complete");
     }
 }
-
-
 
 #[tokio::test]
 async fn test_session_store_mock() {

@@ -4,8 +4,6 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     // Standard OIDC claims
@@ -233,8 +231,6 @@ impl TokenManager {
         Ok(token_data.claims)
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
