@@ -661,7 +661,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::Inde
 #[cfg(all(test, feature = "sql-sqlite"))]
 mod tests {
     use super::*;
-    use crate::store::{KvStore, AtomicConsume, IndexedKvStore};
+    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::time::Duration;
 
@@ -730,7 +730,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(store.get("pk1").await.unwrap(), Some("value1".to_string()));
-        assert_eq!(store.get_by_index("sk1").await.unwrap(), Some("value1".to_string()));
+        assert_eq!(
+            store.get_by_index("sk1").await.unwrap(),
+            Some("value1".to_string())
+        );
 
         // In SQL, index is a column on the primary record. Deleting the record deletes the index.
         KvStore::<String>::delete(&store, "pk1").await.unwrap();

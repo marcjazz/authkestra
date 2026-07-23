@@ -240,7 +240,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> IndexedKvStore<T> 
 #[cfg(all(test, feature = "redis"))]
 mod tests {
     use super::*;
-    use crate::store::{KvStore, AtomicConsume, IndexedKvStore};
+    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
     use std::time::Duration;
     use testcontainers::{runners::AsyncRunner, ContainerAsync};
     use testcontainers_modules::redis::Redis;
@@ -249,7 +249,7 @@ mod tests {
         let container = Redis::default().start().await.unwrap();
         let port = container.get_host_port_ipv4(6379).await.unwrap();
         let url = format!("redis://127.0.0.1:{}", port);
-        
+
         let store = RedisStore::new(&url, "test_prefix".to_string()).unwrap();
         (store, container)
     }
@@ -265,7 +265,7 @@ mod tests {
             .set("key1", "value1".to_string(), Duration::from_secs(10))
             .await
             .unwrap();
-        
+
         let res_some: Option<String> = store.get("key1").await.unwrap();
         assert_eq!(res_some, Some("value1".to_string()));
 
@@ -301,13 +301,13 @@ mod tests {
 
         let pk_res: Option<String> = store.get("pk1").await.unwrap();
         assert_eq!(pk_res, Some("value1".to_string()));
-        
+
         let sk_res: Option<String> = store.get_by_index("sk1").await.unwrap();
         assert_eq!(sk_res, Some("value1".to_string()));
 
         // Delete primary key manually
         KvStore::<String>::delete(&store, "pk1").await.unwrap();
-        
+
         // This should return None and clean up the orphaned index
         let sk_res2: Option<String> = store.get_by_index("sk1").await.unwrap();
         assert_eq!(sk_res2, None);
