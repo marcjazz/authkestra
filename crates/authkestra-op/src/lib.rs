@@ -36,6 +36,10 @@ pub mod handlers;
 /// Refresh tokens and rotation logic.
 pub mod refresh;
 
+/// Unified OpStore trait.
+pub mod store;
+pub use store::OpStore;
+
 /// Provider-level configuration (issuer URL, supported scopes/response
 /// types).
 pub mod config;

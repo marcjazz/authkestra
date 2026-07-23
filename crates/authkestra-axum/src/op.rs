@@ -1,10 +1,7 @@
 use crate::AuthEngineAxumError;
 use authkestra_engine::TokenManager;
 use authkestra_op::{
-    client::ClientStore,
-    code::AuthorizationCodeStore,
     config::OpConfig,
-    device::DeviceCodeStore,
     handlers::{
         authorize::handle_authorize,
         device_authorization::{handle_device_authorization, DeviceAuthorizationRequest},
@@ -13,7 +10,6 @@ use authkestra_op::{
         token::{handle_token, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
-    refresh::RefreshTokenStore,
 };
 use axum::{
     extract::{Form, FromRef, Query, State},
@@ -63,19 +59,14 @@ pub async fn axum_authorize_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn ClientStore>, AuthEngineAxumError>: FromRef<AppState>,
-    Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
     Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
     authkestra_engine::SessionConfig: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(client_id = %req.client_id, "Handling OP authorize request (axum)");
-    let clients = match <Result<Arc<dyn ClientStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
-    let codes =
-        match <Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError>>::from_ref(&state) {
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
             Ok(c) => c,
             Err(e) => return e.into_response(),
         };
@@ -98,7 +89,7 @@ where
         }
     };
 
-    match handle_authorize(req, identity, &config, clients.as_ref(), codes.as_ref()).await {
+    match handle_authorize(req, identity, &config, op_store.as_ref()).await {
         authkestra_op::handlers::authorize::AuthorizeOutcome::Redirect(url) => {
             Redirect::to(&url).into_response()
         }
@@ -121,34 +112,22 @@ pub async fn axum_device_authorization_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn ClientStore>, AuthEngineAxumError>: FromRef<AppState>,
-    Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device authorization request (axum)");
-    let clients = match <Result<Arc<dyn ClientStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
-    let devices = match <Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let config = OpConfig::from_ref(&state);
 
     let auth_header = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
 
-    match handle_device_authorization(
-        req,
-        auth_header,
-        &config,
-        clients.as_ref(),
-        devices.as_ref(),
-    )
-    .await
-    {
+    match handle_device_authorization(req, auth_header, &config, op_store.as_ref()).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(err) => {
             let status = match err.error.as_str() {
@@ -168,32 +147,16 @@ pub async fn axum_token_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn ClientStore>, AuthEngineAxumError>: FromRef<AppState>,
-    Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
-    Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumError>: FromRef<AppState>,
-    Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
     Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (axum)");
-    let clients = match <Result<Arc<dyn ClientStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
-    let codes =
-        match <Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError>>::from_ref(&state) {
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
             Ok(c) => c,
             Err(e) => return e.into_response(),
         };
-    let refresh_tokens =
-        match <Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumError>>::from_ref(&state) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        };
-    let devices = match <Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
     let tokens = match <Result<Arc<TokenManager>, AuthEngineAxumError>>::from_ref(&state) {
         Ok(t) => t,
         Err(e) => return e.into_response(),
@@ -208,10 +171,7 @@ where
         req,
         auth_header,
         &config,
-        clients.as_ref(),
-        codes.as_ref(),
-        refresh_tokens.as_ref(),
-        devices.as_ref(),
+        op_store.as_ref(),
         tokens.as_ref(),
     )
     .await
@@ -288,15 +248,16 @@ pub async fn axum_device_verify_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
     Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
     authkestra_engine::SessionConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device verify request (axum)");
-    let devices = match <Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
 
     let session_store =
         match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
@@ -318,7 +279,7 @@ where
     match authkestra_op::handlers::device_verify::handle_device_verify(
         req,
         identity,
-        devices.as_ref(),
+        op_store.as_ref(),
     )
     .await
     {
@@ -338,10 +299,7 @@ pub trait AuthEngineAxumOpExt {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Result<Arc<dyn ClientStore>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
+        Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
         Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
         Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
@@ -353,10 +311,7 @@ impl<T> AuthEngineAxumOpExt for T {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Result<Arc<dyn ClientStore>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<dyn DeviceCodeStore>, AuthEngineAxumError>: FromRef<AppState>,
+        Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
         Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
         Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,

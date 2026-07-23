@@ -5,12 +5,7 @@ use authkestra_engine::store::KvStore;
 
 use authkestra_axum::AuthEngineAxumOpExt;
 use authkestra_engine::{AuthEngine, Configured, TokenManager};
-use authkestra_op::{
-    client::{ClientRegistration, ClientStore},
-    code::AuthorizationCodeStore,
-    config::OpConfig,
-    refresh::RefreshTokenStore,
-};
+use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use axum::Router;
 use std::sync::Arc;
 
@@ -25,19 +20,10 @@ struct AppState {
     >,
 
     #[authkestra(store)]
-    clients: Arc<dyn ClientStore>,
-
-    #[authkestra(store)]
-    codes: Arc<dyn AuthorizationCodeStore>,
+    op_store: Arc<dyn authkestra_op::OpStore>,
 
     #[authkestra(store)]
     config: OpConfig,
-
-    #[authkestra(store)]
-    refresh_tokens: Arc<dyn RefreshTokenStore>,
-
-    #[authkestra(store)]
-    pub device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore>,
 }
 
 #[tokio::main]
@@ -64,20 +50,12 @@ async fn main() {
         )
         .await
         .unwrap();
-    let clients: Arc<dyn ClientStore> = Arc::new(clients);
-
-    let codes: Arc<dyn AuthorizationCodeStore> =
-        Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            authkestra_op::code::AuthorizationCode,
-        >::new());
-    let refresh_tokens: Arc<dyn RefreshTokenStore> =
-        Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            authkestra_op::refresh::RefreshToken,
-        >::new());
-    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> =
-        Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            authkestra_op::device::DeviceCodeSession,
-        >::new());
+    let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(authkestra_op::store::CompositeOpStore::new(
+        clients,
+        authkestra_engine::store::memory::MemoryStore::<authkestra_op::code::AuthorizationCode>::new(),
+        authkestra_engine::store::memory::MemoryStore::<authkestra_op::refresh::RefreshToken>::new(),
+        authkestra_engine::store::memory::MemoryStore::<authkestra_op::device::DeviceCodeSession>::new(),
+    ));
 
     let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::new());
@@ -94,10 +72,7 @@ async fn main() {
 
     let state = AppState {
         authkestra,
-        clients,
-        codes,
-        refresh_tokens,
-        device_code_store,
+        op_store,
         config: OpConfig {
             issuer: "http://localhost:3000".to_string(),
             scopes_supported: vec![

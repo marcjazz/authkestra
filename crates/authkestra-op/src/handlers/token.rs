@@ -1,8 +1,7 @@
-use crate::client::ClientStore;
-use crate::code::AuthorizationCodeStore;
+use crate::client::{ClientRegistration, GrantType};
 use crate::config::OpConfig;
-use crate::device::DeviceCodeStore;
-use crate::refresh::{RefreshToken, RefreshTokenStore};
+use crate::refresh::RefreshToken;
+use crate::store::OpStore;
 use authkestra_engine::token::TokenManager;
 use base64::Engine;
 use chrono::Utc;
@@ -85,10 +84,7 @@ pub async fn handle_token(
     req: TokenRequest,
     auth_header: Option<&str>,
     config: &OpConfig,
-    clients: &dyn ClientStore,
-    codes: &dyn AuthorizationCodeStore,
-    refresh_tokens: &dyn RefreshTokenStore,
-    devices: &dyn DeviceCodeStore,
+    op_store: &dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
@@ -122,7 +118,7 @@ pub async fn handle_token(
     };
 
     // 1. Client validation
-    let client = match clients.find_client(&client_id).await {
+    let client = match op_store.find_client(&client_id).await {
         Ok(Some(c)) => c,
         Ok(None) => {
             tracing::warn!(client_id = %client_id, "Unknown client ID during token exchange");
@@ -154,34 +150,16 @@ pub async fn handle_token(
 
     match req.grant_type.as_str() {
         "authorization_code" => {
-            handle_authorization_code(
-                req,
-                client_id,
-                client,
-                config,
-                codes,
-                refresh_tokens,
-                tokens,
-            )
-            .await
+            handle_authorization_code(req, client_id, client, config, op_store, tokens).await
         }
         "client_credentials" => {
             handle_client_credentials(req, client_id, client, config, tokens).await
         }
         "refresh_token" => {
-            handle_refresh_token(req, client_id, client, config, refresh_tokens, tokens).await
+            handle_refresh_token(req, client_id, client, config, op_store, tokens).await
         }
         "urn:ietf:params:oauth:grant-type:device_code" => {
-            handle_device_code(
-                req,
-                client_id,
-                client,
-                config,
-                devices,
-                refresh_tokens,
-                tokens,
-            )
-            .await
+            handle_device_code(req, client_id, client, config, op_store, tokens).await
         }
         "urn:ietf:params:oauth:grant-type:token-exchange" => {
             handle_token_exchange(req, client_id, client, config, tokens).await
@@ -200,13 +178,11 @@ pub async fn handle_token(
 async fn handle_device_code(
     req: TokenRequest,
     client_id: String,
-    client: crate::client::ClientRegistration,
+    client: ClientRegistration,
     config: &OpConfig,
-    devices: &dyn DeviceCodeStore,
-    refresh_tokens: &dyn RefreshTokenStore,
+    op_store: &dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    use crate::client::GrantType;
     use crate::device::DeviceCodeStatus;
 
     if !client.allows_grant_type(GrantType::DeviceCode) {
@@ -217,7 +193,7 @@ async fn handle_device_code(
         });
     }
 
-    let req_device_code = match req.device_code.as_deref() {
+    let device_code_str = match req.device_code.as_deref() {
         Some(c) => c,
         None => {
             tracing::warn!("Missing device_code in request");
@@ -228,7 +204,7 @@ async fn handle_device_code(
         }
     };
 
-    let session = match devices.get_device_code(req_device_code).await {
+    let session = match op_store.get_device_code(device_code_str).await {
         Ok(Some(s)) => s,
         Ok(None) => {
             return Err(TokenErrorResponse {
@@ -263,7 +239,7 @@ async fn handle_device_code(
             let now = Utc::now();
             let mut updated = session.clone();
             updated.last_polled_at = Some(now);
-            let _ = devices.update_device_code(updated).await;
+            let _ = op_store.store_device_code(updated).await;
 
             if let Some(last_poll) = session.last_polled_at {
                 if now < last_poll + chrono::Duration::seconds(5) {
@@ -281,7 +257,7 @@ async fn handle_device_code(
         }
         DeviceCodeStatus::Denied | DeviceCodeStatus::Approved(_) => {
             // Atomically consume to prevent race conditions
-            let consumed = match devices.consume_device_code(req_device_code).await {
+            let consumed = match op_store.consume_device_code(device_code_str).await {
                 Ok(Some(s)) => s,
                 _ => {
                     return Err(TokenErrorResponse {
@@ -331,14 +307,14 @@ async fn handle_device_code(
                 let mut issued_refresh_token = None;
                 if session.scope.contains("offline_access") {
                     let refresh_val = uuid::Uuid::new_v4().to_string();
-                    let rt = crate::refresh::RefreshToken {
+                    let rt = RefreshToken {
                         token: refresh_val.clone(),
                         client_id: client_id.clone(),
                         identity,
                         scope: session.scope,
                         expires_at: Utc::now() + chrono::Duration::days(30),
                     };
-                    if refresh_tokens.store_token(rt).await.is_ok() {
+                    if op_store.store_token(rt).await.is_ok() {
                         issued_refresh_token = Some(refresh_val);
                     }
                 }
@@ -365,17 +341,16 @@ async fn handle_device_code(
 async fn handle_authorization_code(
     req: TokenRequest,
     client_id: String,
-    client: crate::client::ClientRegistration,
+    client: ClientRegistration,
     config: &OpConfig,
-    codes: &dyn AuthorizationCodeStore,
-    refresh_tokens: &dyn RefreshTokenStore,
+    op_store: &dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    let req_code = req.code.as_deref().unwrap_or("");
+    let code_str = req.code.as_ref().unwrap();
     let req_redirect_uri = req.redirect_uri.as_deref().unwrap_or("");
 
     // 3. Consume the code atomically
-    let auth_code = match codes.consume_code(req_code).await {
+    let auth_code = match op_store.consume_code(code_str).await {
         Ok(Some(c)) => c,
         Ok(None) => {
             tracing::warn!("Invalid or expired authorization code");
@@ -520,14 +495,14 @@ async fn handle_authorization_code(
     let mut issued_refresh_token = None;
     if auth_code.scope.contains("offline_access") {
         let refresh_val = uuid::Uuid::new_v4().to_string();
-        let rt = RefreshToken {
+        let rt_model = RefreshToken {
             token: refresh_val.clone(),
             client_id: client_id.clone(),
             identity: auth_code.identity.clone(),
             scope: auth_code.scope.clone(),
             expires_at: Utc::now() + chrono::Duration::days(30),
         };
-        if let Err(e) = refresh_tokens.store_token(rt).await {
+        if let Err(e) = op_store.store_token(rt_model.clone()).await {
             tracing::error!(error = ?e, "Failed to store refresh token");
             // Non-fatal, just don't return a refresh token
         } else {
@@ -553,12 +528,10 @@ async fn handle_authorization_code(
 async fn handle_client_credentials(
     req: TokenRequest,
     client_id: String,
-    client: crate::client::ClientRegistration,
+    client: ClientRegistration,
     config: &OpConfig,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    use crate::client::GrantType;
-
     if !client.allows_grant_type(GrantType::ClientCredentials) {
         tracing::warn!(client_id = %client_id, "Client not authorized for client_credentials grant");
         return Err(TokenErrorResponse {
@@ -619,13 +592,11 @@ async fn handle_client_credentials(
 async fn handle_refresh_token(
     req: TokenRequest,
     client_id: String,
-    client: crate::client::ClientRegistration,
+    client: ClientRegistration,
     config: &OpConfig,
-    refresh_tokens: &dyn RefreshTokenStore,
+    op_store: &dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    use crate::client::GrantType;
-
     if !client.allows_grant_type(GrantType::RefreshToken) {
         tracing::warn!(client_id = %client_id, "Client not authorized for refresh_token grant");
         return Err(TokenErrorResponse {
@@ -635,7 +606,7 @@ async fn handle_refresh_token(
         });
     }
 
-    let req_refresh_token = match req.refresh_token.as_deref() {
+    let refresh_token_str = match req.refresh_token.as_deref() {
         Some(t) => t,
         None => {
             tracing::warn!("Missing refresh_token in request");
@@ -646,7 +617,7 @@ async fn handle_refresh_token(
         }
     };
 
-    let rt = match refresh_tokens.consume_token(req_refresh_token).await {
+    let old_rt = match op_store.consume_token(refresh_token_str).await {
         Ok(Some(rt)) => rt,
         Ok(None) => {
             tracing::warn!("Invalid refresh token (possibly replayed)");
@@ -664,7 +635,7 @@ async fn handle_refresh_token(
         }
     };
 
-    if rt.client_id != client_id {
+    if old_rt.client_id != client_id {
         tracing::warn!("Refresh token issued to a different client");
         return Err(TokenErrorResponse {
             error: "invalid_grant".to_string(),
@@ -672,7 +643,7 @@ async fn handle_refresh_token(
         });
     }
 
-    if chrono::Utc::now() > rt.expires_at {
+    if chrono::Utc::now() > old_rt.expires_at {
         tracing::warn!("Refresh token expired");
         return Err(TokenErrorResponse {
             error: "invalid_grant".to_string(),
@@ -684,24 +655,24 @@ async fn handle_refresh_token(
     let new_rt = RefreshToken {
         token: new_refresh_val.clone(),
         client_id: client_id.clone(),
-        identity: rt.identity.clone(),
-        scope: rt.scope.clone(),
+        identity: old_rt.identity.clone(),
+        scope: old_rt.scope.clone(),
         expires_at: chrono::Utc::now() + chrono::Duration::days(30),
     };
 
-    if let Err(e) = refresh_tokens.store_token(new_rt).await {
+    if let Err(e) = op_store.store_token(new_rt).await {
         tracing::error!(error = ?e, "Failed to store new refresh token");
     }
 
     let expires_in = config.access_token_ttl_secs;
-    let scope_opt = if rt.scope.is_empty() {
+    let scope_opt = if old_rt.scope.is_empty() {
         None
     } else {
-        Some(rt.scope.clone())
+        Some(old_rt.scope.clone())
     };
 
     let access_token = match tokens.issue_user_token(
-        rt.identity.clone(),
+        old_rt.identity.clone(),
         expires_in,
         scope_opt.clone(),
         Some(client_id.clone()),
@@ -920,8 +891,9 @@ async fn handle_token_exchange(
 mod tests {
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
-    use crate::code::AuthorizationCode;
-    use crate::refresh::RefreshToken;
+    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+
+    use crate::refresh::{RefreshToken, RefreshTokenStore};
     use authkestra_engine::auth::state::Identity;
     use authkestra_engine::store::KvStore;
     use authkestra_engine::token::TokenManager;
@@ -1019,12 +991,14 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &clients,
-            &codes,
-            &refresh,
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                refresh.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &test_tokens(),
+            ),
+            &test_tokens()
         )
         .await;
         assert_eq!(res.unwrap_err().error, "unsupported_grant_type");
@@ -1096,12 +1070,14 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &clients,
-            &codes,
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &test_tokens(),
+            ),
+            &test_tokens()
         )
         .await;
         assert!(res.is_ok());
@@ -1167,12 +1143,14 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &clients,
-            &codes,
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &test_tokens(),
+            ),
+            &test_tokens()
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_grant");
@@ -1238,12 +1216,14 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &clients,
-            &codes,
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &test_tokens(),
+            ),
+            &test_tokens()
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_grant");
@@ -1309,12 +1289,14 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &clients,
-            &codes,
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &test_tokens(),
+            ),
+            &test_tokens()
         )
         .await;
         assert_eq!(res.unwrap_err().error, "server_error");
@@ -1362,12 +1344,14 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &test_tokens(),
+            ),
+            &test_tokens()
         )
         .await;
         assert!(res.is_ok());
@@ -1428,12 +1412,14 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &refresh,
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                refresh.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &test_tokens(),
+            ),
+            &test_tokens()
         )
         .await;
         assert!(res.is_ok());
@@ -1493,12 +1479,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_grant");
@@ -1536,12 +1524,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         let res = res.unwrap();
@@ -1580,12 +1570,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_scope");
@@ -1621,12 +1613,14 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert_eq!(res.unwrap_err().error, "unsupported_grant_type");
@@ -1663,12 +1657,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_request");
@@ -1705,12 +1701,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_request");
@@ -1747,12 +1745,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_request");
@@ -1789,12 +1789,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert!(res.is_ok());
@@ -1835,12 +1837,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_target");
@@ -1877,12 +1881,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert!(res.is_ok());
@@ -1928,12 +1934,14 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &clients,
-            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
             ),
-            &tokens,
+            ),
+            &tokens
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_grant");
