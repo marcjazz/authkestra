@@ -125,6 +125,119 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
     }
 }
 
+#[cfg(feature = "sql-postgres")]
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::AtomicConsume<T>
+    for SqlKvStore<sqlx::Postgres>
+{
+    #[tracing::instrument(skip(self))]
+    async fn consume(&self, key: &str) -> Result<Option<T>, StoreError> {
+        tracing::debug!(key = %key, "atomically consuming from Postgres store");
+        let query = format!(
+            "DELETE FROM {} WHERE key = $1 AND expires_at > $2 RETURNING key, value, expires_at",
+            self.table_name
+        );
+        let now = chrono::Utc::now();
+
+        let row: Option<SqlKvModel> = sqlx::query_as(&query)
+            .bind(key)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Postgres consume error");
+                StoreError::Internal(format!("Postgres consume error: {e}"))
+            })?;
+
+        match row {
+            Some(model) => {
+                let entity: T = serde_json::from_str(&model.value).map_err(|e| {
+                    tracing::error!(error = %e, "Deserialization error");
+                    StoreError::Serialization(format!("Deserialization error: {e}"))
+                })?;
+                Ok(Some(entity))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+#[cfg(feature = "sql-postgres")]
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::IndexedKvStore<T>
+    for SqlKvStore<sqlx::Postgres>
+{
+    #[tracing::instrument(skip(self, value), fields(key = %key, index = %index))]
+    async fn set_indexed(
+        &self,
+        key: &str,
+        index: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        tracing::debug!("saving indexed to Postgres store");
+        let query = format!(
+            "INSERT INTO {} (key, index_key, value, expires_at)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(key) DO UPDATE SET
+             index_key = $2, value = $3, expires_at = $4",
+            self.table_name
+        );
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        sqlx::query(&query)
+            .bind(key)
+            .bind(index)
+            .bind(json)
+            .bind(expires_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Postgres set_indexed error");
+                StoreError::Internal(format!("Postgres set_indexed error: {e}"))
+            })?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_by_index(&self, index: &str) -> Result<Option<T>, StoreError> {
+        tracing::debug!(index = %index, "loading by index from Postgres store");
+        let query = format!(
+            "SELECT key, value, expires_at FROM {} WHERE index_key = $1 AND expires_at > $2",
+            self.table_name
+        );
+        let now = chrono::Utc::now();
+
+        let row: Option<SqlKvModel> = sqlx::query_as(&query)
+            .bind(index)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Postgres get_by_index error");
+                StoreError::Internal(format!("Postgres get_by_index error: {e}"))
+            })?;
+
+        match row {
+            Some(model) => {
+                let entity: T = serde_json::from_str(&model.value).map_err(|e| {
+                    tracing::error!(error = %e, "Deserialization error");
+                    StoreError::Serialization(format!("Deserialization error: {e}"))
+                })?;
+                Ok(Some(entity))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
 #[cfg(feature = "sql-sqlite")]
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
@@ -206,6 +319,119 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
                 StoreError::Internal(format!("Sqlite delete error: {e}"))
             })?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "sql-sqlite")]
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::AtomicConsume<T>
+    for SqlKvStore<sqlx::Sqlite>
+{
+    #[tracing::instrument(skip(self))]
+    async fn consume(&self, key: &str) -> Result<Option<T>, StoreError> {
+        tracing::debug!(key = %key, "atomically consuming from Sqlite store");
+        let query = format!(
+            "DELETE FROM {} WHERE key = ?1 AND expires_at > ?2 RETURNING key, value, expires_at",
+            self.table_name
+        );
+        let now = chrono::Utc::now();
+
+        let row: Option<SqlKvModel> = sqlx::query_as(&query)
+            .bind(key)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Sqlite consume error");
+                StoreError::Internal(format!("Sqlite consume error: {e}"))
+            })?;
+
+        match row {
+            Some(model) => {
+                let entity: T = serde_json::from_str(&model.value).map_err(|e| {
+                    tracing::error!(error = %e, "Deserialization error");
+                    StoreError::Serialization(format!("Deserialization error: {e}"))
+                })?;
+                Ok(Some(entity))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+#[cfg(feature = "sql-sqlite")]
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::IndexedKvStore<T>
+    for SqlKvStore<sqlx::Sqlite>
+{
+    #[tracing::instrument(skip(self, value), fields(key = %key, index = %index))]
+    async fn set_indexed(
+        &self,
+        key: &str,
+        index: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        tracing::debug!("saving indexed to Sqlite store");
+        let query = format!(
+            "INSERT INTO {} (key, index_key, value, expires_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(key) DO UPDATE SET
+             index_key = ?2, value = ?3, expires_at = ?4",
+            self.table_name
+        );
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        sqlx::query(&query)
+            .bind(key)
+            .bind(index)
+            .bind(json)
+            .bind(expires_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Sqlite set_indexed error");
+                StoreError::Internal(format!("Sqlite set_indexed error: {e}"))
+            })?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_by_index(&self, index: &str) -> Result<Option<T>, StoreError> {
+        tracing::debug!(index = %index, "loading by index from Sqlite store");
+        let query = format!(
+            "SELECT key, value, expires_at FROM {} WHERE index_key = ?1 AND expires_at > ?2",
+            self.table_name
+        );
+        let now = chrono::Utc::now();
+
+        let row: Option<SqlKvModel> = sqlx::query_as(&query)
+            .bind(index)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Sqlite get_by_index error");
+                StoreError::Internal(format!("Sqlite get_by_index error: {e}"))
+            })?;
+
+        match row {
+            Some(model) => {
+                let entity: T = serde_json::from_str(&model.value).map_err(|e| {
+                    tracing::error!(error = %e, "Deserialization error");
+                    StoreError::Serialization(format!("Deserialization error: {e}"))
+                })?;
+                Ok(Some(entity))
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -291,5 +517,143 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
                 StoreError::Internal(format!("MySql delete error: {e}"))
             })?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "sql-mysql")]
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::AtomicConsume<T>
+    for SqlKvStore<sqlx::MySql>
+{
+    #[tracing::instrument(skip(self))]
+    async fn consume(&self, key: &str) -> Result<Option<T>, StoreError> {
+        tracing::debug!(key = %key, "atomically consuming from MySql store");
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            tracing::error!(error = %e, "MySql begin tx error");
+            StoreError::Internal(format!("MySql begin tx error: {e}"))
+        })?;
+
+        let select_query = format!(
+            "SELECT key, value, expires_at FROM {} WHERE key = ? AND expires_at > ? FOR UPDATE",
+            self.table_name
+        );
+        let now = chrono::Utc::now();
+
+        let row: Option<SqlKvModel> = sqlx::query_as(&select_query)
+            .bind(key)
+            .bind(now)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "MySql consume select error");
+                StoreError::Internal(format!("MySql consume select error: {e}"))
+            })?;
+
+        if let Some(model) = row {
+            let delete_query = format!("DELETE FROM {} WHERE key = ?", self.table_name);
+            sqlx::query(&delete_query)
+                .bind(key)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "MySql consume delete error");
+                    StoreError::Internal(format!("MySql consume delete error: {e}"))
+                })?;
+
+            tx.commit().await.map_err(|e| {
+                tracing::error!(error = %e, "MySql commit tx error");
+                StoreError::Internal(format!("MySql commit tx error: {e}"))
+            })?;
+
+            let entity: T = serde_json::from_str(&model.value).map_err(|e| {
+                tracing::error!(error = %e, "Deserialization error");
+                StoreError::Serialization(format!("Deserialization error: {e}"))
+            })?;
+            Ok(Some(entity))
+        } else {
+            tx.rollback().await.map_err(|e| {
+                tracing::error!(error = %e, "MySql rollback tx error");
+                StoreError::Internal(format!("MySql rollback tx error: {e}"))
+            })?;
+            Ok(None)
+        }
+    }
+}
+
+#[cfg(feature = "sql-mysql")]
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::IndexedKvStore<T>
+    for SqlKvStore<sqlx::MySql>
+{
+    #[tracing::instrument(skip(self, value), fields(key = %key, index = %index))]
+    async fn set_indexed(
+        &self,
+        key: &str,
+        index: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        tracing::debug!("saving indexed to MySql store");
+        let query = format!(
+            "INSERT INTO {} (key, index_key, value, expires_at)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+             index_key = VALUES(index_key),
+             value = VALUES(value),
+             expires_at = VALUES(expires_at)",
+            self.table_name
+        );
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        sqlx::query(&query)
+            .bind(key)
+            .bind(index)
+            .bind(json)
+            .bind(expires_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "MySql set_indexed error");
+                StoreError::Internal(format!("MySql set_indexed error: {e}"))
+            })?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_by_index(&self, index: &str) -> Result<Option<T>, StoreError> {
+        tracing::debug!(index = %index, "loading by index from MySql store");
+        let query = format!(
+            "SELECT key, value, expires_at FROM {} WHERE index_key = ? AND expires_at > ?",
+            self.table_name
+        );
+        let now = chrono::Utc::now();
+
+        let row: Option<SqlKvModel> = sqlx::query_as(&query)
+            .bind(index)
+            .bind(now)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "MySql get_by_index error");
+                StoreError::Internal(format!("MySql get_by_index error: {e}"))
+            })?;
+
+        match row {
+            Some(model) => {
+                let entity: T = serde_json::from_str(&model.value).map_err(|e| {
+                    tracing::error!(error = %e, "Deserialization error");
+                    StoreError::Serialization(format!("Deserialization error: {e}"))
+                })?;
+                Ok(Some(entity))
+            }
+            None => Ok(None),
+        }
     }
 }

@@ -106,3 +106,133 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Red
         Ok(())
     }
 }
+
+use crate::store::{AtomicConsume, IndexedKvStore};
+
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicConsume<T> for RedisStore {
+    #[tracing::instrument(skip(self))]
+    async fn consume(&self, key: &str) -> Result<Option<T>, StoreError> {
+        tracing::debug!(key = %key, "atomically consuming from redis store");
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis connection error");
+                StoreError::Internal(format!("Redis connection error: {e}"))
+            })?;
+
+        let script = redis::Script::new(
+            r#"
+            local val = redis.call('GET', KEYS[1])
+            if val then
+                redis.call('DEL', KEYS[1])
+            end
+            return val
+            "#,
+        );
+
+        let data: Option<String> = script
+            .key(self.key(key))
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis get/del script error");
+                StoreError::Internal(format!("Redis get/del script error: {e}"))
+            })?;
+
+        match data {
+            Some(json) => {
+                let entity: T = serde_json::from_str(&json).map_err(|e| {
+                    tracing::error!(error = %e, "Deserialization error");
+                    StoreError::Serialization(format!("Deserialization error: {e}"))
+                })?;
+                Ok(Some(entity))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+impl RedisStore {
+    fn index_key(&self, index: &str) -> String {
+        format!("{prefix}:idx:{index}", prefix = self.prefix)
+    }
+}
+
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> IndexedKvStore<T> for RedisStore {
+    #[tracing::instrument(skip(self, value), fields(key = %key, index = %index))]
+    async fn set_indexed(
+        &self,
+        key: &str,
+        index: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<(), StoreError> {
+        tracing::debug!("saving indexed to redis store");
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis connection error");
+                StoreError::Internal(format!("Redis connection error: {e}"))
+            })?;
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+
+        let ttl_secs = ttl.as_secs();
+        if ttl_secs == 0 {
+            tracing::warn!("ttl is 0, not saving to redis");
+            return Ok(());
+        }
+
+        let mut pipe = redis::pipe();
+        pipe.atomic().set_ex(self.key(key), json, ttl_secs).set_ex(
+            self.index_key(index),
+            key.to_string(),
+            ttl_secs,
+        );
+
+        let _: () = pipe.query_async(&mut conn).await.map_err(|e| {
+            tracing::error!(error = %e, "Redis set_indexed error");
+            StoreError::Internal(format!("Redis set_indexed error: {e}"))
+        })?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_by_index(&self, index: &str) -> Result<Option<T>, StoreError> {
+        tracing::debug!(index = %index, "loading by index from redis store");
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis connection error");
+                StoreError::Internal(format!("Redis connection error: {e}"))
+            })?;
+
+        let rel_key: Option<String> = conn.get(self.index_key(index)).await.map_err(|e| {
+            tracing::error!(error = %e, "Redis index get error");
+            StoreError::Internal(format!("Redis index get error: {e}"))
+        })?;
+
+        if let Some(key) = rel_key {
+            let res = self.get(&key).await;
+            if let Ok(None) = res {
+                // Orphaned index, clean it up optionally
+                let _: () = conn.del(self.index_key(index)).await.unwrap_or(());
+            }
+            res
+        } else {
+            Ok(None)
+        }
+    }
+}
