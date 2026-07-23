@@ -35,11 +35,13 @@ extern crate self as authkestra_axum;
 
 #[cfg(feature = "macros")]
 pub use authkestra_macros::AuthkestraFromRef;
+#[cfg(feature = "macros")]
+pub use authkestra_macros::AuthkestraState; // Keep for backwards compatibility if needed
 
 #[cfg(feature = "flow")]
-#[derive(Clone, AuthkestraFromRef)]
+#[derive(Clone, AuthkestraState)]
 pub struct AuthEngineState<S = Missing, T = Missing> {
-    #[authkestra]
+    #[authkestra(engine)]
     pub authkestra: AuthEngine<S, T>,
 }
 

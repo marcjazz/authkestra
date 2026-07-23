@@ -3,105 +3,41 @@
 //! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Axum.
 use authkestra_engine::store::KvStore;
 
-use authkestra_axum::{AuthEngineAxumError, AuthEngineAxumOpExt};
-use authkestra_engine::TokenManager;
+use authkestra_axum::AuthEngineAxumOpExt;
+use authkestra_engine::{AuthEngine, Configured, TokenManager};
 use authkestra_op::{
     client::{ClientRegistration, ClientStore},
     code::AuthorizationCodeStore,
     config::OpConfig,
     refresh::RefreshTokenStore,
 };
-use axum::{extract::FromRef, Router};
+use axum::Router;
 use std::sync::Arc;
 
-#[derive(Clone)]
+use authkestra_axum::AuthkestraState;
+
+#[derive(Clone, AuthkestraState)]
 struct AppState {
-    token_manager: Arc<TokenManager>,
+    #[authkestra(engine)]
+    authkestra: AuthEngine<
+        Configured<Arc<dyn authkestra_engine::auth::SessionStore>>,
+        Configured<Arc<TokenManager>>,
+    >,
+
+    #[authkestra(store)]
     clients: Arc<dyn ClientStore>,
+
+    #[authkestra(store)]
     codes: Arc<dyn AuthorizationCodeStore>,
+
+    #[authkestra(store)]
     config: OpConfig,
-    session_store: Arc<dyn authkestra_engine::auth::SessionStore>,
-    session_config: authkestra_engine::SessionConfig,
+
+    #[authkestra(store)]
     refresh_tokens: Arc<dyn RefreshTokenStore>,
+
+    #[authkestra(store)]
     pub device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore>,
-}
-
-impl FromRef<AppState> for Arc<TokenManager> {
-    fn from_ref(app_state: &AppState) -> Arc<TokenManager> {
-        app_state.token_manager.clone()
-    }
-}
-
-impl FromRef<AppState> for Result<Arc<TokenManager>, AuthEngineAxumError> {
-    fn from_ref(app_state: &AppState) -> Result<Arc<TokenManager>, AuthEngineAxumError> {
-        Ok(app_state.token_manager.clone())
-    }
-}
-
-impl FromRef<AppState> for Arc<dyn ClientStore> {
-    fn from_ref(app_state: &AppState) -> Arc<dyn ClientStore> {
-        app_state.clients.clone()
-    }
-}
-
-impl FromRef<AppState> for Result<Arc<dyn ClientStore>, AuthEngineAxumError> {
-    fn from_ref(app_state: &AppState) -> Result<Arc<dyn ClientStore>, AuthEngineAxumError> {
-        Ok(app_state.clients.clone())
-    }
-}
-
-impl FromRef<AppState> for Arc<dyn AuthorizationCodeStore> {
-    fn from_ref(app_state: &AppState) -> Arc<dyn AuthorizationCodeStore> {
-        app_state.codes.clone()
-    }
-}
-
-impl FromRef<AppState> for Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError> {
-    fn from_ref(
-        app_state: &AppState,
-    ) -> Result<Arc<dyn AuthorizationCodeStore>, AuthEngineAxumError> {
-        Ok(app_state.codes.clone())
-    }
-}
-
-impl FromRef<AppState> for OpConfig {
-    fn from_ref(app_state: &AppState) -> OpConfig {
-        app_state.config.clone()
-    }
-}
-
-impl FromRef<AppState> for Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumError> {
-    fn from_ref(app_state: &AppState) -> Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumError> {
-        Ok(app_state.refresh_tokens.clone())
-    }
-}
-
-impl FromRef<AppState>
-    for Result<Arc<dyn authkestra_engine::auth::SessionStore>, AuthEngineAxumError>
-{
-    fn from_ref(state: &AppState) -> Self {
-        Ok(state.session_store.clone())
-    }
-}
-
-impl FromRef<AppState> for authkestra_engine::SessionConfig {
-    fn from_ref(state: &AppState) -> Self {
-        state.session_config.clone()
-    }
-}
-
-impl FromRef<AppState> for Arc<dyn authkestra_op::device::DeviceCodeStore> {
-    fn from_ref(state: &AppState) -> Self {
-        state.device_code_store.clone()
-    }
-}
-
-impl FromRef<AppState>
-    for Result<Arc<dyn authkestra_op::device::DeviceCodeStore>, AuthEngineAxumError>
-{
-    fn from_ref(state: &AppState) -> Self {
-        Ok(state.device_code_store.clone())
-    }
 }
 
 #[tokio::main]
@@ -111,8 +47,7 @@ async fn main() {
         Some("issuer".to_string()),
     ));
 
-    let clients =
-        authkestra_engine::store::memory::MemoryStore::<crate::client::ClientRegistration>::new();
+    let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
     clients
         .set(
             "test-client",
@@ -133,17 +68,16 @@ async fn main() {
 
     let codes: Arc<dyn AuthorizationCodeStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            crate::code::AuthorizationCode,
+            authkestra_op::code::AuthorizationCode,
         >::new());
     let refresh_tokens: Arc<dyn RefreshTokenStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::<
-            crate::refresh::RefreshToken,
+            authkestra_op::refresh::RefreshToken,
         >::new());
-    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> = Arc::new(
-        authkestra_op::device::authkestra_engine::store::memory::MemoryStore::<
-            crate::device::DeviceCodeSession,
-        >::new(),
-    );
+    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            authkestra_op::device::DeviceCodeSession,
+        >::new());
 
     let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::new());
@@ -152,14 +86,18 @@ async fn main() {
         ..Default::default()
     };
 
+    let authkestra = authkestra_engine::AuthEngine::builder()
+        .session_store(session_store)
+        .session_config(session_config)
+        .token_manager(token_manager)
+        .build();
+
     let state = AppState {
-        token_manager,
+        authkestra,
         clients,
         codes,
         refresh_tokens,
         device_code_store,
-        session_store,
-        session_config,
         config: OpConfig {
             issuer: "http://localhost:3000".to_string(),
             scopes_supported: vec![
