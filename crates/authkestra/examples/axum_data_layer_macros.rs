@@ -1,7 +1,7 @@
 //! # Axum Data Layer Macros Example
 //!
-//! This example demonstrates how to use the `AuthkestraKvStore` and `AuthkestraRepository`
-//! derive macros to eliminate SQL boilerplate.
+//! This example demonstrates how to use the `AuthkestraKvStore`
+//! derive macro to eliminate SQL boilerplate.
 //!
 //! By wrapping a `sqlx::Pool` in a tuple struct and decorating it with the macros,
 //! it automatically generates the implementations for the data layer traits by delegating
@@ -65,7 +65,10 @@ async fn main() {
     .unwrap();
 
     // Initialize our generated stores
-    let sql_store = authkestra_engine::store::sql::SqlKvStore::with_table_name(pool, "user_sessions".to_string());
+    let sql_store = authkestra_engine::store::sql::SqlKvStore::with_table_name(
+        pool,
+        "user_sessions".to_string(),
+    );
     let session_store = MySqliteSessionStore(sql_store);
 
     let session_store_arc: Arc<dyn SessionStore> = Arc::new(session_store);
