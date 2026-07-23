@@ -1,14 +1,15 @@
 //! # Axum OP Server Example
 //!
 //! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Axum.
+use authkestra_engine::store::KvStore;
 
 use authkestra_axum::{AuthEngineAxumError, AuthEngineAxumOpExt};
 use authkestra_engine::TokenManager;
 use authkestra_op::{
-    client::{ClientRegistration, ClientStore, InMemoryClientStore},
-    code::{AuthorizationCodeStore, InMemoryAuthorizationCodeStore},
+    client::{ClientRegistration, ClientStore},
+    code::AuthorizationCodeStore,
     config::OpConfig,
-    refresh::{InMemoryRefreshTokenStore, RefreshTokenStore},
+    refresh::RefreshTokenStore,
 };
 use axum::{extract::FromRef, Router};
 use std::sync::Arc;
@@ -19,7 +20,7 @@ struct AppState {
     clients: Arc<dyn ClientStore>,
     codes: Arc<dyn AuthorizationCodeStore>,
     config: OpConfig,
-    session_store: Arc<dyn authkestra_session::SessionStore>,
+    session_store: Arc<dyn authkestra_engine::auth::SessionStore>,
     session_config: authkestra_engine::SessionConfig,
     refresh_tokens: Arc<dyn RefreshTokenStore>,
     pub device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore>,
@@ -75,7 +76,9 @@ impl FromRef<AppState> for Result<Arc<dyn RefreshTokenStore>, AuthEngineAxumErro
     }
 }
 
-impl FromRef<AppState> for Result<Arc<dyn authkestra_session::SessionStore>, AuthEngineAxumError> {
+impl FromRef<AppState>
+    for Result<Arc<dyn authkestra_engine::auth::SessionStore>, AuthEngineAxumError>
+{
     fn from_ref(state: &AppState) -> Self {
         Ok(state.session_store.clone())
     }
@@ -108,24 +111,42 @@ async fn main() {
         Some("issuer".to_string()),
     ));
 
-    let clients = InMemoryClientStore::new();
-    clients.register(ClientRegistration {
-        client_id: "test-client".to_string(),
-        client_secret_hash: None,
-        redirect_uris: vec!["http://localhost:3000/callback".to_string()],
-        require_pkce: true,
-        scopes: vec!["openid".to_string(), "profile".to_string()],
-        grant_types: vec![authkestra_op::client::GrantType::AuthorizationCode],
-    });
+    let clients =
+        authkestra_engine::store::memory::MemoryStore::<crate::client::ClientRegistration>::new();
+    clients
+        .set(
+            "test-client",
+            ClientRegistration {
+                client_id: "test-client".to_string(),
+                client_secret_hash: None,
+                redirect_uris: vec!["http://localhost:3000/callback".to_string()],
+                require_pkce: true,
+                scopes: vec!["openid".to_string(), "profile".to_string()],
+                grant_types: vec![authkestra_op::client::GrantType::AuthorizationCode],
+                allowed_audiences: vec![],
+            },
+            std::time::Duration::from_secs(31536000),
+        )
+        .await
+        .unwrap();
     let clients: Arc<dyn ClientStore> = Arc::new(clients);
 
-    let codes: Arc<dyn AuthorizationCodeStore> = Arc::new(InMemoryAuthorizationCodeStore::new());
-    let refresh_tokens: Arc<dyn RefreshTokenStore> = Arc::new(InMemoryRefreshTokenStore::new());
-    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> =
-        Arc::new(authkestra_op::device::InMemoryDeviceCodeStore::new());
+    let codes: Arc<dyn AuthorizationCodeStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            crate::code::AuthorizationCode,
+        >::new());
+    let refresh_tokens: Arc<dyn RefreshTokenStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            crate::refresh::RefreshToken,
+        >::new());
+    let device_code_store: Arc<dyn authkestra_op::device::DeviceCodeStore> = Arc::new(
+        authkestra_op::device::authkestra_engine::store::memory::MemoryStore::<
+            crate::device::DeviceCodeSession,
+        >::new(),
+    );
 
-    let session_store: Arc<dyn authkestra_session::SessionStore> =
-        Arc::new(authkestra_session::memory::MemoryStore::new());
+    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::new());
     let session_config = authkestra_engine::SessionConfig {
         cookie_name: "authkestra_sid".to_string(),
         ..Default::default()
@@ -152,6 +173,7 @@ async fn main() {
             access_token_ttl_secs: 3600,
             authorization_code_ttl_secs: 600,
             device_code_ttl_secs: 600,
+            token_exchange_enabled: true,
         },
     };
 

@@ -919,10 +919,11 @@ async fn handle_token_exchange(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{ClientRegistration, GrantType, InMemoryClientStore};
-    use crate::code::{AuthorizationCode, InMemoryAuthorizationCodeStore};
-    use crate::refresh::{InMemoryRefreshTokenStore, RefreshToken};
+    use crate::client::{ClientRegistration, GrantType};
+    use crate::code::AuthorizationCode;
+    use crate::refresh::RefreshToken;
     use authkestra_engine::auth::state::Identity;
+    use authkestra_engine::store::KvStore;
     use authkestra_engine::token::TokenManager;
     use chrono::{Duration, Utc};
     use std::collections::HashMap;
@@ -990,18 +991,29 @@ mod tests {
             requested_token_type: None,
             audience: None,
         };
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
-        let codes = InMemoryAuthorizationCodeStore::new();
-        let refresh = InMemoryRefreshTokenStore::new();
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
 
         let res = handle_token(
             req,
@@ -1010,7 +1022,8 @@ mod tests {
             &clients,
             &codes,
             &refresh,
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &test_tokens(),
         )
         .await;
@@ -1019,22 +1032,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_successful_exchange_with_pkce() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec!["openid".to_string()],
-            require_pkce: true,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: true,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
         let verifier = "test_verifier";
         let mut hasher = sha2::Sha256::new();
         sha2::Digest::update(&mut hasher, verifier.as_bytes());
         let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
 
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
                 code: "code1".to_string(),
@@ -1075,8 +1098,9 @@ mod tests {
             &test_config(false),
             &clients,
             &codes,
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &test_tokens(),
         )
         .await;
@@ -1085,17 +1109,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_pkce_verifier() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec!["openid".to_string()],
-            require_pkce: true,
-            allowed_audiences: vec![],
-        });
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: true,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
                 code: "code1".to_string(),
@@ -1135,8 +1169,9 @@ mod tests {
             &test_config(false),
             &clients,
             &codes,
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &test_tokens(),
         )
         .await;
@@ -1145,17 +1180,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_redirect_uri_mismatch() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
                 code: "code1".to_string(),
@@ -1195,8 +1240,9 @@ mod tests {
             &test_config(false),
             &clients,
             &codes,
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &test_tokens(),
         )
         .await;
@@ -1205,17 +1251,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_reject_plain_pkce_method() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec!["https://cb".to_string()],
-            grant_types: vec![GrantType::AuthorizationCode],
-            scopes: vec![],
-            require_pkce: true,
-            allowed_audiences: vec![],
-        });
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: true,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
                 code: "code1".to_string(),
@@ -1255,8 +1311,9 @@ mod tests {
             &test_config(false),
             &clients,
             &codes,
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &test_tokens(),
         )
         .await;
@@ -1265,16 +1322,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_credentials() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::ClientCredentials],
-            scopes: vec!["custom".to_string()],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::ClientCredentials],
+                    scopes: vec!["custom".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
         let req = TokenRequest {
             grant_type: "client_credentials".to_string(),
             code: None,
@@ -1297,9 +1363,10 @@ mod tests {
             None,
             &test_config(false),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &test_tokens(),
         )
         .await;
@@ -1308,17 +1375,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_token() {
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::RefreshToken],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
-        let refresh = InMemoryRefreshTokenStore::new();
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::RefreshToken],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
             .store_token(RefreshToken {
                 token: "rt1".to_string(),
@@ -1352,9 +1429,10 @@ mod tests {
             None,
             &test_config(false),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
             &refresh,
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &test_tokens(),
         )
         .await;
@@ -1391,25 +1469,35 @@ mod tests {
         let subject_token = issue_subject_token(&tokens, "client2", None);
         let req = default_tx_req(&subject_token);
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1424,25 +1512,35 @@ mod tests {
         let mut req = default_tx_req(&subject_token);
         req.scope = Some("scopeA scopeC".to_string()); // requesting scopeC which token doesn't have
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec!["scopeA".to_string(), "scopeC".to_string()],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec!["scopeA".to_string(), "scopeC".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1458,25 +1556,35 @@ mod tests {
         let mut req = default_tx_req(&subject_token);
         req.scope = Some("scopeB".to_string());
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec!["scopeB".to_string()],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec!["scopeB".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1489,25 +1597,35 @@ mod tests {
         let subject_token = issue_subject_token(&tokens, "client1", None);
         let req = default_tx_req(&subject_token);
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(false),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1521,25 +1639,35 @@ mod tests {
         let mut req = default_tx_req(&subject_token);
         req.actor_token = Some("some_actor_token".to_string());
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1553,25 +1681,35 @@ mod tests {
         let mut req = default_tx_req(&subject_token);
         req.subject_token_type = Some("urn:ietf:params:oauth:token-type:saml2".to_string());
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1585,25 +1723,35 @@ mod tests {
         let mut req = default_tx_req(&subject_token);
         req.requested_token_type = Some("urn:ietf:params:oauth:token-type:saml2".to_string());
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1617,25 +1765,35 @@ mod tests {
         let mut req = default_tx_req(&subject_token);
         req.audience = Some("serviceA".to_string());
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec!["serviceA".to_string()],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec!["serviceA".to_string()],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1653,25 +1811,35 @@ mod tests {
         let mut req = default_tx_req(&subject_token);
         req.audience = Some("serviceB".to_string());
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec!["serviceA".to_string()],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec!["serviceA".to_string()],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1685,25 +1853,35 @@ mod tests {
         let req = default_tx_req(&subject_token);
         // No audience requested
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;
@@ -1726,25 +1904,35 @@ mod tests {
             .unwrap();
         let req = default_tx_req(&subject_token);
 
-        let clients = InMemoryClientStore::new();
-        clients.register(ClientRegistration {
-            client_id: "client1".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::TokenExchange],
-            scopes: vec![],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         let res = handle_token(
             req,
             None,
             &test_config(true),
             &clients,
-            &InMemoryAuthorizationCodeStore::new(),
-            &InMemoryRefreshTokenStore::new(),
-            &crate::device::InMemoryDeviceCodeStore::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            &authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
             &tokens,
         )
         .await;

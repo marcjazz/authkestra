@@ -1,9 +1,10 @@
 use super::*;
-use crate::client::{ClientRegistration, GrantType, InMemoryClientStore};
-use crate::code::InMemoryAuthorizationCodeStore;
-use crate::device::{DeviceCodeSession, DeviceCodeStatus, InMemoryDeviceCodeStore};
+use crate::client::{ClientRegistration, GrantType};
+use authkestra_engine::store::KvStore;
+
+use crate::device::{DeviceCodeSession, DeviceCodeStatus};
 use crate::handlers::token::tests::{test_config, test_tokens};
-use crate::refresh::InMemoryRefreshTokenStore;
+
 use authkestra_engine::auth::state::Identity;
 use chrono::{Duration, Utc};
 use std::collections::HashMap;
@@ -42,8 +43,12 @@ async fn setup_store(
     status: DeviceCodeStatus,
     client_id: &str,
     scope: &str,
-) -> (InMemoryDeviceCodeStore, InMemoryClientStore) {
-    let devices = InMemoryDeviceCodeStore::new();
+) -> (
+    authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
+    authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
+) {
+    let devices =
+        authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
     let session = DeviceCodeSession {
         device_code: "dev123".to_string(),
         user_code: "USER123".to_string(),
@@ -55,16 +60,24 @@ async fn setup_store(
     };
     devices.store_device_code(session).await.unwrap();
 
-    let clients = InMemoryClientStore::new();
-    clients.register(ClientRegistration {
-        client_id: "client1".to_string(),
-        client_secret_hash: None,
-        redirect_uris: vec![],
-        grant_types: vec![GrantType::DeviceCode],
-        scopes: vec![],
-        require_pkce: false,
-        allowed_audiences: vec![],
-    });
+    let clients =
+        authkestra_engine::store::memory::MemoryStore::<crate::client::ClientRegistration>::new();
+    clients
+        .set(
+            "client1",
+            ClientRegistration {
+                client_id: "client1".to_string(),
+                client_secret_hash: None,
+                redirect_uris: vec![],
+                grant_types: vec![GrantType::DeviceCode],
+                scopes: vec![],
+                require_pkce: false,
+                allowed_audiences: vec![],
+            },
+            std::time::Duration::from_secs(31536000),
+        )
+        .await
+        .unwrap();
 
     (devices, clients)
 }
@@ -79,8 +92,8 @@ async fn test_device_denied() {
         None,
         &test_config(false),
         &clients,
-        &InMemoryAuthorizationCodeStore::new(),
-        &InMemoryRefreshTokenStore::new(),
+        &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+        &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
         &devices,
         &test_tokens(),
     )
@@ -105,8 +118,8 @@ async fn test_device_wrong_client() {
         None,
         &test_config(false),
         &clients,
-        &InMemoryAuthorizationCodeStore::new(),
-        &InMemoryRefreshTokenStore::new(),
+        &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+        &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
         &devices,
         &test_tokens(),
     )
@@ -118,7 +131,8 @@ async fn test_device_wrong_client() {
 
 #[tokio::test]
 async fn test_device_expired() {
-    let devices = InMemoryDeviceCodeStore::new();
+    let devices =
+        authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
     let session = DeviceCodeSession {
         device_code: "dev123".to_string(),
         user_code: "USER123".to_string(),
@@ -130,16 +144,24 @@ async fn test_device_expired() {
     };
     devices.store_device_code(session).await.unwrap();
 
-    let clients = InMemoryClientStore::new();
-    clients.register(ClientRegistration {
-        client_id: "client1".to_string(),
-        client_secret_hash: None,
-        redirect_uris: vec![],
-        grant_types: vec![GrantType::DeviceCode],
-        scopes: vec![],
-        require_pkce: false,
-        allowed_audiences: vec![],
-    });
+    let clients =
+        authkestra_engine::store::memory::MemoryStore::<crate::client::ClientRegistration>::new();
+    clients
+        .set(
+            "client1",
+            ClientRegistration {
+                client_id: "client1".to_string(),
+                client_secret_hash: None,
+                redirect_uris: vec![],
+                grant_types: vec![GrantType::DeviceCode],
+                scopes: vec![],
+                require_pkce: false,
+                allowed_audiences: vec![],
+            },
+            std::time::Duration::from_secs(31536000),
+        )
+        .await
+        .unwrap();
 
     let req = default_device_req("dev123");
 
@@ -148,8 +170,8 @@ async fn test_device_expired() {
         None,
         &test_config(false),
         &clients,
-        &InMemoryAuthorizationCodeStore::new(),
-        &InMemoryRefreshTokenStore::new(),
+        &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+        &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
         &devices,
         &test_tokens(),
     )
@@ -174,8 +196,8 @@ async fn test_device_offline_access() {
         None,
         &test_config(false),
         &clients,
-        &InMemoryAuthorizationCodeStore::new(),
-        &InMemoryRefreshTokenStore::new(),
+        &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+        &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
         &devices,
         &test_tokens(),
     )
@@ -188,7 +210,9 @@ async fn test_device_offline_access() {
 
 #[tokio::test]
 async fn test_device_concurrency() {
-    let devices = std::sync::Arc::new(InMemoryDeviceCodeStore::new());
+    let devices = std::sync::Arc::new(authkestra_engine::store::memory::MemoryStore::<
+        crate::device::DeviceCodeSession,
+    >::new());
     let session = DeviceCodeSession {
         device_code: "dev123".to_string(),
         user_code: "USER123".to_string(),
@@ -200,16 +224,25 @@ async fn test_device_concurrency() {
     };
     devices.store_device_code(session).await.unwrap();
 
-    let clients = std::sync::Arc::new(InMemoryClientStore::new());
-    clients.register(ClientRegistration {
-        client_id: "client1".to_string(),
-        client_secret_hash: None,
-        redirect_uris: vec![],
-        grant_types: vec![GrantType::DeviceCode],
-        scopes: vec![],
-        require_pkce: false,
-        allowed_audiences: vec![],
-    });
+    let clients = std::sync::Arc::new(authkestra_engine::store::memory::MemoryStore::<
+        crate::client::ClientRegistration,
+    >::new());
+    clients
+        .set(
+            "client1",
+            ClientRegistration {
+                client_id: "client1".to_string(),
+                client_secret_hash: None,
+                redirect_uris: vec![],
+                grant_types: vec![GrantType::DeviceCode],
+                scopes: vec![],
+                require_pkce: false,
+                allowed_audiences: vec![],
+            },
+            std::time::Duration::from_secs(31536000),
+        )
+        .await
+        .unwrap();
 
     let config = std::sync::Arc::new(test_config(false));
     let tokens = std::sync::Arc::new(test_tokens());
@@ -229,10 +262,10 @@ async fn test_device_concurrency() {
                 None,
                 &config,
                 &*clients,
-                &InMemoryAuthorizationCodeStore::new(),
-                &InMemoryRefreshTokenStore::new(),
+                &authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                &authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
                 &*devices,
-                &*tokens,
+                &tokens,
             )
             .await
         }));

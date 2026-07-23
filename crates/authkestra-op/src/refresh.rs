@@ -2,8 +2,6 @@ use async_trait::async_trait;
 use authkestra_engine::auth::state::Identity;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::RwLock;
 
 /// Represents a stored refresh token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,48 +38,44 @@ pub trait RefreshTokenStore: Send + Sync {
     ) -> Result<Option<RefreshToken>, crate::error::OpError>;
 }
 
-/// A minimal in-memory `RefreshTokenStore` for development and tests.
-#[derive(Default)]
-pub struct InMemoryRefreshTokenStore {
-    tokens: RwLock<HashMap<String, RefreshToken>>,
-}
-
-impl InMemoryRefreshTokenStore {
-    /// Creates a new, empty in-memory store.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
+use authkestra_engine::store::{AtomicConsume, KvStore};
+use std::time::Duration;
 
 #[async_trait]
-impl RefreshTokenStore for InMemoryRefreshTokenStore {
+impl<S> RefreshTokenStore for S
+where
+    S: KvStore<RefreshToken> + AtomicConsume<RefreshToken>,
+{
     async fn store_token(&self, token: RefreshToken) -> Result<(), crate::error::OpError> {
-        self.tokens
-            .write()
-            .expect("lock poisoned")
-            .insert(token.token.clone(), token);
-        Ok(())
+        let ttl = token
+            .expires_at
+            .signed_duration_since(Utc::now())
+            .to_std()
+            .unwrap_or(Duration::from_secs(0));
+
+        self.set(&token.token, token.clone(), ttl)
+            .await
+            .map_err(|_| crate::error::OpError::Storage)
     }
 
     async fn get_token(&self, token: &str) -> Result<Option<RefreshToken>, crate::error::OpError> {
-        Ok(self
-            .tokens
-            .read()
-            .expect("lock poisoned")
-            .get(token)
-            .cloned())
+        self.get(token)
+            .await
+            .map_err(|_| crate::error::OpError::Storage)
     }
 
     async fn revoke_token(&self, token: &str) -> Result<(), crate::error::OpError> {
-        self.tokens.write().expect("lock poisoned").remove(token);
-        Ok(())
+        self.delete(token)
+            .await
+            .map_err(|_| crate::error::OpError::Storage)
     }
 
     async fn consume_token(
         &self,
         token: &str,
     ) -> Result<Option<RefreshToken>, crate::error::OpError> {
-        let mut map = self.tokens.write().expect("lock poisoned");
-        Ok(map.remove(token))
+        self.consume(token)
+            .await
+            .map_err(|_| crate::error::OpError::Storage)
     }
 }

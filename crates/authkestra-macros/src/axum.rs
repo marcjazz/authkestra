@@ -148,7 +148,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
 
         // 2. FromRef for SessionStore (when S: SessionStoreState)
         impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-            for ::std::result::Result<::std::sync::Arc<dyn authkestra_session::SessionStore>, authkestra_axum::AuthEngineAxumError>
+            for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::AuthEngineAxumError>
         where
             #s_param: authkestra_engine::SessionStoreState,
             #where_clause
@@ -159,7 +159,7 @@ pub(crate) fn derive_authkestra_from_ref_impl(input: TokenStream) -> TokenStream
         }
 
         // 3. FromRef for SessionConfig
-        impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_session::SessionConfig
+        impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::auth::SessionConfig
         #where_clause
         {
             fn from_ref(state: &#struct_name #ty_generics) -> Self {

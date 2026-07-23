@@ -8,9 +8,9 @@
 
 use authkestra::flow::AuthEngine;
 use authkestra_axum::{AuthSession, AuthkestraAxumError, AuthkestraAxumExt, AuthkestraState};
+use authkestra_engine::auth::SessionStore;
+use authkestra_engine::store::redis::RedisStore;
 use authkestra_engine::{Configured, SessionConfig};
-use authkestra_session::redis::RedisStore;
-use authkestra_session::SessionStore;
 use axum::{
     response::{IntoResponse, Json},
     routing::get,

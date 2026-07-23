@@ -3,8 +3,6 @@ use async_trait::async_trait;
 use authkestra_engine::auth::state::Identity;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::RwLock;
 
 /// An authorization code issued at `/authorize`, pending exchange at
 /// `/token`.
@@ -71,63 +69,34 @@ pub trait AuthorizationCodeStore: Send + Sync {
     async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError>;
 }
 
-/// A minimal in-memory `AuthorizationCodeStore` for development and tests.
-/// Not suitable for production (no persistence, no cross-instance sharing,
-/// no expiry sweep — expired-but-unconsumed codes are only checked lazily
-/// on lookup, not proactively evicted).
-#[derive(Default)]
-pub struct InMemoryAuthorizationCodeStore {
-    codes: RwLock<HashMap<String, AuthorizationCode>>,
-}
-
-impl InMemoryAuthorizationCodeStore {
-    /// Creates an empty store.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
+use authkestra_engine::store::{AtomicConsume, KvStore};
+use std::time::Duration;
 
 #[async_trait]
-impl AuthorizationCodeStore for InMemoryAuthorizationCodeStore {
+impl<S> AuthorizationCodeStore for S
+where
+    S: KvStore<AuthorizationCode> + AtomicConsume<AuthorizationCode>,
+{
     async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
-        tracing::debug!(client_id = %code.client_id, "storing authorization code in memory");
-        self.codes
-            .write()
-            .map_err(|_| {
-                tracing::error!("authorization code store lock poisoned");
-                OpError::Storage
-            })?
-            .insert(code.code.clone(), code);
+        tracing::debug!(client_id = %code.client_id, "storing authorization code");
+        let ttl = code
+            .expires_at
+            .signed_duration_since(Utc::now())
+            .to_std()
+            .unwrap_or(Duration::from_secs(0));
+
+        self.set(&code.code, code.clone(), ttl).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to store authorization code");
+            OpError::Storage
+        })?;
         Ok(())
     }
 
     async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
         tracing::trace!("attempting to consume authorization code");
-        let mut codes = self.codes.write().map_err(|_| {
-            tracing::error!("authorization code store lock poisoned");
+        self.consume(code).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to consume authorization code");
             OpError::Storage
-        })?;
-        // `get_mut` + check + mutate while holding the write lock is the
-        // atomic step this trait's contract requires — do not replace this
-        // with a separate read followed by a separate write.
-        match codes.get_mut(code) {
-            Some(entry) if !entry.used && !entry.is_expired(Utc::now()) => {
-                tracing::debug!(client_id = %entry.client_id, "successfully consumed authorization code");
-                entry.used = true;
-                Ok(Some(entry.clone()))
-            }
-            Some(entry) if entry.used => {
-                tracing::warn!(client_id = %entry.client_id, "attempted to consume an already-used authorization code");
-                Ok(None)
-            }
-            Some(entry) => {
-                tracing::debug!(client_id = %entry.client_id, "attempted to consume an expired authorization code");
-                Ok(None)
-            }
-            None => {
-                tracing::debug!("authorization code not found");
-                Ok(None)
-            }
-        }
+        })
     }
 }

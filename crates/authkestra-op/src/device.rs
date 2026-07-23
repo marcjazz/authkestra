@@ -1,10 +1,9 @@
 use crate::error::OpError;
 use async_trait::async_trait;
 use authkestra_engine::auth::state::Identity;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::RwLock;
 
 /// Represents the current status of a device authorization code.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,64 +66,89 @@ pub trait DeviceCodeStore: Send + Sync {
     ) -> Result<Option<DeviceCodeSession>, OpError>;
 }
 
-/// An in-memory implementation of `DeviceCodeStore` for testing and development.
-#[derive(Default)]
-pub struct InMemoryDeviceCodeStore {
-    sessions: RwLock<HashMap<String, DeviceCodeSession>>,
-}
-
-impl InMemoryDeviceCodeStore {
-    /// Create a new empty in-memory store.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
+use authkestra_engine::store::{AtomicConsume, IndexedKvStore};
+use std::time::Duration;
 
 #[async_trait]
-impl DeviceCodeStore for InMemoryDeviceCodeStore {
+impl<S> DeviceCodeStore for S
+where
+    S: IndexedKvStore<DeviceCodeSession> + AtomicConsume<DeviceCodeSession>,
+{
     async fn store_device_code(&self, session: DeviceCodeSession) -> Result<(), OpError> {
-        self.sessions
-            .write()
-            .unwrap()
-            .insert(session.device_code.clone(), session);
-        Ok(())
+        // Keep the token in the store for 5 minutes after expiration
+        // so that the token endpoint can explicitly return `expired_token`
+        // instead of `invalid_grant`.
+        let ttl = session
+            .expires_at
+            .signed_duration_since(Utc::now())
+            .to_std()
+            .unwrap_or(Duration::from_secs(0))
+            + Duration::from_secs(300);
+
+        let device_code = session.device_code.clone();
+        let user_code = session.user_code.clone();
+
+        self.set_indexed(&device_code, &user_code, session, ttl)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to store device code");
+                OpError::Storage
+            })
     }
 
     async fn get_device_code(
         &self,
         device_code: &str,
     ) -> Result<Option<DeviceCodeSession>, OpError> {
-        Ok(self.sessions.read().unwrap().get(device_code).cloned())
+        self.get(device_code).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to get device code");
+            OpError::Storage
+        })
     }
 
     async fn get_by_user_code(
         &self,
         user_code: &str,
     ) -> Result<Option<DeviceCodeSession>, OpError> {
-        let sessions = self.sessions.read().unwrap();
-        Ok(sessions
-            .values()
-            .find(|s| s.user_code == user_code)
-            .cloned())
+        self.get_by_index(user_code).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to get device code by user code");
+            OpError::Storage
+        })
     }
 
     async fn update_device_code(&self, session: DeviceCodeSession) -> Result<(), OpError> {
-        let mut sessions = self.sessions.write().unwrap();
-        if sessions.contains_key(&session.device_code) {
-            sessions.insert(session.device_code.clone(), session);
-        }
-        Ok(())
+        // Keep the token in the store for 5 minutes after expiration
+        let ttl = session
+            .expires_at
+            .signed_duration_since(Utc::now())
+            .to_std()
+            .unwrap_or(Duration::from_secs(0))
+            + Duration::from_secs(300);
+
+        let device_code = session.device_code.clone();
+
+        // We only update the primary key value.
+        // We don't need to update the index because the user_code and device_code don't change.
+        self.set(&device_code, session, ttl).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to update device code");
+            OpError::Storage
+        })
     }
 
     async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
-        self.sessions.write().unwrap().remove(device_code);
-        Ok(())
+        self.delete(device_code).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to delete device code");
+            OpError::Storage
+        })
     }
 
     async fn consume_device_code(
         &self,
         device_code: &str,
     ) -> Result<Option<DeviceCodeSession>, OpError> {
-        Ok(self.sessions.write().unwrap().remove(device_code))
+        self.consume(device_code).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to consume device code");
+            OpError::Storage
+        })
     }
 }

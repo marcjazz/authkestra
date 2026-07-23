@@ -1,5 +1,7 @@
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use actix_web::{dev::Payload, http::header, web, Error, FromRequest, HttpRequest};
+#[cfg(feature = "session")]
+pub use authkestra_engine::auth::{Session, SessionStore};
 #[cfg(all(feature = "flow", feature = "session"))]
 pub use authkestra_engine::SessionStoreState;
 #[cfg(feature = "token")]
@@ -10,8 +12,6 @@ pub use authkestra_engine::TokenManagerState;
 pub use authkestra_engine::{AuthEngine, SessionConfig};
 #[cfg(all(feature = "flow", any(feature = "session", feature = "token")))]
 pub use authkestra_engine::{Configured, Missing};
-#[cfg(feature = "session")]
-pub use authkestra_session::{Session, SessionStore};
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use futures::future::LocalBoxFuture;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]

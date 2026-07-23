@@ -269,6 +269,7 @@ impl OAuthProvider for DiscordProvider {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

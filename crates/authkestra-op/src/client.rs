@@ -5,8 +5,6 @@ use argon2::{
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::RwLock;
 
 /// OAuth2/OIDC grant types a client may be permitted to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,51 +93,25 @@ pub trait ClientStore: Send + Sync {
     async fn find_client(&self, client_id: &str) -> Result<Option<ClientRegistration>, OpError>;
 }
 
-/// A minimal in-memory `ClientStore`, intended for development and tests —
-/// not for production use (no persistence, no distribution across
-/// instances). Production deployments should implement `ClientStore`
-/// against their own database, the same way `authkestra-session-sql` does
-/// for `SessionStore`.
-#[derive(Default)]
-pub struct InMemoryClientStore {
-    clients: RwLock<HashMap<String, ClientRegistration>>,
-}
-
-impl InMemoryClientStore {
-    /// Creates an empty store.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Registers a client, replacing any existing registration with the
-    /// same `client_id`.
-    pub fn register(&self, client: ClientRegistration) {
-        tracing::debug!(client_id = %client.client_id, "registering client in memory");
-        self.clients
-            .write()
-            .expect("client store lock poisoned")
-            .insert(client.client_id.clone(), client);
-    }
-}
+use authkestra_engine::store::KvStore;
 
 #[async_trait]
-impl ClientStore for InMemoryClientStore {
+impl<S> ClientStore for S
+where
+    S: KvStore<ClientRegistration>,
+{
     async fn find_client(&self, client_id: &str) -> Result<Option<ClientRegistration>, OpError> {
         tracing::trace!(client_id, "looking up client");
-        Ok(self
-            .clients
-            .read()
-            .map_err(|_| {
-                tracing::error!("client store lock poisoned");
-                OpError::Storage
-            })?
-            .get(client_id)
-            .cloned())
+        self.get(client_id).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to lookup client");
+            OpError::Storage
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use argon2::{
         password_hash::{rand_core::OsRng, SaltString},

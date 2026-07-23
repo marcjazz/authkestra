@@ -10,7 +10,6 @@ categories.workspace = true
 
 [dependencies]
 authkestra-engine = { workspace = true }
-authkestra-session = { workspace = true, optional = true }
 authkestra-resource = { workspace = true, optional = true }
 authkestra-op = { workspace = true, optional = true }
 actix-web = "4"
@@ -27,7 +26,7 @@ tracing = "0.1"
 
 [features]
 default = []
-session = ["dep:authkestra-session", "authkestra-engine/session"]
+session = ["authkestra-engine/session"]
 flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engine/token"]
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]

@@ -1,3 +1,5 @@
+#[cfg(feature = "session")]
+pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "token")]
 use authkestra_engine::TokenManager;
 #[cfg(any(feature = "flow", feature = "session", feature = "token"))]
@@ -7,8 +9,6 @@ use authkestra_engine::{
 };
 #[cfg(feature = "flow")]
 use authkestra_engine::{AuthEngine, ErasedOAuthFlow, OAuth2Flow};
-#[cfg(feature = "session")]
-pub use authkestra_session::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "token")]
 use axum::Json;
 #[allow(unused_imports)]

@@ -131,11 +131,12 @@ pub async fn handle_device_authorization(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{ClientRegistration, GrantType, InMemoryClientStore};
-    use crate::code::InMemoryAuthorizationCodeStore;
-    use crate::device::{DeviceCodeStatus, InMemoryDeviceCodeStore};
+    use crate::client::{ClientRegistration, GrantType};
+    use authkestra_engine::store::KvStore;
+
+    use crate::device::DeviceCodeStatus;
     use crate::handlers::token::{handle_token, TokenRequest};
-    use crate::refresh::InMemoryRefreshTokenStore;
+
     use authkestra_engine::auth::state::Identity;
     use authkestra_engine::token::TokenManager;
     use std::collections::HashMap;
@@ -157,21 +158,34 @@ mod tests {
     #[tokio::test]
     async fn test_device_authorization_flow() {
         let config = test_config();
-        let clients = InMemoryClientStore::new();
-        let devices = InMemoryDeviceCodeStore::new();
-        let refresh_tokens = InMemoryRefreshTokenStore::new();
-        let codes = InMemoryAuthorizationCodeStore::new();
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        let devices = authkestra_engine::store::memory::MemoryStore::<
+            crate::device::DeviceCodeSession,
+        >::new();
+        let refresh_tokens =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let tokens = TokenManager::new(b"super_secret_key_that_is_long_enough_for_hmac", None);
 
-        clients.register(ClientRegistration {
-            client_id: "device_client".to_string(),
-            client_secret_hash: None,
-            redirect_uris: vec![],
-            grant_types: vec![GrantType::DeviceCode],
-            scopes: vec!["openid".to_string()],
-            require_pkce: false,
-            allowed_audiences: vec![],
-        });
+        clients
+            .set(
+                "device_client",
+                ClientRegistration {
+                    client_id: "device_client".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::DeviceCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
 
         // 1. Initiate device flow
         let req = DeviceAuthorizationRequest {

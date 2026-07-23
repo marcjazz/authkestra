@@ -9,7 +9,7 @@ pub use authkestra_engine as core;
 pub use authkestra_engine as flow;
 
 #[cfg(feature = "session")]
-pub use authkestra_session as session;
+pub use authkestra_engine::store;
 
 #[cfg(feature = "token")]
 pub use authkestra_engine as token;

@@ -365,7 +365,6 @@ dependencies = [
  "authkestra-op",
  "authkestra-providers",
  "authkestra-resource",
- "authkestra-session",
  "axum",
  "base64",
  "chrono",
@@ -394,7 +393,6 @@ dependencies = [
  "authkestra-engine",
  "authkestra-op",
  "authkestra-resource",
- "authkestra-session",
  "base64",
  "chrono",
  "futures",
@@ -414,7 +412,6 @@ dependencies = [
  "authkestra-macros",
  "authkestra-op",
  "authkestra-resource",
- "authkestra-session",
  "axum",
  "base64",
  "chrono",
@@ -437,11 +434,13 @@ dependencies = [
  "http 1.4.0",
  "jsonwebtoken",
  "rand 0.9.4",
+ "redis",
  "reqwest",
  "rsa",
  "serde",
  "serde_json",
  "sha2",
+ "sqlx",
  "thiserror",
  "tokio",
  "tracing",
@@ -527,20 +526,6 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-name = "authkestra-session"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "authkestra-engine",
- "chrono",
- "redis",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
 ]
 
 [[package]]
