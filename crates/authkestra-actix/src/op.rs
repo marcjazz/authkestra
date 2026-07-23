@@ -1,10 +1,7 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use authkestra_engine::TokenManager;
 use authkestra_op::{
-    client::ClientStore,
-    code::AuthorizationCodeStore,
     config::OpConfig,
-    device::DeviceCodeStore,
     handlers::{
         authorize::{handle_authorize, AuthorizeOutcome, AuthorizeRequest},
         device_authorization::{handle_device_authorization, DeviceAuthorizationRequest},
@@ -13,7 +10,6 @@ use authkestra_op::{
         token::{handle_token, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
-    refresh::RefreshTokenStore,
 };
 use std::sync::Arc;
 

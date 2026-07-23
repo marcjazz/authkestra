@@ -1,6 +1,6 @@
-use crate::client::ClientStore;
+
 use crate::config::OpConfig;
-use crate::device::{DeviceCodeSession, DeviceCodeStatus, DeviceCodeStore};
+use crate::device::{DeviceCodeSession, DeviceCodeStatus};
 use crate::store::OpStore;
 use base64::Engine;
 use chrono::{Duration, Utc};
@@ -193,14 +193,19 @@ mod tests {
             scope: Some("openid".to_string()),
         };
 
-        let res = handle_device_authorization(req, None, &config, &crate::store::CompositeOpStore::new(
-            clients.clone(),
-            codes.clone(),
-            refresh_tokens.clone(),
-            devices.clone(),
-        ))
-            .await
-            .unwrap();
+        let res = handle_device_authorization(
+            req,
+            None,
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                refresh_tokens.clone(),
+                devices.clone(),
+            ),
+        )
+        .await
+        .unwrap();
 
         let device_code = res.device_code.clone();
         let user_code = res.user_code.clone();

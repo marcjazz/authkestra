@@ -1,7 +1,7 @@
 use crate::client::{ClientRegistration, GrantType};
 use crate::config::OpConfig;
+use crate::refresh::RefreshToken;
 use crate::store::OpStore;
-use crate::refresh::{RefreshToken, RefreshTokenStore};
 use authkestra_engine::token::TokenManager;
 use base64::Engine;
 use chrono::Utc;
@@ -150,15 +150,7 @@ pub async fn handle_token(
 
     match req.grant_type.as_str() {
         "authorization_code" => {
-            handle_authorization_code(
-                req,
-                client_id,
-                client,
-                config,
-                op_store,
-                tokens,
-            )
-            .await
+            handle_authorization_code(req, client_id, client, config, op_store, tokens).await
         }
         "client_credentials" => {
             handle_client_credentials(req, client_id, client, config, tokens).await
@@ -167,15 +159,7 @@ pub async fn handle_token(
             handle_refresh_token(req, client_id, client, config, op_store, tokens).await
         }
         "urn:ietf:params:oauth:grant-type:device_code" => {
-            handle_device_code(
-                req,
-                client_id,
-                client,
-                config,
-                op_store,
-                tokens,
-            )
-            .await
+            handle_device_code(req, client_id, client, config, op_store, tokens).await
         }
         "urn:ietf:params:oauth:grant-type:token-exchange" => {
             handle_token_exchange(req, client_id, client, config, tokens).await
@@ -908,8 +892,8 @@ mod tests {
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
     use crate::code::{AuthorizationCode, AuthorizationCodeStore};
-    use crate::refresh::{RefreshToken, RefreshTokenStore};
     use crate::device::DeviceCodeStore;
+    use crate::refresh::{RefreshToken, RefreshTokenStore};
     use authkestra_engine::auth::state::Identity;
     use authkestra_engine::store::KvStore;
     use authkestra_engine::token::TokenManager;

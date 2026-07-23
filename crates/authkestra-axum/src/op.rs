@@ -1,10 +1,7 @@
 use crate::AuthEngineAxumError;
 use authkestra_engine::TokenManager;
 use authkestra_op::{
-    client::ClientStore,
-    code::AuthorizationCodeStore,
     config::OpConfig,
-    device::DeviceCodeStore,
     handlers::{
         authorize::handle_authorize,
         device_authorization::{handle_device_authorization, DeviceAuthorizationRequest},
@@ -13,7 +10,6 @@ use authkestra_op::{
         token::{handle_token, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
-    refresh::RefreshTokenStore,
 };
 use axum::{
     extract::{Form, FromRef, Query, State},
@@ -69,10 +65,11 @@ where
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(client_id = %req.client_id, "Handling OP authorize request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let config = OpConfig::from_ref(&state);
 
     let session_store =
@@ -119,10 +116,11 @@ where
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device authorization request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let config = OpConfig::from_ref(&state);
 
     let auth_header = headers
@@ -154,10 +152,11 @@ where
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let tokens = match <Result<Arc<TokenManager>, AuthEngineAxumError>>::from_ref(&state) {
         Ok(t) => t,
         Err(e) => return e.into_response(),
@@ -254,10 +253,11 @@ where
     authkestra_engine::SessionConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device verify request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
 
     let session_store =
         match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {

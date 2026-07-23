@@ -6,10 +6,7 @@ use authkestra_engine::store::KvStore;
 use actix_web::{App, HttpServer};
 use authkestra_actix::AuthEngineActixOpExt;
 use authkestra_engine::TokenManager;
-use authkestra_op::{
-    client::ClientRegistration,
-    config::OpConfig,
-};
+use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use std::sync::Arc;
 
 struct AppState;
@@ -67,8 +64,6 @@ async fn main() -> std::io::Result<()> {
         cookie_name: "authkestra_sid".to_string(),
         ..Default::default()
     };
-
-
 
     println!("🚀 Actix OP Server running on http://localhost:8080");
     HttpServer::new(move || {
