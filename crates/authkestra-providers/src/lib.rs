@@ -1,3 +1,6 @@
+#[macro_use]
+pub mod macros;
+
 #[cfg(feature = "github")]
 pub mod github;
 

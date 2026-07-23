@@ -53,9 +53,9 @@ async fn test_discord_oauth_flow() {
         format!("{}/callback", server.uri()),
     )
     .with_test_urls(
+        format!("{}/api/oauth2/authorize", server.uri()),
         format!("{}/api/oauth2/token", server.uri()),
         format!("{}/api/users/@me", server.uri()),
-        format!("{}/api/oauth2/token/revoke", server.uri()),
     );
 
     // Simulate the authorization URL generation
