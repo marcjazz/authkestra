@@ -23,6 +23,19 @@ macro_rules! define_oauth_provider {
 
         impl $provider_struct {
             pub fn new(client_id: String, client_secret: String, redirect_uri: String) -> Self {
+                let base_url_env = format!("AUTHKESTRA_{}_BASE_URL", $provider_id.to_uppercase());
+                let api_url_env = format!("AUTHKESTRA_{}_API_URL", $provider_id.to_uppercase());
+
+                let auth_url = std::env::var(&base_url_env)
+                    .map(|b| format!("{b}/login/oauth/authorize"))
+                    .unwrap_or_else(|_| $default_auth_url.to_string());
+                let token_url = std::env::var(&base_url_env)
+                    .map(|b| format!("{b}/login/oauth/access_token"))
+                    .unwrap_or_else(|_| $default_token_url.to_string());
+                let user_url = std::env::var(&api_url_env)
+                    .map(|b| format!("{b}/user"))
+                    .unwrap_or_else(|_| $default_userinfo_url.to_string());
+
                 Self {
                     client_id,
                     client_secret,
@@ -31,9 +44,9 @@ macro_rules! define_oauth_provider {
                         .user_agent("authkestra")
                         .build()
                         .unwrap_or_else(|_| reqwest::Client::new()),
-                    authorization_url: $default_auth_url.to_string(),
-                    token_url: $default_token_url.to_string(),
-                    user_url: $default_userinfo_url.to_string(),
+                    authorization_url: auth_url,
+                    token_url: token_url,
+                    user_url: user_url,
                 }
             }
 
