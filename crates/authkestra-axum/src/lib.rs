@@ -23,8 +23,6 @@ pub use helpers::{Session, SessionStore};
 #[cfg(feature = "op")]
 pub use op::OpExt;
 
-
-
 #[cfg(feature = "macros")]
 extern crate self as authkestra_axum;
 
@@ -192,9 +190,7 @@ where
             }
             Ok(None) => {
                 tracing::warn!("authentication failed: no identity returned");
-                Err(AxumError::Unauthorized(
-                    "Authentication failed".to_string(),
-                ))
+                Err(AxumError::Unauthorized("Authentication failed".to_string()))
             }
             Err(e) => {
                 tracing::error!(error = %e, "internal error during authentication");

@@ -66,12 +66,9 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             }
         },
         _ => {
-            return syn::Error::new_spanned(
-                &input,
-                "AxumState can only be derived for structs",
-            )
-            .to_compile_error()
-            .into();
+            return syn::Error::new_spanned(&input, "AxumState can only be derived for structs")
+                .to_compile_error()
+                .into();
         }
     };
 

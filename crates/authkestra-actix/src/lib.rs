@@ -8,10 +8,10 @@ pub use authkestra_engine::SessionStoreState;
 pub use authkestra_engine::TokenManager;
 #[cfg(all(feature = "flow", feature = "token"))]
 pub use authkestra_engine::TokenManagerState;
-#[cfg(feature = "flow")]
-pub use authkestra_engine::{Engine, SessionConfig};
 #[cfg(all(feature = "flow", any(feature = "session", feature = "token")))]
 pub use authkestra_engine::{Configured, Missing};
+#[cfg(feature = "flow")]
+pub use authkestra_engine::{Engine, SessionConfig};
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use futures::future::LocalBoxFuture;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
@@ -34,8 +34,6 @@ pub use op::OpExt;
 pub trait ActixExt<S, T> {
     fn actix_scope(&self) -> actix_web::Scope;
 }
-
-
 
 #[cfg(feature = "flow")]
 #[cfg(all(feature = "flow", feature = "session"))]

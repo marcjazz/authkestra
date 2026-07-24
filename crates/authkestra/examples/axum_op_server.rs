@@ -4,7 +4,7 @@
 use authkestra_engine::store::KvStore;
 
 use authkestra_axum::OpExt;
-use authkestra_engine::{Engine, Configured, TokenManager};
+use authkestra_engine::{Configured, Engine, TokenManager};
 use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use axum::Router;
 use std::sync::Arc;

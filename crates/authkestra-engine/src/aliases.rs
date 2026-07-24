@@ -1,5 +1,5 @@
 use crate::auth::SessionStore;
-use crate::engine::{Engine, Configured, Missing};
+use crate::engine::{Configured, Engine, Missing};
 #[cfg(feature = "token")]
 use crate::token::TokenManager;
 use std::sync::Arc;

@@ -4,7 +4,7 @@
 //! It uses an in-memory session store and a mock authentication provider.
 
 use authkestra::flow::Engine;
-use authkestra_axum::{AxumError, AxumExt, AxumState, AuthSession};
+use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{Configured, SessionConfig};
 use axum::{

@@ -71,8 +71,7 @@ where
     };
     let config = OpConfig::from_ref(&state);
 
-    let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state)
-    {
+    let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
     };
@@ -255,8 +254,7 @@ where
         Err(e) => return e.into_response(),
     };
 
-    let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state)
-    {
+    let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
     };
