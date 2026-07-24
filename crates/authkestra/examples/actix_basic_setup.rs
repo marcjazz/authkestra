@@ -6,13 +6,13 @@
 use actix_files::Files;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra::flow::Engine;
-use authkestra_actix::{ActixExt, AuthSession, State};
+use authkestra_actix::{ActixExt, AuthSession, ActixState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{Configured, Missing, SessionConfig};
 use serde_json::json;
 use std::sync::Arc;
 
-#[derive(Clone, State)]
+#[derive(Clone, ActixState)]
 struct AppState {
     #[authkestra(engine)]
     auth: authkestra_engine::AkWebAppEngine,

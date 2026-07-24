@@ -10,7 +10,7 @@
 use authkestra::flow::Engine;
 use authkestra_axum::{AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
-use authkestra_engine::{Configured, SessionConfig};
+use authkestra_engine::SessionConfig;
 use authkestra_macros::KvStore;
 use axum::Router;
 use sqlx::sqlite::SqlitePoolOptions;

@@ -4,12 +4,12 @@
 use authkestra_engine::store::KvStore;
 
 use actix_web::{App, HttpServer};
-use authkestra_actix::{OpExt, State};
-use authkestra_engine::{Configured, Engine, TokenManager};
+use authkestra_actix::{OpExt, ActixState};
+use authkestra_engine::TokenManager;
 use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use std::sync::Arc;
 
-#[derive(Clone, State)]
+#[derive(Clone, ActixState)]
 struct AppState {
     #[authkestra(engine)]
     auth: authkestra_engine::AkEngine,

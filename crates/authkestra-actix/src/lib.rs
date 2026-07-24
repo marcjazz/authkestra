@@ -9,7 +9,7 @@ pub use authkestra_engine::TokenManager;
 #[cfg(all(feature = "flow", feature = "token"))]
 pub use authkestra_engine::TokenManagerState;
 #[cfg(all(feature = "flow", any(feature = "session", feature = "token")))]
-pub use authkestra_engine::{Configured, Missing};
+pub use authkestra_engine::Missing;
 #[cfg(feature = "flow")]
 pub use authkestra_engine::{Engine, SessionConfig};
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
@@ -23,7 +23,7 @@ pub mod helpers;
 pub mod op;
 
 #[cfg(feature = "macros")]
-pub use authkestra_macros::ActixState as State;
+pub use authkestra_macros::ActixState;
 
 #[cfg(feature = "flow")]
 pub use helpers::actix_login_handler;
