@@ -4,7 +4,7 @@
 use authkestra_engine::store::KvStore;
 
 use authkestra_axum::OpExt;
-use authkestra_engine::{Configured, Engine, TokenManager};
+use authkestra_engine::{AkEngine, TokenManager};
 use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use axum::Router;
 use std::sync::Arc;
@@ -14,10 +14,7 @@ use authkestra_axum::AxumState;
 #[derive(Clone, AxumState)]
 struct AppState {
     #[authkestra(engine)]
-    authkestra: Engine<
-        Configured<Arc<dyn authkestra_engine::auth::SessionStore>>,
-        Configured<Arc<TokenManager>>,
-    >,
+    auth: AkEngine,
 
     #[authkestra(store)]
     op_store: Arc<dyn authkestra_op::OpStore>,
@@ -64,14 +61,14 @@ async fn main() {
         ..Default::default()
     };
 
-    let authkestra = authkestra_engine::Engine::builder()
+    let auth = authkestra_engine::Engine::builder()
         .session_store(session_store)
         .session_config(session_config)
         .token_manager(token_manager)
         .build();
 
     let state = AppState {
-        authkestra,
+        auth,
         op_store,
         config: OpConfig {
             issuer: "http://localhost:3000".to_string(),

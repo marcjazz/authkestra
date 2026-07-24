@@ -9,7 +9,7 @@
 use authkestra::flow::{Engine, OAuth2Flow};
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
-use authkestra_engine::{Configured, SessionConfig};
+use authkestra_engine::{AkWebAppEngine, SessionConfig};
 use authkestra_providers::github::GithubProvider;
 use axum::{
     response::{IntoResponse, Json},
@@ -22,7 +22,11 @@ use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 
 /// Engine state with support for session only.
-type AppState = AxumState<Configured<Arc<dyn SessionStore>>>;
+#[derive(Clone, AxumState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkWebAppEngine,
+}
 
 #[tokio::main]
 async fn main() {
@@ -67,7 +71,7 @@ async fn main() {
         .build();
 
     let state = AppState {
-        authkestra: auth_engine.clone(),
+        auth: auth_engine.clone(),
     };
 
     let app = Router::new()
