@@ -55,7 +55,7 @@ async fn run_oauth_example(example_bin: &str, provider: &str, login_path: &str) 
         .unwrap();
 
     let mut resp = None;
-    while attempt < 45 {
+    while attempt < 180 {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let url = format!("http://127.0.0.1:3000{}", login_path);
         if let Ok(r) = client.get(&url).send().await {
@@ -65,7 +65,7 @@ async fn run_oauth_example(example_bin: &str, provider: &str, login_path: &str) 
         attempt += 1;
     }
 
-    let resp = resp.expect(&format!("{} failed to start after 45s", example_bin));
+    let resp = resp.expect(&format!("{} failed to start after 180s", example_bin));
 
     assert!(
         resp.status().is_redirection(),

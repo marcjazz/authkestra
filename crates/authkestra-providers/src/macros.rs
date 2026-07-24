@@ -45,8 +45,8 @@ macro_rules! define_oauth_provider {
                         .build()
                         .unwrap_or_else(|_| reqwest::Client::new()),
                     authorization_url: auth_url,
-                    token_url: token_url,
-                    user_url: user_url,
+                    token_url,
+                    user_url,
                 }
             }
 
