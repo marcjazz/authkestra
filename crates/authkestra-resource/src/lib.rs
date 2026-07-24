@@ -4,8 +4,6 @@ use http::request::Parts;
 
 pub mod jwt;
 
-pub use Guard as ResourceEnforcer;
-pub use GuardBuilder as ResourceEnforcerBuilder;
 
 /// Policy for controlling the behavior of chained authentication strategies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
