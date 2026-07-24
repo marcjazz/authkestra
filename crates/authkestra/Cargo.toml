@@ -1,12 +1,13 @@
 [package]
 name = "authkestra"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 description = "A modular authentication framework for Rust"
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
+readme.workspace = true
 
 [dependencies]
 authkestra-engine = { workspace = true }

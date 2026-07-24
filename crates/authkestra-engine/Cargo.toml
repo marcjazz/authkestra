@@ -1,10 +1,11 @@
 [package]
 name = "authkestra-engine"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 description = "Unified authentication engine for the authkestra framework"
 repository.workspace = true
 license.workspace = true
+readme.workspace = true
 
 [dependencies]
 # From authkestra-core
