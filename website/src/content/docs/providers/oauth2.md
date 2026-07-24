@@ -11,6 +11,15 @@ By default, OAuth2 logins often result in a server-side session being created. H
 
 Authkestra strictly implements the [OAuth 2.0 Authorization Framework (RFC 6749)](https://datatracker.ietf.org/doc/html/rfc6749) and [PKCE (RFC 7636)](https://datatracker.ietf.org/doc/html/rfc7636). We didn't invent these protocols; we just provide a memory-safe, idiomatic Rust engine to execute them.
 
+## Prerequisites
+
+If you are using multiple OAuth providers (e.g., GitHub and Google), you must enable their respective feature flags:
+
+```toml
+[dependencies]
+authkestra = { version = "0.2.1", features = ["github", "google"] }
+```
+
 ## Stateless Engine Configuration
 
 Notice how we completely omit `.session_store()` and use `.jwt_secret()` instead. You can also chain multiple providers back-to-back:
