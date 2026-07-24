@@ -36,7 +36,7 @@ pub struct MySqliteSessionStore(authkestra_engine::store::sql::SqlKvStore<sqlx::
 struct AppState {
     // Automatically extracts SessionStore and SessionConfig
     #[authkestra(engine)]
-    auth: Engine<Configured<Arc<dyn SessionStore>>, authkestra_engine::Missing>,
+    auth: authkestra_engine::AkWebAppEngine,
 }
 
 // ============================================================================

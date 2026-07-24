@@ -15,7 +15,7 @@ use std::sync::Arc;
 #[derive(Clone, State)]
 struct AppState {
     #[authkestra(engine)]
-    auth: Engine<Configured<Arc<dyn SessionStore>>, Missing>,
+    auth: authkestra_engine::AkWebAppEngine,
 }
 
 #[actix_web::main]

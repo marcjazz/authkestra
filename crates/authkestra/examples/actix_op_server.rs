@@ -12,10 +12,7 @@ use std::sync::Arc;
 #[derive(Clone, State)]
 struct AppState {
     #[authkestra(engine)]
-    auth: Engine<
-        Configured<Arc<dyn authkestra_engine::auth::SessionStore>>,
-        Configured<Arc<TokenManager>>,
-    >,
+    auth: authkestra_engine::AkEngine,
 
     #[authkestra(store)]
     op_store: Arc<dyn authkestra_op::OpStore>,

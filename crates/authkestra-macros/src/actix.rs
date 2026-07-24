@@ -89,7 +89,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                             >
                         ),
                     )
-                } else if ident_str == "Authkestra" || ident_str == "Engine" {
+                } else if ident_str == "Engine" {
                     match &last_segment.arguments {
                         syn::PathArguments::AngleBracketed(args) => {
                             if args.args.len() != 2 {
