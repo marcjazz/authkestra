@@ -41,7 +41,19 @@ async fn main() {
     let redirect_uri = std::env::var("AUTHKESTRA_GITHUB_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/auth/callback/github".to_string());
 
-    let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
+    // Support E2E tests pointing to a local mock server
+    let github_provider = match std::env::var("AUTHKESTRA_GITHUB_BASE_URL") {
+        Ok(base_url) => {
+            let api_url =
+                std::env::var("AUTHKESTRA_GITHUB_API_URL").unwrap_or_else(|_| base_url.clone());
+            GithubProvider::new(client_id, client_secret, redirect_uri).with_test_urls(
+                format!("{base_url}/login/oauth/authorize"),
+                format!("{base_url}/login/oauth/access_token"),
+                format!("{api_url}/user"),
+            )
+        }
+        Err(_) => GithubProvider::new(client_id, client_secret, redirect_uri),
+    };
 
     // Initialize Authkestra in stateless mode (JWT only).
     let auth_engine = Engine::builder()

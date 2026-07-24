@@ -40,7 +40,17 @@ async fn main() {
     let redirect_uri = std::env::var("AUTHKESTRA_GOOGLE_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/auth/google/callback".to_string());
 
-    let google_provider = GoogleProvider::new(client_id, client_secret, redirect_uri);
+    let mut google_provider = GoogleProvider::new(client_id, client_secret, redirect_uri);
+    // Support E2E tests pointing to a local mock server
+    if let Ok(base_url) = std::env::var("AUTHKESTRA_GOOGLE_BASE_URL") {
+        let api_url =
+            std::env::var("AUTHKESTRA_GOOGLE_API_URL").unwrap_or_else(|_| base_url.clone());
+        google_provider = google_provider.with_test_urls(
+            format!("{base_url}/login/oauth/authorize"),
+            format!("{base_url}/login/oauth/access_token"),
+            format!("{api_url}/user"),
+        );
+    }
 
     // Session Store
     // TIP: authkestra uses traits (like `SessionStore`) for storage.

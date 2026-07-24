@@ -139,6 +139,26 @@ name = "actix_resource_server_strategy"
 path = "examples/actix/resource_server_strategy.rs"
 required-features = ["full"]
 
+[[example]]
+name = "axum_basic_setup"
+path = "examples/axum/basic_setup.rs"
+required-features = ["full"]
+
+[[example]]
+name = "axum_session_redis"
+path = "examples/axum/session_redis.rs"
+required-features = ["full"]
+
+[[example]]
+name = "axum_sql_store"
+path = "examples/axum/sql_store.rs"
+required-features = ["full"]
+
+[[example]]
+name = "actix_basic_setup"
+path = "examples/actix/basic_setup.rs"
+required-features = ["full"]
+
 
 [[test]]
 name = "typestate_tests"

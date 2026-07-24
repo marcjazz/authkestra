@@ -60,16 +60,18 @@ let auth_engine = Engine::builder()
     .build();
 ```
 
-To see complete, runnable examples for various frameworks and flows, check out the [examples](crates/authkestra-examples/examples/) directory:
+To see complete, runnable examples for various frameworks and flows, check out the [examples](crates/authkestra/examples/) directory:
 
-- [Axum Basic Setup](crates/authkestra-examples/examples/axum_basic_setup.rs): `cargo run --example axum_basic_setup`
-- [Actix Basic Setup](crates/authkestra-examples/examples/actix_basic_setup.rs): `cargo run --example actix_basic_setup`
-- [Axum with GitHub OAuth](crates/authkestra-examples/examples/axum_oauth2_github.rs): `cargo run --example axum_oauth2_github`
-- [Axum with Google OIDC](crates/authkestra-examples/examples/axum_oidc_google.rs): `cargo run --example axum_oidc_google`
-- [Axum with Redis Session](crates/authkestra-examples/examples/axum_session_redis.rs): `cargo run --example axum_session_redis`
-- [Client Credentials Flow](crates/authkestra-examples/examples/axum_client_credentials.rs): `cargo run --example axum_client_credentials`
-- [Device Flow](crates/authkestra-examples/examples/axum_device_flow.rs): `cargo run --example axum_device_flow`
-- [Axum Resource Server](crates/authkestra-examples/examples/axum_resource_server.rs): `cargo run --example axum_resource_server`
+- [Axum Basic Setup](crates/authkestra/examples/axum/basic_setup.rs): `cargo run --example axum_basic_setup`
+- [Actix Basic Setup](crates/authkestra/examples/actix/basic_setup.rs): `cargo run --example actix_basic_setup`
+- [Axum with GitHub OAuth](crates/authkestra/examples/axum/oauth2_github.rs): `cargo run --example axum_oauth2_github`
+- [Axum with Google OIDC](crates/authkestra/examples/axum/oidc_google.rs): `cargo run --example axum_oidc_google`
+- [Axum with Redis Session](crates/authkestra/examples/axum/session_redis.rs): `cargo run --example axum_session_redis`
+- [Axum with SQL Store](crates/authkestra/examples/axum/sql_store.rs): `cargo run --example axum_sql_store`
+- [Client Credentials Flow](crates/authkestra/examples/core/client_credentials.rs): `cargo run --example core_client_credentials`
+- [Device Flow](crates/authkestra/examples/core/device_flow.rs): `cargo run --example core_device_flow`
+- [Axum Resource Server](crates/authkestra/examples/axum/resource_server.rs): `cargo run --example axum_resource_server`
+- [Axum OP Server](crates/authkestra/examples/axum/op_server.rs): `cargo run --example axum_op_server`
 
 ## 🏗️ Technical Design Principles
 
