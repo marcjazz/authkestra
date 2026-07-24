@@ -31,6 +31,8 @@ export default defineConfig({
 					items: [
 						{ label: 'Stateless OAuth2', slug: 'providers/oauth2' },
 						{ label: 'OIDC Provider', slug: 'providers/oidc' },
+						{ label: 'Client Credentials', slug: 'providers/client-credentials' },
+						{ label: 'Device Flow', slug: 'providers/device-flow' },
 					],
 				},
 				{
