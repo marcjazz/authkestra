@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AuthEngineAxumError"],"struct":["OAuthCallbackParams","OAuthLoginParams"]};
+window.SIDEBAR_ITEMS = {"enum":["AxumError"],"struct":["OAuthCallbackParams","OAuthLoginParams"]};

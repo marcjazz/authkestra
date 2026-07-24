@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AuthEngine","AuthEngineBuilder","Configured","Missing"],"trait":["HasSessionStore","HasTokenManager","SessionStoreState","TokenManagerState"],"type":["Authkestra","HasSessionStoreMarker","HasTokenManagerMarker","NoSessionStoreMarker","NoTokenManagerMarker","StatefulAuthEngine","StatefullAuthkestra","StatelessAuthEngine","StatelessAuthkestra"]};
+window.SIDEBAR_ITEMS = {"struct":["Configured","Engine","EngineBuilder","Missing"],"trait":["HasSessionStore","HasTokenManager","SessionStoreState","TokenManagerState"]};

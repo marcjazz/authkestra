@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AuthPolicy"],"mod":["jwt"],"struct":["AuthEngineGuard","AuthEngineGuardBuilder"]};
+window.SIDEBAR_ITEMS = {"enum":["AuthPolicy"],"mod":["jwt"],"struct":["Guard","GuardBuilder"]};
