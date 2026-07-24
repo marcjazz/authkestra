@@ -7,7 +7,7 @@
 //! - `REDIS_URL` environment variable (e.g., `redis://127.0.0.1/`)
 
 use authkestra::flow::Engine;
-use authkestra_axum::{Error, AxumExt, State, AuthSession};
+use authkestra_axum::{AxumError, AxumExt, AxumState, AuthSession};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::store::redis::RedisStore;
 use authkestra_engine::{Configured, SessionConfig};
@@ -22,7 +22,7 @@ use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 
 /// Engine state with support for session only.
-type AppState = State<Configured<Arc<dyn SessionStore>>>;
+type AppState = AxumState<Configured<Arc<dyn SessionStore>>>;
 
 #[tokio::main]
 async fn main() {
@@ -61,7 +61,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_user(session: Result<AuthSession, Error>) -> impl IntoResponse {
+async fn get_user(session: Result<AuthSession, AxumError>) -> impl IntoResponse {
     match session {
         Ok(AuthSession(session)) => Json(json!({
             "id": session.identity.external_id,

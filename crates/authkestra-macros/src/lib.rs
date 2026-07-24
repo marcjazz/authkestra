@@ -6,7 +6,7 @@ mod axum;
 mod derive;
 
 #[cfg(feature = "axum")]
-#[proc_macro_derive(State, attributes(authkestra))]
+#[proc_macro_derive(AxumState, attributes(authkestra))]
 pub fn derive_authkestra_state(input: TokenStream) -> TokenStream {
     axum::derive_authkestra_state_impl(input)
 }

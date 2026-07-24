@@ -8,7 +8,7 @@
 //! to the internal unified `SqlKvStore`.
 
 use authkestra::flow::Engine;
-use authkestra_axum::{Error, AxumExt, AuthSession, State};
+use authkestra_axum::{AxumError, AxumExt, AuthSession, AxumState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{Configured, SessionConfig};
 use authkestra_macros::KvStore;
@@ -32,7 +32,7 @@ pub struct MySqliteSessionStore(authkestra_engine::store::sql::SqlKvStore<sqlx::
 // ============================================================================
 
 /// The State macro generates all the axum FromRef implementations.
-#[derive(Clone, State)]
+#[derive(Clone, AxumState)]
 struct AppState {
     // Automatically extracts SessionStore and SessionConfig
     #[authkestra(engine)]

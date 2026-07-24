@@ -9,9 +9,9 @@ use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use axum::Router;
 use std::sync::Arc;
 
-use authkestra_axum::State;
+use authkestra_axum::AxumState;
 
-#[derive(Clone, State)]
+#[derive(Clone, AxumState)]
 struct AppState {
     #[authkestra(engine)]
     authkestra: Engine<

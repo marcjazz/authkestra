@@ -8,7 +8,7 @@
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
 use authkestra::flow::{Engine, OAuth2Flow};
-use authkestra_axum::{helpers, Error, AuthToken};
+use authkestra_axum::{helpers, AxumError, AuthToken};
 use authkestra_engine::{token::TokenManager, Configured, Missing};
 use authkestra_providers::github::GithubProvider;
 use axum::{
@@ -29,7 +29,7 @@ struct AppState {
 }
 
 /// Required for the `AuthToken` extractor and internal helpers.
-impl FromRef<AppState> for Result<Arc<TokenManager>, Error> {
+impl FromRef<AppState> for Result<Arc<TokenManager>, AxumError> {
     fn from_ref(state: &AppState) -> Self {
         Ok(state.authkestra.token_manager.0.clone())
     }
@@ -112,14 +112,14 @@ async fn callback_handler(
     State(state): State<AppState>,
     Query(params): Query<helpers::OAuthCallbackParams>,
     cookies: Cookies,
-) -> Result<impl IntoResponse, Error> {
-    let token_manager = <Result<Arc<TokenManager>, Error>>::from_ref(&state)?;
+) -> Result<impl IntoResponse, AxumError> {
+    let token_manager = <Result<Arc<TokenManager>, AxumError>>::from_ref(&state)?;
 
     let flow = state
         .authkestra
         .providers
         .get(&provider)
-        .ok_or_else(|| Error::Internal(format!("Provider {} not found", provider)))?;
+        .ok_or_else(|| AxumError::Internal(format!("Provider {} not found", provider)))?;
 
     // We use the JWT-specific callback helper
     helpers::handle_oauth_callback_jwt_erased(
@@ -133,15 +133,15 @@ async fn callback_handler(
     .await
     .map_err(|(status, msg)| {
         if status == StatusCode::UNAUTHORIZED {
-            Error::Unauthorized(msg)
+            AxumError::Unauthorized(msg)
         } else {
-            Error::Internal(msg)
+            AxumError::Internal(msg)
         }
     })
 }
 
 /// Protected endpoint using `AuthToken` extractor.
-async fn get_user(auth: Result<AuthToken, Error>) -> impl IntoResponse {
+async fn get_user(auth: Result<AuthToken, AxumError>) -> impl IntoResponse {
     match auth {
         Ok(AuthToken(claims)) => {
             let identity = claims.identity.as_ref().unwrap();

@@ -16,7 +16,7 @@ pub mod helpers;
 #[cfg(feature = "op")]
 pub mod op;
 
-pub use helpers::Error;
+pub use helpers::AxumError;
 #[cfg(feature = "session")]
 pub use helpers::{Session, SessionStore};
 
@@ -29,17 +29,17 @@ pub use op::OpExt;
 extern crate self as authkestra_axum;
 
 #[cfg(feature = "macros")]
-pub use authkestra_macros::State;
+pub use authkestra_macros::AxumState;
 
 #[cfg(feature = "flow")]
-#[derive(Clone, State)]
-pub struct State<S = Missing, T = Missing> {
+#[derive(Clone, AxumState)]
+pub struct AxumState<S = Missing, T = Missing> {
     #[authkestra(engine)]
     pub authkestra: Engine<S, T>,
 }
 
 #[cfg(feature = "flow")]
-impl<S, T> From<Engine<S, T>> for State<S, T> {
+impl<S, T> From<Engine<S, T>> for AxumState<S, T> {
     fn from(authkestra: Engine<S, T>) -> Self {
         Self { authkestra }
     }
@@ -53,10 +53,10 @@ pub struct AuthSession(pub Session);
 impl<S> FromRequestParts<S> for AuthSession
 where
     S: Send + Sync,
-    Result<Arc<dyn SessionStore>, Error>: FromRef<S>,
+    Result<Arc<dyn SessionStore>, AxumError>: FromRef<S>,
     SessionConfig: FromRef<S>,
 {
-    type Rejection = Error;
+    type Rejection = AxumError;
 
     #[tracing::instrument(skip_all)]
     async fn from_request_parts(
@@ -65,13 +65,13 @@ where
     ) -> Result<Self, Self::Rejection> {
         use tower_cookies::Cookies;
         tracing::debug!("extracting AuthSession from request");
-        let session_store = <Result<Arc<dyn SessionStore>, Error>>::from_ref(state)?;
+        let session_store = <Result<Arc<dyn SessionStore>, AxumError>>::from_ref(state)?;
         let session_config = SessionConfig::from_ref(state);
         let cookies = Cookies::from_request_parts(parts, state)
             .await
             .map_err(|e| {
                 tracing::error!(error = %e.1, "failed to extract cookies");
-                Error::Internal(e.1.to_string())
+                AxumError::Internal(e.1.to_string())
             })?;
 
         let session = helpers::get_session(&session_store, &session_config, &cookies)
@@ -96,9 +96,9 @@ pub struct AuthToken(pub authkestra_engine::Claims);
 impl<S> FromRequestParts<S> for AuthToken
 where
     S: Send + Sync,
-    Result<Arc<TokenManager>, Error>: FromRef<S>,
+    Result<Arc<TokenManager>, AxumError>: FromRef<S>,
 {
-    type Rejection = Error;
+    type Rejection = AxumError;
 
     #[tracing::instrument(skip_all)]
     async fn from_request_parts(
@@ -106,7 +106,7 @@ where
         state: &S,
     ) -> Result<Self, Self::Rejection> {
         tracing::debug!("extracting AuthToken from request");
-        let token_manager = <Result<Arc<TokenManager>, Error>>::from_ref(state)?;
+        let token_manager = <Result<Arc<TokenManager>, AxumError>>::from_ref(state)?;
         let token = helpers::get_token(parts, &token_manager)
             .await
             .map_err(|e| {
@@ -132,7 +132,7 @@ where
     jsonwebtoken::Validation: FromRef<S>,
     T: for<'de> serde::Deserialize<'de> + 'static,
 {
-    type Rejection = Error;
+    type Rejection = AxumError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
@@ -145,10 +145,10 @@ where
             .headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| Error::Unauthorized("Missing Authorization header".to_string()))?;
+            .ok_or_else(|| AxumError::Unauthorized("Missing Authorization header".to_string()))?;
 
         if !auth_header.starts_with("Bearer ") {
-            return Err(Error::Unauthorized(
+            return Err(AxumError::Unauthorized(
                 "Invalid Authorization header".to_string(),
             ));
         }
@@ -157,7 +157,7 @@ where
         let claims =
             authkestra_resource::jwt::validate_jwt_generic::<T>(token, &cache, &validation)
                 .await
-                .map_err(|e| Error::Unauthorized(format!("Invalid token: {e}")))?;
+                .map_err(|e| AxumError::Unauthorized(format!("Invalid token: {e}")))?;
 
         Ok(Jwt(claims))
     }
@@ -176,7 +176,7 @@ where
     Arc<authkestra_resource::Guard<I>>: FromRef<S>,
     I: Send + Sync + 'static,
 {
-    type Rejection = Error;
+    type Rejection = AxumError;
 
     #[tracing::instrument(skip_all)]
     async fn from_request_parts(
@@ -192,13 +192,13 @@ where
             }
             Ok(None) => {
                 tracing::warn!("authentication failed: no identity returned");
-                Err(Error::Unauthorized(
+                Err(AxumError::Unauthorized(
                     "Authentication failed".to_string(),
                 ))
             }
             Err(e) => {
                 tracing::error!(error = %e, "internal error during authentication");
-                Err(Error::Internal(e.to_string()))
+                Err(AxumError::Internal(e.to_string()))
             }
         }
     }
@@ -211,7 +211,7 @@ pub trait AxumExt<S, T> {
         AppState: Clone + Send + Sync + 'static,
         Engine<S, T>: FromRef<AppState>,
         SessionConfig: FromRef<AppState>,
-        Result<Arc<dyn SessionStore>, Error>: FromRef<AppState>;
+        Result<Arc<dyn SessionStore>, AxumError>: FromRef<AppState>;
 }
 
 #[cfg(all(feature = "flow", feature = "session"))]
@@ -223,7 +223,7 @@ impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AxumExt
         AppState: Clone + Send + Sync + 'static,
         Engine<S, T>: FromRef<AppState>,
         SessionConfig: FromRef<AppState>,
-        Result<Arc<dyn SessionStore>, Error>: FromRef<AppState>,
+        Result<Arc<dyn SessionStore>, AxumError>: FromRef<AppState>,
     {
         use axum::routing::get;
         axum::Router::new()

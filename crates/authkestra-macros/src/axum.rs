@@ -6,10 +6,10 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use authkestra_axum::State;
+//! use authkestra_axum::AxumState;
 //! use authkestra::flow::Engine;
 //!
-//! #[derive(Clone, State)]
+//! #[derive(Clone, AxumState)]
 //! struct AppState {
 //!     #[authkestra(engine)]
 //!     auth: Engine<Configured<Arc<dyn SessionStore>>, Missing>,
@@ -59,7 +59,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             _ => {
                 return syn::Error::new_spanned(
                     &input,
-                    "State can only be derived for structs with named fields",
+                    "AxumState can only be derived for structs with named fields",
                 )
                 .to_compile_error()
                 .into();
@@ -68,7 +68,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
         _ => {
             return syn::Error::new_spanned(
                 &input,
-                "State can only be derived for structs",
+                "AxumState can only be derived for structs",
             )
             .to_compile_error()
             .into();
@@ -176,7 +176,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             use authkestra_engine::{SessionStoreState as _, TokenManagerState as _};
 
             impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-                for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::Error>
+                for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::AxumError>
             where
                 #s_param: authkestra_engine::SessionStoreState,
                 #where_clause
@@ -199,7 +199,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
         if !t_param_str.contains("Missing") {
             generated_impls.push(quote! {
                 impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-                    for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::Error>
+                    for ::std::result::Result<::std::sync::Arc<authkestra_engine::TokenManager>, authkestra_axum::AxumError>
                 where
                     #t_param: authkestra_engine::TokenManagerState,
                     #where_clause
@@ -226,7 +226,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                 }
             }
 
-            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for ::std::result::Result<#field_ty, authkestra_axum::Error>
+            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for ::std::result::Result<#field_ty, authkestra_axum::AxumError>
             #where_clause
             {
                 fn from_ref(state: &#struct_name #ty_generics) -> Self {
