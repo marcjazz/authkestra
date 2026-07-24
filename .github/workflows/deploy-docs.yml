@@ -1,41 +1,61 @@
 name: Deploy Documentation
- 
+
 on:
   push:
     branches:
       - main
- 
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+
 permissions:
-  contents: write
- 
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
- 
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+      
+      - name: Install Node.js
+        uses: actions/setup-node@v4
         with:
-          toolchain: stable
-          override: true
- 
-      - name: Cache cargo registry and build
-        uses: swatinem/rust-cache@v2
- 
-      - name: Build docs
-        run: cargo doc --workspace --no-deps
- 
-      - name: Create root index.html redirect
-        run: |
-          mkdir -p target/doc
-          printf '%s\n' '<!DOCTYPE html>' '<html>' '<head>' '  <meta charset="utf-8">' '  <meta http-equiv="refresh" content="0; url=authkestra/index.html">' '</head>' '</html>' > target/doc/index.html
-      - name: Remove source folder
-        run: rm -rf target/doc/src
- 
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        working-directory: ./website
+        run: pnpm install
+
+      - name: Build Astro
+        working-directory: ./website
+        run: pnpm run build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./website/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+    name: Deploy
+    steps:
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target/doc
+        id: deployment
+        uses: actions/deploy-pages@v4
