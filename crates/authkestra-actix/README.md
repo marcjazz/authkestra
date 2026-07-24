@@ -8,7 +8,7 @@ This crate provides Actix-web specific extractors and utilities to integrate the
 
 - **Extractors**: Easily access validated sessions or JWT claims in your request handlers.
 - **OAuth2 Helpers**: Streamlined functions for initiating login, handling callbacks, and logging out.
-- **Session Management**: Integration with `authkestra-session` for server-side session storage.
+- **Session Management**: Integration with `authkestra-engine` for server-side session storage.
 
 ## Usage
 
@@ -16,9 +16,9 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-actix = "0.1.2"
-authkestra-session = "0.1.1"
-authkestra-token = "0.1.2"
+authkestra-actix = "0.2.0"
+authkestra-engine = "0.2.0"
+authkestra-token = "0.2.0"
 actix-web = "4"
 ```
 
@@ -136,7 +136,7 @@ To use the extractors and helpers, you must configure your Actix app with the ne
 ```rust
 use actix_web::{web, App, HttpServer};
 use authkestra_actix::SessionConfig;
-use authkestra_session::MemoryStore;
+use authkestra_engine::MemoryStore;
 use authkestra_token::TokenManager;
 use std::sync::Arc;
 

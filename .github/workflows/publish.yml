@@ -51,7 +51,6 @@ jobs:
       max-parallel: 4
       matrix:
         crate:
-          - authkestra-session
           - authkestra-resource
           - authkestra-providers
           - authkestra-oidc

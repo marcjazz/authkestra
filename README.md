@@ -11,7 +11,7 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 # Use the facade with the features you need
-authkestra = { version = "0.1.1", features = ["axum", "github"] }
+authkestra = { version = "0.2.0", features = ["axum", "github"] }
 ```
 
 For advanced users, individual crates are still available and can be used independently if preferred.
@@ -33,7 +33,7 @@ For advanced users, individual crates are still available and can be used indepe
 | [`authkestra`](crates/authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
 | [`authkestra-engine`](crates/authkestra-engine/README.md)                       | Foundational types, traits and the **Engine** orchestrator.           |
 | [`authkestra-resource`](crates/authkestra-resource/README.md)                   | Resource server enforcement and validation (JWT, etc).                    |
-| [`authkestra-session`](crates/authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
+| [`authkestra-engine`](crates/authkestra-engine/README.md)                     | Session persistence layer abstraction.                                    |
 | [`authkestra-providers`](crates/authkestra-providers/README.md)                 | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
 | [`authkestra-axum`](crates/authkestra-axum/README.md)                           | Axum-specific integration, including `AuthSession` extractors.            |
 | [`authkestra-actix`](crates/authkestra-actix/README.md)                         | Actix-specific integration, including `State` macro support.    |

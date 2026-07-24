@@ -2,7 +2,7 @@
 
 OpenID Connect (OIDC) implementation for [authkestra](https://github.com/marcjazz/authkestra).
 
-This crate provides OIDC support for the `authkestra` framework, including automatic provider discovery, JWKS handling, and ID token validation. It implements the `OAuthProvider` trait from `authkestra-core`, making it easy to integrate any OIDC-compliant provider into your application.
+This crate provides OIDC support for the `authkestra` framework, including automatic provider discovery, JWKS handling, and ID token validation. It implements the `OAuthProvider` trait from `authkestra-engine`, making it easy to integrate any OIDC-compliant provider into your application.
 
 ## Features
 
@@ -18,15 +18,15 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-oidc = "0.1.1"
-authkestra-core = "0.1.1"
+authkestra-oidc = "0.2.0"
+authkestra-engine = "0.2.0"
 ```
 
 ### Example
 
 ```rust
 use authkestra_oidc::OidcProvider;
-use authkestra_core::OAuthProvider;
+use authkestra_engine::OAuthProvider;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
