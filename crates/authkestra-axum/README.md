@@ -28,7 +28,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.1.3", features = ["macros"] }
+authkestra-axum = { version = "0.2.0", features = ["macros"] }
 tower-cookies = "0.10" # Required for session support
 ```
 
@@ -39,16 +39,16 @@ The easiest way to integrate Authkestra with custom Axum state is using the `Fro
 ```rust
 use axum::{routing::get, Router};
 use authkestra_axum::{AuthSession, FromRef};
-use authkestra::flow::Authkestra;
+use authkestra::flow::Engine;
 use authkestra_flow::{Configured, Missing};
-use authkestra_session::SessionStore;
+use authkestra_engine::SessionStore;
 use tower_cookies::CookieManagerLayer;
 use std::sync::Arc;
 
-#[derive(Clone, FromRef)]
+#[derive(Clone, AxumState)]
 struct AppState {
     #[authkestra]
-    auth: Authkestra<Configured<Arc<dyn SessionStore>>, Missing>,
+    auth: AkWebAppEngine,
     // other fields...
 }
 
@@ -71,7 +71,7 @@ If you prefer not to use the macro or need more control, you can manually implem
 ```rust
 use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::{AuthSession, SessionConfig, Error};
-use authkestra_session::SessionStore;
+use authkestra_engine::SessionStore;
 use tower_cookies::CookieManagerLayer;
 use std::sync::Arc;
 
@@ -103,7 +103,7 @@ use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::Auth;
 use authkestra_resource::{Guard, AuthPolicy};
 use authkestra_resource::jwt::JwtStrategy;
-use authkestra_session::SessionStrategy;
+use authkestra_engine::SessionStrategy;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]

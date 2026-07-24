@@ -19,25 +19,25 @@ authkestra-macros = "0.1.0"
 
 ### FromRef
 
-The `FromRef` macro is designed to work with the `Authkestra<S, T>` type from `authkestra-flow`. It automatically implements `FromRef` for the state, the session store, the session config, and the token manager.
+The `FromRef` macro is designed to work with the `Engine<S, T>` type from `authkestra-flow`. It automatically implements `FromRef` for the state, the session store, the session config, and the token manager.
 
 ```rust
 use authkestra_axum::FromRef;
-use authkestra::flow::Authkestra;
+use authkestra::flow::Engine;
 use authkestra_flow::{Configured, Missing};
-use authkestra_session::SessionStore;
+use authkestra_engine::SessionStore;
 use std::sync::Arc;
 
-#[derive(Clone, FromRef)]
+#[derive(Clone, AxumState)]
 struct AppState {
     #[authkestra]
-    auth: Authkestra<Configured<Arc<dyn SessionStore>>, Missing>,
+    auth: AkWebAppEngine,
     // Other application state...
 }
 ```
 
 This macro eliminates the need to manually implement `FromRef` for:
-- `Authkestra<S, T>`
+- `Engine<S, T>`
 - `Result<Arc<dyn SessionStore>, Error>` (if sessions are configured)
 - `SessionConfig`
 - `Result<Arc<TokenManager>, Error>` (if tokens are configured)
