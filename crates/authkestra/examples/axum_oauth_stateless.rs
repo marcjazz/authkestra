@@ -8,8 +8,8 @@
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
 use authkestra::flow::{Engine, OAuth2Flow};
-use authkestra_axum::{helpers, AuthToken, AxumError};
-use authkestra_engine::{token::TokenManager, Configured, Missing};
+use authkestra_axum::{helpers, AuthToken, AxumError, AxumState};
+use authkestra_engine::{token::TokenManager, Configured, Missing, AkApiEngine};
 use authkestra_providers::github::GithubProvider;
 use axum::{
     extract::{FromRef, Path, Query, State},
@@ -23,30 +23,10 @@ use std::sync::Arc;
 use tower_cookies::Cookies;
 
 /// Engine state with support for tokens (stateless mode).
-#[derive(Clone)]
+#[derive(Clone, AxumState)]
 struct AppState {
-    authkestra: Engine<Missing, Configured<Arc<TokenManager>>>,
-}
-
-/// Required for the `AuthToken` extractor and internal helpers.
-impl FromRef<AppState> for Result<Arc<TokenManager>, AxumError> {
-    fn from_ref(state: &AppState) -> Self {
-        Ok(state.authkestra.token_manager.0.clone())
-    }
-}
-
-/// Required for the `Engine` to be used in generic handlers.
-impl FromRef<AppState> for Engine<Missing, Configured<Arc<TokenManager>>> {
-    fn from_ref(state: &AppState) -> Self {
-        state.authkestra.clone()
-    }
-}
-
-/// Required for encrypted state handling.
-impl FromRef<AppState> for authkestra_axum::SessionConfig {
-    fn from_ref(state: &AppState) -> Self {
-        state.authkestra.session_config.clone()
-    }
+    #[authkestra(engine)]
+    auth: AkApiEngine,
 }
 
 #[tokio::main]
@@ -70,7 +50,7 @@ async fn main() {
         .build();
 
     let state = AppState {
-        authkestra: auth_engine,
+        auth: auth_engine,
     };
 
     let app = Router::new()
@@ -116,7 +96,7 @@ async fn callback_handler(
     let token_manager = <Result<Arc<TokenManager>, AxumError>>::from_ref(&state)?;
 
     let flow = state
-        .authkestra
+        .auth
         .providers
         .get(&provider)
         .ok_or_else(|| AxumError::Internal(format!("Provider {} not found", provider)))?;
@@ -128,7 +108,7 @@ async fn callback_handler(
         params,
         token_manager,
         3600, // 1 hour
-        state.authkestra.session_config.clone(),
+        state.auth.session_config.clone(),
     )
     .await
     .map_err(|(status, msg)| {
