@@ -6,11 +6,17 @@
 use actix_files::Files;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra::flow::Engine;
-use authkestra_actix::{ActixExt, AuthSession};
+use authkestra_actix::{ActixExt, ActixState, AuthSession};
 use authkestra_engine::auth::SessionStore;
-use authkestra_engine::SessionConfig;
+use authkestra_engine::{Configured, Missing, SessionConfig};
 use serde_json::json;
 use std::sync::Arc;
+
+#[derive(Clone, ActixState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: authkestra_engine::AkWebAppEngine,
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -26,13 +32,20 @@ async fn main() -> std::io::Result<()> {
         })
         .build();
 
+    let state = AppState {
+        auth: auth_engine.clone(),
+    };
+
     println!("🚀 Actix Basic Setup running on http://localhost:3000");
 
     HttpServer::new(move || {
+        let app_state = state.clone();
+        let config_state = app_state.clone();
         App::new()
-            .app_data(web::Data::new(auth_engine.clone()))
+            .app_data(web::Data::new(app_state.clone()))
+            .configure(move |cfg| config_state.configure_authkestra(cfg))
             .service(get_user)
-            .service(auth_engine.actix_scope())
+            .service(app_state.auth.actix_scope())
             .service(Files::new("/", "authkestra-examples/static").index_file("index.html"))
     })
     .bind(("0.0.0.0", 3000))?

@@ -9,7 +9,7 @@
 use authkestra::flow::{Engine, OAuth2Flow};
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
-use authkestra_engine::{Configured, SessionConfig};
+use authkestra_engine::{AkWebAppEngine, SessionConfig};
 use authkestra_providers::github::GithubProvider;
 use axum::{
     response::{IntoResponse, Json},
@@ -22,7 +22,11 @@ use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 
 /// Engine state with support for session only.
-type AppState = AxumState<Configured<Arc<dyn SessionStore>>>;
+#[derive(Clone, AxumState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkWebAppEngine,
+}
 
 #[tokio::main]
 async fn main() {
@@ -51,9 +55,24 @@ async fn main() {
     let redirect_uri = std::env::var("AUTHKESTRA_GITHUB_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/auth/github/callback".to_string());
 
-    let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
+    // Support E2E tests pointing to a local mock server
+    let github_provider = match std::env::var("AUTHKESTRA_GITHUB_BASE_URL") {
+        Ok(base_url) => {
+            let api_url =
+                std::env::var("AUTHKESTRA_GITHUB_API_URL").unwrap_or_else(|_| base_url.clone());
+            GithubProvider::new(client_id, client_secret, redirect_uri).with_test_urls(
+                format!("{base_url}/login/oauth/authorize"),
+                format!("{base_url}/login/oauth/access_token"),
+                format!("{api_url}/user"),
+            )
+        }
+        Err(_) => GithubProvider::new(client_id, client_secret, redirect_uri),
+    };
 
     // Session Store
+    // TIP: authkestra uses traits (like `SessionStore`) for storage.
+    // This makes it easy to swap out backends! You could easily replace `MemoryStore`
+    // with `SqlKvStore` or `RedisStore` simply by changing the struct instantiated here.
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
@@ -67,7 +86,7 @@ async fn main() {
         .build();
 
     let state = AppState {
-        authkestra: auth_engine.clone(),
+        auth: auth_engine.clone(),
     };
 
     let app = Router::new()

@@ -8,9 +8,9 @@
 //! to the internal unified `SqlKvStore`.
 
 use authkestra::flow::Engine;
-use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
+use authkestra_axum::{AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
-use authkestra_engine::{Configured, SessionConfig};
+use authkestra_engine::SessionConfig;
 use authkestra_macros::KvStore;
 use axum::Router;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -36,7 +36,7 @@ pub struct MySqliteSessionStore(authkestra_engine::store::sql::SqlKvStore<sqlx::
 struct AppState {
     // Automatically extracts SessionStore and SessionConfig
     #[authkestra(engine)]
-    auth: Engine<Configured<Arc<dyn SessionStore>>, authkestra_engine::Missing>,
+    auth: authkestra_engine::AkWebAppEngine,
 }
 
 // ============================================================================

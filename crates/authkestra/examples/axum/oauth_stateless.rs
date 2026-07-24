@@ -8,8 +8,8 @@
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
 use authkestra::flow::{Engine, OAuth2Flow};
-use authkestra_axum::{helpers, AuthToken, AxumError};
-use authkestra_engine::{token::TokenManager, Configured, Missing};
+use authkestra_axum::{helpers, AuthToken, AxumError, AxumState};
+use authkestra_engine::{token::TokenManager, AkApiEngine, Configured, Missing};
 use authkestra_providers::github::GithubProvider;
 use axum::{
     extract::{FromRef, Path, Query, State},
@@ -23,30 +23,10 @@ use std::sync::Arc;
 use tower_cookies::Cookies;
 
 /// Engine state with support for tokens (stateless mode).
-#[derive(Clone)]
+#[derive(Clone, AxumState)]
 struct AppState {
-    authkestra: Engine<Missing, Configured<Arc<TokenManager>>>,
-}
-
-/// Required for the `AuthToken` extractor and internal helpers.
-impl FromRef<AppState> for Result<Arc<TokenManager>, AxumError> {
-    fn from_ref(state: &AppState) -> Self {
-        Ok(state.authkestra.token_manager.0.clone())
-    }
-}
-
-/// Required for the `Engine` to be used in generic handlers.
-impl FromRef<AppState> for Engine<Missing, Configured<Arc<TokenManager>>> {
-    fn from_ref(state: &AppState) -> Self {
-        state.authkestra.clone()
-    }
-}
-
-/// Required for encrypted state handling.
-impl FromRef<AppState> for authkestra_axum::SessionConfig {
-    fn from_ref(state: &AppState) -> Self {
-        state.authkestra.session_config.clone()
-    }
+    #[authkestra(engine)]
+    auth: AkApiEngine,
 }
 
 #[tokio::main]
@@ -61,7 +41,19 @@ async fn main() {
     let redirect_uri = std::env::var("AUTHKESTRA_GITHUB_REDIRECT_URI")
         .unwrap_or_else(|_| "http://localhost:3000/auth/callback/github".to_string());
 
-    let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
+    // Support E2E tests pointing to a local mock server
+    let github_provider = match std::env::var("AUTHKESTRA_GITHUB_BASE_URL") {
+        Ok(base_url) => {
+            let api_url =
+                std::env::var("AUTHKESTRA_GITHUB_API_URL").unwrap_or_else(|_| base_url.clone());
+            GithubProvider::new(client_id, client_secret, redirect_uri).with_test_urls(
+                format!("{base_url}/login/oauth/authorize"),
+                format!("{base_url}/login/oauth/access_token"),
+                format!("{api_url}/user"),
+            )
+        }
+        Err(_) => GithubProvider::new(client_id, client_secret, redirect_uri),
+    };
 
     // Initialize Authkestra in stateless mode (JWT only).
     let auth_engine = Engine::builder()
@@ -69,14 +61,12 @@ async fn main() {
         .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
         .build();
 
-    let state = AppState {
-        authkestra: auth_engine,
-    };
+    let state = AppState { auth: auth_engine };
 
     let app = Router::new()
         .route("/api/user", get(get_user))
         // Login route
-        .route("/auth/:provider", get(login_handler))
+        .route("/auth/{provider}", get(login_handler))
         // Callback route (stateless)
         .route("/auth/callback/{provider}", get(callback_handler))
         .layer(tower_cookies::CookieManagerLayer::new())
@@ -116,7 +106,7 @@ async fn callback_handler(
     let token_manager = <Result<Arc<TokenManager>, AxumError>>::from_ref(&state)?;
 
     let flow = state
-        .authkestra
+        .auth
         .providers
         .get(&provider)
         .ok_or_else(|| AxumError::Internal(format!("Provider {} not found", provider)))?;
@@ -128,7 +118,7 @@ async fn callback_handler(
         params,
         token_manager,
         3600, // 1 hour
-        state.authkestra.session_config.clone(),
+        state.auth.session_config.clone(),
     )
     .await
     .map_err(|(status, msg)| {

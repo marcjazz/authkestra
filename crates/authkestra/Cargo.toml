@@ -21,8 +21,8 @@ tokio = { version = "1", features = ["full"] }
 authkestra-engine = { workspace = true, features = ["flow", "token", "session", "memory", "redis", "sql-sqlite"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
-authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op"] }
-authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op"] }
+authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op", "macros"] }
+authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op", "macros"] }
 authkestra-oidc = { workspace = true }
 authkestra-op = { workspace = true }
 authkestra-macros = { workspace = true }
@@ -45,6 +45,7 @@ tower-http = { version = "0.6", features = ["fs"] }
 actix-files = "0.6"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+wiremock = "0.6"
 
 [features]
 default = []
@@ -61,67 +62,103 @@ resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra
 axum = ["dep:authkestra-axum", "authkestra-axum/flow", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
 actix = ["dep:authkestra-actix", "authkestra-actix/flow", "authkestra-actix/session", "authkestra-actix/token", "authkestra-actix/resource"]
 
-
 # Providers
 github = ["authkestra-providers/github"]
 google = ["authkestra-providers/google"]
 discord = ["authkestra-providers/discord"]
 
-[[example]]
-name = "actix_basic_setup"
-required-features = ["full"]
 
 [[example]]
 name = "actix_op_server"
+path = "examples/actix/op_server.rs"
 required-features = ["full"]
 
 [[example]]
-name = "axum_basic_setup"
+name = "actix_oauth2_github"
+path = "examples/actix/oauth2_github.rs"
 required-features = ["full"]
 
 [[example]]
-name = "axum_client_credentials"
+name = "actix_oidc_google"
+path = "examples/actix/oidc_google.rs"
+required-features = ["full"]
+
+
+[[example]]
+name = "core_client_credentials"
+path = "examples/core/client_credentials.rs"
 required-features = ["full"]
 
 [[example]]
-name = "axum_device_flow"
+name = "core_device_flow"
+path = "examples/core/device_flow.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_oauth2_github"
+path = "examples/axum/oauth2_github.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_oauth_stateless"
+path = "examples/axum/oauth_stateless.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_oidc_google"
+path = "examples/axum/oidc_google.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_data_layer_macros"
+path = "examples/axum/data_layer_macros.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_op_server"
+path = "examples/axum/op_server.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_resource_server"
+path = "examples/axum/resource_server.rs"
+required-features = ["full"]
+
+[[example]]
+name = "actix_oauth_stateless"
+path = "examples/actix/oauth_stateless.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_resource_server_strategy"
+path = "examples/axum/resource_server_strategy.rs"
+required-features = ["full"]
+
+[[example]]
+name = "actix_resource_server_strategy"
+path = "examples/actix/resource_server_strategy.rs"
+required-features = ["full"]
+
+[[example]]
+name = "axum_basic_setup"
+path = "examples/axum/basic_setup.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_session_redis"
+path = "examples/axum/session_redis.rs"
 required-features = ["full"]
 
 [[example]]
 name = "axum_sql_store"
+path = "examples/axum/sql_store.rs"
 required-features = ["full"]
+
+[[example]]
+name = "actix_basic_setup"
+path = "examples/actix/basic_setup.rs"
+required-features = ["full"]
+
 
 [[test]]
 name = "typestate_tests"

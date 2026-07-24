@@ -3,10 +3,9 @@
 //! This example demonstrates how to use the Resource Server strategy with `Guard`
 //! and the `Auth` extractor to protect an API.
 
-use authkestra_axum::Auth;
-use authkestra_resource::{jwt::JwtStrategy, jwt::ValidationConfig, ResourceEnforcer};
+use authkestra_axum::{Auth, AxumState};
+use authkestra_resource::{jwt::JwtStrategy, jwt::ValidationConfig, Guard};
 use axum::{
-    extract::FromRef,
     response::{IntoResponse, Json},
     routing::get,
     Router,
@@ -23,16 +22,11 @@ struct UserIdentity {
     scope: Option<String>,
 }
 
-/// AppState using Authkestra's `Guard` (ResourceEnforcer).
-#[derive(Clone)]
+/// AppState using Authkestra's `Guard`.
+#[derive(Clone, AxumState)]
 struct AppState {
-    resource_enforcer: Arc<ResourceEnforcer<UserIdentity>>,
-}
-
-impl FromRef<AppState> for Arc<ResourceEnforcer<UserIdentity>> {
-    fn from_ref(state: &AppState) -> Self {
-        state.resource_enforcer.clone()
-    }
+    #[authkestra(store)]
+    guard: Arc<Guard<UserIdentity>>,
 }
 
 #[tokio::main]
@@ -51,10 +45,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let jwt_strategy = JwtStrategy::<UserIdentity>::new(validation_config);
 
     // 2. Configure the Resource Enforcer (Guard)
-    let resource_enforcer = ResourceEnforcer::builder().strategy(jwt_strategy).build();
+    let guard = Guard::builder().strategy(jwt_strategy).build();
 
     let state = AppState {
-        resource_enforcer: Arc::new(resource_enforcer),
+        guard: Arc::new(guard),
     };
 
     // 3. Build Axum Router
@@ -82,7 +76,7 @@ async fn index() -> impl IntoResponse {
 }
 
 /// Protected endpoint using the `Auth` extractor.
-/// This extractor uses the `ResourceEnforcer` from the state to validate the request.
+/// This extractor uses the `Guard` from the state to validate the request.
 async fn protected(Auth(user): Auth<UserIdentity>) -> impl IntoResponse {
     Json(json!({
         "message": "Access granted via Resource Server Strategy!",

@@ -421,6 +421,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
@@ -430,12 +431,14 @@ dependencies = [
  "actix-utils",
  "actix-web",
  "authkestra-engine",
+ "authkestra-macros",
  "authkestra-op",
  "authkestra-resource",
  "base64",
  "chrono",
  "futures",
  "futures-util",
+ "http 1.4.0",
  "jsonwebtoken",
  "serde",
  "serde_json",
