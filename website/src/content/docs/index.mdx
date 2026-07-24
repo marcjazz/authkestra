@@ -1,0 +1,36 @@
+---
+title: Welcome to Authkestra
+description: The modular, framework-agnostic authentication orchestration system for Rust.
+template: splash
+hero:
+  tagline: A modular, framework-agnostic authentication orchestration system designed to be idiomatic to Rust, emphasizing explicit control flow, strong typing, and composability.
+  image:
+    file: ../../assets/houston.webp
+  actions:
+    - text: Quickstart Guide
+      link: /guides/quickstart/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/marcjazz/authkestra
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Why Authkestra?
+
+<CardGrid stagger>
+	<Card title="Compile-Time Safety" icon="approve-check-circle">
+		Authkestra utilizes the **Typestate Builder Pattern**. Misconfigurations become compile-time errors rather than runtime surprises.
+	</Card>
+	<Card title="Stateless OAuth" icon="rocket">
+		OAuth `state` and `nonce` are stored securely in encrypted cookies—never in your database—keeping your architecture horizontally scalable.
+	</Card>
+	<Card title="Flexible Chaining" icon="setting">
+		Chain multiple authentication strategies (Token, Session, Basic, Custom) seamlessly together in the Engine to build complex auth flows with ease.
+	</Card>
+	<Card title="Framework & Database Agnostic" icon="puzzle">
+		Pure Rust logic powers the engine. Integrations for **Axum** and **Actix-web** are isolated adapters, and data access is strictly defined via simple `SessionStore` traits, never enforcing schemas.
+	</Card>
+</CardGrid>

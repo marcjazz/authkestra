@@ -1,0 +1,88 @@
+---
+title: Framework Integration
+description: Using Authkestra with Axum and Actix-web.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Authkestra provides first-class support for both the `axum` and `actix-web` web frameworks through lightweight adapter crates (`authkestra-axum` and `authkestra-actix`).
+
+## The `AuthSession` Extractor
+
+The primary way to interact with an authenticated user in a handler is via the `AuthSession` extractor. It automatically validates the session and injects the user's identity.
+
+<Tabs>
+  <TabItem label="Axum" icon="seti:rust">
+
+```rust
+use authkestra_axum::{AuthSession, AxumError};
+use axum::response::{IntoResponse, Json};
+use serde_json::json;
+
+pub async fn my_handler(
+    session: Result<AuthSession, AxumError>
+) -> impl IntoResponse {
+    match session {
+        Ok(AuthSession(session_data)) => Json(json!({
+            "message": "Welcome!",
+            "user_id": session_data.identity.external_id,
+        })),
+        Err(_) => Json(json!({ "error": "Not authenticated" }))
+    }
+}
+```
+  </TabItem>
+  <TabItem label="Actix-web" icon="seti:rust">
+
+```rust
+use authkestra_actix::{AuthSession, ActixError};
+use actix_web::{get, HttpResponse, Responder};
+
+#[get("/api/user")]
+async fn get_user(session: Result<AuthSession, ActixError>) -> impl Responder {
+    match session {
+        Ok(AuthSession(session_data)) => HttpResponse::Ok().json(
+            serde_json::json!({
+                "message": "Welcome!",
+                "user_id": session_data.identity.external_id,
+            })
+        ),
+        Err(_) => HttpResponse::Unauthorized().json(
+            serde_json::json!({ "error": "Not authenticated" })
+        ),
+    }
+}
+```
+  </TabItem>
+</Tabs>
+
+## Router Setup
+
+To wire up the endpoints, you use `axum_router()` or `actix_router()` on the built Engine.
+
+<Tabs>
+  <TabItem label="Axum" icon="seti:rust">
+
+```rust
+use authkestra_axum::AxumExt;
+
+let app = Router::new()
+    .merge(auth_engine.axum_router())
+    .layer(CookieManagerLayer::new())
+    .with_state(AppState { auth: auth_engine });
+```
+
+  </TabItem>
+  <TabItem label="Actix-web" icon="seti:rust">
+
+```rust
+use authkestra_actix::ActixExt;
+
+HttpServer::new(move || {
+    App::new()
+        .app_data(web::Data::new(auth_engine.clone()))
+        .configure(|cfg| auth_engine.actix_router(cfg))
+})
+```
+
+  </TabItem>
+</Tabs>
