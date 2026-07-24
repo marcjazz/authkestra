@@ -37,6 +37,16 @@ let op_store = CompositeOpStore::new(
 
 Check the `op_server.rs` example in the repository for full database wiring code.
 
+## Supported Grant Types
+
+Authkestra's OP server is fully featured and natively supports the following OAuth 2.0 / OIDC grant types. When registering clients (via your `ClientStore`), you assign them a list of `GrantType` enum variants they are permitted to use:
+
+1. **Authorization Code** (`GrantType::AuthorizationCode`): The standard interactive OIDC login flow. Used by web applications and mobile apps to securely acquire tokens after user authentication.
+2. **Client Credentials** (`GrantType::ClientCredentials`): Server-to-server machine authentication. Used when a backend service needs to access an API on its own behalf.
+3. **Refresh Token** (`GrantType::RefreshToken`): Allows clients to exchange a long-lived refresh token for a new short-lived access token without requiring user interaction.
+4. **Device Code** (`GrantType::DeviceCode`): The OAuth 2.0 Device Authorization Grant (RFC 8628). Used for input-constrained devices like Smart TVs or CLI tools where the user authenticates on a secondary device (e.g., their smartphone).
+5. **Token Exchange** (`GrantType::TokenExchange`): The OAuth 2.0 Token Exchange grant (RFC 8693). Allows a resource server to impersonate or delegate permissions by exchanging an incoming access token for a new token targeting a downstream service.
+
 ## Documenting `OpConfig`
 
 The behavior of your OpenID Provider is entirely driven by `OpConfig`. When building the state, you must configure this struct to declare what your server supports.
