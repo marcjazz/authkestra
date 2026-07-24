@@ -22,5 +22,15 @@ Because this is a trait, you can implement it using `sqlx`, `diesel`, `redis`, o
 
 ## Included Stores
 
-Authkestra comes with a few implementations out of the box for convenience:
-- `authkestra_engine::store::memory::MemoryStore` (Great for testing and local dev)
+Authkestra comes with a few generic implementations out of the box for convenience. To use them, you must enable the corresponding feature flags in your `Cargo.toml`:
+
+```toml
+[dependencies]
+# Example: Using Redis and SQLite stores
+authkestra = { version = "0.2.1", features = ["redis", "sql-sqlite"] }
+```
+
+The available built-in stores and their feature flags are:
+- **Memory Store**: `authkestra_engine::store::memory::MemoryStore` (Great for testing and local dev; enabled by the `memory` feature).
+- **Redis Store**: `authkestra_engine::store::redis::RedisStore` (Production-ready distributed cache; enabled by the `redis` feature).
+- **SQL Store**: `authkestra_engine::store::sql::SqlStore` (Relational persistence; enabled by `sql-postgres`, `sql-mysql`, or `sql-sqlite` features).

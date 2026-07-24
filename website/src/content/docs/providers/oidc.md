@@ -5,6 +5,15 @@ description: Using the generic OpenID Connect client with Authkestra.
 
 Authkestra provides a generic OpenID Connect (OIDC) client that can automatically discover endpoints and keys from any OIDC-compliant provider.
 
+## Prerequisites
+
+To use the OIDC client, you must enable the `oidc` feature on the `authkestra` crate.
+
+```toml
+[dependencies]
+authkestra = { version = "0.2.1", features = ["oidc"] }
+```
+
 ## Configuring the OIDC Provider
 
 You can instantiate the `OidcProvider` directly by pointing it to the issuer URL. The client will automatically fetch the `/.well-known/openid-configuration` to determine the authorization and token endpoints.

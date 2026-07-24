@@ -9,6 +9,18 @@ Beyond consuming identities, Authkestra allows you to *become* the identity prov
 
 An OpenID Provider (OP) is an OAuth 2.0 Authorization Server capable of authenticating End-Users and providing claims to a Relying Party (RP). We strictly implement [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html).
 
+## Prerequisites
+
+Because OP Servers are an advanced use case, the OP logic is not included in the default `authkestra` facade crate. You must include the `authkestra-op` crate directly and explicitly enable the `op` feature on your chosen web framework adapter.
+
+```toml
+[dependencies]
+authkestra-op = "0.2.1"
+authkestra-axum = { version = "0.2.1", features = ["op"] }
+# Or if using Actix:
+# authkestra-actix = { version = "0.2.1", features = ["op"] }
+```
+
 ## The OpStore Interface
 
 To run an OP Server, you need to persist four specific types of records: Clients, Auth Codes, Refresh Tokens, and Device Codes. 

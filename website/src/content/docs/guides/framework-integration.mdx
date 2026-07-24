@@ -6,6 +6,29 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Authkestra provides first-class support for both the `axum` and `actix-web` web frameworks through lightweight adapter crates (`authkestra-axum` and `authkestra-actix`).
 
+## Prerequisites
+
+Ensure you have enabled the correct web framework feature on the `authkestra` crate in your `Cargo.toml`. Also, since session management is stateful, make sure the `session` feature is enabled.
+
+<Tabs>
+  <TabItem label="Axum" icon="seti:rust">
+
+```toml
+[dependencies]
+authkestra = { version = "0.2.1", features = ["axum", "session"] }
+```
+
+  </TabItem>
+  <TabItem label="Actix-web" icon="seti:rust">
+
+```toml
+[dependencies]
+authkestra = { version = "0.2.1", features = ["actix", "session"] }
+```
+
+  </TabItem>
+</Tabs>
+
 ## The `AuthSession` Extractor
 
 The primary way to interact with an authenticated user in a handler is via the `AuthSession` extractor. It automatically validates the session and injects the user's identity.
