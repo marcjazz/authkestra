@@ -47,6 +47,27 @@ Authkestra's OP server is fully featured and natively supports the following OAu
 4. **Device Code** (`GrantType::DeviceCode`): The OAuth 2.0 Device Authorization Grant (RFC 8628). Used for input-constrained devices like Smart TVs or CLI tools where the user authenticates on a secondary device (e.g., their smartphone).
 5. **Token Exchange** (`GrantType::TokenExchange`): The OAuth 2.0 Token Exchange grant (RFC 8693). Allows a resource server to impersonate or delegate permissions by exchanging an incoming access token for a new token targeting a downstream service.
 
+## Supported Algorithms & Scopes
+
+It is important to distinguish between what the Authkestra framework *can* do and what you, the developer, *choose* to enable via your OP configuration.
+
+### Signing Algorithms
+
+Authkestra uses the underlying `jsonwebtoken` crate, which provides robust support for modern cryptographic signing algorithms (including `RS256`, `RS384`, `RS512`, `ES256`, `ES384`, `EdDSA`, etc.). 
+
+However, when configuring your OP server, **you must choose an asymmetric algorithm** (like `RS256`). Authkestra intentionally rejects symmetric algorithms (like `HS256`) for OpenID Providers. This is a strict security requirement: Resource Servers and Relying Parties must be able to verify your tokens using public keys exposed at your `/jwks` endpoint without ever knowing your private signing secret.
+
+### Scopes
+
+Authkestra is entirely **scope-agnostic**. The framework does not hardcode what scopes mean. 
+
+If you want to be OpenID Connect compliant, you simply add `"openid"`, `"profile"`, and `"email"` to your configuration. But you are completely free to invent custom scopes for your own APIs (e.g., `"billing:read"`, `"admin:write"`, `"devices:provision"`).
+
+The relationship works like this:
+1. **Global Capability**: You define all possible scopes your server understands in `OpConfig.scopes_supported`.
+2. **Client Restriction**: When creating a `ClientRegistration` in your database, you give that client a subset of those scopes.
+3. **User Delegation**: When a user logs in, the `/authorize` flow ensures the requested scopes do not exceed what the client is permitted to ask for.
+
 ## Documenting `OpConfig`
 
 The behavior of your OpenID Provider is entirely driven by `OpConfig`. When building the state, you must configure this struct to declare what your server supports.
