@@ -92,13 +92,13 @@ path = "examples/axum/basic_setup.rs"
 required-features = ["full"]
 
 [[example]]
-name = "axum_client_credentials"
-path = "examples/axum/client_credentials.rs"
+name = "core_client_credentials"
+path = "examples/core/client_credentials.rs"
 required-features = ["full"]
 
 [[example]]
-name = "axum_device_flow"
-path = "examples/axum/device_flow.rs"
+name = "core_device_flow"
+path = "examples/core/device_flow.rs"
 required-features = ["full"]
 
 [[example]]
@@ -132,8 +132,18 @@ path = "examples/axum/resource_server.rs"
 required-features = ["full"]
 
 [[example]]
+name = "actix_oauth_stateless"
+path = "examples/actix/oauth_stateless.rs"
+required-features = ["full"]
+
+[[example]]
 name = "axum_resource_server_strategy"
 path = "examples/axum/resource_server_strategy.rs"
+required-features = ["full"]
+
+[[example]]
+name = "actix_resource_server_strategy"
+path = "examples/actix/resource_server_strategy.rs"
 required-features = ["full"]
 
 [[example]]

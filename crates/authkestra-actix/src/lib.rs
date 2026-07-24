@@ -239,3 +239,67 @@ where
         })
     }
 }
+
+/// A unified extractor for authentication.
+///
+/// It uses the `Guard` from the application state to validate the request.
+#[cfg(feature = "resource")]
+pub struct Auth<I>(pub I);
+
+#[cfg(feature = "resource")]
+impl<I> FromRequest for Auth<I>
+where
+    I: Send + Sync + 'static,
+{
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
+
+    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        let guard = req
+            .app_data::<web::Data<Arc<authkestra_resource::Guard<I>>>>()
+            .cloned();
+
+        let req_clone = req.clone();
+
+        Box::pin(async move {
+            tracing::debug!("extracting generic Auth from actix request via Guard");
+            let guard = guard.ok_or_else(|| {
+                tracing::error!("Guard not configured in actix app data");
+                actix_web::error::ErrorInternalServerError("Guard not configured")
+            })?;
+
+            // Convert actix HttpRequest to http::request::Parts (http 1.0)
+            let mut builder = http::Request::builder()
+                .method(req_clone.method().as_str())
+                .uri(req_clone.uri().to_string());
+            for (name, val) in req_clone.headers() {
+                if let (Ok(name), Ok(val)) = (
+                    http::HeaderName::from_bytes(name.as_str().as_bytes()),
+                    http::HeaderValue::from_bytes(val.as_bytes()),
+                ) {
+                    builder = builder.header(name, val);
+                }
+            }
+            let http_req = builder.body(()).map_err(|e| {
+                tracing::error!("failed to build http request parts: {e}");
+                actix_web::error::ErrorInternalServerError("Failed to build request parts")
+            })?;
+            let (parts, _) = http_req.into_parts();
+
+            match guard.authenticate(&parts).await {
+                Ok(Some(identity)) => {
+                    tracing::info!("successfully authenticated request via Guard");
+                    Ok(Auth(identity))
+                }
+                Ok(None) => {
+                    tracing::warn!("authentication failed: no identity returned");
+                    Err(actix_web::error::ErrorUnauthorized("Authentication failed"))
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "internal error during authentication");
+                    Err(actix_web::error::ErrorInternalServerError(e.to_string()))
+                }
+            }
+        })
+    }
+}
