@@ -11,6 +11,18 @@ According to [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749#section-1.
 
 To securely validate an external JWT, the Resource Server must verify the cryptographic signature using the external provider's public keys (JWKS, defined in [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517)).
 
+## Prerequisites
+
+Like the OP Server, the Resource Server is an advanced component and is not included by default. You must explicitly include the `authkestra-resource` crate and enable the `resource` feature on your chosen web adapter.
+
+```toml
+[dependencies]
+authkestra-resource = "0.2.1"
+authkestra-axum = { version = "0.2.1", features = ["resource"] }
+# Or if using Actix:
+# authkestra-actix = { version = "0.2.1", features = ["resource"] }
+```
+
 ## Building with Authkestra Guard
 
 Authkestra provides the `authkestra-resource` crate, which features a `Guard` and a `JwtStrategy` that automatically caches and refreshes external JWKS.
