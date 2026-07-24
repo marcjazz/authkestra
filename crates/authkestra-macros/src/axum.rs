@@ -171,18 +171,25 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
 
             #[allow(unused_imports)]
             use authkestra_engine::{SessionStoreState as _, TokenManagerState as _};
+        });
 
-            impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
-                for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::AxumError>
-            where
-                #s_param: authkestra_engine::SessionStoreState,
-                #where_clause
-            {
-                fn from_ref(state: &#struct_name #ty_generics) -> Self {
-                    Ok(state.#field_name.session_store.get_store())
+        let s_param_str = quote!(#s_param).to_string();
+        if !s_param_str.contains("Missing") {
+            generated_impls.push(quote! {
+                impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics>
+                    for ::std::result::Result<::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>, authkestra_axum::AxumError>
+                where
+                    #s_param: authkestra_engine::SessionStoreState,
+                    #where_clause
+                {
+                    fn from_ref(state: &#struct_name #ty_generics) -> Self {
+                        Ok(state.#field_name.session_store.get_store())
+                    }
                 }
-            }
+            });
+        }
 
+        generated_impls.push(quote! {
             impl #impl_generics axum::extract::FromRef<#struct_name #ty_generics> for authkestra_engine::SessionConfig
             #where_clause
             {

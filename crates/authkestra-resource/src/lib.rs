@@ -4,7 +4,6 @@ use http::request::Parts;
 
 pub mod jwt;
 
-
 /// Policy for controlling the behavior of chained authentication strategies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AuthPolicy {

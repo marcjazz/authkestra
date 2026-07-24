@@ -21,8 +21,8 @@ tokio = { version = "1", features = ["full"] }
 authkestra-engine = { workspace = true, features = ["flow", "token", "session", "memory", "redis", "sql-sqlite"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
-authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op"] }
-authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op"] }
+authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op", "macros"] }
+authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op", "macros"] }
 authkestra-oidc = { workspace = true }
 authkestra-op = { workspace = true }
 authkestra-macros = { workspace = true }
@@ -67,10 +67,6 @@ github = ["authkestra-providers/github"]
 google = ["authkestra-providers/google"]
 discord = ["authkestra-providers/discord"]
 
-[[example]]
-name = "actix_basic_setup"
-path = "examples/actix/basic_setup.rs"
-required-features = ["full"]
 
 [[example]]
 name = "actix_op_server"
@@ -87,10 +83,6 @@ name = "actix_oidc_google"
 path = "examples/actix/oidc_google.rs"
 required-features = ["full"]
 
-[[example]]
-name = "axum_basic_setup"
-path = "examples/axum/basic_setup.rs"
-required-features = ["full"]
 
 [[example]]
 name = "core_client_credentials"
@@ -147,15 +139,6 @@ name = "actix_resource_server_strategy"
 path = "examples/actix/resource_server_strategy.rs"
 required-features = ["full"]
 
-[[example]]
-name = "axum_session_redis"
-path = "examples/axum/session_redis.rs"
-required-features = ["full"]
-
-[[example]]
-name = "axum_sql_store"
-path = "examples/axum/sql_store.rs"
-required-features = ["full"]
 
 [[test]]
 name = "typestate_tests"

@@ -142,11 +142,14 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                 cfg.app_data(actix_web::web::Data::new(
                     authkestra_engine::SessionStoreState::get_store(&self.#field_name.session_store)
                 ));
-                cfg.app_data(actix_web::web::Data::new(
-                    self.#field_name.session_config.clone()
-                ));
             });
         }
+
+        config_statements.push(quote! {
+            cfg.app_data(actix_web::web::Data::new(
+                self.#field_name.session_config.clone()
+            ));
+        });
 
         let t_param_str = quote!(#t_param).to_string();
         if !t_param_str.contains("Missing") {

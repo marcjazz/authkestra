@@ -58,6 +58,9 @@ async fn main() {
     let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
 
     // Session Store
+    // TIP: authkestra uses traits (like `SessionStore`) for storage.
+    // This makes it easy to swap out backends! You could easily replace `MemoryStore`
+    // with `SqlKvStore` or `RedisStore` simply by changing the struct instantiated here.
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 

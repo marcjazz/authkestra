@@ -9,11 +9,10 @@
 
 use actix_web::{get, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use authkestra::flow::{Engine, OAuth2Flow};
-use authkestra_actix::{helpers, AuthToken, ActixState};
-use authkestra_engine::{token::TokenManager, AkApiEngine};
+use authkestra_actix::{helpers, ActixState, AuthToken};
+use authkestra_engine::{AkApiEngine, TokenManagerState};
 use authkestra_providers::github::GithubProvider;
 use serde_json::json;
-use std::sync::Arc;
 
 /// Engine state with support for tokens (stateless mode).
 #[derive(Clone, ActixState)]
@@ -42,9 +41,7 @@ async fn main() -> std::io::Result<()> {
         .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
         .build();
 
-    let state = AppState {
-        auth: auth_engine,
-    };
+    let state = AppState { auth: auth_engine };
 
     println!("🚀 Actix Stateless OAuth running on http://localhost:3000");
     println!("1. Login: http://localhost:3000/auth/github");
@@ -55,7 +52,7 @@ async fn main() -> std::io::Result<()> {
         let app_state = state.clone();
         App::new()
             .app_data(web::Data::new(app_state.clone()))
-            .app_data(web::Data::new(app_state.auth.token_manager.get_manager()))
+            .configure(|cfg| app_state.configure_authkestra(cfg))
             // Login route
             .route("/auth/{provider}", web::get().to(login_handler))
             // Callback route (stateless)

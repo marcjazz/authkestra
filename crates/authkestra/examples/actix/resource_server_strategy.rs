@@ -4,7 +4,7 @@
 //! and the `Auth` extractor to protect an API.
 
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use authkestra_actix::{Auth, ActixState};
+use authkestra_actix::{ActixState, Auth};
 use authkestra_resource::{jwt::JwtStrategy, jwt::ValidationConfig, Guard};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -63,7 +63,8 @@ async fn main() -> std::io::Result<()> {
 
 #[get("/")]
 async fn index() -> impl Responder {
-    HttpResponse::Ok().body("Actix Resource Server (Strategy Mode). Use a Bearer token to access /api/protected")
+    HttpResponse::Ok()
+        .body("Actix Resource Server (Strategy Mode). Use a Bearer token to access /api/protected")
 }
 
 /// Protected endpoint using the `Auth` extractor.

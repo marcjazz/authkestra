@@ -4,9 +4,11 @@
 use authkestra_engine::store::KvStore;
 
 use authkestra_axum::OpExt;
+use authkestra_engine::store::sql::SqlKvStore;
 use authkestra_engine::{AkEngine, TokenManager};
 use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use axum::Router;
+use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 
 use authkestra_axum::AxumState;
@@ -30,7 +32,18 @@ async fn main() {
         Some("issuer".to_string()),
     ));
 
-    let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+    // Create a SQLite connection pool (in-memory for the example, but can be a file path)
+    let pool = SqlitePoolOptions::new()
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+
+    // TIP: authkestra uses traits (like `KvStore<T>`) for storage.
+    // This makes it easy to swap out backends! You could easily swap `SqlKvStore`
+    // with `RedisStore` or `MemoryStore` simply by changing the struct instantiated here.
+
+    let clients = SqlKvStore::with_table_name(pool.clone(), "op_clients".into());
+    clients.migrate().await.unwrap();
     clients
         .set(
             "test-client",
@@ -47,13 +60,25 @@ async fn main() {
         )
         .await
         .unwrap();
-    let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(authkestra_op::store::CompositeOpStore::new(
-        clients,
-        authkestra_engine::store::memory::MemoryStore::<authkestra_op::code::AuthorizationCode>::new(),
-        authkestra_engine::store::memory::MemoryStore::<authkestra_op::refresh::RefreshToken>::new(),
-        authkestra_engine::store::memory::MemoryStore::<authkestra_op::device::DeviceCodeSession>::new(),
-    ));
 
+    let auth_codes = SqlKvStore::with_table_name(pool.clone(), "op_auth_codes".into());
+    auth_codes.migrate().await.unwrap();
+    let refresh_tokens = SqlKvStore::with_table_name(pool.clone(), "op_refresh_tokens".into());
+    refresh_tokens.migrate().await.unwrap();
+    let device_codes = SqlKvStore::with_table_name(pool.clone(), "op_device_codes".into());
+    device_codes.migrate().await.unwrap();
+
+    let op_store: Arc<dyn authkestra_op::OpStore> =
+        Arc::new(authkestra_op::store::CompositeOpStore::new(
+            clients,
+            auth_codes,
+            refresh_tokens,
+            device_codes,
+        ));
+
+    // TIP: authkestra uses traits (like `SessionStore`) for storage.
+    // This makes it easy to swap out backends! You could easily replace `MemoryStore`
+    // with `SqlKvStore` or `RedisStore` simply by changing the struct instantiated here.
     let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::new());
     let session_config = authkestra_engine::SessionConfig {

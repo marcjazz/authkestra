@@ -421,6 +421,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
@@ -437,6 +438,7 @@ dependencies = [
  "chrono",
  "futures",
  "futures-util",
+ "http 1.4.0",
  "jsonwebtoken",
  "serde",
  "serde_json",

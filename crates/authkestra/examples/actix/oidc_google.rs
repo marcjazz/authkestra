@@ -9,7 +9,7 @@
 use actix_files::Files;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra::flow::{Engine, OAuth2Flow};
-use authkestra_actix::{ActixExt, AuthSession, ActixState};
+use authkestra_actix::{ActixExt, ActixState, AuthSession};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{AkWebAppEngine, SessionConfig};
 use authkestra_providers::google::GoogleProvider;
@@ -47,6 +47,9 @@ async fn main() -> std::io::Result<()> {
     let google_provider = GoogleProvider::new(client_id, client_secret, redirect_uri);
 
     // Session Store
+    // TIP: authkestra uses traits (like `SessionStore`) for storage.
+    // This makes it easy to swap out backends! You could easily replace `MemoryStore`
+    // with `SqlKvStore` or `RedisStore` simply by changing the struct instantiated here.
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 

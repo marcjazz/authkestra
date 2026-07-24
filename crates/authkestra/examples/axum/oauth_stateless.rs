@@ -9,7 +9,7 @@
 
 use authkestra::flow::{Engine, OAuth2Flow};
 use authkestra_axum::{helpers, AuthToken, AxumError, AxumState};
-use authkestra_engine::{token::TokenManager, Configured, Missing, AkApiEngine};
+use authkestra_engine::{token::TokenManager, AkApiEngine, Configured, Missing};
 use authkestra_providers::github::GithubProvider;
 use axum::{
     extract::{FromRef, Path, Query, State},
@@ -49,14 +49,12 @@ async fn main() {
         .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
         .build();
 
-    let state = AppState {
-        auth: auth_engine,
-    };
+    let state = AppState { auth: auth_engine };
 
     let app = Router::new()
         .route("/api/user", get(get_user))
         // Login route
-        .route("/auth/:provider", get(login_handler))
+        .route("/auth/{provider}", get(login_handler))
         // Callback route (stateless)
         .route("/auth/callback/{provider}", get(callback_handler))
         .layer(tower_cookies::CookieManagerLayer::new())
