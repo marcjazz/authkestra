@@ -6,7 +6,7 @@ This crate provides procedural macros to eliminate boilerplate code when integra
 
 ## Features
 
-- **AuthkestraFromRef**: A derive macro that automatically generates the 4 required `FromRef` trait implementations for Axum.
+- **FromRef**: A derive macro that automatically generates the 4 required `FromRef` trait implementations for Axum.
 
 ## Usage
 
@@ -17,18 +17,18 @@ Add this to your `Cargo.toml`:
 authkestra-macros = "0.1.0"
 ```
 
-### AuthkestraFromRef
+### FromRef
 
-The `AuthkestraFromRef` macro is designed to work with the `Authkestra<S, T>` type from `authkestra-flow`. It automatically implements `FromRef` for the state, the session store, the session config, and the token manager.
+The `FromRef` macro is designed to work with the `Authkestra<S, T>` type from `authkestra-flow`. It automatically implements `FromRef` for the state, the session store, the session config, and the token manager.
 
 ```rust
-use authkestra_axum::AuthkestraFromRef;
+use authkestra_axum::FromRef;
 use authkestra::flow::Authkestra;
 use authkestra_flow::{Configured, Missing};
 use authkestra_session::SessionStore;
 use std::sync::Arc;
 
-#[derive(Clone, AuthkestraFromRef)]
+#[derive(Clone, FromRef)]
 struct AppState {
     #[authkestra]
     auth: Authkestra<Configured<Arc<dyn SessionStore>>, Missing>,
@@ -38,9 +38,9 @@ struct AppState {
 
 This macro eliminates the need to manually implement `FromRef` for:
 - `Authkestra<S, T>`
-- `Result<Arc<dyn SessionStore>, AuthkestraAxumError>` (if sessions are configured)
+- `Result<Arc<dyn SessionStore>, Error>` (if sessions are configured)
 - `SessionConfig`
-- `Result<Arc<TokenManager>, AuthkestraAxumError>` (if tokens are configured)
+- `Result<Arc<TokenManager>, Error>` (if tokens are configured)
 
 ## Part of authkestra
 

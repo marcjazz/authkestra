@@ -3,18 +3,18 @@
 //! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Axum.
 use authkestra_engine::store::KvStore;
 
-use authkestra_axum::AuthEngineAxumOpExt;
-use authkestra_engine::{AuthEngine, Configured, TokenManager};
+use authkestra_axum::OpExt;
+use authkestra_engine::{Configured, Engine, TokenManager};
 use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use axum::Router;
 use std::sync::Arc;
 
-use authkestra_axum::AuthkestraState;
+use authkestra_axum::AxumState;
 
-#[derive(Clone, AuthkestraState)]
+#[derive(Clone, AxumState)]
 struct AppState {
     #[authkestra(engine)]
-    authkestra: AuthEngine<
+    authkestra: Engine<
         Configured<Arc<dyn authkestra_engine::auth::SessionStore>>,
         Configured<Arc<TokenManager>>,
     >,
@@ -64,7 +64,7 @@ async fn main() {
         ..Default::default()
     };
 
-    let authkestra = authkestra_engine::AuthEngine::builder()
+    let authkestra = authkestra_engine::Engine::builder()
         .session_store(session_store)
         .session_config(session_config)
         .token_manager(token_manager)

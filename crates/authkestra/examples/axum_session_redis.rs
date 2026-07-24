@@ -6,8 +6,8 @@
 //! - A running Redis instance
 //! - `REDIS_URL` environment variable (e.g., `redis://127.0.0.1/`)
 
-use authkestra::flow::AuthEngine;
-use authkestra_axum::{AuthSession, AuthkestraAxumError, AuthkestraAxumExt, AuthkestraState};
+use authkestra::flow::Engine;
+use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::store::redis::RedisStore;
 use authkestra_engine::{Configured, SessionConfig};
@@ -21,8 +21,8 @@ use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
 
-/// AuthEngine state with support for session only.
-type AppState = AuthkestraState<Configured<Arc<dyn SessionStore>>>;
+/// Engine state with support for session only.
+type AppState = AxumState<Configured<Arc<dyn SessionStore>>>;
 
 #[tokio::main]
 async fn main() {
@@ -37,7 +37,7 @@ async fn main() {
             .expect("Failed to connect to Redis"),
     );
 
-    let auth_engine = AuthEngine::builder()
+    let auth_engine = Engine::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false,
@@ -61,7 +61,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_user(session: Result<AuthSession, AuthkestraAxumError>) -> impl IntoResponse {
+async fn get_user(session: Result<AuthSession, AxumError>) -> impl IntoResponse {
     match session {
         Ok(AuthSession(session)) => Json(json!({
             "id": session.identity.external_id,

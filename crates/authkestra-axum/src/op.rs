@@ -1,4 +1,4 @@
-use crate::AuthEngineAxumError;
+use crate::AxumError;
 use authkestra_engine::TokenManager;
 use authkestra_op::{
     config::OpConfig,
@@ -23,9 +23,9 @@ use std::sync::Arc;
 pub async fn axum_jwks_handler<AppState>(State(state): State<AppState>) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
 {
-    let token_manager = match <Result<Arc<TokenManager>, AuthEngineAxumError>>::from_ref(&state) {
+    let token_manager = match <Result<Arc<TokenManager>, AxumError>>::from_ref(&state) {
         Ok(t) => t,
         Err(e) => return e.into_response(),
     };
@@ -59,24 +59,22 @@ pub async fn axum_authorize_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
-    Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
     authkestra_engine::SessionConfig: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(client_id = %req.client_id, "Handling OP authorize request (axum)");
-    let op_store =
-        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        };
+    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
     let config = OpConfig::from_ref(&state);
 
-    let session_store =
-        match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        };
+    let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
     let session_config = authkestra_engine::SessionConfig::from_ref(&state);
 
     let session_res = crate::helpers::get_session(&session_store, &session_config, &cookies).await;
@@ -112,15 +110,14 @@ pub async fn axum_device_authorization_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device authorization request (axum)");
-    let op_store =
-        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        };
+    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
     let config = OpConfig::from_ref(&state);
 
     let auth_header = headers
@@ -147,17 +144,16 @@ pub async fn axum_token_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
-    Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (axum)");
-    let op_store =
-        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        };
-    let tokens = match <Result<Arc<TokenManager>, AuthEngineAxumError>>::from_ref(&state) {
+    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
+    let tokens = match <Result<Arc<TokenManager>, AxumError>>::from_ref(&state) {
         Ok(t) => t,
         Err(e) => return e.into_response(),
     };
@@ -194,11 +190,11 @@ pub async fn axum_userinfo_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP userinfo request (axum)");
-    let tokens = match <Result<Arc<TokenManager>, AuthEngineAxumError>>::from_ref(&state) {
+    let tokens = match <Result<Arc<TokenManager>, AxumError>>::from_ref(&state) {
         Ok(t) => t,
         Err(e) => return e.into_response(),
     };
@@ -248,22 +244,20 @@ pub async fn axum_device_verify_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
-    Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
     authkestra_engine::SessionConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device verify request (axum)");
-    let op_store =
-        match <Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>>::from_ref(&state) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        };
+    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
 
-    let session_store =
-        match <Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>>::from_ref(&state) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        };
+    let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
     let session_config = authkestra_engine::SessionConfig::from_ref(&state);
 
     let session_res = crate::helpers::get_session(&session_store, &session_config, &cookies).await;
@@ -295,25 +289,25 @@ where
     }
 }
 
-pub trait AuthEngineAxumOpExt {
+pub trait OpExt {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
+        Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
+        Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
         OpConfig: FromRef<AppState>;
 }
 
-// Implement for any type to allow standalone usage or usage with AuthEngine.
-impl<T> AuthEngineAxumOpExt for T {
+// Implement for any type to allow standalone usage or usage with Engine.
+impl<T> OpExt for T {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Result<Arc<dyn authkestra_op::OpStore>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<TokenManager>, AuthEngineAxumError>: FromRef<AppState>,
-        Result<Arc<dyn crate::SessionStore>, AuthEngineAxumError>: FromRef<AppState>,
+        Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
+        Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
         OpConfig: FromRef<AppState>,
     {

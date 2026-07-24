@@ -1,19 +1,8 @@
 use crate::auth::{error::AuthError, state::Identity};
-use async_trait::async_trait;
+
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-/// Interface for issuing and verifying tokens.
-/// This can be implemented by JWT-based services, opaque token services, etc.
-#[async_trait]
-pub trait TokenService: Send + Sync {
-    /// Issues a new token for the given identity.
-    async fn issue(&self, identity: &Identity, expires_in_secs: u64) -> Result<String, AuthError>;
-
-    /// Verifies a token and returns the associated identity.
-    async fn verify(&self, token: &str) -> Result<Identity, AuthError>;
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
@@ -240,20 +229,6 @@ impl TokenManager {
             .map_err(|e| AuthError::Token(e.to_string()))?;
 
         Ok(token_data.claims)
-    }
-}
-
-#[async_trait]
-impl TokenService for TokenManager {
-    async fn issue(&self, identity: &Identity, expires_in_secs: u64) -> Result<String, AuthError> {
-        self.issue_user_token(identity.clone(), expires_in_secs, None, None)
-    }
-
-    async fn verify(&self, token: &str) -> Result<Identity, AuthError> {
-        let claims = self.validate_token(token, None)?;
-        claims
-            .identity
-            .ok_or_else(|| AuthError::Token("No identity in token".to_string()))
     }
 }
 

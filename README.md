@@ -31,7 +31,7 @@ For advanced users, individual crates are still available and can be used indepe
 | Crate                                                                    | Responsibility                                                            |
 | :----------------------------------------------------------------------- | :------------------------------------------------------------------------ |
 | [`authkestra`](crates/authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
-| [`authkestra-engine`](crates/authkestra-engine/README.md)                       | Foundational types, traits and the **AuthEngine** orchestrator.           |
+| [`authkestra-engine`](crates/authkestra-engine/README.md)                       | Foundational types, traits and the **Engine** orchestrator.           |
 | [`authkestra-resource`](crates/authkestra-resource/README.md)                   | Resource server enforcement and validation (JWT, etc).                    |
 | [`authkestra-session`](crates/authkestra-session/README.md)                     | Session persistence layer abstraction.                                    |
 | [`authkestra-providers`](crates/authkestra-providers/README.md)                 | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
@@ -43,18 +43,18 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 🛠️ Usage
 
-Authkestra utilizes a powerful **Typestate Builder Pattern** (`AuthEngine::builder()`). This enforces at compile-time that certain methods are only available if their prerequisites are met (e.g., you can only call session methods if a `SessionStore` was provided).
+Authkestra utilizes a powerful **Typestate Builder Pattern** (`Engine::builder()`). This enforces at compile-time that certain methods are only available if their prerequisites are met (e.g., you can only call session methods if a `SessionStore` was provided).
 
 ### Quick Start Example
 
 ```rust
-use authkestra::flow::{AuthEngine, OAuth2Flow};
+use authkestra::flow::{Engine, OAuth2Flow};
 use authkestra_providers::github::GithubProvider;
 
 // The builder ensures compile-time safety for your authentication stack
 let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
 
-let auth_engine = AuthEngine::builder()
+let auth_engine = Engine::builder()
     .provider(OAuth2Flow::new(github_provider))
     .session_store(session_store)
     .build();
@@ -75,7 +75,7 @@ To see complete, runnable examples for various frameworks and flows, check out t
 
 Our architecture enforces strict design principles to guarantee compile-time safety and optimal Developer Experience (DX):
 
-- **Typestate Builder Pattern**: The `AuthEngine::builder()` uses Rust's typestate pattern. This makes misconfigurations a compile-time error rather than a runtime surprise.
+- **Typestate Builder Pattern**: The `Engine::builder()` uses Rust's typestate pattern. This makes misconfigurations a compile-time error rather than a runtime surprise.
 - **Trait Objects over Generics**: For I/O bound paths, we prefer `Box<dyn Trait>` (e.g., `Box<dyn AuthMethod>`) over heavy monomorphized generics. This drastically optimizes compilation times without sacrificing meaningful runtime performance.
 - **Framework Agnostic Core**: The `authkestra-engine` is pure Rust logic. Axum and Actix integrations are entirely isolated in separate adapter crates, utilizing explicit Extractors like `AuthSession(session)`.
 - **Plugin Interfaces**: We extend functionality via strict plugin interfaces (`AuthMethod`, `Flow`) rather than opaque, ordering-dependent middleware.

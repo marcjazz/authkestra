@@ -6,20 +6,20 @@ This crate focuses strictly on validation and enforcement (middleware/extractors
 
 ## Features
 
-- `AuthEngineGuard`: A flexible orchestrator for multiple authentication strategies.
+- `Guard`: A flexible orchestrator for multiple authentication strategies.
 - JWT Validation: Offline validation of JWT tokens using JWKS or local keys.
 - Framework Agnostic: Core logic remains independent of web frameworks.
 
 ## Usage
 
-### Using AuthEngineGuard
+### Using Guard
 
 ```rust
-use authkestra_resource::{AuthEngineGuard, AuthPolicy};
+use authkestra_resource::{Guard, AuthPolicy};
 use authkestra_resource::jwt::JwtStrategy;
 
 // Create a guard with a JWT strategy
-let guard = AuthEngineGuard::builder()
+let guard = Guard::builder()
     .strategy(JwtStrategy::new(validation_config))
     .policy(AuthPolicy::FirstSuccess)
     .build();
@@ -46,6 +46,6 @@ let strategy = JwtStrategy::new(config);
 
 ## Related Crates
 
-- `authkestra-engine`: Foundational types and the AuthEngine orchestrator.
+- `authkestra-engine`: Foundational types and the Engine orchestrator.
 - `authkestra-axum`: Axum extractors and middleware.
 - `authkestra-actix`: Actix-web extractors and middleware.

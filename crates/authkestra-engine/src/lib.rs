@@ -5,6 +5,9 @@ pub mod protocol;
 pub mod store;
 pub mod token;
 
+pub mod aliases;
+
+pub use aliases::*;
 pub use auth::*;
 pub use engine::*;
 pub use flow::*;

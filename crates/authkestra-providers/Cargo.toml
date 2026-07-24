@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-providers"
-version = "0.1.1"
+version = "0.2.0"
 edition.workspace = true
 description = "Consolidated OAuth providers for the authkestra framework"
 repository.workspace = true

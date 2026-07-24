@@ -1,6 +1,6 @@
 //! # Axum Resource Server Strategy Example
 //!
-//! This example demonstrates how to use the Resource Server strategy with `AuthEngineGuard`
+//! This example demonstrates how to use the Resource Server strategy with `Guard`
 //! and the `Auth` extractor to protect an API.
 
 use authkestra_axum::Auth;
@@ -23,7 +23,7 @@ struct UserIdentity {
     scope: Option<String>,
 }
 
-/// AppState using Authkestra's `AuthEngineGuard` (ResourceEnforcer).
+/// AppState using Authkestra's `Guard` (ResourceEnforcer).
 #[derive(Clone)]
 struct AppState {
     resource_enforcer: Arc<ResourceEnforcer<UserIdentity>>,

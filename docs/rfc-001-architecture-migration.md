@@ -9,7 +9,7 @@ This document proposes a comprehensive migration plan to transition Authkestra f
 Authkestra currently consists of numerous specialized crates (`authkestra-core`, `authkestra-flow`, `authkestra-token`, `authkestra-session`, `authkestra-guard`, etc.). While this high level of modularity demonstrates the breadth of the project, it suffers from several architectural issues:
 
 - **Blurry Boundaries:** Crates mix protocol concerns, abstractions, state handling, and execution logic.
-- **Missing Core Engine:** There is no central orchestrator (`AuthEngine`) to tie flows, providers, sessions, and tokens together.
+- **Missing Core Engine:** There is no central orchestrator (`Engine`) to tie flows, providers, sessions, and tokens together.
 - **Naming Inconsistencies:** Crates like `authkestra-guard` handle JWT logic rather than just enforcement.
 - **Developer Friction:** A steep learning curve prevents users from achieving a simple "golden path" integration in a few lines of code.
 
@@ -24,7 +24,7 @@ The new architecture will be split into three distinct zones:
 A framework-agnostic runtime that acts as the brain of the system.
 
 - **Crate:** `authkestra-engine` (Merging `core`, `flow`, `token`, and parts of `guard`)
-- **Responsibilities:** Identity modeling, trait definitions (`Authenticator`, `Flow`, `Provider`, `SessionStore`), protocol helpers (PKCE, OIDC discovery), and the central `AuthEngine` orchestrator.
+- **Responsibilities:** Identity modeling, trait definitions (`Authenticator`, `Flow`, `Provider`, `SessionStore`), protocol helpers (PKCE, OIDC discovery), and the central `Engine` orchestrator.
 
 ### 3.2. Layer 2: Extensions (Plugins)
 
@@ -113,12 +113,12 @@ pub trait TokenService {
 }
 ```
 
-### 4.6. AuthEngine (The Orchestrator)
+### 4.6. Engine (The Orchestrator)
 
 The central runtime that ties everything together.
 
 ```rust
-pub struct AuthEngine {
+pub struct Engine {
     providers: Vec<Box<dyn Provider>>,
     methods: Vec<Box<dyn AuthMethod>>,
     flows: Vec<Box<dyn Flow>>,
@@ -126,9 +126,9 @@ pub struct AuthEngine {
     token_service: Box<dyn TokenService>,
 }
 
-impl AuthEngine {
-    pub fn builder() -> AuthEngineBuilder {
-        AuthEngineBuilder::new()
+impl Engine {
+    pub fn builder() -> EngineBuilder {
+        EngineBuilder::new()
     }
 }
 ```
@@ -136,7 +136,7 @@ impl AuthEngine {
 **Golden Path Example:**
 
 ```rust
-let engine = AuthEngine::builder()
+let engine = Engine::builder()
     .with_provider(GoogleProvider::new(...))
     .with_method(Credentials::new())
     .with_session_store(MemoryStore::new())
@@ -155,11 +155,11 @@ let engine = AuthEngine::builder()
 1. **Create `authkestra-engine`:** Initialize the new crate.
 2. **Merge Crates:** Move code from `authkestra-core`, `authkestra-flow`, and `authkestra-token` into `authkestra-engine/src/{auth, flow, token, protocol}`. Do not alter business logic yet.
 3. **Define Core Traits:** Implement the `AuthMethod`, `Flow`, `Provider`, `SessionStore`, and `TokenService` traits in `authkestra-engine`.
-4. **Implement `AuthEngine` Builder:** Create the `AuthEngine` struct and its builder API.
+4. **Implement `Engine` Builder:** Create the `Engine` struct and its builder API.
 5. **Refactor OAuth Flow:** Update the existing OAuth implementation to implement the `Flow` trait and use the `Provider` trait.
 6. **Refactor Session Crate:** Split `authkestra-session` into an interface-only crate (`authkestra-session`) and implementation crates (`authkestra-session-memory`, etc.).
 7. **Rename Guard:** Rename `authkestra-guard` to `authkestra-resource` and focus it strictly on validation and enforcement (middleware/extractors).
-8. **Create Golden Example:** Update `authkestra-examples` to demonstrate the new `AuthEngine::builder()` API using Axum/Actix.
+8. **Create Golden Example:** Update `authkestra-examples` to demonstrate the new `Engine::builder()` API using Axum/Actix.
 
 ### Phase 2: Authentication Expansion
 
@@ -205,7 +205,7 @@ let engine = AuthEngine::builder()
 
 ## 6. Migration Rules & Constraints
 
-1. **No Breaking User-Space APIs in Phase 1 (Where Possible):** During the initial merge, preserve existing structs where feasible. The breaking changes occur when transitioning to the `AuthEngine::builder()` pattern.
+1. **No Breaking User-Space APIs in Phase 1 (Where Possible):** During the initial merge, preserve existing structs where feasible. The breaking changes occur when transitioning to the `Engine::builder()` pattern.
 2. **Every Feature is a Plugin:** Do not hardcode WebAuthn, TOTP, or specific DB logic into the engine. They must implement the defined traits.
 3. **One Identity Lifecycle:** All flows MUST resolve to the unified `Identity` struct.
 4. **Dogfooding:** The Admin Dashboard MUST be authenticated using Authkestra itself.
