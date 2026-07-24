@@ -4,8 +4,7 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
-	site: 'https://marcjazz.github.io',
-	base: '/authkestra',
+	site: 'https://authkestra.com',
 
 	integrations: [
 		starlight({
