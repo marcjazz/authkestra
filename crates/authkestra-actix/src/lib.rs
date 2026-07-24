@@ -22,6 +22,9 @@ pub mod helpers;
 #[cfg(feature = "op")]
 pub mod op;
 
+#[cfg(feature = "macros")]
+pub use authkestra_macros::ActixState as State;
+
 #[cfg(feature = "flow")]
 pub use helpers::actix_login_handler;
 #[cfg(all(feature = "flow", feature = "session"))]
@@ -69,49 +72,9 @@ impl FromRequest for AuthSession {
     type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
 
     fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let store = req
-            .app_data::<web::Data<Arc<dyn SessionStore>>>()
-            .cloned()
-            .or_else(|| {
-                req.app_data::<web::Data<Engine<Configured<Arc<dyn SessionStore>>, Missing>>>()
-                    .map(|a| web::Data::new(a.session_store.get_store()))
-            })
-            .or_else(|| {
-                #[cfg(feature = "token")]
-                {
-                    req.app_data::<web::Data<
-                        Engine<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
-                    >>()
-                    .map(|a| web::Data::new(a.session_store.get_store()))
-                }
-                #[cfg(not(feature = "token"))]
-                {
-                    None
-                }
-            });
+        let store = req.app_data::<web::Data<Arc<dyn SessionStore>>>().cloned();
 
-        let config = req
-            .app_data::<web::Data<SessionConfig>>()
-            .cloned()
-            .or_else(|| {
-                req.app_data::<web::Data<
-                    Engine<authkestra_engine::Configured<Arc<dyn SessionStore>>, Missing>,
-                >>()
-                .map(|a| web::Data::new(a.session_config.clone()))
-            })
-            .or_else(|| {
-                #[cfg(feature = "token")]
-                {
-                    req.app_data::<web::Data<
-                        Engine<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
-                    >>()
-                    .map(|a| web::Data::new(a.session_config.clone()))
-                }
-                #[cfg(not(feature = "token"))]
-                {
-                    None
-                }
-            });
+        let config = req.app_data::<web::Data<SessionConfig>>().cloned();
 
         let session_id = req
             .cookie(
@@ -169,26 +132,7 @@ impl FromRequest for AuthToken {
     type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
 
     fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let token_manager = req
-            .app_data::<web::Data<Arc<TokenManager>>>()
-            .cloned()
-            .or_else(|| {
-                req.app_data::<web::Data<Engine<Missing, Configured<Arc<TokenManager>>>>>()
-                    .map(|a| web::Data::new(a.token_manager.get_manager()))
-            })
-            .or_else(|| {
-                #[cfg(feature = "session")]
-                {
-                    req.app_data::<web::Data<
-                        Engine<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
-                    >>()
-                    .map(|a| web::Data::new(a.token_manager.get_manager()))
-                }
-                #[cfg(not(feature = "session"))]
-                {
-                    None
-                }
-            });
+        let token_manager = req.app_data::<web::Data<Arc<TokenManager>>>().cloned();
 
         let auth_header = req
             .headers()

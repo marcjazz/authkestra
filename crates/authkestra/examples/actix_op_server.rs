@@ -4,12 +4,25 @@
 use authkestra_engine::store::KvStore;
 
 use actix_web::{App, HttpServer};
-use authkestra_actix::OpExt;
-use authkestra_engine::TokenManager;
+use authkestra_actix::{OpExt, State};
+use authkestra_engine::{Configured, Engine, TokenManager};
 use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use std::sync::Arc;
 
-struct AppState;
+#[derive(Clone, State)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: Engine<
+        Configured<Arc<dyn authkestra_engine::auth::SessionStore>>,
+        Configured<Arc<TokenManager>>,
+    >,
+
+    #[authkestra(store)]
+    op_store: Arc<dyn authkestra_op::OpStore>,
+
+    #[authkestra(store)]
+    config: OpConfig,
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -58,22 +71,30 @@ async fn main() -> std::io::Result<()> {
         token_exchange_enabled: true,
     };
 
-    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
-        Arc::new(authkestra_engine::store::memory::MemoryStore::new());
-    let session_config = authkestra_engine::SessionConfig {
-        cookie_name: "authkestra_sid".to_string(),
-        ..Default::default()
-    };
+    let auth = Engine::builder()
+        .session_store(Arc::new(
+            authkestra_engine::store::memory::MemoryStore::new(),
+        ))
+        .session_config(authkestra_engine::SessionConfig {
+            cookie_name: "authkestra_sid".to_string(),
+            ..Default::default()
+        })
+        .token_manager(token_manager)
+        .build();
 
+    let app_state = AppState {
+        auth,
+        op_store,
+        config,
+    };
     println!("🚀 Actix OP Server running on http://localhost:8080");
     HttpServer::new(move || {
+        let state = app_state.clone();
+        let config_state = state.clone();
         App::new()
-            .app_data(actix_web::web::Data::new(token_manager.clone()))
-            .app_data(actix_web::web::Data::new(op_store.clone()))
-            .app_data(actix_web::web::Data::new(config.clone()))
-            .app_data(actix_web::web::Data::new(session_store.clone()))
-            .app_data(actix_web::web::Data::new(session_config.clone()))
-            .service(AppState.op_actix_scope())
+            .app_data(actix_web::web::Data::new(state.clone()))
+            .configure(move |cfg| config_state.configure_authkestra(cfg))
+            .service(state.op_actix_scope())
     })
     .bind("0.0.0.0:8080")?
     .run()

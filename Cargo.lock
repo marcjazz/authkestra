@@ -430,6 +430,7 @@ dependencies = [
  "actix-utils",
  "actix-web",
  "authkestra-engine",
+ "authkestra-macros",
  "authkestra-op",
  "authkestra-resource",
  "base64",

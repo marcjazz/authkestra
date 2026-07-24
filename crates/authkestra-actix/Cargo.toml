@@ -12,6 +12,7 @@ categories.workspace = true
 authkestra-engine = { workspace = true }
 authkestra-resource = { workspace = true, optional = true }
 authkestra-op = { workspace = true, optional = true }
+authkestra-macros = { workspace = true, optional = true, features = ["actix"] }
 actix-web = "4"
 actix-utils = "3"
 futures-util = "0.3"
@@ -31,3 +32,4 @@ flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engin
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
 op = ["dep:authkestra-op", "session", "token"]
+macros = ["dep:authkestra-macros"]
