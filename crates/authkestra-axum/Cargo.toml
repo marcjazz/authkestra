@@ -1,12 +1,13 @@
 [package]
 name = "authkestra-axum"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 description = "Axum integration for the authkestra authentication framework"
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
+readme = "README.md"
 
 [dependencies]
 authkestra-engine = { workspace = true, optional = true }

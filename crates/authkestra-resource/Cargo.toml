@@ -1,12 +1,13 @@
 [package]
 name = "authkestra-resource"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 description = "Resource server enforcement and validation for the authkestra framework"
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
+readme = "README.md"
 
 [dependencies]
 authkestra-engine = { workspace = true }

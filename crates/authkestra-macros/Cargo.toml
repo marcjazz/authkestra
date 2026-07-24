@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-macros"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 authors = ["Authkestra Contributors"]
 license.workspace = true
@@ -8,6 +8,7 @@ description = "Procedural macros for authkestra framework integrations"
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
+readme = "README.md"
 
 [lib]
 proc-macro = true
