@@ -9,16 +9,33 @@ Beyond consuming identities, Authkestra allows you to *become* the identity prov
 
 An OpenID Provider (OP) is an OAuth 2.0 Authorization Server capable of authenticating End-Users and providing claims to a Relying Party (RP). We strictly implement [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html).
 
-## Required Storage
+## The OpStore Interface
 
-To run an OP Server, you need to persist four specific types of records. 
+To run an OP Server, you need to persist four specific types of records: Clients, Auth Codes, Refresh Tokens, and Device Codes. 
 
-1. **Clients**: The applications (Relying Parties) that are allowed to authenticate users against your server. Each client has a `client_id` and authorized `redirect_uris`.
-2. **Auth Codes**: Short-lived, single-use codes issued after a user logs in. The client exchanges this code for the actual tokens.
-3. **Refresh Tokens**: Long-lived tokens used by clients to fetch new Access Tokens without forcing the user to log in again.
-4. **Device Codes**: Used for the OAuth 2.0 Device Authorization Grant (e.g., logging in on a Smart TV).
+In Authkestra, this is handled through the unified `OpStore` supertrait. `OpStore` aggregates the four granular storage traits:
 
-Authkestra provides a generic `KvStore` trait to persist these using SQLx (`SqlKvStore`). Check the `op_server.rs` example in the repository for the database wiring code.
+```rust
+pub trait OpStore:
+    ClientStore + AuthorizationCodeStore + RefreshTokenStore + DeviceCodeStore + Send + Sync
+{
+}
+```
+
+You can implement `OpStore` directly on a single monolithic database struct (e.g., your main Postgres pool struct). Alternatively, if you want to use different backends for different types of data (e.g., config for clients, Redis for codes), you can use the `CompositeOpStore` helper to delegate to four individual store implementations:
+
+```rust
+use authkestra_op::store::CompositeOpStore;
+
+let op_store = CompositeOpStore::new(
+    client_store, // e.g., PostgreSQL for persistent clients
+    auth_code_store, // e.g., Redis for short-lived codes
+    refresh_token_store,
+    device_code_store,
+);
+```
+
+Check the `op_server.rs` example in the repository for full database wiring code.
 
 ## Documenting `OpConfig`
 
