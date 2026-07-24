@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-oidc"
-version = "0.1.2"
+version = "0.2.0"
 edition.workspace = true
 description = "OIDC support for the authkestra framework"
 repository.workspace = true
