@@ -165,11 +165,13 @@ pub async fn handle_token(
             handle_token_exchange(req, client_id, client, config, tokens).await
         }
         _ => {
-            if !client.allows_grant_type(&crate::client::GrantType::Custom(req.grant_type.clone())) {
+            if !client.allows_grant_type(&crate::client::GrantType::Custom(req.grant_type.clone()))
+            {
                 tracing::warn!(client_id = %client_id, grant_type = %req.grant_type, "Client not authorized for custom grant");
                 return Err(TokenErrorResponse {
                     error: "unauthorized_client".to_string(),
-                    error_description: "Client is not authorized to use this grant type".to_string(),
+                    error_description: "Client is not authorized to use this grant type"
+                        .to_string(),
                 });
             }
 
