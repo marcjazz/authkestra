@@ -86,7 +86,7 @@ async fn main() {
     };
 
     let app = Router::new()
-        .fallback_service(ServeDir::new("crates/authkestra/examples/static"))
+        .fallback_service(ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/static")))
         .merge(auth_engine.axum_router::<AppState>())
         .layer(CookieManagerLayer::new())
         .with_state(state);
