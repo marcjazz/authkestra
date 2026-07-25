@@ -24,6 +24,10 @@ pub enum ValidationError {
     InvalidToken(String),
     #[error("Key not found in JWKS")]
     KeyNotFound,
+    #[error(
+        "Token is missing a 'kid' header, which is required by this JWKS cache's strict validation policy"
+    )]
+    MissingKid,
     #[error("PASETO error: {0}")]
     Paseto(String),
     #[error("Discovery error: {0}")]
@@ -58,6 +62,7 @@ pub struct JwksCache {
     jwks_uri: String,
     jwks: RwLock<Option<(Jwks, Instant)>>,
     ttl: Duration,
+    require_kid: bool,
 }
 
 impl JwksCache {
@@ -66,7 +71,19 @@ impl JwksCache {
             jwks_uri,
             jwks: RwLock::new(None),
             ttl: refresh_interval,
+            require_kid: false,
         }
+    }
+
+    /// When set to `true`, tokens presented without a `kid` header will be rejected
+    /// with [`ValidationError::MissingKid`] instead of silently falling back to the
+    /// first key in the JWKS. This guards against key-confusion when the JWKS holds
+    /// more than one key (e.g. during rotation).
+    ///
+    /// Defaults to `false` to preserve today's permissive fallback behavior.
+    pub fn require_kid(mut self, value: bool) -> Self {
+        self.require_kid = value;
+        self
     }
 
     pub async fn get_jwks(&self) -> Result<Jwks, ValidationError> {
@@ -83,6 +100,10 @@ impl JwksCache {
     }
 
     pub async fn get_key(&self, kid: Option<&str>) -> Result<Option<Jwk>, ValidationError> {
+        if kid.is_none() && self.require_kid {
+            return Err(ValidationError::MissingKid);
+        }
+
         let jwks = self.get_jwks().await?;
         if let Some(key) = jwks.find_key(kid) {
             return Ok(Some(key.clone()));
@@ -107,8 +128,9 @@ pub struct ValidationConfig {
     pub jwks_url: String,
     pub refresh_interval: Duration,
     pub issuer: Option<String>,
-    pub audience: Option<String>,
+    pub audience: Vec<String>,
     pub algorithms: Vec<Algorithm>,
+    pub require_kid: bool,
 }
 
 impl ValidationConfig {
@@ -124,8 +146,9 @@ pub struct ValidationConfigBuilder {
     jwks_url: Option<String>,
     refresh_interval: Option<Duration>,
     issuer: Option<String>,
-    audience: Option<String>,
+    audience: Vec<String>,
     algorithms: Vec<Algorithm>,
+    require_kid: bool,
 }
 
 impl ValidationConfigBuilder {
@@ -147,15 +170,33 @@ impl ValidationConfigBuilder {
         self
     }
 
-    /// Set the expected audience.
+    /// Add an expected audience. May be called multiple times to accept tokens scoped to
+    /// any one of several audiences. Kept for backward compatibility with single-audience
+    /// configuration; prefer [`ValidationConfigBuilder::audiences`] when adding more than one.
     pub fn audience(mut self, audience: impl Into<String>) -> Self {
-        self.audience = Some(audience.into());
+        self.audience.push(audience.into());
+        self
+    }
+
+    /// Add multiple expected audiences at once. A token is accepted if its `aud` claim
+    /// matches ANY of the configured audiences (e.g. a token valid for both a web app and
+    /// a mobile client, or a gateway service that accepts several downstream audiences).
+    pub fn audiences(mut self, audiences: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.audience.extend(audiences.into_iter().map(Into::into));
         self
     }
 
     /// Set the allowed algorithms.
     pub fn algorithms(mut self, algorithms: Vec<Algorithm>) -> Self {
         self.algorithms = algorithms;
+        self
+    }
+
+    /// When `true`, reject tokens that omit a `kid` header instead of silently falling back
+    /// to the first key in the JWKS. Off by default for backward compatibility. See
+    /// [`JwksCache::require_kid`].
+    pub fn require_kid(mut self, value: bool) -> Self {
+        self.require_kid = value;
         self
     }
 
@@ -175,6 +216,7 @@ impl ValidationConfigBuilder {
             } else {
                 self.algorithms
             },
+            require_kid: self.require_kid,
         }
     }
 }
@@ -189,7 +231,8 @@ pub struct JwtStrategy<I> {
 impl<I> JwtStrategy<I> {
     /// Create a new `JwtStrategy` with the given `ValidationConfig`.
     pub fn new(config: ValidationConfig) -> Self {
-        let cache = JwksCache::new(config.jwks_url, config.refresh_interval);
+        let cache = JwksCache::new(config.jwks_url, config.refresh_interval)
+            .require_kid(config.require_kid);
         let mut validation = Validation::new(config.algorithms[0]);
         validation.algorithms = config.algorithms;
 
@@ -197,8 +240,8 @@ impl<I> JwtStrategy<I> {
             validation.set_issuer(&[iss]);
         }
 
-        if let Some(aud) = config.audience {
-            validation.set_audience(&[aud]);
+        if !config.audience.is_empty() {
+            validation.set_audience(&config.audience);
         }
 
         Self {
