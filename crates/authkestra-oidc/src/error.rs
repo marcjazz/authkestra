@@ -63,6 +63,9 @@ impl From<authkestra_resource::jwt::ValidationError> for OidcError {
             authkestra_resource::jwt::ValidationError::KeyNotFound => {
                 OidcError::ValidationError("Key not found".to_string())
             }
+            authkestra_resource::jwt::ValidationError::MissingKid => {
+                OidcError::ValidationError("Token is missing a required 'kid' header".to_string())
+            }
             authkestra_resource::jwt::ValidationError::Paseto(e) => OidcError::ValidationError(e),
             authkestra_resource::jwt::ValidationError::Validation(e) => {
                 OidcError::ValidationError(e)
