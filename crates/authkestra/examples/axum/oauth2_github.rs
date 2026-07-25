@@ -90,7 +90,10 @@ async fn main() {
     };
 
     let app = Router::new()
-        .fallback_service(ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/static")))
+        .fallback_service(ServeDir::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/static"
+        )))
         .route("/api/user", get(get_user))
         .merge(auth_engine.axum_router())
         .layer(CookieManagerLayer::new())
