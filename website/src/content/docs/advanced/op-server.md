@@ -113,6 +113,32 @@ let config = OpConfig {
 };
 ```
 
+## Custom Claims
+
+When building a full Identity Provider, you often need to attach domain-specific data to your tokens (e.g., `role`, `project_id`, or `billing_tier`). This aligns with custom claim mappers found in enterprise systems like Keycloak or Auth0.
+
+Authkestra's core `TokenManager` natively supports injecting custom claims via the `*_with_extra` suite of methods. You simply provide a `HashMap<String, serde_json::Value>` containing your extra claims when minting tokens:
+
+```rust
+use std::collections::HashMap;
+use serde_json::json;
+
+let mut extra_claims = HashMap::new();
+extra_claims.insert("org_id".to_string(), json!("org-123"));
+extra_claims.insert("role".to_string(), json!("admin"));
+
+// Issue an ID Token with standard claims AND your custom claims appended
+let id_token = token_manager.issue_id_token_with_extra(
+    identity,
+    "client-1",
+    Some("nonce123".to_string()),
+    3600,
+    extra_claims
+)?;
+```
+
+*(Note: When calling `issue_id_token_with_extra`, an explicit `nonce` argument will always take precedence over a `"nonce"` key provided in the `extra_claims` map).*
+
 ## Wiring the OP Endpoints
 
 Once your stores and config are built, you wire the server routes using `op_axum_router()` (or `op_actix_router()`).
