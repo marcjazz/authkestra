@@ -1,6 +1,6 @@
 [package]
 name = "authkestra-resource"
-version = "0.2.1"
+version = "0.2.2"
 edition.workspace = true
 description = "Resource server enforcement and validation for the authkestra framework"
 repository.workspace = true

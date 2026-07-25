@@ -17,7 +17,7 @@ Like the OP Server, the Resource Server is an advanced component and is not incl
 
 ```toml
 [dependencies]
-authkestra-resource = "0.2.1"
+authkestra-resource = "0.2.2"
 authkestra-axum = { version = "0.2.1", features = ["resource"] }
 # Or if using Actix:
 # authkestra-actix = { version = "0.2.1", features = ["resource"] }
