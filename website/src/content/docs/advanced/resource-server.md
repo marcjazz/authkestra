@@ -45,6 +45,21 @@ let validation_config = ValidationConfig::builder()
 let jwt_strategy = JwtStrategy::<UserIdentity>::new(validation_config);
 ```
 
+### Advanced JWT Validation
+
+The `ValidationConfig::builder()` supports several advanced validation rules to enforce strict security policies:
+
+- **Multi-Audience Support**: If your API serves multiple distinct clients, you can configure it to accept tokens minted for any of those audiences by chaining `.audiences(["client_a", "client_b"])`. (You can still use `.audience("single_client")` for backward compatibility).
+- **Strict Key IDs (`kid`)**: By default, if a JWT is missing the `kid` (Key ID) header, Authkestra will gracefully fall back to the first available key in the JWKS. To strictly reject malformed tokens that lack a `kid`, chain `.require_kid(true)`.
+
+```rust
+let advanced_config = ValidationConfig::builder()
+    .jwks_url("https://example.com/jwks")
+    .audiences(["admin_portal", "mobile_app"])
+    .require_kid(true) // Reject tokens without a 'kid' header
+    .build();
+```
+
 ### 2. Flexible Strategy Chaining
 
 A core feature of Authkestra is **Flexible Chaining**. What if you want to support *multiple* types of authentication on the same endpoint? For instance, accepting an OIDC JWT *or* a custom API key? 
