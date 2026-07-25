@@ -6,15 +6,28 @@ use crate::refresh::RefreshTokenStore;
 /// A unified store for all OpenID Provider state.
 /// This supertrait aggregates `ClientStore`, `AuthorizationCodeStore`,
 /// `RefreshTokenStore`, and `DeviceCodeStore`.
+#[async_trait::async_trait]
 pub trait OpStore:
     ClientStore + AuthorizationCodeStore + RefreshTokenStore + DeviceCodeStore + Send + Sync
 {
-}
-
-// Automatically implement `OpStore` for any type that implements the granular traits.
-impl<T> OpStore for T where
-    T: ClientStore + AuthorizationCodeStore + RefreshTokenStore + DeviceCodeStore + Send + Sync
-{
+    /// Handle a custom grant type request during token exchange.
+    ///
+    /// By default, this returns an `unsupported_grant_type` error.
+    async fn handle_custom_grant(
+        &self,
+        _grant_type: &str,
+        _req: crate::handlers::token::TokenRequest,
+        _client_id: String,
+        _client: crate::client::ClientRegistration,
+        _config: &crate::config::OpConfig,
+        _tokens: &authkestra_engine::token::TokenManager,
+    ) -> Result<crate::handlers::token::TokenResponse, crate::handlers::token::TokenErrorResponse>
+    {
+        Err(crate::handlers::token::TokenErrorResponse {
+            error: "unsupported_grant_type".to_string(),
+            error_description: "Unsupported grant type".to_string(),
+        })
+    }
 }
 
 /// A helper struct that implements `OpStore` by delegating to 4 individual stores.
@@ -24,6 +37,16 @@ pub struct CompositeOpStore<C, A, R, D> {
     codes: A,
     refresh: R,
     devices: D,
+}
+
+impl<C, A, R, D> OpStore for CompositeOpStore<C, A, R, D>
+where
+    C: ClientStore,
+    A: AuthorizationCodeStore,
+    R: RefreshTokenStore,
+    D: DeviceCodeStore,
+    Self: Send + Sync,
+{
 }
 
 impl<C, A, R, D> CompositeOpStore<C, A, R, D> {

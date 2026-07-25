@@ -16,9 +16,9 @@ Because OP Servers are an advanced use case, the OP logic is not included in the
 ```toml
 [dependencies]
 authkestra-op = "0.2.2"
-authkestra-axum = { version = "0.2.1", features = ["op"] }
+authkestra-axum = { version = "0.2.2", features = ["op"] }
 # Or if using Actix:
-# authkestra-actix = { version = "0.2.1", features = ["op"] }
+# authkestra-actix = { version = "0.2.2", features = ["op"] }
 ```
 
 ## The OpStore Interface
@@ -46,6 +46,9 @@ let op_store = CompositeOpStore::new(
     device_code_store,
 );
 ```
+
+> [!TIP]
+> **Implementing Custom Stores:** If you build your own combined store type (e.g. `struct MyCustomStore { ... }`), you must explicitly implement the `OpStore` trait for it (`impl OpStore for MyCustomStore {}`). This is a minor breaking change from `0.2.2` where a blanket implementation was provided, which was removed to allow for overriding the `handle_custom_grant` method.
 
 Check the `op_server.rs` example in the repository for full database wiring code.
 
@@ -112,6 +115,61 @@ let config = OpConfig {
     token_exchange_enabled: true,
 };
 ```
+
+## Custom Grant Types
+
+Beyond the built-in grant types, Authkestra allows you to implement custom extension grants (e.g. for custom legacy flows, SSO tokens from third parties, etc).
+
+To support a custom grant type:
+
+1. Add it to your client's authorized grants using the `Custom(String)` variant:
+   ```rust
+   use authkestra_op::client::GrantType;
+
+   client.grant_types = vec![GrantType::Custom("urn:my:custom:grant".to_string())];
+   ```
+2. Implement your own `OpStore` and override the `handle_custom_grant` method. By default, `handle_custom_grant` returns an `unsupported_grant_type` error, meaning it is safely backwards compatible for users leveraging `CompositeOpStore`.
+   ```rust
+   use authkestra_op::store::OpStore;
+   use authkestra_op::handlers::token::{TokenRequest, TokenResponse, TokenErrorResponse};
+
+   #[async_trait::async_trait]
+   impl OpStore for MyCustomOpStore {
+       // ... other store methods ...
+
+       async fn handle_custom_grant(
+           &self,
+           grant_type: &str,
+           req: TokenRequest,
+           client_id: String,
+           client: authkestra_op::client::ClientRegistration,
+           config: &authkestra_op::config::OpConfig,
+           tokens: &authkestra_engine::token::TokenManager,
+       ) -> Result<TokenResponse, TokenErrorResponse> {
+           if grant_type == "urn:my:custom:grant" {
+               // Perform custom validation here...
+               
+               // Issue the token!
+               let access_token = tokens.issue_client_token(&client_id, 3600, None, None).unwrap();
+               return Ok(TokenResponse {
+                   access_token,
+                   token_type: "Bearer".to_string(),
+                   expires_in: 3600,
+                   refresh_token: None,
+                   id_token: None,
+                   scope: None,
+               });
+           }
+           
+           Err(TokenErrorResponse {
+               error: "unsupported_grant_type".to_string(),
+               error_description: "Unsupported custom grant".to_string(),
+           })
+       }
+   }
+   ```
+
+Authkestra's token endpoint automatically intercepts any unknown grant type, checks if the client is authorized to use `GrantType::Custom(grant_type_string)`, and if so, safely forwards it to your `handle_custom_grant` implementation.
 
 ## Custom Claims
 

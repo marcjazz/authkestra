@@ -10,43 +10,52 @@ export default defineConfig({
 		starlight({
 			title: 'Authkestra',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/marcjazz/authkestra' }],
+			customCss: [
+				'./src/styles/custom.css',
+			],
 			sidebar: [
 				{
-					label: 'Introduction & Concepts',
+					label: 'Welcome',
 					items: [
-						{ label: 'Architecture', slug: 'concepts/architecture' },
-						{ label: 'Typestate Builder Pattern', slug: 'concepts/typestate-builder' },
+						{ label: 'Why Authkestra?', slug: 'concepts/architecture' },
+						{ label: 'Comparison', slug: 'concepts/comparison' },
 					],
 				},
 				{
 					label: 'Getting Started',
 					items: [
 						{ label: 'Quickstart', slug: 'guides/quickstart' },
-						{ label: 'Wired Endpoints', slug: 'guides/wired-endpoints' },
 						{ label: 'Framework Integration', slug: 'guides/framework-integration' },
+						{ label: 'Wired Endpoints', slug: 'guides/wired-endpoints' },
 					],
 				},
 				{
-					label: 'Identity Providers',
+					label: 'Authentication Flows',
 					items: [
 						{ label: 'Stateless OAuth2', slug: 'providers/oauth2' },
-						{ label: 'OIDC Provider', slug: 'providers/oidc' },
+						{ label: 'OIDC Provider (Client)', slug: 'providers/oidc' },
 						{ label: 'Client Credentials', slug: 'providers/client-credentials' },
 						{ label: 'Device Flow', slug: 'providers/device-flow' },
 					],
 				},
 				{
-					label: 'Storage & Data Access',
+					label: 'Building Servers',
 					items: [
-						{ label: 'Overview', slug: 'storage/overview' },
-						{ label: 'Implementing Stores', slug: 'storage/implementing-stores' },
+						{ label: 'Resource Server (API)', slug: 'advanced/resource-server' },
+						{ label: 'OpenID Provider (OP)', slug: 'advanced/op-server' },
 					],
 				},
 				{
-					label: 'Advanced & Servers',
+					label: 'Data & Storage',
 					items: [
-						{ label: 'Resource Server', slug: 'advanced/resource-server' },
-						{ label: 'OpenID Provider (OP) Server', slug: 'advanced/op-server' },
+						{ label: 'Storage Overview', slug: 'storage/overview' },
+						{ label: 'Implementing Custom Stores', slug: 'storage/implementing-stores' },
+					],
+				},
+				{
+					label: 'Core Concepts',
+					items: [
+						{ label: 'Typestate Builder Pattern', slug: 'concepts/typestate-builder' },
 						{ label: 'Instrumentation & Tracing', slug: 'advanced/instrumentation' },
 					],
 				},

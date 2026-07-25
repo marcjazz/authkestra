@@ -1,0 +1,42 @@
+---
+title: Authkestra vs. The World
+description: How Authkestra compares to standalone Identity Providers like Rauthy and embedded libraries like better-auth.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+When choosing an authentication architecture in the Rust ecosystem, you generally have two paths: deploying a standalone Identity Provider, or embedding a library directly into your application. 
+
+**Authkestra** falls into a unique category: it is a **modular, embedded identity engine** powered by Rust's strict compiler. It gives you the ownership and flexibility of an embedded library with the capabilities of a standalone OP server.
+
+Here is how Authkestra compares to the most popular Rust alternatives.
+
+## Feature Matrix
+
+| Feature | **Authkestra** | **better-auth.rs** | **Rauthy / Kanidm** |
+| :--- | :--- | :--- | :--- |
+| **Category** | Embedded Identity Engine | Comprehensive Auth Lib | Standalone IdP Server |
+| **OIDC OP Server** | ✅ Native, Fully Featured | ❌ Relying Party Only | ✅ Full Support |
+| **Resource Server**| ✅ Native (Guard/Strategies) | ✅ API Validation | ✅ API Validation |
+| **Configuration Safety** | 🛡️ Strict (Typestates) | ✅ Standard Builder | ❌ N/A (External Config) |
+| **State Management**| Stateless (Encrypted Cookies)| Stateful (DB) | Stateful (Dedicated DB) |
+| **Data Architecture** | Agnostic Trait-Based (Any DB) | Built-in Adapters / ORMs | 100% Yours |
+| **WebAuthn / Passkeys**| ⏳ Coming Soon | ✅ Native Support | ✅ Full Support |
+| **Bot Protection** | ⏳ Coming Soon | ✅ Plugins Available | ✅ Built-in |
+
+## Detailed Comparisons
+
+<Tabs>
+  <TabItem label="vs. better-auth.rs">
+    **better-auth.rs** is a fantastic, feature-rich library (ported from JS) that excels at "batteries-included" user management. It has great database handling with built-in adapters and ORM integrations, and it offers advanced features like Passkeys and 2FA out of the box (which are coming soon to Authkestra!).
+    
+    * **Scope**: It is primarily a Relying Party and session manager. It does not provide the capability to build an OpenID Provider (minting tokens for third parties).
+    * **Authkestra's Edge**: Authkestra distinguishes itself in two major ways. First, it provides the engine to build your own **OpenID Provider (OP)**, allowing your Rust backend to serve as the central identity authority for multiple downstream clients and mobile apps. Second, it enforces orchestration correctness at compile time using the **Typestate Builder Pattern**—meaning invalid authentication flow combinations literally will not compile. While `better-auth` offers a more opinionated database layer, Authkestra focuses on absolute architectural flexibility and compile-time guarantees.
+  </TabItem>
+  <TabItem label="vs. Rust Standalone Servers (Rauthy / Kanidm)">
+    **Rauthy** and **Kanidm** are excellent, highly performant Rust alternatives to enterprise servers like Keycloak. If you are comparing Rust solutions, these are the heavyweights for standalone deployments.
+    
+    * **DevOps Overhead**: Like any standalone server, they require you to deploy and maintain a separate microservice, manage networking between your API and the IdP, and often require their own dedicated database cluster.
+    * **Authkestra's Edge**: Authkestra gives you the same OpenID Provider (OP) capabilities, but embedded directly into your existing Axum or Actix binary. There are no external service dependencies to manage, no network latency when validating tokens, and no separate database to backup.
+  </TabItem>
+</Tabs>

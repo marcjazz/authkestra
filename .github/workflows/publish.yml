@@ -6,7 +6,7 @@ on:
       deploy_environment:
         description: Deployment environment
         required: false
-        default: pre-prod
+        default: prod
         type: string
 
   release:
@@ -16,7 +16,7 @@ jobs:
   publish-foundation:
     name: Publish foundation / ${{ matrix.crate }}
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    environment: ${{ github.event.inputs.deploy_environment || 'prod' }}
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -42,7 +42,7 @@ jobs:
     name: Publish core / ${{ matrix.crate }}
     runs-on: ubuntu-latest
     needs: publish-foundation
-    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    environment: ${{ github.event.inputs.deploy_environment || 'prod' }}
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -68,7 +68,7 @@ jobs:
     name: Publish advanced / ${{ matrix.crate }}
     runs-on: ubuntu-latest
     needs: publish-core
-    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    environment: ${{ github.event.inputs.deploy_environment || 'prod' }}
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -94,7 +94,7 @@ jobs:
     name: Publish frameworks / ${{ matrix.crate }}
     runs-on: ubuntu-latest
     needs: publish-advanced
-    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    environment: ${{ github.event.inputs.deploy_environment || 'prod' }}
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -120,7 +120,7 @@ jobs:
     name: Publish root / ${{ matrix.crate }}
     runs-on: ubuntu-latest
     needs: publish-frameworks
-    environment: ${{ github.event.inputs.deploy_environment || 'pre-prod' }}
+    environment: ${{ github.event.inputs.deploy_environment || 'prod' }}
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
