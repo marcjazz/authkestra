@@ -1,0 +1,85 @@
+:root {
+  /* Use a modern font stack */
+  --sl-font: 'Inter', 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+  
+  /* Mintlify-like dark theme by default */
+  --sl-color-black: #000000;
+  --sl-color-white: #ffffff;
+  
+  /* Background colors */
+  --sl-color-bg: #09090b;
+  --sl-color-bg-nav: #09090bb3;
+  --sl-color-bg-sidebar: #09090b;
+  --sl-color-bg-inline-code: #27272a;
+  
+  /* Text colors */
+  --sl-color-text: #a1a1aa;
+  --sl-color-text-accent: #ffffff;
+  --sl-color-text-invert: #09090b;
+  
+  /* Hairline borders */
+  --sl-color-hairline-shade: #27272a;
+  --sl-color-hairline: #27272a;
+  --sl-color-hairline-light: #3f3f46;
+  
+  /* Brand/Accent Color (Authkestra primary) */
+  --sl-hue-accent: 220; /* You can adjust to match brand hue */
+  --sl-color-accent-low: hsl(var(--sl-hue-accent), 70%, 15%);
+  --sl-color-accent: hsl(var(--sl-hue-accent), 100%, 60%);
+  --sl-color-accent-high: hsl(var(--sl-hue-accent), 100%, 85%);
+  
+  /* Blur effect for nav */
+  --sl-nav-backdrop-filter: blur(12px);
+}
+
+/* Base text readability */
+body {
+  line-height: 1.6;
+  letter-spacing: -0.015em;
+}
+
+/* Headings */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--sl-color-text-accent);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+h1 {
+  font-weight: 700;
+}
+
+/* Cards styling for Starlight */
+.sl-markdown-content .card {
+  background-color: #09090b;
+  border: 1px solid var(--sl-color-hairline);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  border-radius: 0.75rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sl-markdown-content .card:hover {
+  border-color: var(--sl-color-hairline-light);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Code block styling */
+.expressive-code {
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+/* Tabs */
+starlight-tabs {
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 0.75rem;
+  background-color: var(--sl-color-bg);
+  overflow: hidden;
+}
+
+.tablist-wrapper {
+  background-color: #18181b;
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
