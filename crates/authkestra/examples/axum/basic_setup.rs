@@ -44,7 +44,7 @@ async fn main() {
 
     let app = Router::new()
         // Serve static files from the 'static' directory
-        .fallback_service(ServeDir::new("authkestra-examples/static"))
+        .fallback_service(ServeDir::new("crates/authkestra/examples/static"))
         // API for checking current user status
         .route("/api/user", get(get_user))
         .merge(auth_engine.axum_router())

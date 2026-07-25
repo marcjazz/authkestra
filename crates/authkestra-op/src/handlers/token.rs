@@ -1965,7 +1965,7 @@ mod tests {
     #[tokio::test]
     async fn test_custom_grant_fallback() {
         let tokens = test_tokens();
-        let mut req = TokenRequest {
+        let req = TokenRequest {
             grant_type: "urn:custom:grant".to_string(),
             code: None,
             device_code: None,
@@ -2024,7 +2024,7 @@ mod tests {
     #[tokio::test]
     async fn test_custom_grant_unauthorized() {
         let tokens = test_tokens();
-        let mut req = TokenRequest {
+        let req = TokenRequest {
             grant_type: "urn:custom:grant".to_string(),
             code: None,
             device_code: None,

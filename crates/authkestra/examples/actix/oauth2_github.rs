@@ -88,7 +88,7 @@ async fn main() -> std::io::Result<()> {
             .configure(move |cfg| config_state.configure_authkestra(cfg))
             .service(get_user)
             .service(app_state.auth.actix_scope())
-            .service(Files::new("/", "authkestra-examples/static").index_file("index.html"))
+            .service(Files::new("/", "crates/authkestra/examples/static").index_file("index.html"))
     })
     .bind(("0.0.0.0", 3000))?
     .run()
