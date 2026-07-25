@@ -116,6 +116,28 @@ impl TokenManager {
         scope: Option<String>,
         aud: Option<String>,
     ) -> Result<String, AuthError> {
+        self.issue_user_token_with_extra(identity, expires_in_secs, scope, aud, HashMap::new())
+    }
+
+    /// Issues a token for a user identity, stamping the given `extra` claims
+    /// onto the token in addition to the standard/core claims.
+    ///
+    /// This lets a host application (e.g. a resource server built on top of
+    /// this engine) attach domain-specific claims — such as `api_key_id`,
+    /// `project_id`, or `roles` — so downstream consumers (an API gateway or
+    /// authorization proxy) can read them directly off the token without a
+    /// database round-trip. Keys in `extra` take precedence over any
+    /// same-named field set elsewhere in `extra` by this method; they cannot
+    /// override the top-level standard claims (`sub`, `aud`, `exp`, etc.)
+    /// since those are not part of the flattened map.
+    pub fn issue_user_token_with_extra(
+        &self,
+        identity: Identity,
+        expires_in_secs: u64,
+        scope: Option<String>,
+        aud: Option<String>,
+        extra: HashMap<String, serde_json::Value>,
+    ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
 
@@ -129,7 +151,7 @@ impl TokenManager {
             jti: Some(uuid::Uuid::new_v4().to_string()),
             scope,
             identity: Some(identity),
-            extra: HashMap::new(),
+            extra,
         };
 
         let mut header = Header::new(self.alg);
@@ -148,6 +170,27 @@ impl TokenManager {
         nonce: Option<String>,
         expires_in_secs: u64,
     ) -> Result<String, AuthError> {
+        self.issue_id_token_with_extra(identity, client_id, nonce, expires_in_secs, HashMap::new())
+    }
+
+    /// Issues an OIDC-conformant ID token, stamping the given `extra` claims
+    /// onto the token in addition to the standard/core claims.
+    ///
+    /// `nonce` is a reserved claim key: `extra` is merged into the token
+    /// first, then the explicit `nonce` parameter is applied on top. So if
+    /// `nonce` is `Some(_)`, it always wins over any `"nonce"` entry passed
+    /// in `extra`. If `nonce` is `None`, an `extra["nonce"]` value (if any)
+    /// is left as-is. This preserves OIDC `nonce` semantics — it reflects
+    /// what the client sent in the authorization request — and keeps it from
+    /// being accidentally clobbered by unrelated custom claims.
+    pub fn issue_id_token_with_extra(
+        &self,
+        identity: Identity,
+        client_id: &str,
+        nonce: Option<String>,
+        expires_in_secs: u64,
+        extra: HashMap<String, serde_json::Value>,
+    ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
 
@@ -161,7 +204,7 @@ impl TokenManager {
             jti: Some(uuid::Uuid::new_v4().to_string()),
             scope: None,
             identity: Some(identity),
-            extra: HashMap::new(),
+            extra,
         };
 
         if let Some(n) = nonce {
@@ -186,6 +229,20 @@ impl TokenManager {
         scope: Option<String>,
         aud: Option<String>,
     ) -> Result<String, AuthError> {
+        self.issue_client_token_with_extra(client_id, expires_in_secs, scope, aud, HashMap::new())
+    }
+
+    /// Issues a machine-to-machine (M2M) token for a client, stamping the
+    /// given `extra` claims onto the token in addition to the standard/core
+    /// claims. See [`Self::issue_user_token_with_extra`] for the rationale.
+    pub fn issue_client_token_with_extra(
+        &self,
+        client_id: &str,
+        expires_in_secs: u64,
+        scope: Option<String>,
+        aud: Option<String>,
+        extra: HashMap<String, serde_json::Value>,
+    ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
 
@@ -199,7 +256,7 @@ impl TokenManager {
             jti: Some(uuid::Uuid::new_v4().to_string()),
             scope,
             identity: None,
-            extra: HashMap::new(),
+            extra,
         };
 
         let mut header = Header::new(self.alg);
@@ -407,6 +464,157 @@ a0QMqKUcs8+YTy5R5K6qtw==
             .validate_token(&token, Some("client-2"))
             .unwrap_err();
         assert!(err.to_string().contains("InvalidAudience"));
+    }
+
+    #[test]
+    fn test_issue_user_token_with_extra_round_trips_custom_claims() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let mut extra = HashMap::new();
+        extra.insert("api_key_id".to_string(), serde_json::json!("key-abc"));
+        extra.insert("project_id".to_string(), serde_json::json!("proj-42"));
+
+        let token = manager
+            .issue_user_token_with_extra(identity, 3600, None, None, extra)
+            .unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
+
+        assert_eq!(
+            claims.extra.get("api_key_id"),
+            Some(&serde_json::json!("key-abc"))
+        );
+        assert_eq!(
+            claims.extra.get("project_id"),
+            Some(&serde_json::json!("proj-42"))
+        );
+    }
+
+    #[test]
+    fn test_issue_user_token_wrapper_still_has_empty_extra() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_user_token(identity, 3600, None, None)
+            .unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
+
+        assert!(claims.extra.is_empty());
+    }
+
+    #[test]
+    fn test_issue_client_token_with_extra_round_trips_custom_claims() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        let mut extra = HashMap::new();
+        extra.insert("roles".to_string(), serde_json::json!(["admin", "billing"]));
+
+        let token = manager
+            .issue_client_token_with_extra("client-1", 3600, None, None, extra)
+            .unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
+
+        assert_eq!(
+            claims.extra.get("roles"),
+            Some(&serde_json::json!(["admin", "billing"]))
+        );
+    }
+
+    #[test]
+    fn test_issue_client_token_wrapper_still_has_empty_extra() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        let token = manager
+            .issue_client_token("client-1", 3600, None, None)
+            .unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
+
+        assert!(claims.extra.is_empty());
+    }
+
+    #[test]
+    fn test_issue_id_token_with_extra_round_trips_custom_claims() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let mut extra = HashMap::new();
+        extra.insert("org_id".to_string(), serde_json::json!("org-7"));
+
+        let token = manager
+            .issue_id_token_with_extra(
+                identity,
+                "client-1",
+                Some("nonce123".to_string()),
+                3600,
+                extra,
+            )
+            .unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
+
+        assert_eq!(
+            claims.extra.get("org_id"),
+            Some(&serde_json::json!("org-7"))
+        );
+        assert_eq!(
+            claims.extra.get("nonce"),
+            Some(&serde_json::json!("nonce123"))
+        );
+    }
+
+    #[test]
+    fn test_issue_id_token_with_extra_explicit_nonce_wins_over_extra_nonce() {
+        // Documents the precedence chosen in `issue_id_token_with_extra`:
+        // the explicit `nonce` parameter always overrides a `"nonce"` entry
+        // supplied via `extra`.
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "nonce".to_string(),
+            serde_json::json!("attacker-supplied-nonce"),
+        );
+
+        let token = manager
+            .issue_id_token_with_extra(
+                identity,
+                "client-1",
+                Some("real-nonce".to_string()),
+                3600,
+                extra,
+            )
+            .unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
+
+        assert_eq!(
+            claims.extra.get("nonce"),
+            Some(&serde_json::json!("real-nonce"))
+        );
     }
 }
 pub mod jwk;
