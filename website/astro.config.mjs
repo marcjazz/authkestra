@@ -9,6 +9,10 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'Authkestra',
+			favicon: '/favicon.ico',
+			logo: {
+				src: './src/assets/logo.png',
+			},
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/marcjazz/authkestra' }],
 			sidebar: [
 				{
