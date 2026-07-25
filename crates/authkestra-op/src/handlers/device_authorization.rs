@@ -83,7 +83,7 @@ pub async fn handle_device_authorization(
         }
     };
 
-    if !client.allows_grant_type(crate::client::GrantType::DeviceCode) {
+    if !client.allows_grant_type(&crate::client::GrantType::DeviceCode) {
         return Err(DeviceAuthorizationErrorResponse {
             error: "unauthorized_client".to_string(),
             error_description: "Client not authorized for device flow".to_string(),

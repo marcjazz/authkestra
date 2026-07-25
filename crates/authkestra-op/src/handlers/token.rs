@@ -165,11 +165,25 @@ pub async fn handle_token(
             handle_token_exchange(req, client_id, client, config, tokens).await
         }
         _ => {
-            tracing::warn!(grant_type = %req.grant_type, "Unsupported grant type");
-            Err(TokenErrorResponse {
-                error: "unsupported_grant_type".to_string(),
-                error_description: "Unsupported grant type".to_string(),
-            })
+            if !client.allows_grant_type(&crate::client::GrantType::Custom(req.grant_type.clone())) {
+                tracing::warn!(client_id = %client_id, grant_type = %req.grant_type, "Client not authorized for custom grant");
+                return Err(TokenErrorResponse {
+                    error: "unauthorized_client".to_string(),
+                    error_description: "Client is not authorized to use this grant type".to_string(),
+                });
+            }
+
+            // Forward any other grant type to the custom grant handler
+            op_store
+                .handle_custom_grant(
+                    &req.grant_type,
+                    req.clone(),
+                    client_id,
+                    client,
+                    config,
+                    tokens,
+                )
+                .await
         }
     }
 }
@@ -185,7 +199,7 @@ async fn handle_device_code(
 ) -> Result<TokenResponse, TokenErrorResponse> {
     use crate::device::DeviceCodeStatus;
 
-    if !client.allows_grant_type(GrantType::DeviceCode) {
+    if !client.allows_grant_type(&GrantType::DeviceCode) {
         tracing::warn!(client_id = %client_id, "Client not authorized for device_code grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
@@ -532,7 +546,7 @@ async fn handle_client_credentials(
     config: &OpConfig,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    if !client.allows_grant_type(GrantType::ClientCredentials) {
+    if !client.allows_grant_type(&GrantType::ClientCredentials) {
         tracing::warn!(client_id = %client_id, "Client not authorized for client_credentials grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
@@ -597,7 +611,7 @@ async fn handle_refresh_token(
     op_store: &dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    if !client.allows_grant_type(GrantType::RefreshToken) {
+    if !client.allows_grant_type(&GrantType::RefreshToken) {
         tracing::warn!(client_id = %client_id, "Client not authorized for refresh_token grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
@@ -721,7 +735,7 @@ async fn handle_token_exchange(
         });
     }
 
-    if !client.allows_grant_type(GrantType::TokenExchange) {
+    if !client.allows_grant_type(&GrantType::TokenExchange) {
         tracing::warn!(client_id = %client_id, "Client not authorized for token_exchange grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
@@ -1001,7 +1015,7 @@ mod tests {
             &test_tokens()
         )
         .await;
-        assert_eq!(res.unwrap_err().error, "unsupported_grant_type");
+        assert_eq!(res.unwrap_err().error, "unauthorized_client");
     }
 
     #[tokio::test]
@@ -1945,6 +1959,124 @@ mod tests {
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+    #[tokio::test]
+    async fn test_custom_grant_fallback() {
+        let tokens = test_tokens();
+        let mut req = TokenRequest {
+            grant_type: "urn:custom:grant".to_string(),
+            code: None,
+            device_code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::Custom("urn:custom:grant".to_string())],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        // With the default implementation, custom grants should return unsupported_grant_type
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+            &tokens,
+        )
+        .await;
+
+        assert_eq!(res.unwrap_err().error, "unsupported_grant_type");
+    }
+
+    #[tokio::test]
+    async fn test_custom_grant_unauthorized() {
+        let tokens = test_tokens();
+        let mut req = TokenRequest {
+            grant_type: "urn:custom:grant".to_string(),
+            code: None,
+            device_code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+        };
+
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    // Crucially, this client is NOT authorized for the custom grant type
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+            &tokens,
+        )
+        .await;
+
+        let err = res.unwrap_err();
+        assert_eq!(err.error, "unauthorized_client");
     }
 }
 

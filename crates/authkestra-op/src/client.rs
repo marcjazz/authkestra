@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// OAuth2/OIDC grant types a client may be permitted to use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum GrantType {
     /// Standard authorization code grant (with or without PKCE).
     AuthorizationCode,
@@ -19,6 +20,8 @@ pub enum GrantType {
     DeviceCode,
     /// Token Exchange grant (RFC 8693).
     TokenExchange,
+    /// A custom grant type.
+    Custom(String),
 }
 
 /// A registered OAuth2/OIDC client application.
@@ -57,8 +60,8 @@ impl ClientRegistration {
     }
 
     /// Checks if the client is allowed to use a specific grant type.
-    pub fn allows_grant_type(&self, grant_type: GrantType) -> bool {
-        self.grant_types.contains(&grant_type)
+    pub fn allows_grant_type(&self, grant_type: &GrantType) -> bool {
+        self.grant_types.contains(grant_type)
     }
 
     /// Verifies the provided secret against the stored argon2 hash in constant time.

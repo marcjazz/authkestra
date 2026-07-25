@@ -105,7 +105,7 @@ pub async fn handle_authorize(
     }
 
     // 5. Check client allows AuthorizationCode grant type
-    if !client.allows_grant_type(GrantType::AuthorizationCode) {
+    if !client.allows_grant_type(&GrantType::AuthorizationCode) {
         tracing::warn!(
             client_id = %req.client_id,
             "Client is not permitted to use the authorization code grant"

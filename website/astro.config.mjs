@@ -16,7 +16,6 @@ export default defineConfig({
 					items: [
 						{ label: 'Architecture', slug: 'concepts/architecture' },
 						{ label: 'Typestate Builder Pattern', slug: 'concepts/typestate-builder' },
-						{ label: 'Authkestra vs. The World', slug: 'concepts/comparison' },
 					],
 				},
 				{
