@@ -1,0 +1,61 @@
+---
+title: Authkestra vs. The World
+description: Compare Authkestra against other popular authentication solutions like Auth0, Keycloak, and Lucia.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+When choosing an authentication architecture, you generally have three paths: a managed SaaS product, a heavy standalone Identity Provider, or an embedded library. 
+
+**Authkestra** falls into a unique fourth category: it is a **modular, embedded identity engine** powered by Rust's strict compiler. It gives you the ownership of a library with the capabilities of a standalone OP server.
+
+Here is how Authkestra compares to the most popular alternatives in the ecosystem.
+
+## Feature Matrix
+
+| Feature | **Authkestra** | **Auth0 / Okta** | **Keycloak** | **Lucia Auth** |
+| :--- | :--- | :--- | :--- | :--- |
+| **Hosting Model** | Embedded Engine (Rust) | Managed SaaS | Standalone Server (Java) | Embedded Library (TS) |
+| **Data Ownership** | 100% Yours (Any DB) | Vendor Locked | 100% Yours | 100% Yours |
+| **Cost at Scale** | Free (Open Source) | High ($$$) | Free (High DevOps) | Free (Open Source) |
+| **OIDC OP Server** | ✅ Native Support | ✅ Full Support | ✅ Full Support | ❌ No |
+| **OAuth2 Client** | ✅ Native Support | ✅ Full Support | ✅ Full Support | ⚠️ Manual via OAuth Lib |
+| **Type Safety** | 🛡️ Strict (Typestates) | ❌ Dynamic / SDKs | ❌ Dynamic | ✅ Strict (TypeScript) |
+| **State Management**| Stateless (Encrypted Cookies) | Managed by Vendor | Stateful (Heavy DB) | Stateful (DB Sessions) |
+| **Resource Server** | ✅ Native (Guard/Strategies) | ✅ API Validation | ✅ API Validation | ❌ Session Only |
+| **Framework Agnostic**| ✅ Axum, Actix, etc. | ✅ Polyglot | ✅ Polyglot | ✅ JS/TS Ecosystem |
+
+---
+
+## Detailed Comparisons
+
+<Tabs>
+  <TabItem label="vs. Auth0 / SaaS">
+    **Auth0** and other managed Identity-as-a-Service (IDaaS) platforms are incredibly easy to set up and offer a massive suite of features. However, they come with significant drawbacks:
+    
+    * **Vendor Lock-in & Pricing**: Once your application scales, Auth0's MAU (Monthly Active Users) pricing becomes aggressively expensive. Migrating away is difficult because they own your user credentials.
+    * **Latency**: Every authentication or token introspection request requires a network hop to the SaaS provider, adding latency to your API calls.
+    * **Authkestra's Edge**: Authkestra runs *inside* your infrastructure. You own the database, you own the schema, and you pay absolutely zero licensing fees regardless of whether you have 100 or 10,000,000 users. Token validation happens locally with zero network hops.
+  </TabItem>
+  <TabItem label="vs. Keycloak">
+    **Keycloak** is the industry standard for self-hosted, open-source identity and access management. It is extremely powerful but notoriously heavy.
+    
+    * **DevOps Overhead**: Keycloak is a standalone Java application. It requires dedicated infrastructure, JVM tuning, and its own database cluster. 
+    * **Customization**: Extending Keycloak requires writing Java SPIs, which has a steep learning curve if your team works in Rust, Go, or Node.
+    * **Authkestra's Edge**: Authkestra is not a standalone server—it is an engine embedded directly into your Rust binary. It compiles down to a few megabytes, has zero external service dependencies, and is blazingly fast. You can build a complete OIDC OP server using Authkestra in less than 50 lines of Rust.
+  </TabItem>
+  <TabItem label="vs. Lucia Auth">
+    **Lucia** is a brilliant, highly popular authentication library for the TypeScript ecosystem. It shares Authkestra's philosophy of database agnosticism and developer experience.
+    
+    * **Scope**: Lucia is primarily focused on session management (creating and validating user sessions in your own database). It is strictly a client-side/Relying Party library.
+    * **Authkestra's Edge**: Authkestra encompasses much more than session management. While it can act as a standard OAuth2 client, it also contains the logic to act as a **Resource Server** (validating third-party JWTs via OIDC Discovery) and an **OpenID Provider** (minting JWTs and exposing `.well-known` endpoints). Furthermore, Authkestra's use of Rust's Typestate Builder pattern prevents misconfigurations at compile time, a guarantee TypeScript cannot enforce for complex flow orchestration.
+  </TabItem>
+</Tabs>
+
+## The Authkestra Philosophy
+
+Most frameworks treat authentication as an afterthought or force you to adopt rigid, monolithic schemas. Authkestra believes that identity orchestration should be:
+
+1. **Explicit**: Magic is dangerous in security. Authkestra makes the flow of data visible and explicit.
+2. **Stateless Where Possible**: By leveraging encrypted cookies for OAuth `state` and `nonce` parameters, Authkestra eliminates the need for temporary database tables, preventing TOCTOU races and reducing database load.
+3. **Provably Correct**: If it compiles, it's configured correctly. You cannot accidentally start an OP Server without providing signing keys because the Rust compiler simply won't allow the method to exist.
