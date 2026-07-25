@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-engine"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-oidc"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "authkestra-engine",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-op"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "argon2",
  "async-trait",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-resource"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "authkestra-engine",
