@@ -924,4 +924,399 @@ mod postgres_tests {
 
         assert_eq!(count.0, 0);
     }
+
+    #[tokio::test]
+    async fn test_postgres_concurrency() {
+        let (store, _c) = setup_db().await;
+
+        sqlx::query(
+            "INSERT INTO authkestra.oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+        )
+        .bind("concurrency_client")
+        .bind("hash")
+        .bind(true)
+        .bind(sqlx::types::Json(vec!["http://localhost/cb"]))
+        .bind(sqlx::types::Json(vec!["authorization_code"]))
+        .bind(sqlx::types::Json(vec!["openid"]))
+        .bind(sqlx::types::Json(vec!["aud"]))
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        let code = AuthorizationCode {
+            code: "concurrent_code".to_string(),
+            client_id: "concurrency_client".to_string(),
+            redirect_uri: "http://localhost/cb".to_string(),
+            scope: "openid".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            nonce: None,
+            identity: authkestra_engine::auth::state::Identity {
+                provider_id: "local".to_string(),
+                external_id: "user_1".to_string(),
+                email: None,
+                username: None,
+                attributes: std::collections::HashMap::new(),
+            },
+            expires_at: Utc::now() + Duration::try_minutes(10).unwrap(),
+            used: false,
+        };
+        store.store_code(code.clone()).await.unwrap();
+
+        let mut handles = vec![];
+        let store_arc = std::sync::Arc::new(store);
+
+        // Spawn 10 simultaneous consumers
+        for _ in 0..10 {
+            let s = store_arc.clone();
+            handles.push(tokio::spawn(async move {
+                s.consume_code("concurrent_code").await.unwrap()
+            }));
+        }
+
+        let mut successes = 0;
+        let mut failures = 0;
+        for h in handles {
+            let res = h.await.unwrap();
+            if res.is_some() {
+                successes += 1;
+            } else {
+                failures += 1;
+            }
+        }
+
+        assert_eq!(successes, 1);
+        assert_eq!(failures, 9);
+    }
+}
+
+#[cfg(all(test, feature = "sqlx-sqlite"))]
+mod sqlite_tests {
+    use super::*;
+    use crate::client::{ClientRegistration, ClientStore};
+    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+    use chrono::{Duration, Utc};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_db() -> SqlxOpStore<sqlx::Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        let store = SqlxOpStore::<sqlx::Sqlite>::new(pool);
+        store.migrate().await.unwrap();
+
+        // Enable foreign keys in SQLite for this connection
+        sqlx::query("PRAGMA foreign_keys = ON;")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        store
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_cascading_delete() {
+        let store = setup_db().await;
+
+        // Manually insert a client
+        sqlx::query(
+            "INSERT INTO authkestra_oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("test_client")
+        .bind("hash")
+        .bind(true)
+        .bind(sqlx::types::Json(vec!["http://localhost/cb"]))
+        .bind(sqlx::types::Json(vec!["authorization_code"]))
+        .bind(sqlx::types::Json(vec!["openid"]))
+        .bind(sqlx::types::Json(vec!["aud"]))
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        let code = AuthorizationCode {
+            code: "test_code_123".to_string(),
+            client_id: "test_client".to_string(),
+            redirect_uri: "http://localhost/cb".to_string(),
+            scope: "openid".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            nonce: None,
+            identity: authkestra_engine::auth::state::Identity {
+                provider_id: "local".to_string(),
+                external_id: "user_1".to_string(),
+                email: None,
+                username: None,
+                attributes: std::collections::HashMap::new(),
+            },
+            expires_at: Utc::now() + Duration::try_minutes(10).unwrap(),
+            used: false,
+        };
+
+        store.store_code(code.clone()).await.unwrap();
+
+        // Consume it to verify it exists
+        let consumed = store.consume_code("test_code_123").await.unwrap();
+        assert!(consumed.is_some());
+        assert_eq!(consumed.unwrap().client_id, "test_client");
+
+        // Test cascade delete
+        let code2 = AuthorizationCode {
+            code: "test_code_456".to_string(),
+            ..code
+        };
+        store.store_code(code2.clone()).await.unwrap();
+
+        // Delete the client
+        sqlx::query("DELETE FROM authkestra_oauth_clients WHERE client_id = 'test_client'")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        // Ensure the code is also deleted due to CASCADE
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM authkestra_oauth_codes WHERE code = 'test_code_456'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+
+        assert_eq!(count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_concurrency() {
+        let store = setup_db().await;
+
+        sqlx::query(
+            "INSERT INTO authkestra_oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("concurrency_client")
+        .bind("hash")
+        .bind(true)
+        .bind(sqlx::types::Json(vec!["http://localhost/cb"]))
+        .bind(sqlx::types::Json(vec!["authorization_code"]))
+        .bind(sqlx::types::Json(vec!["openid"]))
+        .bind(sqlx::types::Json(vec!["aud"]))
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        let code = AuthorizationCode {
+            code: "concurrent_code".to_string(),
+            client_id: "concurrency_client".to_string(),
+            redirect_uri: "http://localhost/cb".to_string(),
+            scope: "openid".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            nonce: None,
+            identity: authkestra_engine::auth::state::Identity {
+                provider_id: "local".to_string(),
+                external_id: "user_1".to_string(),
+                email: None,
+                username: None,
+                attributes: std::collections::HashMap::new(),
+            },
+            expires_at: Utc::now() + Duration::try_minutes(10).unwrap(),
+            used: false,
+        };
+        store.store_code(code.clone()).await.unwrap();
+
+        let mut handles = vec![];
+        let store_arc = std::sync::Arc::new(store);
+
+        // Spawn 10 simultaneous consumers
+        for _ in 0..10 {
+            let s = store_arc.clone();
+            handles.push(tokio::spawn(async move {
+                s.consume_code("concurrent_code").await.unwrap()
+            }));
+        }
+
+        let mut successes = 0;
+        let mut failures = 0;
+        for h in handles {
+            let res = h.await.unwrap();
+            if res.is_some() {
+                successes += 1;
+            } else {
+                failures += 1;
+            }
+        }
+
+        assert_eq!(successes, 1);
+        assert_eq!(failures, 9);
+    }
+}
+
+#[cfg(all(test, feature = "sqlx-mysql"))]
+mod mysql_tests {
+    use super::*;
+    use crate::client::{ClientRegistration, ClientStore};
+    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+    use chrono::{Duration, Utc};
+    use sqlx::mysql::MySqlPoolOptions;
+    use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
+    use testcontainers_modules::mysql::Mysql;
+
+    async fn setup_db() -> (SqlxOpStore<sqlx::MySql>, ContainerAsync<Mysql>) {
+        let container = Mysql::default()
+            .with_env_var("MYSQL_ROOT_PASSWORD", "mysql")
+            .with_env_var("MYSQL_DATABASE", "mysql")
+            .start()
+            .await
+            .unwrap();
+        let port = container.get_host_port_ipv4(3306).await.unwrap();
+        let url = format!("mysql://root:mysql@127.0.0.1:{port}/mysql");
+
+        let pool = MySqlPoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await
+            .unwrap();
+
+        let store = SqlxOpStore::<sqlx::MySql>::new(pool);
+        store.migrate().await.unwrap();
+
+        (store, container)
+    }
+
+    #[tokio::test]
+    async fn test_mysql_cascading_delete() {
+        let (store, _c) = setup_db().await;
+
+        // Manually insert a client
+        sqlx::query(
+            "INSERT INTO authkestra_oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("test_client")
+        .bind("hash")
+        .bind(true)
+        .bind(sqlx::types::Json(vec!["http://localhost/cb"]))
+        .bind(sqlx::types::Json(vec!["authorization_code"]))
+        .bind(sqlx::types::Json(vec!["openid"]))
+        .bind(sqlx::types::Json(vec!["aud"]))
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        let code = AuthorizationCode {
+            code: "test_code_123".to_string(),
+            client_id: "test_client".to_string(),
+            redirect_uri: "http://localhost/cb".to_string(),
+            scope: "openid".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            nonce: None,
+            identity: authkestra_engine::auth::state::Identity {
+                provider_id: "local".to_string(),
+                external_id: "user_1".to_string(),
+                email: None,
+                username: None,
+                attributes: std::collections::HashMap::new(),
+            },
+            expires_at: Utc::now() + Duration::try_minutes(10).unwrap(),
+            used: false,
+        };
+
+        store.store_code(code.clone()).await.unwrap();
+
+        // Consume it to verify it exists
+        let consumed = store.consume_code("test_code_123").await.unwrap();
+        assert!(consumed.is_some());
+        assert_eq!(consumed.unwrap().client_id, "test_client");
+
+        // Test cascade delete
+        let code2 = AuthorizationCode {
+            code: "test_code_456".to_string(),
+            ..code
+        };
+        store.store_code(code2.clone()).await.unwrap();
+
+        // Delete the client
+        sqlx::query("DELETE FROM authkestra_oauth_clients WHERE client_id = 'test_client'")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        // Ensure the code is also deleted due to CASCADE
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM authkestra_oauth_codes WHERE code = 'test_code_456'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+
+        assert_eq!(count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_concurrency() {
+        let (store, _c) = setup_db().await;
+
+        sqlx::query(
+            "INSERT INTO authkestra_oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("concurrency_client")
+        .bind("hash")
+        .bind(true)
+        .bind(sqlx::types::Json(vec!["http://localhost/cb"]))
+        .bind(sqlx::types::Json(vec!["authorization_code"]))
+        .bind(sqlx::types::Json(vec!["openid"]))
+        .bind(sqlx::types::Json(vec!["aud"]))
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        let code = AuthorizationCode {
+            code: "concurrent_code".to_string(),
+            client_id: "concurrency_client".to_string(),
+            redirect_uri: "http://localhost/cb".to_string(),
+            scope: "openid".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            nonce: None,
+            identity: authkestra_engine::auth::state::Identity {
+                provider_id: "local".to_string(),
+                external_id: "user_1".to_string(),
+                email: None,
+                username: None,
+                attributes: std::collections::HashMap::new(),
+            },
+            expires_at: Utc::now() + Duration::try_minutes(10).unwrap(),
+            used: false,
+        };
+        store.store_code(code.clone()).await.unwrap();
+
+        let mut handles = vec![];
+        let store_arc = std::sync::Arc::new(store);
+
+        // Spawn 10 simultaneous consumers
+        for _ in 0..10 {
+            let s = store_arc.clone();
+            handles.push(tokio::spawn(async move {
+                s.consume_code("concurrent_code").await.unwrap()
+            }));
+        }
+
+        let mut successes = 0;
+        let mut failures = 0;
+        for h in handles {
+            let res = h.await.unwrap();
+            if res.is_some() {
+                successes += 1;
+            } else {
+                failures += 1;
+            }
+        }
+
+        assert_eq!(successes, 1);
+        assert_eq!(failures, 9);
+    }
 }
