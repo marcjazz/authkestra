@@ -3,9 +3,9 @@
 //! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Axum.
 //! It uses the batteries-included `SqlxOpStore` for a production-ready relational database schema.
 use authkestra_axum::OpExt;
-use authkestra_op::store::OpStore;
+use authkestra_op::client::{ClientRegistration, ClientStore};
 use authkestra_op::sqlx_store::SqlxOpStore;
-use authkestra_op::client::{ClientStore, ClientRegistration};
+use authkestra_op::store::OpStore;
 
 use authkestra_engine::{AkEngine, TokenManager};
 use authkestra_op::config::OpConfig;
@@ -43,7 +43,7 @@ async fn main() {
     // Use the batteries-included native SQL store (SqlxOpStore)
     // This provides a highly opinionated schema with cascading deletes and strict relational integrity
     let sqlx_store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
-    
+
     // Automatically run schema migrations to create the required tables
     sqlx_store.migrate().await.unwrap();
 

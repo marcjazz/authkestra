@@ -5,9 +5,9 @@
 use actix_web::{App, HttpServer};
 use authkestra::flow::Engine;
 use authkestra_actix::{ActixState, OpExt};
+use authkestra_op::client::{ClientRegistration, ClientStore};
 use authkestra_op::sqlx_store::SqlxOpStore;
 use authkestra_op::store::OpStore;
-use authkestra_op::client::{ClientStore, ClientRegistration};
 
 use authkestra_engine::TokenManager;
 use authkestra_op::config::OpConfig;
@@ -42,7 +42,7 @@ async fn main() -> std::io::Result<()> {
     // Use the batteries-included native SQL store (SqlxOpStore)
     // This provides a highly opinionated schema with cascading deletes and strict relational integrity
     let sqlx_store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
-    
+
     // Automatically run schema migrations to create the required tables
     sqlx_store.migrate().await.unwrap();
 

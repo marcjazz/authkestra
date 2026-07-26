@@ -76,7 +76,7 @@ macro_rules! impl_opstore_sql {
                     // The safest way across all drivers is to deserialize from whatever String they provide, or handle types cleanly.
                     // For now, we'll assume we can get it as a string or fallback. We will use `try_get` as string.
                     // Since sqlx::types::Json is cross-platform, we can use that!
-                    
+
                     let redirect_uris: sqlx::types::Json<Vec<String>> = row.try_get("redirect_uris").map_err(|_| OpError::Storage)?;
                     let grant_types: sqlx::types::Json<Vec<crate::client::GrantType>> = row.try_get("grant_types").map_err(|_| OpError::Storage)?;
                     let scopes: sqlx::types::Json<Vec<String>> = row.try_get("scopes").map_err(|_| OpError::Storage)?;
@@ -190,7 +190,7 @@ macro_rules! impl_opstore_sql {
                 if let Some(row) = row {
                     use sqlx::Row;
                     let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
-                    
+
                     Ok(Some(RefreshToken {
                         token: row.try_get("token").map_err(|_| OpError::Storage)?,
                         client_id: row.try_get("client_id").map_err(|_| OpError::Storage)?,
@@ -280,7 +280,7 @@ macro_rules! impl_opstore_sql {
                 if let Some(row) = row {
                     use sqlx::Row;
                     let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| OpError::Storage)?;
-                    
+
                     Ok(Some(DeviceCodeSession {
                         device_code: row.try_get("device_code").map_err(|_| OpError::Storage)?,
                         user_code: row.try_get("user_code").map_err(|_| OpError::Storage)?,
@@ -316,7 +316,7 @@ macro_rules! impl_opstore_sql {
                 if let Some(row) = row {
                     use sqlx::Row;
                     let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| OpError::Storage)?;
-                    
+
                     Ok(Some(DeviceCodeSession {
                         device_code: row.try_get("device_code").map_err(|_| OpError::Storage)?,
                         user_code: row.try_get("user_code").map_err(|_| OpError::Storage)?,
@@ -472,7 +472,7 @@ impl_opstore_sql! {
             .fetch_optional(&self.pool)
             .await
             .map_err(|_| OpError::Storage)?;
-        
+
         if let Some(row) = row {
             use sqlx::Row;
             let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
@@ -606,7 +606,7 @@ impl_opstore_sql! {
             .fetch_optional(&self.pool)
             .await
             .map_err(|_| OpError::Storage)?;
-        
+
         if let Some(row) = row {
             use sqlx::Row;
             let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
@@ -710,7 +710,7 @@ impl_opstore_sql! {
     // consume_code (MySQL specific - needs transaction and FOR UPDATE since no RETURNING)
     async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
         let mut tx = self.pool.begin().await.map_err(|_| OpError::Storage)?;
-        
+
         let select_query = "SELECT * FROM authkestra_oauth_codes WHERE code = ? AND used = FALSE FOR UPDATE";
         let row = sqlx::query(select_query)
             .bind(code)
@@ -750,7 +750,7 @@ impl_opstore_sql! {
     // consume_token (MySQL specific)
     async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
         let mut tx = self.pool.begin().await.map_err(|_| OpError::Storage)?;
-        
+
         let select_query = "SELECT * FROM authkestra_oauth_refresh_tokens WHERE token = ? AND revoked_at IS NULL FOR UPDATE";
         let row = sqlx::query(select_query)
             .bind(token)
@@ -785,7 +785,7 @@ impl_opstore_sql! {
     // consume_device_impl (MySQL specific)
     async fn consume_device_code(&self, device_code: &str) -> Result<Option<DeviceCodeSession>, OpError> {
         let mut tx = self.pool.begin().await.map_err(|_| OpError::Storage)?;
-        
+
         let select_query = "SELECT * FROM authkestra_oauth_device_codes WHERE device_code = ? FOR UPDATE";
         let row = sqlx::query(select_query)
             .bind(device_code)
@@ -824,12 +824,12 @@ impl_opstore_sql! {
 #[cfg(all(test, feature = "sqlx-postgres"))]
 mod postgres_tests {
     use super::*;
-    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
     use crate::client::{ClientRegistration, ClientStore};
+    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+    use chrono::{Duration, Utc};
     use sqlx::postgres::PgPoolOptions;
     use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
     use testcontainers_modules::postgres::Postgres;
-    use chrono::{Utc, Duration};
 
     async fn setup_db() -> (SqlxOpStore<sqlx::Postgres>, ContainerAsync<Postgres>) {
         let container = Postgres::default()
@@ -882,12 +882,12 @@ mod postgres_tests {
             code_challenge: None,
             code_challenge_method: None,
             nonce: None,
-            identity: authkestra_engine::auth::state::Identity { 
+            identity: authkestra_engine::auth::state::Identity {
                 provider_id: "local".to_string(),
-                external_id: "user_1".to_string(), 
+                external_id: "user_1".to_string(),
                 email: None,
                 username: None,
-                attributes: std::collections::HashMap::new() 
+                attributes: std::collections::HashMap::new(),
             },
             expires_at: Utc::now() + Duration::try_minutes(10).unwrap(),
             used: false,
@@ -915,11 +915,13 @@ mod postgres_tests {
             .unwrap();
 
         // Ensure the code is also deleted due to CASCADE
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM authkestra.oauth_codes WHERE code = 'test_code_456'")
-            .fetch_one(&store.pool)
-            .await
-            .unwrap();
-        
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM authkestra.oauth_codes WHERE code = 'test_code_456'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+
         assert_eq!(count.0, 0);
     }
 }
