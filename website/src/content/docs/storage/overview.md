@@ -33,4 +33,19 @@ authkestra = { version = "0.2.2", features = ["redis", "sql-sqlite"] }
 The available built-in stores and their feature flags are:
 - **Memory Store**: `authkestra_engine::store::memory::MemoryStore` (Great for testing and local dev; enabled by the `memory` feature).
 - **Redis Store**: `authkestra_engine::store::redis::RedisStore` (Production-ready distributed cache; enabled by the `redis` feature).
-- **SQL Store**: `authkestra_engine::store::sql::SqlStore` (Relational persistence; enabled by `sql-postgres`, `sql-mysql`, or `sql-sqlite` features).
+- **Generic SQL KV Store**: `authkestra_engine::store::sql::SqlKvStore` (Relational JSON blob persistence; enabled by `sql-postgres`, `sql-mysql`, or `sql-sqlite` features).
+
+## OpenID Provider (OP) Storage
+
+If you are building an OpenID Provider using `authkestra-op`, you can use the traits: `ClientStore`, `AuthorizationCodeStore`, `RefreshTokenStore`, and `DeviceCodeStore`.
+
+To simplify building OPs, Authkestra provides a batteries-included **native SQL** implementation: `authkestra_op::sqlx_store::SqlxOpStore`. 
+
+Unlike the generic `SqlKvStore` which stores JSON blobs, `SqlxOpStore` provides highly opinionated, normalized SQL tables with proper relational foreign keys, `ON DELETE CASCADE` constraints, and strictly defined columns (like `client_id`, `scopes`, `expires_at`).
+
+To use it, enable the respective feature flag:
+```toml
+[dependencies]
+authkestra-op = { version = "0.2.2", features = ["sqlx-postgres"] }
+# or sqlx-mysql, sqlx-sqlite
+```
