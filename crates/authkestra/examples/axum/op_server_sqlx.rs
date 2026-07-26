@@ -42,7 +42,7 @@ async fn main() {
 
     // Use the batteries-included native SQL store (SqlxOpStore)
     // This provides a highly opinionated schema with cascading deletes and strict relational integrity
-    let sqlx_store = SqlxOpStore::new(pool.clone());
+    let sqlx_store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
     
     // Automatically run schema migrations to create the required tables
     sqlx_store.migrate().await.unwrap();

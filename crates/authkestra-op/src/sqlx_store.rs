@@ -842,9 +842,13 @@ mod postgres_tests {
         let port = container.get_host_port_ipv4(5432).await.unwrap();
         let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-        let pool = PgPoolOptions::new().connect(&url).await.unwrap();
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await
+            .unwrap();
 
-        let store = SqlxOpStore::new(pool);
+        let store = SqlxOpStore::<sqlx::Postgres>::new(pool);
         store.migrate().await.unwrap();
 
         (store, container)
