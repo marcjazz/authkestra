@@ -40,6 +40,10 @@ pub mod refresh;
 pub mod store;
 pub use store::OpStore;
 
+#[cfg(feature = "sqlx")]
+/// Native SQL implementations using sqlx.
+pub mod sqlx_store;
+
 /// Provider-level configuration (issuer URL, supported scopes/response
 /// types).
 pub mod config;

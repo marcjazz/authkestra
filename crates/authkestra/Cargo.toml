@@ -25,7 +25,7 @@ authkestra-providers = { workspace = true, features = ["github", "google", "disc
 authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op", "macros"] }
 authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op", "macros"] }
 authkestra-oidc = { workspace = true }
-authkestra-op = { workspace = true }
+authkestra-op = { workspace = true, features = ["sqlx-sqlite"] }
 authkestra-macros = { workspace = true }
 actix-web = "4"
 axum = "0.8"
@@ -163,4 +163,14 @@ required-features = ["full"]
 
 [[test]]
 name = "typestate_tests"
+required-features = ["full"]
+
+[[example]]
+name = "axum_op_server_sqlx"
+path = "examples/axum/op_server_sqlx.rs"
+required-features = ["full"]
+
+[[example]]
+name = "actix_op_server_sqlx"
+path = "examples/actix/op_server_sqlx.rs"
 required-features = ["full"]
