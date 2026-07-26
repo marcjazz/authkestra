@@ -20,6 +20,20 @@ license = "MIT OR Apache-2.0"
 keywords = ["auth", "authentication", "oauth2", "oidc"]
 categories = ["authentication"]
 readme = "README.md"
+exclude = [
+    "/Cargo.lock",
+    "tests/**/*",
+    "examples/**/*",
+    ".github/**/*",
+    "docs/**/*",
+    "website/**/*",
+    "benches/**/*",
+    ".gitignore",
+    ".agents/**/*",
+    "plans/**/*",
+    "AGENTS.md",
+    "docker-compose.yml"
+]
 
 [workspace.dependencies]
 authkestra-engine = { version = "0.2.2", path = "crates/authkestra-engine" }

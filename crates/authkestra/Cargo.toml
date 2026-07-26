@@ -1,4 +1,5 @@
 [package]
+exclude.workspace = true
 name = "authkestra"
 version = "0.2.2"
 edition.workspace = true
