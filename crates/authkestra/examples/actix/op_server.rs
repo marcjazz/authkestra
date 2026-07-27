@@ -107,8 +107,16 @@ async fn main() -> std::io::Result<()> {
         },
     };
 
-    HttpServer::new(move || App::new().configure(|cfg| state.op_actix_config(cfg)))
-        .bind("0.0.0.0:8080")?
-        .run()
-        .await
+    println!("🚀 Actix OP Server running on http://localhost:8080");
+    HttpServer::new(move || {
+        let s = state.clone();
+        let s2 = s.clone();
+        App::new()
+            .app_data(actix_web::web::Data::new(s.clone()))
+            .configure(move |cfg| s.configure_authkestra(cfg))
+            .service(s2.op_actix_scope())
+    })
+    .bind("0.0.0.0:8080")?
+    .run()
+    .await
 }
