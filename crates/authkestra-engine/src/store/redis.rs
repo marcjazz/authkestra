@@ -13,7 +13,26 @@ impl RedisStore {
     pub fn new(redis_url: &str, prefix: String) -> Result<Self, StoreError> {
         let client = redis::Client::open(redis_url)
             .map_err(|e| StoreError::Internal(format!("Failed to open redis client: {e}")))?;
+        tracing::debug!(prefix = %prefix, "Initialized RedisStore");
         Ok(Self { client, prefix })
+    }
+
+    /// Create a new `RedisStore` sharing an already-open `redis::Client`.
+    ///
+    /// This is the preferred constructor when you need multiple stores pointing at the
+    /// same Redis instance with different key prefixes — it avoids opening a new TCP
+    /// connection per store.
+    ///
+    /// ```rust,no_run
+    /// # use authkestra_engine::store::redis::RedisStore;
+    /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// let sessions  = RedisStore::with_client(client.clone(), "session".into());
+    /// let op_codes  = RedisStore::with_client(client.clone(), "op_codes".into());
+    /// let op_tokens = RedisStore::with_client(client,          "op_tokens".into());
+    /// ```
+    pub fn with_client(client: redis::Client, prefix: String) -> Self {
+        tracing::debug!(prefix = %prefix, "Initialized RedisStore with shared client");
+        Self { client, prefix }
     }
 
     fn key(&self, id: &str) -> String {

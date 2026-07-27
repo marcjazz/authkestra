@@ -27,7 +27,7 @@ authkestra-op = { version = "0.2.3", features = ["sqlx-postgres"] }
 
 Unlike the generic KV store that automatically initializes its single `authkestra_kv` table upon connection, the `SqlxOpStore` assumes you want strict control over your database schema and migrations.
 
-Authkestra provides the required schema queries, but **it will not automatically run them for you**. You are expected to integrate the provided schema into your application's migration runner (e.g., `sqlx-cli`, `barrel`, or manually in a database console).
+Authkestra provides the required schema queries, but **it will not automatically run them for you** on connection. You can either run the migrations directly via code using `.migrate()`, or integrate the provided schema into your application's migration runner (e.g., `sqlx-cli`, `barrel`, or manually in a database console).
 
 ### 1. Extracting the Schema
 
@@ -40,9 +40,9 @@ use authkestra_op::sqlx_store::SqlxOpStore;
 println!("{}", SqlxOpStore::<sqlx::Postgres>::schema());
 ```
 
-### 2. Initialization
+### 2. Initialization & Migration
 
-Once the schema has been applied to your database via your migration runner, you can initialize the store with an existing `sqlx::Pool`:
+Once connected to your pool, you can initialize the store. Since migrations are not run automatically, you have the option of running them directly via code using `.migrate().await`:
 
 ```rust
 use authkestra_op::sqlx_store::SqlxOpStore;
@@ -50,8 +50,11 @@ use sqlx::postgres::PgPoolOptions;
 
 let pool = PgPoolOptions::new().connect("postgres://user:pass@localhost/db").await?;
 
-// Initialize the store. This will NOT run migrations.
+// Initialize the store
 let op_store = SqlxOpStore::new(pool);
+
+// Optionally run the built-in migrations to ensure all tables exist
+op_store.migrate().await?;
 ```
 
 You can then pass this `op_store` into your `authkestra_op::OpBuilder` for client, code, and token storage.
