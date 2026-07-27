@@ -46,7 +46,7 @@ async fn run_oauth_example(example_bin: &str, provider: &str, login_path: &str) 
         .env(env_client_id, "test_id")
         .env(env_client_secret, "test_secret")
         .spawn()
-        .expect(&format!("Failed to start {}", example_bin));
+        .unwrap_or_else(|_| panic!("Failed to start {}", example_bin));
 
     let mut attempt = 0;
     let client = reqwest::Client::builder()
@@ -65,7 +65,7 @@ async fn run_oauth_example(example_bin: &str, provider: &str, login_path: &str) 
         attempt += 1;
     }
 
-    let resp = resp.expect(&format!("{} failed to start after 180s", example_bin));
+    let resp = resp.unwrap_or_else(|| panic!("{} failed to start after 180s", example_bin));
 
     assert!(
         resp.status().is_redirection(),
@@ -83,6 +83,7 @@ async fn run_oauth_example(example_bin: &str, provider: &str, login_path: &str) 
     );
 
     child.kill().expect("Failed to kill child process");
+    child.wait().expect("Failed to wait on child");
 
     // Give the OS a moment to release the port
     tokio::time::sleep(Duration::from_secs(1)).await;

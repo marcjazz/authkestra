@@ -824,7 +824,6 @@ impl_opstore_sql! {
 #[cfg(all(test, feature = "sqlx-postgres"))]
 mod postgres_tests {
     use super::*;
-    use crate::client::{ClientRegistration, ClientStore};
     use crate::code::{AuthorizationCode, AuthorizationCodeStore};
     use chrono::{Duration, Utc};
     use sqlx::postgres::PgPoolOptions;
@@ -994,7 +993,6 @@ mod postgres_tests {
 #[cfg(all(test, feature = "sqlx-sqlite"))]
 mod sqlite_tests {
     use super::*;
-    use crate::client::{ClientRegistration, ClientStore};
     use crate::code::{AuthorizationCode, AuthorizationCodeStore};
     use chrono::{Duration, Utc};
     use sqlx::sqlite::SqlitePoolOptions;
@@ -1156,7 +1154,6 @@ mod sqlite_tests {
 #[cfg(all(test, feature = "sqlx-mysql"))]
 mod mysql_tests {
     use super::*;
-    use crate::client::{ClientRegistration, ClientStore};
     use crate::code::{AuthorizationCode, AuthorizationCodeStore};
     use chrono::{Duration, Utc};
     use sqlx::mysql::MySqlPoolOptions;
