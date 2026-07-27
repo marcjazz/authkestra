@@ -39,8 +39,11 @@ async fn main() {
         Some("issuer".to_string()),
     ));
 
-    // Connect to Redis for each OP component, using different prefixes to avoid collisions
-    let clients = RedisStore::new(&redis_url, "op_clients".into()).unwrap();
+    // Open a single Redis client and share it across all stores via different key prefixes.
+    // This avoids opening multiple TCP connections to Redis.
+    let redis_client = redis::Client::open(redis_url.as_str()).expect("Failed to connect to Redis");
+
+    let clients = RedisStore::with_client(redis_client.clone(), "op_clients".into());
     clients
         .set(
             "test-client",
@@ -58,9 +61,9 @@ async fn main() {
         .await
         .unwrap();
 
-    let auth_codes = RedisStore::new(&redis_url, "op_codes".into()).unwrap();
-    let refresh_tokens = RedisStore::new(&redis_url, "op_refresh".into()).unwrap();
-    let device_codes = RedisStore::new(&redis_url, "op_device".into()).unwrap();
+    let auth_codes = RedisStore::with_client(redis_client.clone(), "op_codes".into());
+    let refresh_tokens = RedisStore::with_client(redis_client.clone(), "op_refresh".into());
+    let device_codes = RedisStore::with_client(redis_client.clone(), "op_device".into());
 
     let op_store: Arc<dyn authkestra_op::OpStore> =
         Arc::new(authkestra_op::store::CompositeOpStore::new(
@@ -70,9 +73,9 @@ async fn main() {
             device_codes,
         ));
 
-    // Use Redis for the main engine session store as well
-    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
-        Arc::new(RedisStore::new(&redis_url, "engine_session".into()).unwrap());
+    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> = Arc::new(
+        RedisStore::with_client(redis_client, "engine_session".into()),
+    );
 
     let session_config = SessionConfig {
         cookie_name: "authkestra_sid".to_string(),
