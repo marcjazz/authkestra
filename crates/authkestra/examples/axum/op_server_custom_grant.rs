@@ -163,7 +163,14 @@ impl<
         authkestra_op::handlers::token::TokenErrorResponse,
     > {
         if grant_type == "urn:example:custom" {
-            // Demonstration: blindly issue a token!
+            // Safe to issue here: the framework already verified this client is authorized
+            // for "urn:example:custom" (via `client.allows_grant_type`) before dispatching
+            // to this method, so no extra grant-type check is needed.
+            //
+            // In a real implementation you would validate the custom payload here
+            // (e.g. a signed assertion, a license key, a device attestation, etc.)
+            // before issuing the token. This demo intentionally skips that step because
+            // it only exists to illustrate the wiring pattern, not a real credential exchange.
             let access_token = tokens
                 .issue_client_token(&client_id, 3600, None, None)
                 .unwrap();
