@@ -11,6 +11,10 @@ use std::time::Duration;
 use crate::store::{KvStore, StoreError};
 
 #[derive(Clone, Debug)]
+#[deprecated(
+    since = "0.2.4",
+    note = "SqlKvStore is deprecated. Please implement a custom DB layer or use RedisStore for KV needs."
+)]
 pub struct SqlKvStore<DB: Database> {
     #[allow(dead_code)]
     pool: sqlx::Pool<DB>,
@@ -18,6 +22,11 @@ pub struct SqlKvStore<DB: Database> {
     table_name: String,
 }
 
+#[allow(deprecated)]
+#[deprecated(
+    since = "0.2.4",
+    note = "SqlStore is deprecated. Please implement a custom DB layer or use RedisStore for KV needs."
+)]
 pub type SqlStore<DB> = SqlKvStore<DB>;
 
 /// Internal data model for a KV entry in the SQL database.
@@ -28,6 +37,7 @@ pub struct SqlKvModel {
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[allow(deprecated)]
 impl<DB: Database> SqlKvStore<DB> {
     pub fn new(pool: sqlx::Pool<DB>) -> Self {
         Self {
@@ -58,6 +68,7 @@ macro_rules! impl_sql_store {
     ) => {
         #[cfg(feature = $feature)]
         #[async_trait]
+        #[allow(deprecated)]
         impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T>
             for SqlKvStore<$backend>
         {
@@ -132,6 +143,7 @@ macro_rules! impl_sql_store {
         }
 
         #[cfg(feature = $feature)]
+        #[allow(deprecated)]
         impl SqlKvStore<$backend> {
             /// Creates the necessary table and index if they do not exist.
             pub async fn migrate(&self) -> Result<(), StoreError> {
@@ -151,6 +163,7 @@ macro_rules! impl_sql_store {
 
         #[cfg(feature = $feature)]
         #[async_trait]
+        #[allow(deprecated)]
         impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::IndexedKvStore<T>
             for SqlKvStore<$backend>
         {
@@ -218,6 +231,7 @@ macro_rules! impl_sql_store {
 
         #[cfg(feature = $feature)]
         #[async_trait]
+        #[allow(deprecated)]
         impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> crate::store::AtomicConsume<T>
             for SqlKvStore<$backend>
         {
@@ -382,6 +396,7 @@ impl_sql_store! {
 }
 
 #[cfg(all(test, feature = "sql-sqlite"))]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
@@ -455,6 +470,7 @@ mod tests {
 }
 
 #[cfg(all(test, feature = "sql-postgres"))]
+#[allow(deprecated)]
 mod postgres_tests {
     use super::*;
     use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
@@ -539,6 +555,7 @@ mod postgres_tests {
 }
 
 #[cfg(all(test, feature = "sql-mysql"))]
+#[allow(deprecated)]
 mod mysql_tests {
     use super::*;
     use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
