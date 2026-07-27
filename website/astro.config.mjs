@@ -49,6 +49,8 @@ export default defineConfig({
 					label: 'Data & Storage',
 					items: [
 						{ label: 'Storage Overview', slug: 'storage/overview' },
+						{ label: 'KV Stores', slug: 'storage/kv-store' },
+						{ label: 'OP SQL Store', slug: 'storage/sql-store' },
 						{ label: 'Implementing Custom Stores', slug: 'storage/implementing-stores' },
 					],
 				},
