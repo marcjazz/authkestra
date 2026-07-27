@@ -62,19 +62,17 @@ async fn main() {
     let refresh_tokens = RedisStore::new(&redis_url, "op_refresh".into()).unwrap();
     let device_codes = RedisStore::new(&redis_url, "op_device".into()).unwrap();
 
-    let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(
-        authkestra_op::store::CompositeOpStore::new(
+    let op_store: Arc<dyn authkestra_op::OpStore> =
+        Arc::new(authkestra_op::store::CompositeOpStore::new(
             clients,
             auth_codes,
             refresh_tokens,
             device_codes,
-        ),
-    );
+        ));
 
     // Use Redis for the main engine session store as well
-    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> = Arc::new(
-        RedisStore::new(&redis_url, "engine_session".into()).unwrap()
-    );
+    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
+        Arc::new(RedisStore::new(&redis_url, "engine_session".into()).unwrap());
 
     let session_config = SessionConfig {
         cookie_name: "authkestra_sid".to_string(),
