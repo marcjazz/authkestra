@@ -13,7 +13,11 @@ use crate::store::{KvStore, StoreError};
 #[derive(Clone, Debug)]
 #[deprecated(
     since = "0.2.4",
-    note = "SqlKvStore is deprecated. Please implement a custom DB layer or use RedisStore for KV needs."
+    note = "Using SqlKvStore for OP-specific data (clients, authorization codes, refresh tokens, \
+            device codes) is deprecated — use `authkestra_op::sqlx_store::SqlxOpStore` instead, \
+            which provides a normalized relational schema with proper foreign keys and ON DELETE CASCADE. \
+            SqlKvStore remains a valid choice for generic KV/session storage when you prefer SQL \
+            over Redis and do not need OP-specific semantics."
 )]
 pub struct SqlKvStore<DB: Database> {
     #[allow(dead_code)]
@@ -25,7 +29,7 @@ pub struct SqlKvStore<DB: Database> {
 #[allow(deprecated)]
 #[deprecated(
     since = "0.2.4",
-    note = "SqlStore is deprecated. Please implement a custom DB layer or use RedisStore for KV needs."
+    note = "SqlStore is a type alias for SqlKvStore — see SqlKvStore deprecation notice for details."
 )]
 pub type SqlStore<DB> = SqlKvStore<DB>;
 
