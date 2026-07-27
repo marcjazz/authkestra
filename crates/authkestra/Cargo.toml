@@ -76,6 +76,11 @@ path = "examples/actix/op_server.rs"
 required-features = ["full"]
 
 [[example]]
+name = "actix_op_server_custom_grant"
+path = "examples/actix/op_server_custom_grant.rs"
+required-features = ["full"]
+
+[[example]]
 name = "actix_oauth2_github"
 path = "examples/actix/oauth2_github.rs"
 required-features = ["full"]
@@ -119,6 +124,11 @@ required-features = ["full"]
 [[example]]
 name = "axum_op_server"
 path = "examples/axum/op_server.rs"
+required-features = ["full"]
+
+[[example]]
+name = "axum_op_server_custom_grant"
+path = "examples/axum/op_server_custom_grant.rs"
 required-features = ["full"]
 
 [[example]]

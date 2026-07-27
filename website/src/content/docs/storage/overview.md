@@ -1,9 +1,9 @@
 ---
 title: Storage Overview
-description: Understanding Authkestra's database-agnostic design.
+description: Understanding Authkestra's database-agnostic design and storage options.
 ---
 
-Authkestra is entirely **Database Agnostic**. We never enforce database schemas, migrations, or ORM choices.
+Authkestra is entirely **Database Agnostic**. We never enforce database schemas, migrations, or ORM choices for the core library.
 
 ## The Trait-Based Approach
 
@@ -22,30 +22,11 @@ Because this is a trait, you can implement it using `sqlx`, `diesel`, `redis`, o
 
 ## Included Stores
 
-Authkestra comes with a few generic implementations out of the box for convenience. To use them, you must enable the corresponding feature flags in your `Cargo.toml`:
+Authkestra comes with a few generic implementations out of the box for convenience. To use them, you must enable the corresponding feature flags in your `Cargo.toml`.
 
-```toml
-[dependencies]
-# Example: Using Redis and SQLite stores
-authkestra = { version = "0.2.2", features = ["redis", "sql-sqlite"] }
-```
+There are two primary paradigms for built-in storage in Authkestra:
 
-The available built-in stores and their feature flags are:
-- **Memory Store**: `authkestra_engine::store::memory::MemoryStore` (Great for testing and local dev; enabled by the `memory` feature).
-- **Redis Store**: `authkestra_engine::store::redis::RedisStore` (Production-ready distributed cache; enabled by the `redis` feature).
-- **Generic SQL KV Store**: `authkestra_engine::store::sql::SqlKvStore` (Relational JSON blob persistence; enabled by `sql-postgres`, `sql-mysql`, or `sql-sqlite` features).
+1. **[KV Stores](/storage/kv-store)**: General-purpose Key-Value persistence used by the main `authkestra-engine`. This includes the Memory Store, Redis Store, and a generic SQL KV Store that serializes data as JSON blobs.
+2. **[SQL Stores](/storage/sql-store)**: Highly opinionated, normalized relational SQL tables designed specifically for building an OpenID Provider (OP) via `authkestra-op`.
 
-## OpenID Provider (OP) Storage
-
-If you are building an OpenID Provider using `authkestra-op`, you can use the traits: `ClientStore`, `AuthorizationCodeStore`, `RefreshTokenStore`, and `DeviceCodeStore`.
-
-To simplify building OPs, Authkestra provides a batteries-included **native SQL** implementation: `authkestra_op::sqlx_store::SqlxOpStore`. 
-
-Unlike the generic `SqlKvStore` which stores JSON blobs, `SqlxOpStore` provides highly opinionated, normalized SQL tables with proper relational foreign keys, `ON DELETE CASCADE` constraints, and strictly defined columns (like `client_id`, `scopes`, `expires_at`).
-
-To use it, enable the respective feature flag:
-```toml
-[dependencies]
-authkestra-op = { version = "0.2.2", features = ["sqlx-postgres"] }
-# or sqlx-mysql, sqlx-sqlite
-```
+Continue reading to explore how to set up the [KV Store](/storage/kv-store) for typical setups, or the specialized [SQL Store](/storage/sql-store) for building your own OP. Or, if you have unique infrastructure needs, learn how to [Implement Custom Stores](/storage/implementing-stores).

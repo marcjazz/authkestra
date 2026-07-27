@@ -28,7 +28,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.2.0", features = ["macros"] }
+authkestra-axum = { version = "0.2.3", features = ["macros"] }
 tower-cookies = "0.10" # Required for session support
 ```
 
