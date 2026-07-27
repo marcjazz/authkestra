@@ -27,7 +27,7 @@ authkestra-op = { version = "0.2.3", features = ["sqlx-postgres"] }
 
 Unlike the generic KV store that automatically initializes its single `authkestra_kv` table upon connection, the `SqlxOpStore` assumes you want strict control over your database schema and migrations.
 
-Authkestra provides the required schema queries, but **it will not automatically run them for you** on connection. You can either run the migrations manually using the `.migrate()` method, or integrate the provided schema into your application's migration runner (e.g., `sqlx-cli`, `barrel`, or manually in a database console).
+Authkestra provides the required schema queries, but **it will not automatically run them for you** on connection. You can either run the migrations directly via code using `.migrate()`, or integrate the provided schema into your application's migration runner (e.g., `sqlx-cli`, `barrel`, or manually in a database console).
 
 ### 1. Extracting the Schema
 
