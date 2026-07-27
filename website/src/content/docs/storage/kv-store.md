@@ -39,7 +39,10 @@ let store = RedisStore::new("redis://127.0.0.1:6379/").await?;
 
 If you want to use a relational database but still leverage the simplicity of a KV interface, the `SqlKvStore` serializes data as JSON blobs into a simple SQL table.
 
-This is perfect if you already have a Postgres, MySQL, or SQLite database running and want to avoid introducing Redis to your infrastructure.
+This is useful if you already have a Postgres, MySQL, or SQLite database running and want to avoid introducing Redis to your infrastructure for **generic session storage**.
+
+> [!WARNING]
+> `SqlKvStore` is **deprecated for OP-specific data** (OAuth clients, authorization codes, refresh tokens, device codes). If you are building an OpenID Provider, use [`SqlxOpStore`](/storage/sql-store) instead — it provides a normalized relational schema with proper foreign keys and `ON DELETE CASCADE`. `SqlKvStore` remains a valid option for session storage when Redis is not available.
 
 ```rust
 use authkestra_engine::store::sql::SqlKvStore;
@@ -47,13 +50,14 @@ use sqlx::sqlite::SqlitePoolOptions;
 
 let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await?;
 
-// The SqlKvStore will automatically create the necessary `authkestra_kv` 
+// The SqlKvStore will automatically create the necessary `authkestra_kv`
 // table if it does not already exist.
-let store = SqlKvStore::new(pool).await?;
+let store = SqlKvStore::new(pool);
+store.migrate().await?;
 ```
 
 ## Setup Differences (KV vs SQL Store)
 
 When initializing a `SqlKvStore`, the table is automatically managed for you using a simple generic schema (typically a `key` column and a `value` JSON blob column). You do not need to manually run migrations.
 
-This differs significantly from the specialized **[SQL Store](/storage/sql-store)** used in `authkestra-op`, which requires explicit, normalized tables.
+This differs significantly from the specialized **[SQL Store](/storage/sql-store)** used in `authkestra-op`, which provides a proper normalized relational schema.
