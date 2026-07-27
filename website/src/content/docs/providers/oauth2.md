@@ -17,7 +17,7 @@ If you are using multiple OAuth providers (e.g., GitHub and Google), you must en
 
 ```toml
 [dependencies]
-authkestra = { version = "0.2.2", features = ["github", "google"] }
+authkestra = { version = "0.2.3", features = ["github", "google"] }
 ```
 
 ## Stateless Engine Configuration

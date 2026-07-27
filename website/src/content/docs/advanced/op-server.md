@@ -15,10 +15,10 @@ Because OP Servers are an advanced use case, the OP logic is not included in the
 
 ```toml
 [dependencies]
-authkestra-op = "0.2.2"
-authkestra-axum = { version = "0.2.2", features = ["op"] }
+authkestra-op = "0.2.3"
+authkestra-axum = { version = "0.2.3", features = ["op"] }
 # Or if using Actix:
-# authkestra-actix = { version = "0.2.2", features = ["op"] }
+# authkestra-actix = { version = "0.2.3", features = ["op"] }
 ```
 
 ## The OpStore Interface
@@ -48,7 +48,7 @@ let op_store = CompositeOpStore::new(
 ```
 
 > [!TIP]
-> **Implementing Custom Stores:** If you build your own combined store type (e.g. `struct MyCustomStore { ... }`), you must explicitly implement the `OpStore` trait for it (`impl OpStore for MyCustomStore {}`). This is a minor breaking change from `0.2.2` where a blanket implementation was provided, which was removed to allow for overriding the `handle_custom_grant` method.
+> **Implementing Custom Stores:** If you build your own combined store type (e.g. `struct MyCustomStore { ... }`), you must explicitly implement the `OpStore` trait for it (`impl OpStore for MyCustomStore {}`). This is a minor breaking change from `0.2.3` where a blanket implementation was provided, which was removed to allow for overriding the `handle_custom_grant` method.
 
 Check the `op_server.rs` example in the repository for full database wiring code.
 

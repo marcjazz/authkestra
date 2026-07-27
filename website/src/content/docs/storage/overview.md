@@ -27,7 +27,7 @@ Authkestra comes with a few generic implementations out of the box for convenien
 ```toml
 [dependencies]
 # Example: Using Redis and SQLite stores
-authkestra = { version = "0.2.2", features = ["redis", "sql-sqlite"] }
+authkestra = { version = "0.2.3", features = ["redis", "sql-sqlite"] }
 ```
 
 The available built-in stores and their feature flags are:
@@ -46,6 +46,6 @@ Unlike the generic `SqlKvStore` which stores JSON blobs, `SqlxOpStore` provides 
 To use it, enable the respective feature flag:
 ```toml
 [dependencies]
-authkestra-op = { version = "0.2.2", features = ["sqlx-postgres"] }
+authkestra-op = { version = "0.2.3", features = ["sqlx-postgres"] }
 # or sqlx-mysql, sqlx-sqlite
 ```
