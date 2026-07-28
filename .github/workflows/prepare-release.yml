@@ -39,37 +39,32 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "release/v${{ github.event.inputs.version }}"
+          BRANCH="release/v${{ github.event.inputs.version }}"
+          git checkout -B "$BRANCH"
           git add -A
-          git commit -m "chore: release v${{ github.event.inputs.version }}"
-          # --force-with-lease: safe re-run if the branch already exists from
-          # a previously failed workflow attempt (e.g. pr-create failed after push)
-          git push origin "release/v${{ github.event.inputs.version }}" --force
+          git commit -m "chore: release v${{ github.event.inputs.version }}" --allow-empty
+          git push origin "$BRANCH" --force
 
       - name: Open PR to main (or update if already exists)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # If the PR already exists (e.g. from a failed previous run), skip creation
-          EXISTING=$(gh pr list \
-            --head "release/v${{ github.event.inputs.version }}" \
-            --base main --json number --jq '.[0].number' 2>/dev/null || echo "")
-
-          if [ -n "$EXISTING" ]; then
-            echo "⚠️  PR #$EXISTING already exists — skipping creation."
+          BRANCH="release/v${{ github.event.inputs.version }}"
+          if gh pr view "$BRANCH" --json url -q .url 2>/dev/null; then
+            echo "⚠️  PR already open for $BRANCH — force-push above already updated it, nothing more to do."
           else
             gh pr create \
               --base main \
-              --head "release/v${{ github.event.inputs.version }}" \
+              --head "$BRANCH" \
               --title "chore: release v${{ github.event.inputs.version }}" \
               --body "## Release v${{ github.event.inputs.version }}
 
-          Automated version bump across all workspace crates, docs, and README.
+Automated version bump across all workspace crates, docs, and README.
 
-          **Checklist before merging:**
-          - [ ] All CI checks pass on this PR
-          - [ ] Diff contains only version string changes (no unintended modifications)
-          - [ ] CHANGELOG updated (if applicable)
+**Checklist before merging:**
+- [ ] All CI checks pass on this PR
+- [ ] Diff contains only version string changes (no unintended modifications)
+- [ ] CHANGELOG updated (if applicable)
 
-          > ⚠️ Merging this PR will automatically create the \`v${{ github.event.inputs.version }}\` tag and publish all crates to crates.io."
+> ⚠️ Merging this PR will automatically create the \`v${{ github.event.inputs.version }}\` tag and publish all crates to crates.io."
           fi
