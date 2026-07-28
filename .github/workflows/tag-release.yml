@@ -1,0 +1,51 @@
+name: Tag Release
+
+# Fires only when a PR is merged into main.
+# The job-level `if` guard restricts tagging to PRs whose source branch
+# is literally named `release/v*` — no other merge can trigger this.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Create tag and GitHub Release
+    # Double guard:
+    #   1. PR must have been merged (not just closed/declined)
+    #   2. Source branch must start with `release/v`
+    if: |
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from branch name
+        id: ver
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          VERSION="${BRANCH#release/v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Releasing v$VERSION"
+
+      - name: Create and push tag
+        run: |
+          git tag "v${{ steps.ver.outputs.version }}"
+          git push origin "v${{ steps.ver.outputs.version }}"
+
+      - name: Create GitHub Release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.ver.outputs.version }}" \
+            --title "v${{ steps.ver.outputs.version }}" \
+            --generate-notes \
+            --latest
