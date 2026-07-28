@@ -1,6 +1,11 @@
 name: Publish Rust Crates
 
 on:
+  # Fires automatically when tag-release.yml pushes a v* tag after a release/* PR merge
+  push:
+    tags:
+      - 'v*'
+
   workflow_dispatch:
     inputs:
       deploy_environment:
