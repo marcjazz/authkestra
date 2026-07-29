@@ -44,7 +44,7 @@ jobs:
           git commit -m "chore: release v${{ github.event.inputs.version }}"
           # --force-with-lease: safe re-run if the branch already exists from
           # a previously failed workflow attempt (e.g. pr-create failed after push)
-          git push --force-with-lease origin "release/v${{ github.event.inputs.version }}"
+          git push origin "release/v${{ github.event.inputs.version }}" --force
 
       - name: Open PR to main (or update if already exists)
         env:
