@@ -41,7 +41,10 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
         let url = totp.get_url();
 
         // Save Base32 secret to store
+        let credential_id = uuid::Uuid::new_v4().to_string();
+
         let val = serde_json::json!({
+            "credential_id": credential_id,
             "secret": secret_b32.clone(),
             "last_used_step": 0
         });
@@ -198,9 +201,23 @@ mod tests {
 
         async fn update_credential(
             &self,
-            _credential_id: &str,
-            _data: serde_json::Value,
+            credential_id: &str,
+            data: serde_json::Value,
         ) -> Result<(), AuthError> {
+            let mut creds = self.creds.lock().unwrap();
+            for val_list in creds.values_mut() {
+                for val in val_list.iter_mut() {
+                    if let Some(obj) = val.as_object_mut() {
+                        if obj.get("credential_id").and_then(|v| v.as_str()) == Some(credential_id) {
+                            if let Some(update_obj) = data.as_object() {
+                                for (k, v) in update_obj {
+                                    obj.insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Ok(())
         }
     }
@@ -250,7 +267,18 @@ mod tests {
                 user_id: "user123".to_string(),
                 code: "000000".to_string(),
             })
-            .await;
-        assert!(err.is_err());
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AuthError::Credentials(_)));
+
+        // Verify replay protection (re-submitting the exact same valid code should fail)
+        let replay_err = totp_method
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: code.clone(),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(replay_err, AuthError::Credentials(_)));
     }
 }
