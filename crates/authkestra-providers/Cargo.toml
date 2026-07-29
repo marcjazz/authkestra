@@ -1,7 +1,7 @@
 [package]
 exclude.workspace = true
 name = "authkestra-providers"
-version = "0.2.3"
+version = "0.2.4"
 edition.workspace = true
 description = "Consolidated OAuth providers for the authkestra framework"
 repository.workspace = true

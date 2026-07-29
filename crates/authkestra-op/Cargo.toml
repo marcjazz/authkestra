@@ -1,7 +1,7 @@
 [package]
 exclude.workspace = true
 name = "authkestra-op"
-version = "0.2.3"
+version = "0.2.4"
 edition.workspace = true
 description = "OpenID Provider (OP) support for the authkestra framework — issue tokens and run the authorization code grant, rather than only consuming an external IdP"
 repository.workspace = true
