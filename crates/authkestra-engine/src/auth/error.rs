@@ -30,6 +30,15 @@ pub enum AuthError {
     /// A required component (e.g., SessionManager, TokenManager) is missing
     #[error("Missing component: {0}")]
     ComponentMissing(String),
+    /// Invalid input provided
+    #[error("Invalid input")]
+    InvalidInput,
+    /// Invalid or failed credentials verification
+    #[error("Credentials error: {0}")]
+    Credentials(String),
+    /// An internal or unexpected storage error occurred
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 /// Represents an error response from an OAuth2 provider.

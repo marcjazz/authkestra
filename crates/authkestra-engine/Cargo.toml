@@ -34,6 +34,8 @@ rsa = "0.9.6"
 
 redis = { version = "0.27", features = ["tokio-comp"], optional = true }
 sqlx = { version = "0.8.2", optional = true }
+webauthn-rs = { version = "0.5.0", optional = true }
+totp-rs = { version = "5.7", features = ["gen_secret", "otpauth"], optional = true }
 
 [features]
 default = ["token", "flow"]
@@ -45,6 +47,8 @@ redis = ["dep:redis"]
 sql-postgres = ["sqlx/postgres", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
 sql-mysql = ["sqlx/mysql", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
 sql-sqlite = ["sqlx/sqlite", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
+webauthn = ["dep:webauthn-rs"]
+totp = ["dep:totp-rs"]
 
 [dev-dependencies]
 testcontainers = "0.27.3"
