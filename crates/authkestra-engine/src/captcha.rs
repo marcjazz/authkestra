@@ -73,3 +73,17 @@ impl CaptchaVerifier {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_captcha_verification_invalid_token() {
+        let verifier = CaptchaVerifier::new(CaptchaProvider::Turnstile, "invalid_secret");
+        let res = verifier.verify("bogus_token", None).await;
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err();
+        assert!(err_msg.contains("verification failed") || err_msg.contains("request"));
+    }
+}
