@@ -218,7 +218,8 @@ mod tests {
             for val_list in creds.values_mut() {
                 for val in val_list.iter_mut() {
                     if let Some(obj) = val.as_object_mut() {
-                        if obj.get("credential_id").and_then(|v| v.as_str()) == Some(credential_id) {
+                        if obj.get("credential_id").and_then(|v| v.as_str()) == Some(credential_id)
+                        {
                             if let Some(update_obj) = data.as_object() {
                                 for (k, v) in update_obj {
                                     obj.insert(k.clone(), v.clone());
