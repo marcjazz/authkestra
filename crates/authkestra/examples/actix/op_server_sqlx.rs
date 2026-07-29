@@ -5,10 +5,7 @@
 use actix_web::{App, HttpServer};
 use authkestra::flow::Engine;
 use authkestra_actix::{ActixState, OpExt};
-use authkestra_op::client::{ClientRegistration, ClientStore};
 use authkestra_op::sqlx_store::SqlxOpStore;
-use authkestra_op::store::OpStore;
-
 use authkestra_engine::TokenManager;
 use authkestra_op::config::OpConfig;
 use sqlx::sqlite::SqlitePoolOptions;

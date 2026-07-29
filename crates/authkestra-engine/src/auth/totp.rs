@@ -1,10 +1,4 @@
-use crate::auth::{
-    error::AuthError,
-    AuthInput,
-    AuthMethod,
-    CredentialStore,
-    state::Identity,
-};
+use crate::auth::{error::AuthError, state::Identity, AuthInput, AuthMethod, CredentialStore};
 use async_trait::async_trait;
 use totp_rs::{Algorithm, TOTP};
 
@@ -27,17 +21,22 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
         account_name: &str,
     ) -> Result<(String, String), AuthError> {
         let secret = totp_rs::Secret::generate_secret();
-        let secret_b32 = secret.to_string(); // Base32 encoded secret
-
+        let secret_b32 = match secret.to_encoded() {
+            totp_rs::Secret::Encoded(s) => s,
+            _ => unreachable!(),
+        }; // Base32 encoded secret
         let totp = TOTP::new(
             Algorithm::SHA1,
             6,
             1,
             30,
-            secret.to_bytes().map_err(|e| AuthError::Internal(e.to_string()))?,
+            secret
+                .to_bytes()
+                .map_err(|e| AuthError::Internal(e.to_string()))?,
             Some(issuer.to_string()),
             account_name.to_string(),
-        ).map_err(|e| AuthError::Internal(e.to_string()))?;
+        )
+        .map_err(|e| AuthError::Internal(e.to_string()))?;
 
         let url = totp.get_url();
 
@@ -62,10 +61,13 @@ impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
 
         let creds = self.store.get_credentials(&user_id, "totp").await?;
         let Some(secret_val) = creds.first() else {
-            return Err(AuthError::Credentials("TOTP not registered for this user".into()));
+            return Err(AuthError::Credentials(
+                "TOTP not registered for this user".into(),
+            ));
         };
 
-        let secret_b32 = secret_val.as_str()
+        let secret_b32 = secret_val
+            .as_str()
             .ok_or_else(|| AuthError::Internal("Invalid stored TOTP secret".to_string()))?;
 
         let secret = totp_rs::Secret::Encoded(secret_b32.to_string());
@@ -74,10 +76,13 @@ impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
             6,
             1,
             30,
-            secret.to_bytes().map_err(|e| AuthError::Internal(e.to_string()))?,
+            secret
+                .to_bytes()
+                .map_err(|e| AuthError::Internal(e.to_string()))?,
             None,
             "".to_string(),
-        ).map_err(|e| AuthError::Internal(e.to_string()))?;
+        )
+        .map_err(|e| AuthError::Internal(e.to_string()))?;
 
         if totp.check_current(&code).unwrap_or(false) {
             Ok(Identity {
@@ -105,29 +110,58 @@ mod tests {
 
     #[async_trait]
     impl CredentialStore for MockStore {
-        async fn save_credential(&self, user_id: &str, cred_type: &str, data: serde_json::Value) -> Result<(), AuthError> {
+        async fn save_credential(
+            &self,
+            user_id: &str,
+            cred_type: &str,
+            data: serde_json::Value,
+        ) -> Result<(), AuthError> {
             let key = format!("{user_id}:{cred_type}");
-            self.creds.lock().unwrap().entry(key).or_default().push(data);
+            self.creds
+                .lock()
+                .unwrap()
+                .entry(key)
+                .or_default()
+                .push(data);
             Ok(())
         }
 
-        async fn get_credentials(&self, user_id: &str, cred_type: &str) -> Result<Vec<serde_json::Value>, AuthError> {
+        async fn get_credentials(
+            &self,
+            user_id: &str,
+            cred_type: &str,
+        ) -> Result<Vec<serde_json::Value>, AuthError> {
             let key = format!("{user_id}:{cred_type}");
-            Ok(self.creds.lock().unwrap().get(&key).cloned().unwrap_or_default())
+            Ok(self
+                .creds
+                .lock()
+                .unwrap()
+                .get(&key)
+                .cloned()
+                .unwrap_or_default())
         }
 
-        async fn update_credential(&self, _credential_id: &str, _data: serde_json::Value) -> Result<(), AuthError> {
+        async fn update_credential(
+            &self,
+            _credential_id: &str,
+            _data: serde_json::Value,
+        ) -> Result<(), AuthError> {
             Ok(())
         }
     }
 
     #[tokio::test]
     async fn test_totp_flow() {
-        let store = MockStore { creds: Mutex::new(HashMap::new()) };
+        let store = MockStore {
+            creds: Mutex::new(HashMap::new()),
+        };
         let totp_method = TotpAuthMethod::new(store);
 
         // Register a TOTP key for user
-        let (secret_b32, uri) = totp_method.register_totp("user123", "Authkestra", "user123").await.unwrap();
+        let (secret_b32, uri) = totp_method
+            .register_totp("user123", "Authkestra", "user123")
+            .await
+            .unwrap();
         assert!(!secret_b32.is_empty());
         assert!(uri.contains("otpauth://totp/"));
 
@@ -140,22 +174,28 @@ mod tests {
             totp_rs::Secret::Encoded(secret_b32).to_bytes().unwrap(),
             None,
             "".to_string(),
-        ).unwrap();
+        )
+        .unwrap();
         let code = totp.generate_current().unwrap();
 
         // Verify successful auth
-        let identity = totp_method.authenticate(AuthInput::Totp {
-            user_id: "user123".to_string(),
-            code: code.clone(),
-        }).await.unwrap();
+        let identity = totp_method
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: code.clone(),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(identity.external_id, "user123");
 
         // Verify failure on wrong code
-        let err = totp_method.authenticate(AuthInput::Totp {
-            user_id: "user123".to_string(),
-            code: "000000".to_string(),
-        }).await;
+        let err = totp_method
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: "000000".to_string(),
+            })
+            .await;
         assert!(err.is_err());
     }
 }
