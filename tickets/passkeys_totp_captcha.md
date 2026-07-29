@@ -3,8 +3,8 @@
 ## Goal Description
 Enhance Authkestra's security primitives by implementing:
 1. **Passkeys/WebAuthn & TOTP**: Built directly into the `authkestra-engine` crate behind optional features (`webauthn` and `totp`), avoiding new crate proliferation.
-2. **Bot Protection (CAPTCHA)**: Framework-agnostic verifiers built directly into `authkestra-engine/src/captcha.rs` under a `captcha` feature flag (supporting Cloudflare Turnstile, hCaptcha, Google reCAPTCHA). Framework adapters (`authkestra-axum` and `authkestra-actix`) expose clean helper modules.
-3. **Pluggable DB Storage (`SqlxCredentialStore`)**: Relational database persistence under `store/sql/` directory modules.
+2. **Bot Protection (CAPTCHA)**: Framework-agnostic verifiers built directly into `authkestra-engine/src/captcha.rs` under a `captcha` feature flag (supporting Cloudflare Turnstile, hCaptcha, Google reCAPTCHA). Framework adapters (`authkestra-axum` and `authkestra-actix`) use it directly from the engine, avoiding redundant wrapper re-exports.
+3. **Pluggable DB Storage (`SqlxCredentialStore`)**: Relational database persistence under `store/sql/` directory modules. Default table prefix is `ak_`.
 
 ---
 
@@ -16,12 +16,11 @@ Enhance Authkestra's security primitives by implementing:
 *   **Refactored SQL Store**: Split the monolithic `sql.rs` into a clean folder module `store/sql/` consisting of:
     *   `mod.rs` (exporting the module)
     *   `session.rs` (isolated Session SQLx logic)
-    *   `credential.rs` (implements SQLx `CredentialStore`)
+    *   `credential.rs` (implements SQLx `CredentialStore` with normalized columns for credentials)
 
 ### 2. Framework Adapters (`authkestra-axum` & `authkestra-actix`)
-*   **Cargo Feature**: Added `captcha` feature gate to propagate to `authkestra-engine/captcha`.
-*   **Helpers Directory Module**: Refactored the monolithic `helpers.rs` into clean, directory-based structures:
+*   **Helpers Directory Module**: Refactored monolithic helper files into clean, directory-based structures:
     *   `helpers/mod.rs` (re-exports)
     *   `helpers/api.rs` (handlers & token managers)
     *   `helpers/cookie.rs` (cookie builder helpers)
-    *   `helpers/captcha.rs` (re-exports `CaptchaProvider` and `CaptchaVerifier` from the engine)
+*   **Framework Agnostic CAPTCHA**: Direct use of the core verifier from `authkestra_engine::captcha::*`, eliminating redundant wrapper modules.
