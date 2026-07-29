@@ -1,10 +1,4 @@
-use crate::auth::{
-    error::AuthError,
-    AuthInput,
-    AuthMethod,
-    CredentialStore,
-    state::Identity,
-};
+use crate::auth::{error::AuthError, state::Identity, AuthInput, AuthMethod, CredentialStore};
 use async_trait::async_trait;
 use std::sync::Arc;
 use webauthn_rs::prelude::*;
@@ -27,9 +21,8 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
         user_id: &str,
         username: &str,
     ) -> Result<(CreationChallengeResponse, PasskeyRegistration), AuthError> {
-        let user_unique_id = Uuid::parse_str(user_id)
-            .unwrap_or_else(|_| Uuid::new_v4());
-        
+        let user_unique_id = Uuid::parse_str(user_id).unwrap_or_else(|_| Uuid::new_v4());
+
         self.webauthn
             .start_passkey_registration(user_unique_id, username, username, None)
             .map_err(|e| AuthError::Internal(format!("WebAuthn registration failed to start: {e}")))
@@ -42,13 +35,16 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
         reg_response: RegisterPublicKeyCredential,
         state: PasskeyRegistration,
     ) -> Result<Passkey, AuthError> {
-        let passkey = self.webauthn
+        let passkey = self
+            .webauthn
             .finish_passkey_registration(&reg_response, &state)
-            .map_err(|e| AuthError::Credentials(format!("WebAuthn registration verification failed: {e}")))?;
-        
+            .map_err(|e| {
+                AuthError::Credentials(format!("WebAuthn registration verification failed: {e}"))
+            })?;
+
         let val = serde_json::to_value(&passkey)
             .map_err(|e| AuthError::Internal(format!("Failed to serialize passkey: {e}")))?;
-        
+
         self.store.save_credential(user_id, "webauthn", val).await?;
         Ok(passkey)
     }
@@ -68,18 +64,19 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
             authenticator_data: _,
             signature: _,
             user_handle: _,
-        } = input else {
+        } = input
+        else {
             return Err(AuthError::InvalidInput);
         };
 
         // Retrieve credentials mapped to the user
         let creds_data = self.store.get_credentials(&user_id, "webauthn").await?;
-        
+
         let mut target_passkey: Option<Passkey> = None;
         for c_val in creds_data {
             let passkey: Passkey = serde_json::from_value(c_val)
                 .map_err(|e| AuthError::Internal(format!("Failed to deserialize passkey: {e}")))?;
-            
+
             use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
             let passkey_cred_id_str = URL_SAFE_NO_PAD.encode(passkey.cred_id().as_ref());
             if passkey_cred_id_str == credential_id {
@@ -89,7 +86,9 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
         }
 
         let Some(_passkey) = target_passkey else {
-            return Err(AuthError::Credentials("Passkey not found for this user".into()));
+            return Err(AuthError::Credentials(
+                "Passkey not found for this user".into(),
+            ));
         };
 
         // Note: Full verification requires passing the challenge from the active authentication session state.
