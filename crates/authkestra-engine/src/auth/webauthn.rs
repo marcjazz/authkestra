@@ -48,6 +48,27 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
         self.store.save_credential(user_id, "webauthn", val).await?;
         Ok(passkey)
     }
+
+    /// Helper to generate an authentication challenge.
+    pub fn start_authentication(
+        &self,
+        passkeys: &[Passkey],
+    ) -> Result<(RequestChallengeResponse, PasskeyAuthentication), AuthError> {
+        self.webauthn
+            .start_passkey_authentication(passkeys)
+            .map_err(|e| AuthError::Internal(format!("WebAuthn auth failed to start: {e}")))
+    }
+
+    /// Helper to finalize passkey authentication
+    pub fn finish_authentication(
+        &self,
+        auth_response: &PublicKeyCredential,
+        state: &PasskeyAuthentication,
+    ) -> Result<webauthn_rs::prelude::AuthenticationResult, AuthError> {
+        self.webauthn
+            .finish_passkey_authentication(auth_response, state)
+            .map_err(|e| AuthError::Credentials(format!("WebAuthn authentication failed: {e}")))
+    }
 }
 
 #[async_trait]
@@ -60,13 +81,49 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
         let AuthInput::WebAuthnAuthentication {
             user_id,
             credential_id,
-            client_data_json: _,
-            authenticator_data: _,
-            signature: _,
-            user_handle: _,
+            client_data_json,
+            authenticator_data,
+            signature,
+            user_handle,
+            auth_state_json,
         } = input
         else {
             return Err(AuthError::InvalidInput);
+        };
+
+        let auth_state_json = auth_state_json.ok_or_else(|| {
+            AuthError::Credentials("Missing authentication state from session".into())
+        })?;
+
+        let auth_state: PasskeyAuthentication = serde_json::from_str(&auth_state_json)
+            .map_err(|e| AuthError::Internal(format!("Invalid authentication state: {e}")))?;
+
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let cred_id_bytes = URL_SAFE_NO_PAD
+            .decode(&credential_id)
+            .map_err(|_| AuthError::InvalidInput)?;
+
+        let client_data_bytes = URL_SAFE_NO_PAD
+            .decode(&client_data_json)
+            .map_err(|_| AuthError::InvalidInput)?;
+
+        let authenticator_data_bytes = URL_SAFE_NO_PAD
+            .decode(&authenticator_data)
+            .map_err(|_| AuthError::InvalidInput)?;
+
+        let signature_bytes = URL_SAFE_NO_PAD
+            .decode(&signature)
+            .map_err(|_| AuthError::InvalidInput)?;
+
+        let auth_response = PublicKeyCredential {
+            id: credential_id.clone(),
+            response: AuthenticatorAssertionResponse {
+                client_data_json: client_data_bytes,
+                authenticator_data: authenticator_data_bytes,
+                signature: signature_bytes,
+                user_handle: user_handle.map(|h| URL_SAFE_NO_PAD.decode(h).unwrap_or_default()),
+            },
+            extensions: None,
         };
 
         // Retrieve credentials mapped to the user
@@ -77,23 +134,40 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
             let passkey: Passkey = serde_json::from_value(c_val)
                 .map_err(|e| AuthError::Internal(format!("Failed to deserialize passkey: {e}")))?;
 
-            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-            let passkey_cred_id_str = URL_SAFE_NO_PAD.encode(passkey.cred_id().as_ref());
-            if passkey_cred_id_str == credential_id {
+            if passkey.cred_id() == cred_id_bytes {
                 target_passkey = Some(passkey);
                 break;
             }
         }
 
-        let Some(_passkey) = target_passkey else {
+        let Some(passkey) = target_passkey else {
             return Err(AuthError::Credentials(
                 "Passkey not found for this user".into(),
             ));
         };
 
-        // Note: Full verification requires passing the challenge from the active authentication session state.
-        // Since AuthMethod::authenticate is stateless, we return an Identity if the passkey lookup succeeds,
-        // and verification is managed during the session handshake (finish_authentication).
+        // Cryptographically verify the signature
+        let auth_result = self.finish_authentication(&auth_response, &auth_state)?;
+
+        // Update the credential signature counter
+        // `update_credential` needs the passkey (which contains the updated counter)
+        // Since `finish_passkey_authentication` updates the counter in the `auth_result.passkey`? No, wait.
+        // Let's check webauthn-rs to see what `finish_authentication` returns, or if `passkey` itself needs to be updated.
+        // Actually, webauthn-rs `AuthenticationResult` usually contains the updated passkey which must be saved.
+        // We'll update it by converting to JSON and saving it back.
+        let mut updated_passkey = passkey.clone();
+        updated_passkey.update_credential(&auth_result);
+
+        let updated_val = serde_json::to_value(&updated_passkey).map_err(|e| {
+            AuthError::Internal(format!("Failed to serialize updated passkey: {e}"))
+        })?;
+
+        // We need the credential_id to update, we can use the base64 string
+        let _ = self
+            .store
+            .update_credential(&credential_id, updated_val)
+            .await;
+
         Ok(Identity {
             provider_id: "webauthn".to_string(),
             external_id: user_id.clone(),

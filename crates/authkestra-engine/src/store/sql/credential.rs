@@ -133,7 +133,20 @@ macro_rules! impl_credential_store {
 
                 let mut list = Vec::new();
                 for row in rows {
-                    if cred_type == "totp" || cred_type == "password" {
+                    if cred_type == "totp" {
+                        let mut obj = serde_json::json!({ "credential_id": row.credential_id });
+                        if let Some(secret) = row.secret_key {
+                            obj["secret"] = Value::String(secret);
+                        }
+                        if let Some(extra) = row.extra_data {
+                            if let Ok(extra_val) = serde_json::from_str::<Value>(&extra) {
+                                if let Some(step) = extra_val.get("last_used_step") {
+                                    obj["last_used_step"] = step.clone();
+                                }
+                            }
+                        }
+                        list.push(obj);
+                    } else if cred_type == "password" {
                         if let Some(secret) = row.secret_key {
                             list.push(Value::String(secret));
                         }

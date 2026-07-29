@@ -41,7 +41,10 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
         let url = totp.get_url();
 
         // Save Base32 secret to store
-        let val = serde_json::Value::String(secret_b32.clone());
+        let val = serde_json::json!({
+            "secret": secret_b32.clone(),
+            "last_used_step": 0
+        });
         self.store.save_credential(user_id, "totp", val).await?;
 
         Ok((secret_b32, url))
@@ -66,11 +69,37 @@ impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
             ));
         };
 
-        let secret_b32 = secret_val
-            .as_str()
-            .ok_or_else(|| AuthError::Internal("Invalid stored TOTP secret".to_string()))?;
+        // secret_val could be a string (old implementation backward compatibility) or an object
+        let (secret_b32, credential_id, last_used_step) = if let Some(s) = secret_val.as_str() {
+            (s.to_string(), None, 0)
+        } else if let Some(obj) = secret_val.as_object() {
+            let secret = obj
+                .get("secret")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let cred_id = obj
+                .get("credential_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let step = obj
+                .get("last_used_step")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            (secret, cred_id, step)
+        } else {
+            return Err(AuthError::Internal(
+                "Invalid stored TOTP secret format".to_string(),
+            ));
+        };
 
-        let secret = totp_rs::Secret::Encoded(secret_b32.to_string());
+        if secret_b32.is_empty() {
+            return Err(AuthError::Internal(
+                "Invalid stored TOTP secret".to_string(),
+            ));
+        }
+
+        let secret = totp_rs::Secret::Encoded(secret_b32.clone());
         let totp = TOTP::new(
             Algorithm::SHA1,
             6,
@@ -84,7 +113,33 @@ impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
         )
         .map_err(|e| AuthError::Internal(e.to_string()))?;
 
-        if totp.check_current(&code).unwrap_or(false) {
+        // Time calculations for replay protection
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| AuthError::Internal(e.to_string()))?
+            .as_secs();
+
+        let basestep = t / totp.step - (totp.skew as u64);
+        let mut matched_step = None;
+        for i in 0..(totp.skew as u16) * 2 + 1 {
+            let step = basestep + (i as u64);
+            let step_time = step * totp.step;
+            if totp.generate(step_time) == code {
+                if step > last_used_step {
+                    matched_step = Some(step);
+                    break;
+                }
+            }
+        }
+
+        if let Some(step) = matched_step {
+            if let Some(cred_id) = credential_id {
+                let update_data = serde_json::json!({
+                    "last_used_step": step
+                });
+                let _ = self.store.update_credential(&cred_id, update_data).await;
+            }
+
             Ok(Identity {
                 provider_id: "totp".to_string(),
                 external_id: user_id.clone(),
@@ -93,7 +148,9 @@ impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
                 attributes: std::collections::HashMap::new(),
             })
         } else {
-            Err(AuthError::Credentials("Invalid TOTP code".into()))
+            Err(AuthError::Credentials(
+                "Invalid or replayed TOTP code".into(),
+            ))
         }
     }
 }

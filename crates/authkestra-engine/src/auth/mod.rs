@@ -80,6 +80,9 @@ pub enum AuthInput {
         signature: String,
         /// Optional user handle
         user_handle: Option<String>,
+        /// Optional authentication state serialized as JSON (injected by the server session, not the client)
+        #[serde(default)]
+        auth_state_json: Option<String>,
     },
     /// TOTP validation input
     #[cfg(feature = "totp")]
