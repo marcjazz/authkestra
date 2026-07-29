@@ -1,7 +1,6 @@
-#[cfg(any(
-    feature = "sql-postgres",
-    feature = "sql-sqlite",
-    feature = "sql-mysql"
+#[cfg(all(
+    any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"),
+    any(feature = "webauthn", feature = "totp")
 ))]
 use async_trait::async_trait;
 use serde_json::Value;

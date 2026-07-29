@@ -5,10 +5,9 @@
 ))]
 pub mod session;
 
-#[cfg(any(
-    feature = "sql-postgres",
-    feature = "sql-sqlite",
-    feature = "sql-mysql"
+#[cfg(all(
+    any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"),
+    any(feature = "webauthn", feature = "totp")
 ))]
 pub mod credential;
 
@@ -19,9 +18,8 @@ pub mod credential;
 ))]
 pub use session::{SqlKvModel, SqlKvStore, SqlStore};
 
-#[cfg(any(
-    feature = "sql-postgres",
-    feature = "sql-sqlite",
-    feature = "sql-mysql"
+#[cfg(all(
+    any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"),
+    any(feature = "webauthn", feature = "totp")
 ))]
 pub use credential::SqlxCredentialStore;

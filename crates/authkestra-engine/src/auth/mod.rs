@@ -30,7 +30,9 @@ pub mod session;
 pub use session::{Session, SessionConfig, SessionStore};
 
 /// Credential storage traits.
+#[cfg(any(feature = "webauthn", feature = "totp"))]
 pub mod store;
+#[cfg(any(feature = "webauthn", feature = "totp"))]
 pub use store::CredentialStore;
 
 /// WebAuthn authentication method.
