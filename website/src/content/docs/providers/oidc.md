@@ -11,7 +11,7 @@ To use the OIDC client, you must enable the `oidc` feature on the `authkestra` c
 
 ```toml
 [dependencies]
-authkestra = { version = "0.2.3", features = ["oidc"] }
+authkestra = { version = "0.2.4", features = ["oidc"] }
 ```
 
 ## Configuring the OIDC Provider
