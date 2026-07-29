@@ -98,33 +98,25 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
         let auth_state: PasskeyAuthentication = serde_json::from_str(&auth_state_json)
             .map_err(|e| AuthError::Internal(format!("Invalid authentication state: {e}")))?;
 
+        let auth_response_json = serde_json::json!({
+            "id": credential_id,
+            "rawId": credential_id,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": client_data_json,
+                "authenticatorData": authenticator_data,
+                "signature": signature,
+                "userHandle": user_handle,
+            }
+        });
+
+        let auth_response: PublicKeyCredential = serde_json::from_value(auth_response_json)
+            .map_err(|e| AuthError::Internal(format!("Failed to parse credential: {e}")))?;
+
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
         let cred_id_bytes = URL_SAFE_NO_PAD
             .decode(&credential_id)
             .map_err(|_| AuthError::InvalidInput)?;
-
-        let client_data_bytes = URL_SAFE_NO_PAD
-            .decode(&client_data_json)
-            .map_err(|_| AuthError::InvalidInput)?;
-
-        let authenticator_data_bytes = URL_SAFE_NO_PAD
-            .decode(&authenticator_data)
-            .map_err(|_| AuthError::InvalidInput)?;
-
-        let signature_bytes = URL_SAFE_NO_PAD
-            .decode(&signature)
-            .map_err(|_| AuthError::InvalidInput)?;
-
-        let auth_response = PublicKeyCredential {
-            id: credential_id.clone(),
-            response: AuthenticatorAssertionResponse {
-                client_data_json: client_data_bytes,
-                authenticator_data: authenticator_data_bytes,
-                signature: signature_bytes,
-                user_handle: user_handle.map(|h| URL_SAFE_NO_PAD.decode(h).unwrap_or_default()),
-            },
-            extensions: None,
-        };
 
         // Retrieve credentials mapped to the user
         let creds_data = self.store.get_credentials(&user_id, "webauthn").await?;
@@ -134,7 +126,7 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
             let passkey: Passkey = serde_json::from_value(c_val)
                 .map_err(|e| AuthError::Internal(format!("Failed to deserialize passkey: {e}")))?;
 
-            if passkey.cred_id() == cred_id_bytes {
+            if passkey.cred_id().as_ref() == cred_id_bytes {
                 target_passkey = Some(passkey);
                 break;
             }
