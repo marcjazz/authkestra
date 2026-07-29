@@ -49,6 +49,7 @@ sql-mysql = ["sqlx/mysql", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/jso
 sql-sqlite = ["sqlx/sqlite", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
 webauthn = ["dep:webauthn-rs"]
 totp = ["dep:totp-rs"]
+captcha = []
 
 [dev-dependencies]
 testcontainers = "0.27.3"
