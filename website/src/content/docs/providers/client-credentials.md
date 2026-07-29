@@ -11,7 +11,7 @@ The Client Credentials flow is built natively into the `authkestra-engine`. If y
 
 ```toml
 [dependencies]
-authkestra = { version = "0.2.3" }
+authkestra = { version = "0.2.4" }
 ```
 
 ## Using `ClientCredentialsFlow`
