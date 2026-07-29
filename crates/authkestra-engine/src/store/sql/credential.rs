@@ -1,5 +1,9 @@
 #[cfg(all(
-    any(feature = "sql-postgres", feature = "sql-sqlite", feature = "sql-mysql"),
+    any(
+        feature = "sql-postgres",
+        feature = "sql-sqlite",
+        feature = "sql-mysql"
+    ),
     any(feature = "webauthn", feature = "totp")
 ))]
 use async_trait::async_trait;
