@@ -124,11 +124,9 @@ impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
         for i in 0..(totp.skew as u16) * 2 + 1 {
             let step = basestep + (i as u64);
             let step_time = step * totp.step;
-            if totp.generate(step_time) == code {
-                if step > last_used_step {
-                    matched_step = Some(step);
-                    break;
-                }
+            if totp.generate(step_time) == code && step > last_used_step {
+                matched_step = Some(step);
+                break;
             }
         }
 
