@@ -138,7 +138,17 @@ impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
                 let update_data = serde_json::json!({
                     "last_used_step": step
                 });
-                let _ = self.store.update_credential(&cred_id, update_data).await;
+                if let Err(e) = self.store.update_credential(&cred_id, update_data).await {
+                    tracing::error!(
+                        error = %e,
+                        user_id = %user_id,
+                        credential_id = %cred_id,
+                        "Failed to update TOTP last_used_step in the credential store"
+                    );
+                    return Err(AuthError::Internal(
+                        "Failed to persist security state".into(),
+                    ));
+                }
             }
 
             Ok(Identity {

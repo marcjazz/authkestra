@@ -155,10 +155,21 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
         })?;
 
         // We need the credential_id to update, we can use the base64 string
-        let _ = self
+        if let Err(e) = self
             .store
             .update_credential(&credential_id, updated_val)
-            .await;
+            .await
+        {
+            tracing::error!(
+                error = %e,
+                user_id = %user_id,
+                credential_id = %credential_id,
+                "Failed to update WebAuthn signature counter in the credential store"
+            );
+            return Err(AuthError::Internal(
+                "Failed to persist security state".into(),
+            ));
+        }
 
         Ok(Identity {
             provider_id: "webauthn".to_string(),
