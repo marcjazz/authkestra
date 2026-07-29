@@ -18,11 +18,11 @@ pub struct SqlxCredentialStore<DB: Database> {
 }
 
 impl<DB: Database> SqlxCredentialStore<DB> {
-    /// Create a new `SqlxCredentialStore` with the default table name `authkestra_credentials`.
+    /// Create a new `SqlxCredentialStore` with the default table name `ak_credentials`.
     pub fn new(pool: sqlx::Pool<DB>) -> Self {
         Self {
             pool,
-            table_name: "authkestra_credentials".to_string(),
+            table_name: "ak_credentials".to_string(),
         }
     }
 
@@ -32,7 +32,7 @@ impl<DB: Database> SqlxCredentialStore<DB> {
     }
 }
 
-/// Helper model for deserializing database rows.
+/// Helper model for deserializing database rows using normalized columns.
 #[derive(sqlx::FromRow)]
 struct SqlCredentialModel {
     #[allow(dead_code)]
@@ -41,7 +41,8 @@ struct SqlCredentialModel {
     pub user_id: String,
     #[allow(dead_code)]
     pub cred_type: String,
-    pub data: String,
+    pub secret_key: Option<String>,
+    pub extra_data: Option<String>,
 }
 
 macro_rules! impl_credential_store {
@@ -75,14 +76,29 @@ macro_rules! impl_credential_store {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-                let json = serde_json::to_string(&data)
-                    .map_err(|e| AuthError::Internal(format!("Serialization error: {e}")))?;
+                let mut secret_key: Option<String> = None;
+                let mut extra_data: Option<String> = None;
+
+                if cred_type == "totp" {
+                    if let Some(s) = data.as_str() {
+                        secret_key = Some(s.to_string());
+                    } else if let Some(s) = data.get("secret").and_then(|v| v.as_str()) {
+                        secret_key = Some(s.to_string());
+                    }
+                } else if cred_type == "password" {
+                    if let Some(s) = data.as_str() {
+                        secret_key = Some(s.to_string());
+                    }
+                } else {
+                    extra_data = Some(serde_json::to_string(&data).unwrap_or_default());
+                }
 
                 sqlx::query(&query)
                     .bind(&credential_id)
                     .bind(user_id)
                     .bind(cred_type)
-                    .bind(json)
+                    .bind(secret_key)
+                    .bind(extra_data)
                     .execute(&self.pool)
                     .await
                     .map_err(|e| {
@@ -114,11 +130,17 @@ macro_rules! impl_credential_store {
 
                 let mut list = Vec::new();
                 for row in rows {
-                    let val: Value = serde_json::from_str(&row.data).map_err(|e| {
-                        tracing::error!(error = %e, "Deserialization error");
-                        AuthError::Internal(format!("Deserialization error: {e}"))
-                    })?;
-                    list.push(val);
+                    if cred_type == "totp" || cred_type == "password" {
+                        if let Some(secret) = row.secret_key {
+                            list.push(Value::String(secret));
+                        }
+                    } else if let Some(extra) = row.extra_data {
+                        let val: Value = serde_json::from_str(&extra).map_err(|e| {
+                            tracing::error!(error = %e, "Deserialization error");
+                            AuthError::Internal(format!("Deserialization error: {e}"))
+                        })?;
+                        list.push(val);
+                    }
                 }
 
                 Ok(list)
@@ -133,11 +155,11 @@ macro_rules! impl_credential_store {
                 tracing::debug!(credential_id = %credential_id, concat!("updating credential in ", $dialect_name, " store"));
                 let query = format!($update_query, self.table_name);
 
-                let json = serde_json::to_string(&data)
+                let extra_data = serde_json::to_string(&data)
                     .map_err(|e| AuthError::Internal(format!("Serialization error: {e}")))?;
 
                 sqlx::query(&query)
-                    .bind(json)
+                    .bind(extra_data)
                     .bind(credential_id)
                     .execute(&self.pool)
                     .await
@@ -174,10 +196,10 @@ impl_credential_store! {
     sqlx::Postgres,
     "sql-postgres",
     "Postgres",
-    "INSERT INTO {} (credential_id, user_id, cred_type, data) VALUES ($1, $2, $3, $4) ON CONFLICT(credential_id) DO UPDATE SET data = $4",
-    "SELECT credential_id, user_id, cred_type, data FROM {} WHERE user_id = $1 AND cred_type = $2",
-    "UPDATE {} SET data = $1 WHERE credential_id = $2",
-    "CREATE TABLE IF NOT EXISTS {table} (credential_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_type TEXT NOT NULL, data TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    "INSERT INTO {} (credential_id, user_id, cred_type, secret_key, extra_data) VALUES ($1, $2, $3, $4, $5) ON CONFLICT(credential_id) DO UPDATE SET secret_key = $4, extra_data = $5",
+    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = $1 AND cred_type = $2",
+    "UPDATE {} SET extra_data = $1 WHERE credential_id = $2",
+    "CREATE TABLE IF NOT EXISTS {table} (credential_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_type TEXT NOT NULL, secret_key TEXT, extra_data TEXT, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     "CREATE INDEX IF NOT EXISTS {table}_user_idx ON {table}(user_id, cred_type)"
 }
 
@@ -185,10 +207,10 @@ impl_credential_store! {
     sqlx::Sqlite,
     "sql-sqlite",
     "Sqlite",
-    "INSERT INTO {} (credential_id, user_id, cred_type, data) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(credential_id) DO UPDATE SET data = ?4",
-    "SELECT credential_id, user_id, cred_type, data FROM {} WHERE user_id = ?1 AND cred_type = ?2",
-    "UPDATE {} SET data = ?1 WHERE credential_id = ?2",
-    "CREATE TABLE IF NOT EXISTS {table} (credential_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_type TEXT NOT NULL, data TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    "INSERT INTO {} (credential_id, user_id, cred_type, secret_key, extra_data) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(credential_id) DO UPDATE SET secret_key = ?4, extra_data = ?5",
+    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = ?1 AND cred_type = ?2",
+    "UPDATE {} SET extra_data = ?1 WHERE credential_id = ?2",
+    "CREATE TABLE IF NOT EXISTS {table} (credential_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_type TEXT NOT NULL, secret_key TEXT, extra_data TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     "CREATE INDEX IF NOT EXISTS {table}_user_idx ON {table}(user_id, cred_type)"
 }
 
@@ -196,9 +218,9 @@ impl_credential_store! {
     sqlx::MySql,
     "sql-mysql",
     "MySql",
-    "INSERT INTO {} (credential_id, user_id, cred_type, data) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)",
-    "SELECT credential_id, user_id, cred_type, data FROM {} WHERE user_id = ? AND cred_type = ?",
-    "UPDATE {} SET data = ? WHERE credential_id = ?",
-    "CREATE TABLE IF NOT EXISTS {table} (credential_id VARCHAR(255) PRIMARY KEY, user_id VARCHAR(255) NOT NULL, cred_type VARCHAR(255) NOT NULL, data TEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+    "INSERT INTO {} (credential_id, user_id, cred_type, secret_key, extra_data) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE secret_key = VALUES(secret_key), extra_data = VALUES(extra_data)",
+    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = ? AND cred_type = ?",
+    "UPDATE {} SET extra_data = ? WHERE credential_id = ?",
+    "CREATE TABLE IF NOT EXISTS {table} (credential_id VARCHAR(255) PRIMARY KEY, user_id VARCHAR(255) NOT NULL, cred_type VARCHAR(255) NOT NULL, secret_key TEXT, extra_data TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     "CREATE INDEX {table}_user_idx ON {table}(user_id, cred_type)"
 }
