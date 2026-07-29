@@ -58,13 +58,10 @@ jobs:
               --head "$BRANCH" \
               --title "chore: release v${{ github.event.inputs.version }}" \
               --body "## Release v${{ github.event.inputs.version }}
-
-Automated version bump across all workspace crates, docs, and README.
-
-**Checklist before merging:**
-- [ ] All CI checks pass on this PR
-- [ ] Diff contains only version string changes (no unintended modifications)
-- [ ] CHANGELOG updated (if applicable)
-
-> ⚠️ Merging this PR will automatically create the \`v${{ github.event.inputs.version }}\` tag and publish all crates to crates.io."
+          Automated version bump across all workspace crates, docs, and README.
+          **Checklist before merging:**
+          - [ ] All CI checks pass on this PR
+          - [ ] Diff contains only version string changes (no unintended modifications)
+          - [ ] CHANGELOG updated (if applicable)
+          > ⚠️ Merging this PR will automatically create the \`v${{ github.event.inputs.version }}\` tag and publish all crates to crates.io."
           fi
