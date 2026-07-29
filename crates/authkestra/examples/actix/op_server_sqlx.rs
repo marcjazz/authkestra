@@ -5,9 +5,9 @@
 use actix_web::{App, HttpServer};
 use authkestra::flow::Engine;
 use authkestra_actix::{ActixState, OpExt};
-use authkestra_op::sqlx_store::SqlxOpStore;
 use authkestra_engine::TokenManager;
 use authkestra_op::config::OpConfig;
+use authkestra_op::sqlx_store::SqlxOpStore;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 
