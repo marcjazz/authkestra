@@ -45,6 +45,7 @@ reqwest = { version = "0.13", features = ["json"] }
 tower-http = { version = "0.6", features = ["fs"] }
 actix-files = "0.6"
 
+tokio = { version = "1", features = ["full"] }
 rsa = "0.9"
 p256 = { version = "0.13", features = ["pem", "ecdsa", "jwk"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
