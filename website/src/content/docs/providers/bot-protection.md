@@ -38,9 +38,12 @@ let remote_ip = req.remote_ip; // Optional, e.g. from X-Forwarded-For
 match turnstile.verify(&token, remote_ip.as_deref()).await {
     Ok(true) => {
         // Success! Proceed with standard authentication
-        // let identity = engine.authenticate(...).await?;
+        // match engine.authenticate(...).await? {
+        //     AuthResult::Success(identity) => ...
+        //     AuthResult::MfaRequired { .. } => ...
+        // }
     }
-    Ok(false) | Err(e) => {
+    Ok(false) | Err(_) => {
         // Bot detected or token invalid, reject the login request immediately!
         // return HTTP 403 Forbidden
     }

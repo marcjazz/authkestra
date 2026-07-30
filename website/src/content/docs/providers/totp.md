@@ -11,22 +11,26 @@ To use TOTP, enable the `totp` feature in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-engine = { version = "0.2.0", features = ["totp"] }
+authkestra-engine = { version = "0.2.4", features = ["totp"] }
 ```
 
 ## Configuration
 
-In Authkestra, TOTP is implemented via the `TotpAuthMethod` struct. You initialize it by passing a `CredentialStore` where the secrets will be securely saved.
+In Authkestra, TOTP is implemented via the `TotpAuthMethod` struct. You initialize it by passing a `CredentialStore` where the secrets will be securely saved, and then register it with the `EngineBuilder`.
 
 ```rust
 use authkestra_engine::auth::totp::TotpAuthMethod;
+use authkestra_engine::engine::Engine;
+
 // `my_store` implements the `CredentialStore` trait (e.g. `SqlxCredentialStore`)
-let totp_method = TotpAuthMethod::new(my_store);
+let engine = Engine::builder()
+    .with_auth_method(TotpAuthMethod::new(my_store))
+    .build();
 ```
 
 ## Registering a Device
 
-To enroll a user, call `register_totp`. It automatically generates a new base32 secret and an `otpauth://` provisioning URI. The secret is saved to the store internally.
+To enroll a user, keep a reference to your `TotpAuthMethod` and call `register_totp`. It automatically generates a new base32 secret and an `otpauth://` provisioning URI. The secret is saved to the store internally.
 
 ```rust
 let (secret_b32, uri) = totp_method.register_totp(
@@ -39,14 +43,37 @@ You can convert the returned `uri` into a QR code using a frontend library (like
 
 ## Authenticating
 
-To authenticate, accept the 6-digit code from the user and pass it to `authenticate` via `AuthInput::Totp`:
+To authenticate, accept the 6-digit code from the user and pass it to the unified `engine.authenticate` method via `AuthInput::Totp`:
 
 ```rust
-use authkestra_engine::auth::{AuthInput, AuthMethod};
+use authkestra_engine::auth::{AuthInput, AuthResult};
 
-let identity = totp_method.authenticate(AuthInput::Totp {
+let result = engine.authenticate(AuthInput::Totp {
     user_id: "user_123".to_string(),
     code: "123456".to_string(),
+}).await?;
+
+match result {
+    AuthResult::Success(identity) => {
+        println!("Successfully authenticated as: {}", identity.external_id);
+    }
+    AuthResult::MfaRequired { .. } => {
+        // Technically possible if they have ANOTHER MFA method required!
+    }
+}
+```
+
+### Using TOTP as a Second Factor (MFA Continuation)
+
+If the user logged in with a password and they have TOTP enrolled, the engine will return `AuthResult::MfaRequired` containing an `mfa_token`. You complete the login by sending an `MfaChallenge`:
+
+```rust
+let result = engine.authenticate(AuthInput::MfaChallenge {
+    mfa_token: previous_mfa_token,
+    challenge_input: Box::new(AuthInput::Totp {
+        user_id: "user_123".to_string(),
+        code: "123456".to_string(),
+    }),
 }).await?;
 ```
 
