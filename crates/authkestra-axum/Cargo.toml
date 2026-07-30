@@ -15,6 +15,7 @@ authkestra-engine = { workspace = true, optional = true }
 authkestra-resource = { workspace = true, optional = true }
 authkestra-macros = { workspace = true, optional = true, features = ["axum"] }
 authkestra-op = { workspace = true, optional = true }
+authkestra-devsig = { workspace = true, optional = true }
 axum = { version = "0.8.8", features = ["macros"] }
 jsonwebtoken = "10.3.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -24,6 +25,22 @@ base64 = "0.22.1"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
+
+# Optional devsig integration: a tower::Layer that buffers+hashes the body ahead of axum's
+# extraction, plus a thin FromRequestParts extractor. See src/devsig.rs.
+tower-layer = { version = "0.3", optional = true }
+tower-service = { version = "0.3", optional = true }
+http-body-util = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+rsa = "0.9"
+p256 = { version = "0.13", features = ["pem", "ecdsa"] }
+rand = "0.8"
+sha2 = "0.10"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 [features]
 default = ["macros"]
 macros = ["authkestra-macros"]
@@ -33,3 +50,15 @@ token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
 op = ["dep:authkestra-op", "session", "token"]
 captcha = ["authkestra-engine/captcha"]
+devsig = [
+    "dep:authkestra-devsig",
+    "dep:tower-layer",
+    "dep:tower-service",
+    "dep:http-body-util",
+    "dep:bytes",
+]
+
+[[example]]
+name = "axum_devsig"
+path = "examples/devsig/main.rs"
+required-features = ["devsig"]

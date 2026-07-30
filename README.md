@@ -37,6 +37,7 @@ For advanced users, individual crates are still available and can be used indepe
 | [`authkestra-actix`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-actix/README.md)                         | Actix-specific integration, including `State` macro support.    |
 | [`authkestra-oidc`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-oidc/README.md)                           | OpenID Connect discovery and provider support.                            |
 | [`authkestra-op`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-op/README.md)                               | OpenID Connect Provider (OP) implementation.                              |
+| [`authkestra-devsig`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-devsig/README.md)                       | Device-bound signature authentication (proof-of-possession + Issuer attestation). |
 | [`authkestra-macros`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-macros/README.md)                       | Procedural macros for simplifying Authkestra integration.                 |
 
 ## 🛠️ Usage
