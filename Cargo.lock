@@ -477,10 +477,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlx",
+ "tokio",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
+ "webauthn-rs",
 ]
 
 [[package]]
