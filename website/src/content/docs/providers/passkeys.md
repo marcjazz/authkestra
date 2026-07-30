@@ -36,7 +36,7 @@ let webauthn = WebauthnBuilder::new(rp_id, &origin)
 
 // `my_store` implements the `CredentialStore` trait
 let engine = Engine::builder()
-    .with_auth_method(WebAuthnAuthMethod::new(Arc::new(webauthn), my_store))
+    .with_webauthn(Arc::new(webauthn), my_store)
     .build();
 ```
 

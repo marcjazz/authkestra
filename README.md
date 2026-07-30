@@ -28,10 +28,11 @@ For advanced users, individual crates are still available and can be used indepe
 
 ## 📦 Workspace Crates
 
+| Crate | Description |
+| --- | --- |
 | [`authkestra`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
 | [`authkestra-engine`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/README.md)                       | Foundational types, traits and the **Engine** orchestrator.           |
 | [`authkestra-resource`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-resource/README.md)                   | Resource server enforcement and validation (JWT, etc).                    |
-| [`authkestra-engine`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/README.md)                     | Session persistence layer abstraction.                                    |
 | [`authkestra-providers`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-providers/README.md)                 | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
 | [`authkestra-axum`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/README.md)                           | Axum-specific integration, including `AuthSession` extractors.            |
 | [`authkestra-actix`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-actix/README.md)                         | Actix-specific integration, including `State` macro support.    |
@@ -59,18 +60,19 @@ let auth_engine = Engine::builder()
     .build();
 ```
 
-To see complete, runnable examples for various frameworks and flows, check out the [examples](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/) directory:
+To see complete, runnable examples for various frameworks and flows, check out the examples directory inside each crate:
 
-- [Axum Basic Setup](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/axum/basic_setup.rs): `cargo run --example axum_basic_setup`
-- [Actix Basic Setup](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/actix/basic_setup.rs): `cargo run --example actix_basic_setup`
-- [Axum with GitHub OAuth](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/axum/oauth2_github.rs): `cargo run --example axum_oauth2_github`
-- [Axum with Google OIDC](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/axum/oidc_google.rs): `cargo run --example axum_oidc_google`
-- [Axum with Redis Session](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/axum/session_redis.rs): `cargo run --example axum_session_redis`
-- [Axum with SQL Store](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/axum/sql_store.rs): `cargo run --example axum_sql_store`
-- [Client Credentials Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/core/client_credentials.rs): `cargo run --example core_client_credentials`
-- [Device Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/core/device_flow.rs): `cargo run --example core_device_flow`
-- [Axum Resource Server](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/axum/resource_server.rs): `cargo run --example axum_resource_server`
-- [Axum OP Server](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/axum/op_server.rs): `cargo run --example axum_op_server`
+- [Axum Basic Setup](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/basic_setup.rs): `cargo run -p authkestra-axum --example basic_setup`
+- [Actix Basic Setup](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-actix/examples/basic_setup.rs): `cargo run -p authkestra-actix --example basic_setup`
+- [Axum with GitHub OAuth](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/oauth2_github.rs): `cargo run -p authkestra-axum --example oauth2_github`
+- [Axum with Google OIDC](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/oidc_google.rs): `cargo run -p authkestra-axum --example oidc_google`
+- [Axum with Redis Session](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/session_redis.rs): `cargo run -p authkestra-axum --example session_redis`
+- [Axum with SQL Store](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/sql_store.rs): `cargo run -p authkestra-axum --example sql_store`
+- [Client Credentials Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/client_credentials.rs): `cargo run -p authkestra-engine --example client_credentials`
+- [Device Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/device_flow.rs): `cargo run -p authkestra-engine --example device_flow`
+- [Axum Resource Server](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/resource_server.rs): `cargo run -p authkestra-axum --example resource_server`
+- [Axum OP Server](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/op_server.rs): `cargo run -p authkestra-axum --example op_server`
+- [Axum MFA Server (TOTP + WebAuthn)](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/mfa_server.rs): `cargo run -p authkestra-axum --example mfa_server`
 
 ## 🏗️ Technical Design Principles
 

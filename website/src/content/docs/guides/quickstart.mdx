@@ -65,12 +65,12 @@ Once the engine is built, it's time to integrate it into your web framework's ro
   <TabItem label="Axum" icon="seti:rust">
 
 ```rust
-use authkestra_axum::AxumExt;
+use authkestra::axum::AxumExt;
 use axum::Router;
 use tower_cookies::CookieManagerLayer;
-use authkestra::flow::Engine;
-use authkestra_engine::AkWebAppEngine;
-use authkestra_axum::AxumState;
+use authkestra::core::engine::Engine;
+use authkestra::core::AkWebAppEngine;
+use authkestra::axum::AxumState;
 
 #[derive(Clone, AxumState)]
 struct AppState {
@@ -98,9 +98,9 @@ async fn main() {
   <TabItem label="Actix-web" icon="seti:rust">
 
 ```rust
-use authkestra_actix::ActixExt;
+use authkestra::actix::ActixExt;
 use actix_web::{App, HttpServer, web};
-use authkestra::flow::Engine;
+use authkestra::core::engine::Engine;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

@@ -39,6 +39,7 @@ export default defineConfig({
 						{ label: 'Passkeys (WebAuthn)', slug: 'providers/passkeys' },
 						{ label: 'TOTP (Authenticator Apps)', slug: 'providers/totp' },
 						{ label: 'Bot Protection (CAPTCHA)', slug: 'providers/bot-protection' },
+						{ label: 'Device Signatures', slug: 'providers/device-signatures' },
 					],
 				},
 				{

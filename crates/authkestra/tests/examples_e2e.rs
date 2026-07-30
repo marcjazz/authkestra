@@ -5,7 +5,7 @@ use wiremock::{
     Mock, MockServer, ResponseTemplate,
 };
 
-async fn run_oauth_example(example_bin: &str, provider: &str, login_path: &str) {
+async fn run_oauth_example(package: &str, example_bin: &str, provider: &str, login_path: &str) {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -40,7 +40,14 @@ async fn run_oauth_example(example_bin: &str, provider: &str, login_path: &str) 
     let env_client_secret = format!("AUTHKESTRA_{}_CLIENT_SECRET", provider);
 
     let mut child = Command::new("cargo")
-        .args(["run", "--example", example_bin, "--features", "full"])
+        .args([
+            "run",
+            "-p",
+            package,
+            "--example",
+            example_bin,
+            "--all-features",
+        ])
         .env(env_base_url, mock_server.uri())
         .env(env_api_url, mock_server.uri())
         .env(env_client_id, "test_id")
@@ -91,12 +98,48 @@ async fn run_oauth_example(example_bin: &str, provider: &str, login_path: &str) 
 
 #[tokio::test]
 async fn test_all_oauth_examples_sequentially() {
-    run_oauth_example("axum_oauth2_github", "GITHUB", "/auth/login/github").await;
-    run_oauth_example("actix_oauth2_github", "GITHUB", "/auth/login/github").await;
+    run_oauth_example(
+        "authkestra-axum",
+        "oauth2_github",
+        "GITHUB",
+        "/auth/login/github",
+    )
+    .await;
+    run_oauth_example(
+        "authkestra-actix",
+        "oauth2_github",
+        "GITHUB",
+        "/auth/login/github",
+    )
+    .await;
 
-    run_oauth_example("axum_oidc_google", "GOOGLE", "/auth/login/google").await;
-    run_oauth_example("actix_oidc_google", "GOOGLE", "/auth/login/google").await;
+    run_oauth_example(
+        "authkestra-axum",
+        "oidc_google",
+        "GOOGLE",
+        "/auth/login/google",
+    )
+    .await;
+    run_oauth_example(
+        "authkestra-actix",
+        "oidc_google",
+        "GOOGLE",
+        "/auth/login/google",
+    )
+    .await;
 
-    run_oauth_example("axum_oauth_stateless", "GITHUB", "/auth/github").await;
-    run_oauth_example("actix_oauth_stateless", "GITHUB", "/auth/github").await;
+    run_oauth_example(
+        "authkestra-axum",
+        "oauth_stateless",
+        "GITHUB",
+        "/auth/github",
+    )
+    .await;
+    run_oauth_example(
+        "authkestra-actix",
+        "oauth_stateless",
+        "GITHUB",
+        "/auth/github",
+    )
+    .await;
 }
