@@ -60,6 +60,11 @@ impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
         "totp"
     }
 
+    async fn has_enrolled(&self, user_id: &str) -> Result<bool, AuthError> {
+        let creds = self.store.get_credentials(user_id, "totp").await?;
+        Ok(!creds.is_empty())
+    }
+
     async fn authenticate(&self, input: AuthInput) -> Result<Identity, AuthError> {
         let AuthInput::Totp { user_id, code } = input else {
             return Err(AuthError::InvalidInput);

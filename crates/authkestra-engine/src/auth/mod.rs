@@ -20,7 +20,7 @@ pub use error::AuthError;
 
 /// A unified identity structure returned by all providers.
 pub mod state;
-pub use state::{Identity, OAuth2State, OAuthToken};
+pub use state::{AuthResult, Identity, OAuth2State, OAuthToken};
 
 /// Discovery utilities for OAuth2 providers.
 pub mod discovery;
@@ -65,6 +65,13 @@ pub enum AuthInput {
     Token(String),
     /// Custom input for extensible methods.
     Custom(serde_json::Value),
+    /// MFA Challenge Submission
+    MfaChallenge {
+        /// The temporary MFA JWT token
+        mfa_token: String,
+        /// The specific factor input (e.g., Totp or WebAuthnAuthentication)
+        challenge_input: Box<AuthInput>,
+    },
     /// WebAuthn Passkeys authentication input
     #[cfg(feature = "webauthn")]
     WebAuthnAuthentication {
@@ -102,6 +109,12 @@ pub trait AuthMethod: Send + Sync {
 
     /// Authenticate a user with the given input.
     async fn authenticate(&self, input: AuthInput) -> Result<Identity, AuthError>;
+
+    /// Check if a given user has enrolled in this authentication method.
+    /// Default implementation returns false.
+    async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
+        Ok(false)
+    }
 }
 
 /// Configuration for an identity provider.

@@ -77,6 +77,11 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
         "webauthn"
     }
 
+    async fn has_enrolled(&self, user_id: &str) -> Result<bool, AuthError> {
+        let creds = self.store.get_credentials(user_id, "webauthn").await?;
+        Ok(!creds.is_empty())
+    }
+
     async fn authenticate(&self, input: AuthInput) -> Result<Identity, AuthError> {
         let AuthInput::WebAuthnAuthentication {
             user_id,
