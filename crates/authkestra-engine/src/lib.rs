@@ -13,5 +13,10 @@ pub use engine::*;
 pub use flow::*;
 pub use token::*;
 
+#[cfg(feature = "captcha")]
+pub mod captcha;
+#[cfg(feature = "captcha")]
+pub use captcha::{CaptchaProvider, CaptchaVerifier};
+
 #[cfg(test)]
 mod tests;

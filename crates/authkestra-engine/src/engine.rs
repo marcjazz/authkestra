@@ -1,5 +1,5 @@
 use crate::auth::session::{Session, SessionConfig, SessionStore};
-use crate::auth::{AuthError, ErasedOAuthFlow, Identity};
+use crate::auth::{AuthError, AuthInput, AuthMethod, AuthResult, ErasedOAuthFlow, Identity};
 #[cfg(feature = "token")]
 use crate::token::TokenManager;
 use std::collections::HashMap;
@@ -47,6 +47,12 @@ impl TokenManagerState for Configured<Arc<TokenManager>> {
 pub struct Engine<S = Missing, T = Missing> {
     /// Map of registered OAuth providers.
     pub providers: HashMap<String, Arc<dyn ErasedOAuthFlow>>,
+    /// Map of registered local authentication methods.
+    pub auth_methods: HashMap<String, Arc<dyn AuthMethod>>,
+    /// Map of methods explicitly registered for step-up (MFA) use.
+    pub mfa_methods: HashMap<String, Arc<dyn AuthMethod>>,
+    /// Internal secret for signing temporary MFA JWT tokens.
+    pub mfa_jwt_secret: [u8; 32],
     /// The session storage backend.
     pub session_store: S,
     /// Configuration for session cookies.
@@ -64,6 +70,9 @@ where
     fn clone(&self) -> Self {
         Self {
             providers: self.providers.clone(),
+            auth_methods: self.auth_methods.clone(),
+            mfa_methods: self.mfa_methods.clone(),
+            mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store.clone(),
             session_config: self.session_config.clone(),
             #[cfg(feature = "token")]
@@ -75,8 +84,14 @@ where
 impl Engine<Missing, Missing> {
     /// Start building a new `Engine`.
     pub fn builder() -> EngineBuilder<Missing, Missing> {
+        let mut secret = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret);
+
         EngineBuilder {
             providers: HashMap::new(),
+            auth_methods: HashMap::new(),
+            mfa_methods: HashMap::new(),
+            mfa_jwt_secret: secret,
             session_store: Missing,
             session_config: SessionConfig::default(),
             #[cfg(feature = "token")]
@@ -88,6 +103,9 @@ impl Engine<Missing, Missing> {
 /// A builder for configuring and creating an [`Engine`] instance.
 pub struct EngineBuilder<S = Missing, T = Missing> {
     providers: HashMap<String, Arc<dyn ErasedOAuthFlow>>,
+    auth_methods: HashMap<String, Arc<dyn AuthMethod>>,
+    mfa_methods: HashMap<String, Arc<dyn AuthMethod>>,
+    mfa_jwt_secret: [u8; 32],
     session_store: S,
     session_config: SessionConfig,
     #[cfg(feature = "token")]
@@ -105,6 +123,26 @@ impl<S, T> EngineBuilder<S, T> {
         self
     }
 
+    /// Register a local authentication method.
+    pub fn with_auth_method<M>(mut self, method: M) -> Self
+    where
+        M: AuthMethod + 'static,
+    {
+        self.auth_methods
+            .insert(method.name().to_string(), Arc::new(method));
+        self
+    }
+
+    /// Register a local authentication method to be used EXCLUSIVELY for step-up MFA challenges.
+    pub fn with_mfa_method<M>(mut self, method: M) -> Self
+    where
+        M: AuthMethod + 'static,
+    {
+        self.mfa_methods
+            .insert(method.name().to_string(), Arc::new(method));
+        self
+    }
+
     /// Set the session store.
     pub fn session_store(
         self,
@@ -112,6 +150,9 @@ impl<S, T> EngineBuilder<S, T> {
     ) -> EngineBuilder<Configured<Arc<dyn SessionStore>>, T> {
         EngineBuilder {
             providers: self.providers,
+            auth_methods: self.auth_methods,
+            mfa_methods: self.mfa_methods,
+            mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: Configured(store),
             session_config: self.session_config,
             #[cfg(feature = "token")]
@@ -127,6 +168,9 @@ impl<S, T> EngineBuilder<S, T> {
     ) -> EngineBuilder<S, Configured<Arc<TokenManager>>> {
         EngineBuilder {
             providers: self.providers,
+            auth_methods: self.auth_methods,
+            mfa_methods: self.mfa_methods,
+            mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store,
             session_config: self.session_config,
             token_manager: Configured(manager),
@@ -149,10 +193,133 @@ impl<S, T> EngineBuilder<S, T> {
     pub fn build(self) -> Engine<S, T> {
         Engine {
             providers: self.providers,
+            auth_methods: self.auth_methods,
+            mfa_methods: self.mfa_methods,
+            mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store,
             session_config: self.session_config,
             #[cfg(feature = "token")]
             token_manager: self.token_manager,
+        }
+    }
+}
+
+impl<S, T> Engine<S, T> {
+    /// Attempt to authenticate a user.
+    /// Returns `AuthResult::Success` if authentication is fully complete,
+    /// or `AuthResult::MfaRequired` if a second factor is needed.
+    pub async fn authenticate(&self, input: AuthInput) -> Result<AuthResult, AuthError> {
+        // Handle MFA Challenge Continuation
+        if let AuthInput::MfaChallenge {
+            mfa_token,
+            challenge_input,
+        } = input
+        {
+            // Verify MFA Token
+            let token_data = jsonwebtoken::decode::<crate::auth::state::MfaTokenClaims>(
+                &mfa_token,
+                &jsonwebtoken::DecodingKey::from_secret(&self.mfa_jwt_secret),
+                &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+            )
+            .map_err(|_| AuthError::InvalidInput)?;
+
+            if !token_data.claims.mfa_pending {
+                return Err(AuthError::InvalidInput);
+            }
+
+            let method_name = match &*challenge_input {
+                #[cfg(feature = "totp")]
+                AuthInput::Totp { .. } => "totp",
+                #[cfg(feature = "webauthn")]
+                AuthInput::WebAuthnAuthentication { .. } => "webauthn",
+                _ => "",
+            };
+
+            if method_name.is_empty() {
+                return Err(AuthError::InvalidInput);
+            }
+
+            let method = self
+                .auth_methods
+                .get(method_name)
+                .or_else(|| self.mfa_methods.get(method_name))
+                .ok_or_else(|| {
+                    AuthError::Internal(format!("MFA method {} not registered", method_name))
+                })?;
+
+            let identity = method.authenticate(*challenge_input).await?;
+
+            if identity.external_id != token_data.claims.sub {
+                return Err(AuthError::Credentials("MFA token user mismatch".into()));
+            }
+
+            return Ok(AuthResult::Success(identity));
+        }
+
+        // Primary Authentication
+        let method_name = match &input {
+            AuthInput::Password { .. } => "password",
+            #[cfg(feature = "totp")]
+            AuthInput::Totp { .. } => "totp", // Could theoretically be used as primary
+            #[cfg(feature = "webauthn")]
+            AuthInput::WebAuthnAuthentication { .. } => "webauthn",
+            _ => "",
+        };
+
+        if method_name.is_empty() {
+            return Err(AuthError::InvalidInput);
+        }
+
+        let method = self.auth_methods.get(method_name).ok_or_else(|| {
+            AuthError::Internal(format!(
+                "Primary auth method {} not registered or is step-up only",
+                method_name
+            ))
+        })?;
+
+        let identity = method.authenticate(input).await?;
+
+        // Check if user has MFA enrolled
+        let mut enrolled_methods = Vec::new();
+        for (name, method) in self.auth_methods.iter().chain(self.mfa_methods.iter()) {
+            if name == "password" {
+                continue;
+            }
+            if !enrolled_methods.contains(name)
+                && method
+                    .has_enrolled(&identity.external_id)
+                    .await
+                    .unwrap_or(false)
+            {
+                enrolled_methods.push(name.clone());
+            }
+        }
+
+        // If this method was already an MFA method (e.g. WebAuthn primary), we don't prompt for MFA again.
+        // For now, if enrolled_methods is empty or if we used WebAuthn, we succeed.
+        if enrolled_methods.is_empty() || method_name != "password" {
+            Ok(AuthResult::Success(identity))
+        } else {
+            // Issue MFA Token
+            let exp = chrono::Utc::now() + chrono::Duration::minutes(15);
+            let claims = crate::auth::state::MfaTokenClaims {
+                sub: identity.external_id.clone(),
+                mfa_pending: true,
+                exp: exp.timestamp() as usize,
+            };
+
+            let mfa_token = jsonwebtoken::encode(
+                &jsonwebtoken::Header::default(),
+                &claims,
+                &jsonwebtoken::EncodingKey::from_secret(&self.mfa_jwt_secret),
+            )
+            .map_err(|e| AuthError::Internal(e.to_string()))?;
+
+            Ok(AuthResult::MfaRequired {
+                mfa_token,
+                user_id: identity.external_id,
+                allowed_methods: enrolled_methods,
+            })
         }
     }
 }

@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! # Axum Data Layer Macros Example
 //!
 //! This example demonstrates how to use the `KvStore`
