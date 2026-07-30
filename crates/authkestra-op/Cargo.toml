@@ -38,3 +38,10 @@ sqlx-mysql = ["sqlx", "sqlx/mysql"]
 tokio = { version = "1.0", features = ["full"] }
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql"] }
+# Test-only: generating real EC P-256 keypairs and signing enrolment
+# challenges with them, to exercise the attestation ceremony end-to-end
+# rather than mocking the crypto away. Already present in the dependency
+# graph via jsonwebtoken's `rust_crypto` feature; declared directly here so
+# tests can construct keys themselves.
+p256 = { version = "0.13", features = ["jwk"] }
+rand_core = { version = "0.6", features = ["getrandom"] }

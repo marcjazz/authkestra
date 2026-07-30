@@ -27,3 +27,10 @@ pub use userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest, User
 /// Device Verification endpoint handler (`/device/verify`).
 pub mod device_verify;
 pub use device_verify::{handle_device_verify, DeviceVerifyRequest, DeviceVerifyResponse};
+
+/// Device/service enrolment and attestation (re-)issuance endpoints.
+pub mod enrolment;
+pub use enrolment::{
+    handle_complete_challenge, handle_enrol_start, handle_reissue_start, AttestationResponse,
+    ChallengeResponse, CompleteChallengeRequest, EnrolStartRequest, ReissueStartRequest,
+};
