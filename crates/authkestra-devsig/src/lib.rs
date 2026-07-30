@@ -33,7 +33,7 @@
 //! let identity = authkestra_devsig::verify(&request, &config, &jwks, &replay_store).await?;
 //! ```
 //!
-//! ## Framework integration — proposal, not a settled decision
+//! ## Framework integration — lives in the adapter crates, per `AGENTS.md`
 //!
 //! Two extension points exist in `authkestra-engine` today: `AuthMethod` (roadmapped, used only
 //! in tests, and its `AuthInput` carries no HTTP request context at all) and
@@ -42,15 +42,24 @@
 //! for the `bdh` check). Neither can express a body-aware verifier today, and deciding which one
 //! should grow that capability — or whether a new trait should — is the framework's own
 //! architecture call, tracked in
-//! [authkestra#137](https://github.com/marcjazz/authkestra/issues/137). This crate does not
-//! resolve that question: the `axum` feature (see [`axum_integration`]) ships a `tower::Layer`
-//! that buffers and hashes the body ahead of axum's extraction and injects a verified
-//! [`DeviceIdentity`] into request extensions, plus a thin `FromRequestParts` extractor that
-//! reads it back out. Both exist specifically because they need neither trait to exist yet, and
+//! [authkestra#137](https://github.com/marcjazz/authkestra/issues/137).
+//!
+//! This crate stays framework-agnostic (per `AGENTS.md`'s "Framework Agnostic" rule) and exposes
+//! only the plain [`verify`] function plus the types it needs. Framework wiring lives in the
+//! adapter crates instead:
+//!
+//! - `authkestra-axum`'s `devsig` feature (see its `devsig` module) ships a `tower::Layer` that
+//!   buffers and hashes the body ahead of axum's extraction and injects a verified
+//!   [`DeviceIdentity`] into request extensions, plus a thin `FromRequestParts` extractor that
+//!   reads it back out.
+//! - `authkestra-actix`'s `devsig` feature (see its `devsig` module) ships the equivalent
+//!   `actix_web::dev::Transform` middleware and `FromRequest` extractor.
+//!
+//! Both exist specifically because they need neither `authkestra-engine` trait to exist yet, and
 //! migrating to whichever trait the maintainer lands on is a matter of swapping which caller
 //! builds a [`SignedRequest`] and calls [`verify`] — the algorithm itself is unaffected either
-//! way. See the `axum_integration` module docs for why an `AuthenticationStrategy<I>` impl is
-//! deliberately *not* provided today.
+//! way. See each adapter crate's `devsig` module docs for why an `AuthenticationStrategy<I>`
+//! impl is deliberately *not* provided today.
 
 mod attestation;
 mod config;
@@ -62,9 +71,6 @@ mod replay;
 mod request;
 mod signature;
 mod verify;
-
-#[cfg(feature = "axum")]
-pub mod axum_integration;
 
 pub use config::VerifierConfig;
 pub use error::VerifyError;

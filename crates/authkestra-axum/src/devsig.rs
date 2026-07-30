@@ -1,5 +1,6 @@
-//! Axum integration: a `tower::Layer` that verifies device-signed requests ahead of axum's own
-//! extraction, plus a thin extractor that reads the result back out.
+//! Axum integration for `authkestra-devsig`: a `tower::Layer` that verifies device-signed
+//! requests ahead of axum's own extraction, plus a thin extractor that reads the result back
+//! out.
 //!
 //! ## Why a `tower::Layer` and not an `authkestra-engine` trait
 //!
@@ -11,8 +12,8 @@
 //!   not even a header map, let alone a body.
 //! - `AuthenticationStrategy<I>` (`auth/strategy.rs`) is what `Guard<I>`/`JwtStrategy` actually
 //!   chain, but its `authenticate(&self, parts: &http::request::Parts)` only ever sees `Parts` —
-//!   no body. Every existing axum extractor in `authkestra-axum` implements `FromRequestParts`,
-//!   not `FromRequest`, for the same reason: none of them read a body today.
+//!   no body. Every existing axum extractor in this crate implements `FromRequestParts`, not
+//!   `FromRequest`, for the same reason: none of them read a body today.
 //!
 //! Device-signature verification needs the raw body bytes for the `bdh` check (spec: the
 //! signature's `bdh` claim must match the SHA-256 of the actual request body). So this would be
@@ -29,25 +30,32 @@
 //! most. That is not a reasonable default to ship silently, so instead:
 //!
 //! - [`DeviceSignatureLayer`] is a plain `tower::Layer` that runs *before* axum's extraction,
-//!   buffers the body (with an explicit, enforced size cap), calls [`crate::verify`] with the
-//!   full request — including the body — and stashes the resulting [`DeviceIdentity`] in
-//!   request extensions on success, or short-circuits with a `401`/`413` response on failure.
-//! - [`DeviceIdentity`] itself implements `FromRequestParts` (feature-gated here), reading the
-//!   value the layer already placed in extensions. This is intentionally *not* where any
-//!   verification happens — by the time an extractor runs, the layer has already decided.
+//!   buffers the body (with an explicit, enforced size cap), calls `authkestra_devsig::verify`
+//!   with the full request — including the body — and stashes the resulting
+//!   `authkestra_devsig::DeviceIdentity` in request extensions on success, or short-circuits
+//!   with a `401`/`413` response on failure.
+//! - [`AuthDeviceSignature`] implements `FromRequestParts` (this module, only compiled when the
+//!   `devsig` feature is enabled), reading the value the layer already placed in extensions.
+//!   This is intentionally *not* where any verification happens — by the time an extractor
+//!   runs, the layer has already decided. It wraps `authkestra_devsig::DeviceIdentity` in a
+//!   local newtype because `FromRequestParts` (axum) and `DeviceIdentity` (`authkestra-devsig`)
+//!   are both foreign to this crate — Rust's orphan rules require the impl to live on a type
+//!   this crate owns.
 //!
 //! Migrating to `AuthenticationStrategy<I>` (if it grows body access), `AuthMethod` (if it grows
 //! request context), or a new body-aware trait is then a matter of writing a new, thin adapter
-//! that builds a [`crate::SignedRequest`] from whatever the trait provides and calls
-//! [`crate::verify`] — the algorithm in `verify.rs` does not know or care which caller invoked
-//! it, so none of the code in this module needs to change for that migration to happen
-//! elsewhere.
+//! that builds an `authkestra_devsig::SignedRequest` from whatever the trait provides and calls
+//! `authkestra_devsig::verify` — the algorithm does not know or care which caller invoked it, so
+//! none of the code in this module needs to change for that migration to happen elsewhere.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use authkestra_devsig::{
+    verify, DeviceIdentity, IssuerJwks, ReplayStore, SignedRequest, VerifierConfig, VerifyError,
+};
 use axum::body::Body;
 use axum::extract::{FromRequestParts, Request};
 use axum::http::request::Parts;
@@ -57,14 +65,6 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Limited};
 use tower_layer::Layer;
 use tower_service::Service;
-
-use crate::config::VerifierConfig;
-use crate::error::VerifyError;
-use crate::identity::DeviceIdentity;
-use crate::jwks::IssuerJwks;
-use crate::replay::ReplayStore;
-use crate::request::SignedRequest;
-use crate::verify::verify;
 
 /// Default cap on the buffered request body. Buffering is a memory-amplification vector (the
 /// layer must hold the whole body before it can compute `bdh`), so this is deliberately
@@ -83,8 +83,8 @@ struct Shared {
 }
 
 /// A `tower::Layer` that verifies `X-Signature` + `X-Attestation` (header names configurable)
-/// against a [`VerifierConfig`], an [`IssuerJwks`] cache, and a [`ReplayStore`], injecting a
-/// verified [`DeviceIdentity`] into the request's extensions ahead of axum's own extraction.
+/// against a `VerifierConfig`, an `IssuerJwks` cache, and a `ReplayStore`, injecting a verified
+/// `DeviceIdentity` into the request's extensions ahead of axum's own extraction.
 ///
 /// On rejection, short-circuits with a `401 Unauthorized` (or `413 Payload Too Large` if the
 /// body exceeds [`DeviceSignatureLayer::max_body_size`]) and never calls the inner service.
@@ -96,11 +96,13 @@ pub struct DeviceSignatureLayer {
 impl DeviceSignatureLayer {
     /// Builds a layer with the default header names (`X-Signature`, `X-Attestation`) and default
     /// body size cap ([`DEFAULT_MAX_BODY_SIZE`]).
+    #[tracing::instrument(skip_all)]
     pub fn new(
         config: VerifierConfig,
         jwks: Arc<IssuerJwks>,
         replay_store: Arc<dyn ReplayStore>,
     ) -> Self {
+        tracing::debug!(target: "authkestra_devsig", "constructing axum DeviceSignatureLayer");
         Self {
             shared: Arc::new(Shared {
                 config,
@@ -180,6 +182,7 @@ where
     }
 }
 
+#[tracing::instrument(skip_all, fields(method = %req.method(), path = %req.uri().path()))]
 async fn authenticate(shared: &Shared, req: Request<Body>) -> Result<Request<Body>, Response> {
     let (mut parts, body) = req.into_parts();
 
@@ -188,7 +191,10 @@ async fn authenticate(shared: &Shared, req: Request<Body>) -> Result<Request<Bod
     // unbounded memory use just by lacking a valid signature.
     let body_bytes: Bytes = match Limited::new(body, shared.max_body_size).collect().await {
         Ok(collected) => collected.to_bytes(),
-        Err(_) => return Err(reject(VerifyError::BodyTooLarge(shared.max_body_size))),
+        Err(_) => {
+            tracing::warn!(target: "authkestra_devsig", max_body_size = shared.max_body_size, "rejecting request: body exceeds configured maximum");
+            return Err(reject(VerifyError::BodyTooLarge(shared.max_body_size)));
+        }
     };
 
     let signature = header_str(&parts, &shared.signature_header);
@@ -221,6 +227,7 @@ async fn authenticate(shared: &Shared, req: Request<Body>) -> Result<Request<Bod
 
     match result {
         Ok(identity) => {
+            tracing::info!(target: "authkestra_devsig", subject = %identity.subject, device = %identity.device, "device signature verified (axum)");
             parts.extensions.insert(identity);
             Ok(Request::from_parts(parts, Body::from(body_bytes)))
         }
@@ -247,8 +254,17 @@ fn reject(err: VerifyError) -> Response {
     (status, err.code().to_string()).into_response()
 }
 
-/// Rejection returned by the [`DeviceIdentity`] extractor when the [`DeviceSignatureLayer`] was
-/// never run (or rejected the request but the handler was reached anyway, which should not
+/// The extractor for a request verified by [`DeviceSignatureLayer`].
+///
+/// Wraps `authkestra_devsig::DeviceIdentity` in a local newtype: Rust's orphan rules require
+/// this crate to own either the trait (`FromRequestParts`, from axum) or the type
+/// (`DeviceIdentity`, from `authkestra-devsig`) being implemented against, and this crate owns
+/// neither of those directly -- it owns this wrapper instead.
+#[derive(Debug, Clone)]
+pub struct AuthDeviceSignature(pub DeviceIdentity);
+
+/// Rejection returned by the [`AuthDeviceSignature`] extractor when the [`DeviceSignatureLayer`]
+/// was never run (or rejected the request but the handler was reached anyway, which should not
 /// normally happen).
 #[derive(Debug)]
 pub struct MissingDeviceIdentity;
@@ -263,17 +279,20 @@ impl IntoResponse for MissingDeviceIdentity {
     }
 }
 
-impl<S> FromRequestParts<S> for DeviceIdentity
+impl<S> FromRequestParts<S> for AuthDeviceSignature
 where
     S: Send + Sync,
 {
     type Rejection = MissingDeviceIdentity;
 
+    #[tracing::instrument(skip_all)]
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        tracing::debug!(target: "authkestra_devsig", "extracting AuthDeviceSignature from request extensions");
         parts
             .extensions
             .get::<DeviceIdentity>()
             .cloned()
+            .map(AuthDeviceSignature)
             .ok_or(MissingDeviceIdentity)
     }
 }

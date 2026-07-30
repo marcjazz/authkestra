@@ -22,16 +22,6 @@ subtle = "2.6"
 tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
 
-# Optional axum integration: a tower::Layer that buffers+hashes the body ahead of axum's
-# extraction, plus a thin FromRequestParts extractor that reads the DeviceIdentity the layer
-# already verified back out of request extensions. See src/axum_integration.rs and the crate
-# docs (§5.8 of the design spec / authkestra#137) for why this is a Layer and not a trait impl.
-axum = { version = "0.8.8", optional = true }
-tower-layer = { version = "0.3", optional = true }
-tower-service = { version = "0.3", optional = true }
-http-body-util = { version = "0.1", optional = true }
-bytes = { version = "1", optional = true }
-
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 rsa = "0.9"
@@ -40,10 +30,3 @@ rand = "0.8"
 
 [features]
 default = []
-axum = [
-    "dep:axum",
-    "dep:tower-layer",
-    "dep:tower-service",
-    "dep:http-body-util",
-    "dep:bytes",
-]

@@ -99,8 +99,9 @@ pub enum VerifyError {
     ReplayDetected,
 
     /// The request body exceeded the configured maximum size before it could be hashed. Only
-    /// produced by the optional `axum` integration layer, which must buffer the body to compute
-    /// `bdh` — never by [`crate::verify`] itself, which takes body bytes the caller already has.
+    /// produced by the optional framework-integration layer/middleware (in `authkestra-axum` or
+    /// `authkestra-actix`), which must buffer the body to compute `bdh` — never by
+    /// [`crate::verify`] itself, which takes body bytes the caller already has.
     #[error("body_too_large: request body exceeds the configured maximum of {0} bytes")]
     BodyTooLarge(usize),
 }

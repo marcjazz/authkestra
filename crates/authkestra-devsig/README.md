@@ -11,11 +11,11 @@ security-critical step.
 
 ## Status
 
-The verification core (`verify()`) is complete and covered by conformance tests. The `axum`
-feature ships a `tower::Layer` + extractor as today's framework-integration surface; which
-`authkestra-engine` trait (if any) this should eventually implement against is an open question
-for the maintainer — see the crate-level docs on the `axum_integration` module and
-authkestra#137.
+The verification core (`verify()`) is complete and covered by conformance tests. This crate is
+deliberately framework-agnostic (per the workspace `AGENTS.md`'s "Framework Agnostic" rule) —
+it does not depend on axum, actix, or any other web framework. Which `authkestra-engine` trait
+(if any) framework integrations should eventually implement against is an open question for the
+maintainer — see authkestra#137.
 
 ## Usage
 
@@ -25,11 +25,21 @@ use authkestra_devsig::{IssuerJwks, InMemoryReplayStore, SignedRequest, Verifier
 let identity = verify(&request, &config, &jwks, &replay_store).await?;
 ```
 
-With the `axum` feature enabled:
+### Framework integration
 
-```rust,ignore
-use authkestra_devsig::axum_integration::DeviceSignatureLayer;
+Framework wiring lives in the adapter crates, not here:
 
-let layer = DeviceSignatureLayer::new(config, jwks, replay_store);
-let app = axum::Router::new().route("/v1/payments/transfer", post(handler)).layer(layer);
-```
+- **Axum**: enable the `devsig` feature on `authkestra-axum` and use
+  `authkestra_axum::devsig::DeviceSignatureLayer` (a `tower::Layer`) plus the
+  `authkestra_axum::devsig::AuthDeviceSignature` extractor. See
+  [`authkestra-axum`'s README](../authkestra-axum/README.md) and
+  `crates/authkestra-axum/examples/devsig/`.
+- **Actix Web**: enable the `devsig` feature on `authkestra-actix` and use
+  `authkestra_actix::devsig::DeviceSignatureAuth` (an `actix_web::dev::Transform` middleware)
+  plus the `authkestra_actix::devsig::AuthDeviceSignature` extractor. See
+  [`authkestra-actix`'s README](../authkestra-actix/README.md) and
+  `crates/authkestra-actix/examples/devsig/`.
+
+Both adapters buffer the request body ahead of their framework's own extraction (needed for the
+`bdh` check) and call this crate's plain [`verify`] function underneath — see their `devsig`
+module docs for why neither implements an `authkestra-engine` `AuthenticationStrategy<I>` today.
