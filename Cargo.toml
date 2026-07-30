@@ -12,6 +12,7 @@ members = [
 
     "crates/authkestra-op",
     "crates/authkestra-devsig",
+    "examples/axum-mfa-server",
 ]
 
 [workspace.package]

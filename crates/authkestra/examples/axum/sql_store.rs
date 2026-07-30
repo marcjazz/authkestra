@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! # Axum SQL Store Example
 //!
 //! This example demonstrates how to use `SqlKvStore` (with SQLite) as a session store with Axum.

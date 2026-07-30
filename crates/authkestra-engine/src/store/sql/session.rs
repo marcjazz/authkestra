@@ -21,9 +21,9 @@ use crate::store::{KvStore, StoreError};
 )]
 pub struct SqlKvStore<DB: Database> {
     #[allow(dead_code)]
-    pool: sqlx::Pool<DB>,
+    pub pool: sqlx::Pool<DB>,
     #[allow(dead_code)]
-    table_name: String,
+    pub table_name: String,
 }
 
 #[allow(deprecated)]

@@ -24,7 +24,6 @@ base64 = "0.22.1"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
-
 [features]
 default = ["macros"]
 macros = ["authkestra-macros"]
@@ -33,3 +32,4 @@ flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engin
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
 op = ["dep:authkestra-op", "session", "token"]
+captcha = ["authkestra-engine/captcha"]

@@ -7,8 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// OAuth2/OIDC grant types a client may be permitted to use.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GrantType {
     /// Standard authorization code grant (with or without PKCE).
     AuthorizationCode,
@@ -22,6 +21,40 @@ pub enum GrantType {
     TokenExchange,
     /// A custom grant type.
     Custom(String),
+}
+
+impl Serialize for GrantType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = match self {
+            GrantType::AuthorizationCode => "authorization_code",
+            GrantType::RefreshToken => "refresh_token",
+            GrantType::ClientCredentials => "client_credentials",
+            GrantType::DeviceCode => "urn:ietf:params:oauth:grant-type:device_code",
+            GrantType::TokenExchange => "urn:ietf:params:oauth:grant-type:token-exchange",
+            GrantType::Custom(custom) => custom,
+        };
+        serializer.serialize_str(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for GrantType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "authorization_code" => GrantType::AuthorizationCode,
+            "refresh_token" => GrantType::RefreshToken,
+            "client_credentials" => GrantType::ClientCredentials,
+            "urn:ietf:params:oauth:grant-type:device_code" => GrantType::DeviceCode,
+            "urn:ietf:params:oauth:grant-type:token-exchange" => GrantType::TokenExchange,
+            _ => GrantType::Custom(s),
+        })
+    }
 }
 
 /// A registered OAuth2/OIDC client application.
@@ -178,5 +211,30 @@ mod tests {
         };
 
         assert!(!client.verify_secret("some_secret"));
+    }
+
+    #[test]
+    fn test_grant_type_serialization() {
+        let client = ClientRegistration {
+            client_id: "test".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![
+                GrantType::ClientCredentials,
+                GrantType::AuthorizationCode,
+                GrantType::Custom("my_custom_grant".to_string()),
+            ],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+        };
+
+        let serialized = serde_json::to_string(&client).unwrap();
+        let deserialized: ClientRegistration = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(client.grant_types, deserialized.grant_types);
+        assert!(serialized.contains("\"client_credentials\""));
+        assert!(serialized.contains("\"authorization_code\""));
+        assert!(serialized.contains("\"my_custom_grant\""));
     }
 }
