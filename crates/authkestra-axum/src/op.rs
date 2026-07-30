@@ -1,15 +1,23 @@
 use crate::AxumError;
 use authkestra_engine::TokenManager;
 use authkestra_op::{
+    attestation::{
+        AttestationConfig, AttestationStatusProvider, EnrolmentChallengeStore, SecondFactorVerifier,
+    },
     config::OpConfig,
     handlers::{
         authorize::handle_authorize,
         device_authorization::{handle_device_authorization, DeviceAuthorizationRequest},
         discovery::OidcDiscovery,
+        enrolment::{
+            handle_complete_challenge, handle_enrol_start, handle_reissue_start,
+            CompleteChallengeRequest, EnrolStartRequest, ReissueStartRequest,
+        },
         jwks::JwksResponse,
         token::{handle_token, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
+    OpError,
 };
 use axum::{
     extract::{Form, FromRef, Query, State},
@@ -289,6 +297,135 @@ where
     }
 }
 
+/// Maps an `OpError` from the attestation ceremony to an HTTP status and an
+/// OAuth2-shaped `{error, error_description}` body, matching the style the
+/// other OP handlers in this file already use for their own error enums.
+fn attestation_error_response(err: OpError) -> Response {
+    let status = match &err {
+        OpError::BadJwk(_) | OpError::BadAlg(_) => StatusCode::BAD_REQUEST,
+        OpError::InvalidChallenge
+        | OpError::ChallengeSignatureInvalid
+        | OpError::AttestationInvalid
+        | OpError::KeyNotBound
+        | OpError::SecondFactorFailed => StatusCode::UNAUTHORIZED,
+        OpError::PrincipalRevoked => StatusCode::FORBIDDEN,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    let code = match &err {
+        OpError::PrincipalRevoked => "access_denied",
+        OpError::BadJwk(_) | OpError::BadAlg(_) => "invalid_request",
+        _ if status == StatusCode::INTERNAL_SERVER_ERROR => "server_error",
+        _ => "invalid_grant",
+    };
+    (
+        status,
+        Json(serde_json::json!({
+            "error": code,
+            "error_description": err.to_string(),
+        })),
+    )
+        .into_response()
+}
+
+/// Handler for beginning device/service enrolment (spec §5.6 steps 1-3).
+pub async fn axum_enrol_start_handler<AppState>(
+    State(state): State<AppState>,
+    Json(req): Json<EnrolStartRequest>,
+) -> Response
+where
+    AppState: Clone + Send + Sync + 'static,
+    Result<Arc<dyn EnrolmentChallengeStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<dyn SecondFactorVerifier>, AxumError>: FromRef<AppState>,
+    AttestationConfig: FromRef<AppState>,
+{
+    tracing::debug!(principal_type = ?req.principal_type, "Handling OP enrol start request (axum)");
+    let challenges = match <Result<Arc<dyn EnrolmentChallengeStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
+    let second_factor = match <Result<Arc<dyn SecondFactorVerifier>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
+    let config = AttestationConfig::from_ref(&state);
+
+    match handle_enrol_start(req, second_factor.as_ref(), challenges.as_ref(), &config).await {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(err) => attestation_error_response(err),
+    }
+}
+
+/// Handler for beginning re-issuance of a near-expiry attestation (ADR 0014
+/// decision point 6). `AttestationStatusProvider` is optional at the type
+/// level — a host application that has not configured one gets `None` from
+/// `FromRef`, and re-issuance falls back to copying the previous `att`
+/// claim forward (see `handle_reissue_start`'s docs).
+pub async fn axum_reissue_start_handler<AppState>(
+    State(state): State<AppState>,
+    Json(req): Json<ReissueStartRequest>,
+) -> Response
+where
+    AppState: Clone + Send + Sync + 'static,
+    Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
+    Option<Arc<dyn AttestationStatusProvider>>: FromRef<AppState>,
+    Result<Arc<dyn EnrolmentChallengeStore>, AxumError>: FromRef<AppState>,
+    AttestationConfig: FromRef<AppState>,
+{
+    tracing::debug!("Handling OP re-issuance start request (axum)");
+    let tokens = match <Result<Arc<TokenManager>, AxumError>>::from_ref(&state) {
+        Ok(t) => t,
+        Err(e) => return e.into_response(),
+    };
+    let status_provider = Option::<Arc<dyn AttestationStatusProvider>>::from_ref(&state);
+    let challenges = match <Result<Arc<dyn EnrolmentChallengeStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
+    let config = AttestationConfig::from_ref(&state);
+
+    match handle_reissue_start(
+        req,
+        tokens.as_ref(),
+        status_provider.as_deref(),
+        challenges.as_ref(),
+        &config,
+    )
+    .await
+    {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(err) => attestation_error_response(err),
+    }
+}
+
+/// Handler completing either an enrolment or a re-issuance ceremony — the
+/// same operation either way (see `handle_complete_challenge`'s docs).
+pub async fn axum_complete_challenge_handler<AppState>(
+    State(state): State<AppState>,
+    Json(req): Json<CompleteChallengeRequest>,
+) -> Response
+where
+    AppState: Clone + Send + Sync + 'static,
+    Result<Arc<dyn EnrolmentChallengeStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
+    AttestationConfig: FromRef<AppState>,
+{
+    tracing::debug!("Handling OP enrolment/re-issuance completion request (axum)");
+    let challenges = match <Result<Arc<dyn EnrolmentChallengeStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
+    let tokens = match <Result<Arc<TokenManager>, AxumError>>::from_ref(&state) {
+        Ok(t) => t,
+        Err(e) => return e.into_response(),
+    };
+    let config = AttestationConfig::from_ref(&state);
+
+    match handle_complete_challenge(req, challenges.as_ref(), tokens.as_ref(), &config).await {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(err) => attestation_error_response(err),
+    }
+}
+
 pub trait OpExt {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
@@ -298,6 +435,34 @@ pub trait OpExt {
         Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
         OpConfig: FromRef<AppState>;
+
+    /// Routes for the device/service attestation ceremony (`/enrol`,
+    /// `/enrol/complete`, `/reissue` — spec §5.6/§5.6.1), split out from
+    /// [`op_axum_router`](OpExt::op_axum_router) rather than folded into it.
+    ///
+    /// `AttestationConfig` is deliberately kept separate from `OpConfig`
+    /// (see that type's doc comment) so this extension does not force every
+    /// existing `op_axum_router()` call site to also grow
+    /// `EnrolmentChallengeStore`/`SecondFactorVerifier`/
+    /// `AttestationStatusProvider`/`AttestationConfig` just to keep
+    /// compiling — an application that only wants the standard OIDC surface
+    /// merges `op_axum_router()` alone; one that also wants device/service
+    /// attestation merges this router too:
+    ///
+    /// ```rust,ignore
+    /// let app = Router::new()
+    ///     .merge(state.op_axum_router())
+    ///     .merge(state.op_axum_attestation_router())
+    ///     .with_state(state);
+    /// ```
+    fn op_axum_attestation_router<AppState>(&self) -> axum::Router<AppState>
+    where
+        AppState: Clone + Send + Sync + 'static,
+        Result<Arc<dyn EnrolmentChallengeStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<dyn SecondFactorVerifier>, AxumError>: FromRef<AppState>,
+        Option<Arc<dyn AttestationStatusProvider>>: FromRef<AppState>,
+        Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
+        AttestationConfig: FromRef<AppState>;
 }
 
 // Implement for any type to allow standalone usage or usage with Engine.
@@ -332,5 +497,24 @@ impl<T> OpExt for T {
                 "/device/verify",
                 post(axum_device_verify_handler::<AppState>),
             )
+    }
+
+    fn op_axum_attestation_router<AppState>(&self) -> axum::Router<AppState>
+    where
+        AppState: Clone + Send + Sync + 'static,
+        Result<Arc<dyn EnrolmentChallengeStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<dyn SecondFactorVerifier>, AxumError>: FromRef<AppState>,
+        Option<Arc<dyn AttestationStatusProvider>>: FromRef<AppState>,
+        Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
+        AttestationConfig: FromRef<AppState>,
+    {
+        use axum::routing::post;
+        axum::Router::new()
+            .route("/enrol", post(axum_enrol_start_handler::<AppState>))
+            .route(
+                "/enrol/complete",
+                post(axum_complete_challenge_handler::<AppState>),
+            )
+            .route("/reissue", post(axum_reissue_start_handler::<AppState>))
     }
 }

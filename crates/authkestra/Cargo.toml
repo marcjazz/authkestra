@@ -48,6 +48,12 @@ actix-files = "0.6"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 wiremock = "0.6"
+# Example-only: generating a real EC P-256 keypair and signing enrolment
+# challenges with it in the attestation-issuance examples, exercising the
+# real crypto end-to-end rather than mocking it away. Same versions
+# `authkestra-op` already pins for the identical purpose in its own tests.
+p256 = { version = "0.13", features = ["jwk"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 
 [features]
 default = []
@@ -184,4 +190,14 @@ required-features = ["full"]
 [[example]]
 name = "actix_op_server_sqlx"
 path = "examples/actix/op_server_sqlx.rs"
+required-features = ["full"]
+
+[[example]]
+name = "axum_op_server_attestation"
+path = "examples/axum/op_server_attestation.rs"
+required-features = ["full"]
+
+[[example]]
+name = "actix_op_server_attestation"
+path = "examples/actix/op_server_attestation.rs"
 required-features = ["full"]

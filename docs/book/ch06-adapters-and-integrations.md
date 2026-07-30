@@ -61,6 +61,68 @@ scheme designed to protect write requests. Migrating either adapter to a body-aw
 `authkestra-engine` trait, if one is added, is a matter of swapping which caller builds a
 `SignedRequest` and calls `verify()`; the verification algorithm itself does not change.
 
+## Device/Service Attestation Issuance (OP)
+
+Beyond the standard OIDC provider surface, `authkestra-op` (behind the `op`
+feature) can issue **device/service attestations**: short-lived,
+`cnf.jkt`-bound JWS tokens that let a mobile device or backend service prove
+possession of a key it enrolled, without a bearer token ever leaving the
+device. This is the Issuer side of the device-bound-signature authentication
+method. Three handlers, framework-agnostic in `authkestra-op`, are wired
+into both adapters:
+
+| Route | Purpose |
+|---|---|
+| `POST /enrol` | Validate the caller's public key and second factor, issue a single-use proof-of-possession challenge. |
+| `POST /enrol/complete` | Consume the challenge, verify the signature was produced by the enrolled key, compute `cnf.jkt` from that key (never from caller input), and mint the attestation. |
+| `POST /reissue` | Silently renew a near-expiry attestation by re-proving possession of the same key — no second factor required, since continuity of the key stands in for it. |
+
+Both `authkestra-axum` and `authkestra-actix` wire these three routes with
+the same `tracing` instrumentation the rest of each adapter's handlers use.
+
+**Axum** exposes them through a router split from the main OIDC router
+rather than folded into it, so an application that only wants standard OIDC
+never has to supply attestation-specific dependencies just to keep
+compiling:
+
+```rust,ignore
+let app = Router::new()
+    .merge(state.op_axum_router())              // /authorize, /token, /userinfo, ...
+    .merge(state.op_axum_attestation_router())   // /enrol, /enrol/complete, /reissue
+    .with_state(state);
+```
+
+**Actix** wires the same three routes via `OpExt::op_actix_scope()`,
+resolving each dependency (`EnrolmentChallengeStore`, `SecondFactorVerifier`,
+`TokenManager`, `AttestationConfig`) from `app_data` — an application that
+has not registered the optional `AttestationStatusProvider` simply gets
+`None` at the extractor, exactly like Axum's `Option<Arc<dyn
+AttestationStatusProvider>>: FromRef<AppState>`.
+
+The ceremony has two pluggable hooks a host application implements, since
+`authkestra-op` deliberately does not hardcode a telecom integration or an
+attribute/revocation store:
+
+- **`SecondFactorVerifier`** — verifies whatever proof the caller submits at
+  enrolment (SMS/TOTP for a device; an out-of-band admin approval or
+  one-time bootstrap secret for a service principal).
+- **`AttestationStatusProvider`** *(optional)* — supplies current
+  attributes at re-issuance time, and can refuse re-issuance outright for a
+  revoked principal. If not configured, re-issuance falls back to copying
+  the previous attestation's attributes forward, still bound by
+  proof-of-possession.
+
+The enrolment-challenge store itself is just another `EnrolmentChallengeStore`
+trait — implemented as a blanket impl over any `KvStore` + `AtomicConsume`
+backend, so Redis/SQL/in-memory all work via the same mechanism session and
+OP data already use elsewhere in this chapter.
+
+See `crates/authkestra/examples/axum/op_server_attestation.rs` and
+`crates/authkestra/examples/actix/op_server_attestation.rs` for a
+self-contained, runnable walkthrough of enrolment and re-issuance end to end
+(no external services required — the challenge store is an in-memory
+`MemoryStore` for the example).
+
 ### Architectural Decisions & Future Direction
 
 - **Extractors vs Middleware:** In Axum and Actix, both serve different purposes and we must provide both. Custom extractors (`async fn handler(user: Identity)`) provide the best developer experience (DX) for route-specific logic. Middleware is better suited for global URL protection rules.
