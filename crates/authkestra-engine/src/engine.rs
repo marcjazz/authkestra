@@ -239,9 +239,13 @@ impl<S, T> Engine<S, T> {
                 return Err(AuthError::InvalidInput);
             }
 
-            let method = self.auth_methods.get(method_name).or_else(|| self.mfa_methods.get(method_name)).ok_or_else(|| {
-                AuthError::Internal(format!("MFA method {} not registered", method_name))
-            })?;
+            let method = self
+                .auth_methods
+                .get(method_name)
+                .or_else(|| self.mfa_methods.get(method_name))
+                .ok_or_else(|| {
+                    AuthError::Internal(format!("MFA method {} not registered", method_name))
+                })?;
 
             let identity = method.authenticate(*challenge_input).await?;
 
@@ -267,7 +271,10 @@ impl<S, T> Engine<S, T> {
         }
 
         let method = self.auth_methods.get(method_name).ok_or_else(|| {
-            AuthError::Internal(format!("Primary auth method {} not registered or is step-up only", method_name))
+            AuthError::Internal(format!(
+                "Primary auth method {} not registered or is step-up only",
+                method_name
+            ))
         })?;
 
         let identity = method.authenticate(input).await?;
