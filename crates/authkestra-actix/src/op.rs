@@ -1,15 +1,23 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use authkestra_engine::TokenManager;
 use authkestra_op::{
+    attestation::{
+        AttestationConfig, AttestationStatusProvider, EnrolmentChallengeStore, SecondFactorVerifier,
+    },
     config::OpConfig,
     handlers::{
         authorize::{handle_authorize, AuthorizeOutcome, AuthorizeRequest},
         device_authorization::{handle_device_authorization, DeviceAuthorizationRequest},
         discovery::OidcDiscovery,
+        enrolment::{
+            handle_complete_challenge, handle_enrol_start, handle_reissue_start,
+            CompleteChallengeRequest, EnrolStartRequest, ReissueStartRequest,
+        },
         jwks::JwksResponse,
         token::{handle_token, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
+    OpError,
 };
 use std::sync::Arc;
 
@@ -203,6 +211,105 @@ pub async fn actix_device_verify_handler(
     }
 }
 
+/// Maps an `OpError` from the attestation ceremony to an HTTP status and an
+/// OAuth2-shaped `{error, error_description}` body, matching the style the
+/// other OP handlers in this file already use for their own error enums.
+fn attestation_error_response(err: OpError) -> HttpResponse {
+    let status = match &err {
+        OpError::BadJwk(_) | OpError::BadAlg(_) => actix_web::http::StatusCode::BAD_REQUEST,
+        OpError::InvalidChallenge
+        | OpError::ChallengeSignatureInvalid
+        | OpError::AttestationInvalid
+        | OpError::KeyNotBound
+        | OpError::SecondFactorFailed => actix_web::http::StatusCode::UNAUTHORIZED,
+        OpError::PrincipalRevoked => actix_web::http::StatusCode::FORBIDDEN,
+        _ => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    let code = match &err {
+        OpError::PrincipalRevoked => "access_denied",
+        OpError::BadJwk(_) | OpError::BadAlg(_) => "invalid_request",
+        _ if status == actix_web::http::StatusCode::INTERNAL_SERVER_ERROR => "server_error",
+        _ => "invalid_grant",
+    };
+    HttpResponse::build(status).json(serde_json::json!({
+        "error": code,
+        "error_description": err.to_string(),
+    }))
+}
+
+/// Handler for beginning device/service enrolment (spec §5.6 steps 1-3).
+pub async fn actix_enrol_start_handler(
+    req: web::Json<EnrolStartRequest>,
+    second_factor: web::Data<Arc<dyn SecondFactorVerifier>>,
+    challenges: web::Data<Arc<dyn EnrolmentChallengeStore>>,
+    config: web::Data<AttestationConfig>,
+) -> impl Responder {
+    tracing::debug!(principal_type = ?req.principal_type, "Handling OP enrol start request (actix)");
+    match handle_enrol_start(
+        req.into_inner(),
+        second_factor.get_ref().as_ref(),
+        challenges.get_ref().as_ref(),
+        config.get_ref(),
+    )
+    .await
+    {
+        Ok(resp) => HttpResponse::Ok().json(resp),
+        Err(err) => attestation_error_response(err),
+    }
+}
+
+/// Handler for beginning re-issuance of a near-expiry attestation (ADR 0014
+/// decision point 6). `AttestationStatusProvider` is optional: an app that
+/// has not registered one simply gets `None` here (same `Option<T>`
+/// extractor pattern already used for `crate::AuthSession` above), and
+/// re-issuance falls back to copying the previous `att` claim forward — see
+/// `handle_reissue_start`'s docs.
+pub async fn actix_reissue_start_handler(
+    req: web::Json<ReissueStartRequest>,
+    tokens: web::Data<Arc<TokenManager>>,
+    status_provider: Option<web::Data<Arc<dyn AttestationStatusProvider>>>,
+    challenges: web::Data<Arc<dyn EnrolmentChallengeStore>>,
+    config: web::Data<AttestationConfig>,
+) -> impl Responder {
+    tracing::debug!("Handling OP re-issuance start request (actix)");
+    let status_provider = status_provider.as_ref().map(|d| d.get_ref().as_ref());
+
+    match handle_reissue_start(
+        req.into_inner(),
+        tokens.get_ref().as_ref(),
+        status_provider,
+        challenges.get_ref().as_ref(),
+        config.get_ref(),
+    )
+    .await
+    {
+        Ok(resp) => HttpResponse::Ok().json(resp),
+        Err(err) => attestation_error_response(err),
+    }
+}
+
+/// Handler completing either an enrolment or a re-issuance ceremony — the
+/// same operation either way (see `handle_complete_challenge`'s docs).
+pub async fn actix_complete_challenge_handler(
+    req: web::Json<CompleteChallengeRequest>,
+    challenges: web::Data<Arc<dyn EnrolmentChallengeStore>>,
+    tokens: web::Data<Arc<TokenManager>>,
+    config: web::Data<AttestationConfig>,
+) -> impl Responder {
+    tracing::debug!("Handling OP enrolment/re-issuance completion request (actix)");
+    match handle_complete_challenge(
+        req.into_inner(),
+        challenges.get_ref().as_ref(),
+        tokens.get_ref().as_ref(),
+        config.get_ref(),
+    )
+    .await
+    {
+        Ok(resp) => HttpResponse::Ok().json(resp),
+        Err(err) => attestation_error_response(err),
+    }
+}
+
 pub trait OpExt {
     fn op_actix_scope(&self) -> actix_web::Scope;
 }
@@ -227,5 +334,11 @@ impl<T> OpExt for T {
                 "/device/verify",
                 web::post().to(actix_device_verify_handler),
             )
+            .route("/enrol", web::post().to(actix_enrol_start_handler))
+            .route(
+                "/enrol/complete",
+                web::post().to(actix_complete_challenge_handler),
+            )
+            .route("/reissue", web::post().to(actix_reissue_start_handler))
     }
 }

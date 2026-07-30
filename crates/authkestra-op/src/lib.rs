@@ -27,6 +27,16 @@ pub use client::{ClientRegistration, ClientStore, GrantType};
 pub mod code;
 pub use code::{AuthorizationCode, AuthorizationCodeStore};
 
+/// Device/service attestation issuance: the enrolment/re-issuance ceremony
+/// and `cnf.jkt`-bound attestation minting for the device-bound-signature
+/// authentication method. See `handlers::enrolment` for the request/
+/// response handlers built on top of these types.
+pub mod attestation;
+pub use attestation::{
+    AttestationConfig, AttestationStatusProvider, EnrolmentChallenge, EnrolmentChallengeStore,
+    PrincipalType, SecondFactorProof, SecondFactorVerifier,
+};
+
 /// Device Authorization Grant related types.
 pub mod device;
 
