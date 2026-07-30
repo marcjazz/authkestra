@@ -49,6 +49,8 @@ pub struct Engine<S = Missing, T = Missing> {
     pub providers: HashMap<String, Arc<dyn ErasedOAuthFlow>>,
     /// Map of registered local authentication methods.
     pub auth_methods: HashMap<String, Arc<dyn AuthMethod>>,
+    /// Map of methods explicitly registered for step-up (MFA) use.
+    pub mfa_methods: HashMap<String, Arc<dyn AuthMethod>>,
     /// Internal secret for signing temporary MFA JWT tokens.
     pub mfa_jwt_secret: [u8; 32],
     /// The session storage backend.
@@ -69,6 +71,7 @@ where
         Self {
             providers: self.providers.clone(),
             auth_methods: self.auth_methods.clone(),
+            mfa_methods: self.mfa_methods.clone(),
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store.clone(),
             session_config: self.session_config.clone(),
@@ -87,6 +90,7 @@ impl Engine<Missing, Missing> {
         EngineBuilder {
             providers: HashMap::new(),
             auth_methods: HashMap::new(),
+            mfa_methods: HashMap::new(),
             mfa_jwt_secret: secret,
             session_store: Missing,
             session_config: SessionConfig::default(),
@@ -100,6 +104,7 @@ impl Engine<Missing, Missing> {
 pub struct EngineBuilder<S = Missing, T = Missing> {
     providers: HashMap<String, Arc<dyn ErasedOAuthFlow>>,
     auth_methods: HashMap<String, Arc<dyn AuthMethod>>,
+    mfa_methods: HashMap<String, Arc<dyn AuthMethod>>,
     mfa_jwt_secret: [u8; 32],
     session_store: S,
     session_config: SessionConfig,
@@ -128,6 +133,16 @@ impl<S, T> EngineBuilder<S, T> {
         self
     }
 
+    /// Register a local authentication method to be used EXCLUSIVELY for step-up MFA challenges.
+    pub fn with_mfa_method<M>(mut self, method: M) -> Self
+    where
+        M: AuthMethod + 'static,
+    {
+        self.mfa_methods
+            .insert(method.name().to_string(), Arc::new(method));
+        self
+    }
+
     /// Set the session store.
     pub fn session_store(
         self,
@@ -136,6 +151,7 @@ impl<S, T> EngineBuilder<S, T> {
         EngineBuilder {
             providers: self.providers,
             auth_methods: self.auth_methods,
+            mfa_methods: self.mfa_methods,
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: Configured(store),
             session_config: self.session_config,
@@ -153,6 +169,7 @@ impl<S, T> EngineBuilder<S, T> {
         EngineBuilder {
             providers: self.providers,
             auth_methods: self.auth_methods,
+            mfa_methods: self.mfa_methods,
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store,
             session_config: self.session_config,
@@ -177,6 +194,7 @@ impl<S, T> EngineBuilder<S, T> {
         Engine {
             providers: self.providers,
             auth_methods: self.auth_methods,
+            mfa_methods: self.mfa_methods,
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store,
             session_config: self.session_config,
@@ -214,11 +232,15 @@ impl<S, T> Engine<S, T> {
                 AuthInput::Totp { .. } => "totp",
                 #[cfg(feature = "webauthn")]
                 AuthInput::WebAuthnAuthentication { .. } => "webauthn",
-                _ => return Err(AuthError::InvalidInput),
+                _ => "",
             };
 
-            let method = self.auth_methods.get(method_name).ok_or_else(|| {
-                AuthError::Internal(format!("Auth method {} not registered", method_name))
+            if method_name.is_empty() {
+                return Err(AuthError::InvalidInput);
+            }
+
+            let method = self.auth_methods.get(method_name).or_else(|| self.mfa_methods.get(method_name)).ok_or_else(|| {
+                AuthError::Internal(format!("MFA method {} not registered", method_name))
             })?;
 
             let identity = method.authenticate(*challenge_input).await?;
@@ -237,25 +259,30 @@ impl<S, T> Engine<S, T> {
             AuthInput::Totp { .. } => "totp", // Could theoretically be used as primary
             #[cfg(feature = "webauthn")]
             AuthInput::WebAuthnAuthentication { .. } => "webauthn",
-            _ => return Err(AuthError::InvalidInput),
+            _ => "",
         };
 
+        if method_name.is_empty() {
+            return Err(AuthError::InvalidInput);
+        }
+
         let method = self.auth_methods.get(method_name).ok_or_else(|| {
-            AuthError::Internal(format!("Auth method {} not registered", method_name))
+            AuthError::Internal(format!("Primary auth method {} not registered or is step-up only", method_name))
         })?;
 
         let identity = method.authenticate(input).await?;
 
         // Check if user has MFA enrolled
         let mut enrolled_methods = Vec::new();
-        for (name, method) in &self.auth_methods {
+        for (name, method) in self.auth_methods.iter().chain(self.mfa_methods.iter()) {
             if name == "password" {
                 continue;
             }
-            if method
-                .has_enrolled(&identity.external_id)
-                .await
-                .unwrap_or(false)
+            if !enrolled_methods.contains(name)
+                && method
+                    .has_enrolled(&identity.external_id)
+                    .await
+                    .unwrap_or(false)
             {
                 enrolled_methods.push(name.clone());
             }

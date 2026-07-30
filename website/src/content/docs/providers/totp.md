@@ -16,7 +16,9 @@ authkestra-engine = { version = "0.2.4", features = ["totp"] }
 
 ## Configuration
 
-In Authkestra, TOTP is implemented via the `TotpAuthMethod` struct. You initialize it by passing a `CredentialStore` where the secrets will be securely saved, and then register it with the `EngineBuilder`.
+In Authkestra, TOTP is implemented via the `TotpAuthMethod` struct. You initialize it by passing a `CredentialStore` where the secrets will be securely saved.
+
+Because a 6-digit TOTP code alone is generally insufficient as a primary credential, it is strongly recommended to register TOTP as an **MFA-only** method. You do this by registering it with the `EngineBuilder` using `.with_mfa_method()`.
 
 ```rust
 use authkestra_engine::auth::totp::TotpAuthMethod;
@@ -24,9 +26,11 @@ use authkestra_engine::engine::Engine;
 
 // `my_store` implements the `CredentialStore` trait (e.g. `SqlxCredentialStore`)
 let engine = Engine::builder()
-    .with_auth_method(TotpAuthMethod::new(my_store))
+    .with_mfa_method(TotpAuthMethod::new(my_store)) // Step-up only!
     .build();
 ```
+
+By registering it this way, the Engine will automatically block any attempt to use TOTP directly for primary authentication (enforcing that it can only be submitted in an `MfaChallenge` after a primary method like a password is authenticated).
 
 ## Registering a Device
 
@@ -43,25 +47,9 @@ You can convert the returned `uri` into a QR code using a frontend library (like
 
 ## Authenticating
 
-To authenticate, accept the 6-digit code from the user and pass it to the unified `engine.authenticate` method via `AuthInput::Totp`:
+Because TOTP is registered as an MFA-only method, you cannot simply pass `AuthInput::Totp` to `engine.authenticate()`. If you try, you will receive an `AuthError::Internal` explaining that the method is not registered for primary authentication.
 
-```rust
-use authkestra_engine::auth::{AuthInput, AuthResult};
-
-let result = engine.authenticate(AuthInput::Totp {
-    user_id: "user_123".to_string(),
-    code: "123456".to_string(),
-}).await?;
-
-match result {
-    AuthResult::Success(identity) => {
-        println!("Successfully authenticated as: {}", identity.external_id);
-    }
-    AuthResult::MfaRequired { .. } => {
-        // Technically possible if they have ANOTHER MFA method required!
-    }
-}
-```
+Instead, TOTP must be provided in response to an `AuthResult::MfaRequired` returned by a primary authentication method (such as a password).
 
 ### Using TOTP as a Second Factor (MFA Continuation)
 

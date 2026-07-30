@@ -59,7 +59,7 @@ async fn main() {
 
     // 3. Build Unified Engine
     let engine = Engine::builder()
-        .with_auth_method(TotpAuthMethod::new(store.clone()))
+        .with_mfa_method(TotpAuthMethod::new(store.clone()))
         .with_auth_method(WebAuthnAuthMethod::new(Arc::new(webauthn), store.clone()))
         // In a real app, you would also add a password AuthMethod here
         .build();
