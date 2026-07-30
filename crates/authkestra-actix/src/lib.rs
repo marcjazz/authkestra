@@ -22,6 +22,9 @@ pub mod helpers;
 #[cfg(feature = "op")]
 pub mod op;
 
+#[cfg(feature = "devsig")]
+pub mod devsig;
+
 #[cfg(feature = "macros")]
 pub use authkestra_macros::ActixState;
 
@@ -32,6 +35,9 @@ pub use helpers::{actix_callback_handler, actix_logout_handler};
 
 #[cfg(feature = "op")]
 pub use op::OpExt;
+
+#[cfg(feature = "devsig")]
+pub use devsig::{AuthDeviceSignature, DeviceSignatureAuth};
 
 #[cfg(feature = "flow")]
 pub trait ActixExt<S, T> {

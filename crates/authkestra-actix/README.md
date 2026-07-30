@@ -9,6 +9,10 @@ This crate provides Actix-web specific extractors and utilities to integrate the
 - **Extractors**: Easily access validated sessions or JWT claims in your request handlers.
 - **OAuth2 Helpers**: Streamlined functions for initiating login, handling callbacks, and logging out.
 - **Session Management**: Integration with `authkestra-engine` for server-side session storage.
+- **Device-Bound Signature Authentication** (`devsig` feature): `DeviceSignatureAuth`, an
+  `actix_web::dev::Transform` middleware that verifies `X-Signature` + `X-Attestation` headers
+  (per-request proof-of-possession, no session store, no per-request network call — see
+  `authkestra-devsig`) ahead of the handler, plus the `AuthDeviceSignature` extractor.
 
 ## Usage
 
@@ -157,6 +161,48 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await
 }
+```
+
+### Device-Bound Signature Authentication
+
+Enable the `devsig` feature to protect a route with `authkestra-devsig`'s verifier: per-request
+proof-of-possession of a device-bound private key, with no session store and no per-request
+network call.
+
+```toml
+[dependencies]
+authkestra-actix = { version = "0.2.4", features = ["devsig"] }
+authkestra-devsig = "0.1.0"
+```
+
+```rust,ignore
+use authkestra_actix::devsig::{AuthDeviceSignature, DeviceSignatureAuth};
+use actix_web::{post, web, App, HttpServer};
+use std::sync::Arc;
+
+#[post("/v1/payments/transfer")]
+async fn transfer_handler(identity: AuthDeviceSignature) -> web::Json<serde_json::Value> {
+    let AuthDeviceSignature(identity) = identity;
+    web::Json(serde_json::json!({ "device": identity.device }))
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    HttpServer::new(move || {
+        let auth = DeviceSignatureAuth::new(config.clone(), jwks.clone(), replay_store.clone());
+        App::new().wrap(auth).service(transfer_handler)
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
+}
+```
+
+See [`crates/authkestra-actix/examples/devsig/`](examples/devsig/) for a complete, runnable
+example:
+
+```bash
+cargo run -p authkestra-actix --example actix_devsig --features devsig
 ```
 
 ## Part of authkestra

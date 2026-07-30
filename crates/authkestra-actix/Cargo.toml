@@ -15,6 +15,7 @@ authkestra-engine = { workspace = true }
 authkestra-resource = { workspace = true, optional = true }
 authkestra-op = { workspace = true, optional = true }
 authkestra-macros = { workspace = true, optional = true, features = ["actix"] }
+authkestra-devsig = { workspace = true, optional = true }
 actix-web = "4"
 actix-utils = "3"
 futures-util = "0.3"
@@ -28,6 +29,13 @@ chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 http = "1"
 
+[dev-dependencies]
+rsa = "0.9"
+p256 = { version = "0.13", features = ["pem", "ecdsa"] }
+rand = "0.8"
+sha2 = "0.10"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 [features]
 default = []
 session = ["authkestra-engine/session"]
@@ -36,3 +44,10 @@ token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
 op = ["dep:authkestra-op", "session", "token"]
 macros = ["dep:authkestra-macros"]
+captcha = ["authkestra-engine/captcha"]
+devsig = ["dep:authkestra-devsig"]
+
+[[example]]
+name = "actix_devsig"
+path = "examples/devsig/main.rs"
+required-features = ["devsig"]
