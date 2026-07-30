@@ -197,6 +197,69 @@ let id_token = token_manager.issue_id_token_with_extra(
 
 *(Note: When calling `issue_id_token_with_extra`, an explicit `nonce` argument will always take precedence over a `"nonce"` key provided in the `extra_claims` map).*
 
+## Device/Service Attestation Issuance
+
+Beyond issuing OIDC tokens to a browser-based Relying Party, `authkestra-op` can also act as the **Issuer** in a device-bound-signature authentication scheme: it mints short-lived **attestations** — JWS tokens carrying a `cnf.jkt` claim (the SHA-256 thumbprint of a JWK) bound to a public key that a device or backend service generated locally and never shares. An attestation alone proves nothing; a verifier must additionally see a per-request signature made with the corresponding private key. This is the Issuer-side counterpart to `authkestra-devsig`'s request verification (see the mdBook chapter on adapters for that side).
+
+Attestations are deliberately **short-lived** rather than the long-lived, hard-to-revoke tokens common to plain bearer auth: a compromised or revoked device's exposure window is bounded by `attestation_ttl_secs`, not by however long a refresh token happens to live. Renewal is silent — the caller re-proves possession of the same key well before expiry (recommended at `attestation_reissue_after_secs`), so there is no user-facing re-login and no second factor required beyond continuity of the key itself.
+
+The ceremony is three HTTP calls (see the updated endpoint list below):
+
+1. The caller generates an asymmetric keypair locally (EC P-256, ideally hardware-backed — Secure Enclave / StrongBox / Keystore) and calls `POST /enrol` with its public JWK and a second-factor proof (SMS/TOTP for a device; an out-of-band admin approval or bootstrap secret for a service principal). The OP verifies the factor and returns a single-use challenge.
+2. The caller signs the challenge with its private key and calls `POST /enrol/complete`. The OP verifies the signature, computes `cnf.jkt` from the *enrolled* key (never from client input), and mints the attestation.
+3. Before the attestation expires, the caller silently re-proves possession via `POST /reissue`, which itself returns a fresh challenge to complete through the same `/enrol/complete` endpoint — no second factor needed, since continuity of the key stands in for it.
+
+Configure the ceremony with `AttestationConfig`, and implement a `SecondFactorVerifier` (mandatory) plus, optionally, an `AttestationStatusProvider` that can refuse re-issuance for a revoked principal or refresh its attributes:
+
+```rust
+use async_trait::async_trait;
+use authkestra_op::attestation::{
+    AttestationConfig, PrincipalType, SecondFactorProof, SecondFactorVerifier,
+};
+use authkestra_op::OpError;
+
+let attestation_config = AttestationConfig {
+    attestation_ttl_secs: 86_400,           // 24h attestation lifetime
+    attestation_reissue_after_secs: 43_200, // recommend silent renewal at 12h
+    challenge_ttl_secs: 300,                // 5 minutes to complete a challenge
+};
+
+struct SmsOrBootstrapVerifier;
+
+#[async_trait]
+impl SecondFactorVerifier for SmsOrBootstrapVerifier {
+    async fn verify(
+        &self,
+        subject: &str,
+        principal_type: PrincipalType,
+        proof: &SecondFactorProof,
+    ) -> Result<(), OpError> {
+        // Verify `proof.value` against whatever second factor fits
+        // `principal_type` — an SMS/TOTP code for a device, or an
+        // out-of-band approval / one-time bootstrap secret for a service.
+        // `authkestra-op` treats `proof` as opaque and never interprets it
+        // itself.
+        todo!()
+    }
+}
+```
+
+The three routes are wired through a router split from the standard OIDC surface, so an application that only wants plain OIDC never has to supply attestation-specific dependencies just to keep compiling:
+
+```rust
+use authkestra_axum::OpExt;
+use axum::Router;
+
+let app = Router::new()
+    .merge(state.op_axum_router())              // /authorize, /token, /userinfo, ...
+    .merge(state.op_axum_attestation_router())   // /enrol, /enrol/complete, /reissue
+    .with_state(state);
+```
+
+Actix wires the same three routes via `OpExt::op_actix_scope()`, resolving `EnrolmentChallengeStore`, `SecondFactorVerifier`, `TokenManager`, and `AttestationConfig` from `app_data` the same way the rest of the OP server's dependencies are resolved.
+
+See `crates/authkestra/examples/axum/op_server_attestation.rs` and `crates/authkestra/examples/actix/op_server_attestation.rs` in the repository for a runnable, end-to-end walkthrough of enrolment and re-issuance (no external services required — the challenge store is an in-memory `MemoryStore`), or the step-by-step [Device Attestation guide](/guides/device-attestation/) for a narrated version of the same flow.
+
 ## Wiring the OP Endpoints
 
 Once your stores and config are built, you wire the server routes using `op_axum_router()` (or `op_actix_router()`).
@@ -217,3 +280,9 @@ Unlike a standard OAuth client router, `op_axum_router()` exposes the endpoints 
 2. **`GET /jwks`**: Exposes the public keys used to sign your JWTs so Resource Servers can validate them.
 3. **`GET /authorize`**: The endpoint users are redirected to when they want to log in.
 4. **`POST /token`**: The endpoint clients call to exchange an authorization code or refresh token for a new Access/ID Token.
+
+If you also merge `op_axum_attestation_router()` (or wire `op_actix_scope()`), three more endpoints are exposed for the device/service attestation ceremony described above:
+
+5. **`POST /enrol`**: Validates the caller's public key and second factor, and issues a single-use proof-of-possession challenge.
+6. **`POST /enrol/complete`**: Consumes the challenge, verifies the signature was produced by the enrolled key, and mints the attestation.
+7. **`POST /reissue`**: Silently renews a near-expiry attestation by re-proving possession of the same key.
