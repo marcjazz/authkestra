@@ -52,5 +52,20 @@ totp = ["dep:totp-rs"]
 captcha = []
 
 [dev-dependencies]
+
+authkestra = { workspace = true, features = ["full"] }
+authkestra-engine = { workspace = true, features = ["flow", "token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
+authkestra-resource = { workspace = true }
+authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
+authkestra-oidc = { workspace = true }
+authkestra-op = { workspace = true, features = ["sqlx-sqlite"] }
+authkestra-macros = { workspace = true }
+dotenvy = "0.15"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+redis = { version = "0.27", features = ["tokio-comp"] }
+reqwest = { version = "0.13", features = ["json"] }
+tower-http = { version = "0.6", features = ["fs"] }
+actix-files = "0.6"
+
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["mysql", "postgres", "redis"] }

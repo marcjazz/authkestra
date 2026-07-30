@@ -19,41 +19,10 @@ authkestra-providers = { workspace = true, optional = true }
 authkestra-resource = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
-authkestra-engine = { workspace = true, features = ["flow", "token", "session", "memory", "redis", "sql-sqlite"] }
-authkestra-resource = { workspace = true }
-authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
-authkestra-actix = { workspace = true, features = ["flow", "session", "token", "op", "macros"] }
-authkestra-axum = { workspace = true, features = ["flow", "session", "token", "op", "macros"] }
-authkestra-oidc = { workspace = true }
-authkestra-op = { workspace = true, features = ["sqlx-sqlite"] }
-authkestra-macros = { workspace = true }
-actix-web = "4"
-axum = "0.8"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tower-cookies = "0.11"
-dotenvy = "0.15"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-redis = { version = "0.27", features = ["tokio-comp"] }
 reqwest = { version = "0.13", features = ["json"] }
-async-trait = "0.1"
-jsonwebtoken = "10.3.0"
-base64 = "0.22.1"
-tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["fs"] }
-actix-files = "0.6"
-uuid = { version = "1.0", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
 wiremock = "0.6"
-# Example-only: generating a real EC P-256 keypair and signing enrolment
-# challenges with it in the attestation-issuance examples, exercising the
-# real crypto end-to-end rather than mocking it away. Same versions
-# `authkestra-op` already pins for the identical purpose in its own tests.
-p256 = { version = "0.13", features = ["jwk"] }
-rand_core = { version = "0.6", features = ["getrandom"] }
 
 [features]
 default = []
@@ -76,128 +45,27 @@ google = ["authkestra-providers/google"]
 discord = ["authkestra-providers/discord"]
 
 
-[[example]]
-name = "actix_op_server"
-path = "examples/actix/op_server.rs"
-required-features = ["full"]
-
-[[example]]
-name = "actix_op_server_custom_grant"
-path = "examples/actix/op_server_custom_grant.rs"
-required-features = ["full"]
-
-[[example]]
-name = "actix_oauth2_github"
-path = "examples/actix/oauth2_github.rs"
-required-features = ["full"]
-
-[[example]]
-name = "actix_oidc_google"
-path = "examples/actix/oidc_google.rs"
-required-features = ["full"]
 
 
-[[example]]
-name = "core_client_credentials"
-path = "examples/core/client_credentials.rs"
-required-features = ["full"]
 
-[[example]]
-name = "core_device_flow"
-path = "examples/core/device_flow.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_oauth2_github"
-path = "examples/axum/oauth2_github.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_oauth_stateless"
-path = "examples/axum/oauth_stateless.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_oidc_google"
-path = "examples/axum/oidc_google.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_data_layer_macros"
-path = "examples/axum/data_layer_macros.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_op_server"
-path = "examples/axum/op_server.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_op_server_custom_grant"
-path = "examples/axum/op_server_custom_grant.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_resource_server"
-path = "examples/axum/resource_server.rs"
-required-features = ["full"]
 
-[[example]]
-name = "actix_oauth_stateless"
-path = "examples/actix/oauth_stateless.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_resource_server_strategy"
-path = "examples/axum/resource_server_strategy.rs"
-required-features = ["full"]
 
-[[example]]
-name = "actix_resource_server_strategy"
-path = "examples/actix/resource_server_strategy.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_basic_setup"
-path = "examples/axum/basic_setup.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_session_redis"
-path = "examples/axum/session_redis.rs"
-required-features = ["full"]
 
-[[example]]
-name = "axum_sql_store"
-path = "examples/axum/sql_store.rs"
-required-features = ["full"]
 
-[[example]]
-name = "actix_basic_setup"
-path = "examples/actix/basic_setup.rs"
-required-features = ["full"]
+
 
 
 [[test]]
 name = "typestate_tests"
 required-features = ["full"]
 
-[[example]]
-name = "axum_op_server_sqlx"
-path = "examples/axum/op_server_sqlx.rs"
-required-features = ["full"]
-
-[[example]]
-name = "actix_op_server_sqlx"
-path = "examples/actix/op_server_sqlx.rs"
-required-features = ["full"]
-
-[[example]]
-name = "axum_op_server_attestation"
-path = "examples/axum/op_server_attestation.rs"
-required-features = ["full"]
-
-[[example]]
-name = "actix_op_server_attestation"
-path = "examples/actix/op_server_attestation.rs"
-required-features = ["full"]

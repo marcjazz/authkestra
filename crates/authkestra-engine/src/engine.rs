@@ -143,6 +143,26 @@ impl<S, T> EngineBuilder<S, T> {
         self
     }
 
+    /// Register the TOTP authentication method.
+    #[cfg(feature = "totp")]
+    pub fn with_totp<C>(self, store: C) -> Self
+    where
+        C: crate::CredentialStore + 'static,
+    {
+        self.with_auth_method(crate::auth::totp::TotpAuthMethod::new(store))
+    }
+
+    /// Register the WebAuthn authentication method.
+    #[cfg(feature = "webauthn")]
+    pub fn with_webauthn<C>(self, webauthn: Arc<webauthn_rs::prelude::Webauthn>, store: C) -> Self
+    where
+        C: crate::CredentialStore + 'static,
+    {
+        self.with_auth_method(crate::auth::webauthn::WebAuthnAuthMethod::new(
+            webauthn, store,
+        ))
+    }
+
     /// Set the session store.
     pub fn session_store(
         self,
