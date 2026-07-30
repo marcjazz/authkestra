@@ -16,39 +16,35 @@ authkestra-engine = { version = "0.2.0", features = ["totp"] }
 
 ## Configuration
 
-Authkestra's typestate builder pattern requires you to initialize the engine with TOTP support:
+In Authkestra, TOTP is implemented via the `TotpAuthMethod` struct. You initialize it by passing a `CredentialStore` where the secrets will be securely saved.
 
 ```rust
-use authkestra_engine::Authkestra;
-
-let engine = Authkestra::builder()
-    .with_store(my_store)
-    .with_totp() // Enables TOTP support
-    .build()
-    .unwrap();
+use authkestra_engine::auth::totp::TotpAuthMethod;
+// `my_store` implements the `CredentialStore` trait (e.g. `SqlxCredentialStore`)
+let totp_method = TotpAuthMethod::new(my_store);
 ```
 
 ## Registering a Device
 
-To enroll a user, call `register_totp`. It generates a new base32 secret and an `otpauth://` provisioning URI. 
+To enroll a user, call `register_totp`. It automatically generates a new base32 secret and an `otpauth://` provisioning URI. The secret is saved to the store internally.
 
 ```rust
-let (secret_b32, uri) = engine.register_totp(
+let (secret_b32, uri) = totp_method.register_totp(
     "user_123", // user ID
     "Authkestra", // Issuer (shows in app)
     "alice@example.com" // Account name
 ).await?;
 ```
-You can convert the `uri` into a QR code using a frontend library (like `qrcode.js`) for the user to scan. The secret is automatically saved in the configured `CredentialStore`.
+You can convert the returned `uri` into a QR code using a frontend library (like `qrcode.js`) for the user to scan. 
 
 ## Authenticating
 
-To authenticate, simply accept the 6-digit code from the user and pass it to `authenticate`:
+To authenticate, accept the 6-digit code from the user and pass it to `authenticate` via `AuthInput::Totp`:
 
 ```rust
-use authkestra_engine::auth::AuthInput;
+use authkestra_engine::auth::{AuthInput, AuthMethod};
 
-let identity = engine.authenticate(AuthInput::Totp {
+let identity = totp_method.authenticate(AuthInput::Totp {
     user_id: "user_123".to_string(),
     code: "123456".to_string(),
 }).await?;

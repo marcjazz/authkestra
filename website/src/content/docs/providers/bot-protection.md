@@ -3,7 +3,7 @@ title: Bot Protection (CAPTCHA)
 description: Learn how to protect your authentication endpoints using CAPTCHA verification in Authkestra.
 ---
 
-Authkestra provides built-in bot protection interceptors that validate CAPTCHA tokens during the authentication flow. This prevents automated credential stuffing and brute force attacks.
+Authkestra provides built-in bot protection verifiers that validate CAPTCHA tokens. This prevents automated credential stuffing and brute force attacks on your authentication endpoints.
 
 ## Enabling Bot Protection
 
@@ -16,35 +16,37 @@ authkestra-engine = { version = "0.2.0", features = ["captcha"] }
 
 ## Configuration
 
-You can use either Cloudflare Turnstile (recommended) or Google reCAPTCHA. You provide the verification client (e.g., `TurnstileVerifier`) to the engine builder. 
+Authkestra supports Cloudflare Turnstile, hCaptcha, and Google reCAPTCHA out of the box via the `CaptchaVerifier` utility. You instantiate the verifier with your chosen provider and secret key.
 
 ```rust
-use authkestra_engine::Authkestra;
-use authkestra_engine::auth::captcha::TurnstileVerifier;
+use authkestra_engine::captcha::{CaptchaVerifier, CaptchaProvider};
 
-let turnstile = TurnstileVerifier::new("your_secret_key");
-
-let engine = Authkestra::builder()
-    .with_store(my_store)
-    .with_captcha(turnstile) // Activates bot protection
-    .build()
-    .unwrap();
+// Example using Cloudflare Turnstile
+let turnstile = CaptchaVerifier::new(CaptchaProvider::Turnstile, "your_secret_key");
 ```
 
 ## How It Works
 
-Once `with_captcha` is enabled, **every** call to `authenticate` that requires a CAPTCHA token must include it via the `captcha_token` field in the input.
+Because bot protection occurs *before* standard authentication logic (like password hashing), you should manually invoke the verifier in your HTTP handlers prior to passing the credentials to Authkestra.
 
 ```rust
-use authkestra_engine::auth::AuthInput;
+// Extract the captcha token from the user's login request
+let token = req.captcha_token;
+let remote_ip = req.remote_ip; // Optional, e.g. from X-Forwarded-For
 
-let identity = engine.authenticate(AuthInput::Password {
-    username: "alice".to_string(),
-    password: "Password123!".to_string(),
-    captcha_token: Some("xxxx.token.xxxx".to_string()),
-}).await?;
+// Validate the token against the provider API
+match turnstile.verify(&token, remote_ip.as_deref()).await {
+    Ok(true) => {
+        // Success! Proceed with standard authentication
+        // let identity = engine.authenticate(...).await?;
+    }
+    Ok(false) | Err(e) => {
+        // Bot detected or token invalid, reject the login request immediately!
+        // return HTTP 403 Forbidden
+    }
+}
 ```
 
 ### Fail-Closed Design
 
-Authkestra's bot protection is strictly **fail-closed**. This means if the CAPTCHA token is invalid, missing, or if the network request to the verification provider fails, the authentication is immediately rejected. It will never silently succeed and allow an attacker to bypass the protection!
+Authkestra's bot protection is designed to be strictly **fail-closed**. This means if the CAPTCHA token is invalid, missing, or if the network request to the verification provider fails, the `verify` method returns an `Err`. It will never silently succeed and allow an attacker to bypass the protection!
