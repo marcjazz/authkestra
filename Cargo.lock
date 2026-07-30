@@ -466,6 +466,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "authkestra-devsig"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64",
+ "bytes",
+ "http-body-util",
+ "jsonwebtoken",
+ "p256",
+ "rand 0.8.6",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "thiserror",
+ "tokio",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
 name = "authkestra-engine"
 version = "0.2.4"
 dependencies = [
