@@ -434,10 +434,34 @@ pub trait OpExt {
         Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
         Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
-        OpConfig: FromRef<AppState>,
+        OpConfig: FromRef<AppState>;
+
+    /// Routes for the device/service attestation ceremony (`/enrol`,
+    /// `/enrol/complete`, `/reissue` — spec §5.6/§5.6.1), split out from
+    /// [`op_axum_router`](OpExt::op_axum_router) rather than folded into it.
+    ///
+    /// `AttestationConfig` is deliberately kept separate from `OpConfig`
+    /// (see that type's doc comment) so this extension does not force every
+    /// existing `op_axum_router()` call site to also grow
+    /// `EnrolmentChallengeStore`/`SecondFactorVerifier`/
+    /// `AttestationStatusProvider`/`AttestationConfig` just to keep
+    /// compiling — an application that only wants the standard OIDC surface
+    /// merges `op_axum_router()` alone; one that also wants device/service
+    /// attestation merges this router too:
+    ///
+    /// ```rust,ignore
+    /// let app = Router::new()
+    ///     .merge(state.op_axum_router())
+    ///     .merge(state.op_axum_attestation_router())
+    ///     .with_state(state);
+    /// ```
+    fn op_axum_attestation_router<AppState>(&self) -> axum::Router<AppState>
+    where
+        AppState: Clone + Send + Sync + 'static,
         Result<Arc<dyn EnrolmentChallengeStore>, AxumError>: FromRef<AppState>,
         Result<Arc<dyn SecondFactorVerifier>, AxumError>: FromRef<AppState>,
         Option<Arc<dyn AttestationStatusProvider>>: FromRef<AppState>,
+        Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
         AttestationConfig: FromRef<AppState>;
 }
 
@@ -451,10 +475,6 @@ impl<T> OpExt for T {
         Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
         OpConfig: FromRef<AppState>,
-        Result<Arc<dyn EnrolmentChallengeStore>, AxumError>: FromRef<AppState>,
-        Result<Arc<dyn SecondFactorVerifier>, AxumError>: FromRef<AppState>,
-        Option<Arc<dyn AttestationStatusProvider>>: FromRef<AppState>,
-        AttestationConfig: FromRef<AppState>,
     {
         use axum::routing::{get, post};
         axum::Router::new()
@@ -477,6 +497,19 @@ impl<T> OpExt for T {
                 "/device/verify",
                 post(axum_device_verify_handler::<AppState>),
             )
+    }
+
+    fn op_axum_attestation_router<AppState>(&self) -> axum::Router<AppState>
+    where
+        AppState: Clone + Send + Sync + 'static,
+        Result<Arc<dyn EnrolmentChallengeStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<dyn SecondFactorVerifier>, AxumError>: FromRef<AppState>,
+        Option<Arc<dyn AttestationStatusProvider>>: FromRef<AppState>,
+        Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
+        AttestationConfig: FromRef<AppState>,
+    {
+        use axum::routing::post;
+        axum::Router::new()
             .route("/enrol", post(axum_enrol_start_handler::<AppState>))
             .route(
                 "/enrol/complete",

@@ -409,6 +409,8 @@ dependencies = [
  "chrono",
  "dotenvy",
  "jsonwebtoken",
+ "p256",
+ "rand_core 0.6.4",
  "redis",
  "reqwest",
  "serde",
