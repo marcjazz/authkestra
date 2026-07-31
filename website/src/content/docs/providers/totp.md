@@ -11,7 +11,7 @@ To use TOTP, enable the `totp` feature in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-engine = { version = "0.2.5", features = ["totp"] }
+authkestra-engine = { version = "0.2", features = ["totp"] }
 ```
 
 ## Configuration

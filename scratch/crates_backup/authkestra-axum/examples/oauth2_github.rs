@@ -1,0 +1,117 @@
+//! # Axum GitHub OAuth2 Example
+//!
+//! This example demonstrates how to set up Engine with Axum for GitHub OAuth2 login.
+//!
+//! To run this example, you'll need:
+//! - `AUTHKESTRA_GITHUB_CLIENT_ID`
+//! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
+
+use authkestra::flow::{Engine, OAuth2Flow};
+use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
+use authkestra_engine::auth::SessionStore;
+use authkestra_engine::{AkWebAppEngine, SessionConfig};
+use authkestra_providers::github::GithubProvider;
+use axum::{
+    response::{IntoResponse, Json},
+    routing::get,
+    Router,
+};
+use serde_json::json;
+use std::sync::Arc;
+use tower_cookies::CookieManagerLayer;
+use tower_http::services::ServeDir;
+
+/// Engine state with support for session only.
+#[derive(Clone, AxumState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkWebAppEngine,
+}
+
+#[tokio::main]
+async fn main() {
+    // =========================================================================
+    // Initialize tracing subscriber for logging
+    // =========================================================================
+    // This allows the user to capture logs emitted by Engine via `tracing`.
+    // You can customize the log level by setting the `RUST_LOG` environment
+    // variable (e.g., `RUST_LOG=debug`, `RUST_LOG=authkestra=info,my_app=debug`).
+    // `tracing_subscriber::fmt::init()` installs a global default subscriber
+    // that formats logs to standard output.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
+    // Load environment variables from .env file
+    dotenvy::dotenv().ok();
+
+    let client_id = std::env::var("AUTHKESTRA_GITHUB_CLIENT_ID")
+        .expect("AUTHKESTRA_GITHUB_CLIENT_ID must be set");
+    let client_secret = std::env::var("AUTHKESTRA_GITHUB_CLIENT_SECRET")
+        .expect("AUTHKESTRA_GITHUB_CLIENT_SECRET must be set");
+    let redirect_uri = std::env::var("AUTHKESTRA_GITHUB_REDIRECT_URI")
+        .unwrap_or_else(|_| "http://localhost:3000/auth/github/callback".to_string());
+
+    // Support E2E tests pointing to a local mock server
+    let github_provider = match std::env::var("AUTHKESTRA_GITHUB_BASE_URL") {
+        Ok(base_url) => {
+            let api_url =
+                std::env::var("AUTHKESTRA_GITHUB_API_URL").unwrap_or_else(|_| base_url.clone());
+            GithubProvider::new(client_id, client_secret, redirect_uri).with_test_urls(
+                format!("{base_url}/login/oauth/authorize"),
+                format!("{base_url}/login/oauth/access_token"),
+                format!("{api_url}/user"),
+            )
+        }
+        Err(_) => GithubProvider::new(client_id, client_secret, redirect_uri),
+    };
+
+    // Session Store
+    // TIP: authkestra uses traits (like `SessionStore`) for storage.
+    // This makes it easy to swap out backends! You could easily replace `MemoryStore`
+    // with `SqlKvStore` or `RedisStore` simply by changing the struct instantiated here.
+    let session_store: Arc<dyn SessionStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::default());
+
+    let authkestra = Engine::builder()
+        .provider(OAuth2Flow::new(github_provider))
+        .session_store(session_store)
+        .session_config(SessionConfig {
+            secure: false,
+            ..Default::default()
+        })
+        .build();
+
+    let state = AppState {
+        auth: authkestra.clone(),
+    };
+
+    let app = Router::new()
+        .fallback_service(ServeDir::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/static"
+        )))
+        .route("/api/user", get(get_user))
+        .merge(authkestra.axum_router())
+        .layer(CookieManagerLayer::new())
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    println!("🚀 Axum GitHub OAuth2 running on http://localhost:3000");
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn get_user(session: Result<AuthSession, AxumError>) -> impl IntoResponse {
+    match session {
+        Ok(AuthSession(session)) => Json(json!({
+            "id": session.identity.external_id,
+            "username": session.identity.username,
+            "email": session.identity.email,
+            "provider": session.identity.provider_id,
+        })),
+        Err(_) => Json(json!({ "error": "Not authenticated" })),
+    }
+}
