@@ -32,12 +32,12 @@ http = "1"
 [dev-dependencies]
 
 
-authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
-authkestra-resource = { workspace = true }
-authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
-authkestra-oidc = { workspace = true }
-authkestra-op = { workspace = true, features = ["sqlx-sqlite"] }
-authkestra-macros = { workspace = true }
+authkestra-engine = { path = "../authkestra-engine", features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
+authkestra-resource = { path = "../authkestra-resource" }
+authkestra-providers = { path = "../authkestra-providers", features = ["github", "google", "discord"] }
+authkestra-oidc = { path = "../authkestra-oidc" }
+authkestra-op = { path = "../authkestra-op", features = ["sqlx-sqlite"] }
+authkestra-macros = { path = "../authkestra-macros" }
 dotenvy = "0.15"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 redis = { version = "0.27", features = ["tokio-comp"] }
