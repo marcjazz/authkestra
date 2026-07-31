@@ -53,13 +53,7 @@ captcha = []
 
 [dev-dependencies]
 
-authkestra = { workspace = true, features = ["full"] }
-authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
-authkestra-resource = { workspace = true }
-authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
-authkestra-oidc = { workspace = true }
-authkestra-op = { workspace = true, features = ["sqlx-sqlite"] }
-authkestra-macros = { workspace = true }
+
 dotenvy = "0.15"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 redis = { version = "0.27", features = ["tokio-comp"] }
