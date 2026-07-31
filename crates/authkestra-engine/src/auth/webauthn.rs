@@ -77,6 +77,10 @@ impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
         "webauthn"
     }
 
+    fn is_mfa_equivalent(&self) -> bool {
+        true
+    }
+
     async fn has_enrolled(&self, user_id: &str) -> Result<bool, AuthError> {
         let creds = self.store.get_credentials(user_id, "webauthn").await?;
         Ok(!creds.is_empty())

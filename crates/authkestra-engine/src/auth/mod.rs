@@ -115,6 +115,13 @@ pub trait AuthMethod: Send + Sync {
     async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
         Ok(false)
     }
+
+    /// Indicates whether this method provides multi-factor-equivalent security.
+    /// If true, users logging in with this method will not be prompted for an additional MFA step.
+    /// Default implementation returns false.
+    fn is_mfa_equivalent(&self) -> bool {
+        false
+    }
 }
 
 /// Configuration for an identity provider.

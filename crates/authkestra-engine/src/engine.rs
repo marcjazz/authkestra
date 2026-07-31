@@ -301,12 +301,12 @@ impl<S, T> Engine<S, T> {
 
         // Check if user has MFA enrolled
         let mut enrolled_methods = Vec::new();
-        for (name, method) in self.auth_methods.iter().chain(self.mfa_methods.iter()) {
-            if name == "password" {
+        for (name, m) in self.auth_methods.iter().chain(self.mfa_methods.iter()) {
+            if name == "password" || name == method_name {
                 continue;
             }
             if !enrolled_methods.contains(name)
-                && method
+                && m
                     .has_enrolled(&identity.external_id)
                     .await
                     .unwrap_or(false)
@@ -316,8 +316,8 @@ impl<S, T> Engine<S, T> {
         }
 
         // If this method was already an MFA method (e.g. WebAuthn primary), we don't prompt for MFA again.
-        // For now, if enrolled_methods is empty or if we used WebAuthn, we succeed.
-        if enrolled_methods.is_empty() || method_name != "password" {
+        // Or if the user has no other MFA methods enrolled.
+        if enrolled_methods.is_empty() || method.is_mfa_equivalent() {
             Ok(AuthResult::Success(identity))
         } else {
             // Issue MFA Token
