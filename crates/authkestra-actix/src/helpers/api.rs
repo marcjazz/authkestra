@@ -1,10 +1,7 @@
-#[cfg(any(feature = "session", feature = "token"))]
+#![allow(unused_imports)]
 use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
-#[cfg(feature = "session")]
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 use authkestra_engine::pkce::Pkce;
-#[cfg(not(feature = "session"))]
-use authkestra_engine::SessionConfig;
 use authkestra_engine::{state::OAuth2State, Engine, ErasedOAuthFlow, OAuth2Flow};
 #[allow(unused_imports)]
 use std::sync::Arc;
@@ -100,7 +97,7 @@ pub async fn handle_oauth_callback_erased(
     let cookie_name = "ak_state";
     let encrypted_state = req
         .cookie(cookie_name)
-        .map(|c| c.value().to_string())
+        .map(|c: Cookie| c.value().to_string())
         .ok_or_else(|| {
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
         })?;
@@ -175,7 +172,7 @@ pub async fn actix_login_handler<S, T>(
     let scopes_str = params.scope.clone().unwrap_or_default();
     let scopes: Vec<&str> = scopes_str
         .split(|c: char| [' ', ','].contains(&c))
-        .filter(|s| !s.is_empty())
+        .filter(|s: &&str| !s.is_empty())
         .collect();
 
     initiate_oauth_login_erased(
@@ -246,7 +243,7 @@ pub async fn logout(
 ) -> Result<HttpResponse, actix_web::Error> {
     let session_id = req
         .cookie(&config.cookie_name)
-        .map(|c| c.value().to_string());
+        .map(|c: Cookie| c.value().to_string());
 
     if let Some(id) = session_id {
         store
@@ -277,7 +274,7 @@ pub async fn handle_oauth_callback_jwt_erased(
 
     let encrypted_state = req
         .cookie(cookie_name)
-        .map(|c| c.value().to_string())
+        .map(|c: Cookie| c.value().to_string())
         .ok_or_else(|| {
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
         })?;

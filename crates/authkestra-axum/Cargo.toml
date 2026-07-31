@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "README.md"
 
 [dependencies]
-authkestra-engine = { workspace = true, optional = true }
+authkestra-engine = { workspace = true }
 authkestra-resource = { workspace = true, optional = true }
 authkestra-macros = { workspace = true, optional = true, features = ["axum"] }
 authkestra-op = { workspace = true, optional = true }

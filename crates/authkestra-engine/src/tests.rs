@@ -24,26 +24,6 @@ impl AuthMethod for MockAuthMethod {
     }
 }
 
-struct MockMfaEquivalentMethod;
-#[async_trait]
-impl AuthMethod for MockMfaEquivalentMethod {
-    fn name(&self) -> &str {
-        "mock_mfa_eq"
-    }
-    async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
-        Ok(Identity {
-            provider_id: "mock".to_string(),
-            external_id: "user123".to_string(),
-            email: Some("mock@example.com".to_string()),
-            username: Some("Mock User".to_string()),
-            attributes: HashMap::new(),
-        })
-    }
-    fn is_mfa_equivalent(&self) -> bool {
-        true
-    }
-}
-
 struct MockProvider;
 #[async_trait]
 impl Provider for MockProvider {
