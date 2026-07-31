@@ -12,6 +12,14 @@ pub struct DeviceAuthorizationRequest {
     pub client_id: Option<String>,
     /// The requested scope.
     pub scope: Option<String>,
+
+    // --- Client authentication fields ---
+    /// Client secret from the request body.
+    pub client_secret: Option<String>,
+    /// Client assertion for `private_key_jwt` authentication.
+    pub client_assertion: Option<String>,
+    /// Type of the client assertion, typically `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`.
+    pub client_assertion_type: Option<String>,
 }
 
 /// Response payload for a successful device authorization request.
@@ -48,22 +56,24 @@ pub async fn handle_device_authorization(
     config: &OpConfig,
     op_store: &dyn OpStore,
 ) -> Result<DeviceAuthorizationResponse, DeviceAuthorizationErrorResponse> {
-    let mut client_id = req.client_id.clone();
+    use crate::handlers::token::{authenticate_client, extract_credential, resolve_client_id};
 
-    // Try extract basic auth
-    if let Some(auth) = auth_header {
-        if let Some(stripped) = auth.strip_prefix("Basic ") {
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(stripped) {
-                if let Ok(creds) = String::from_utf8(decoded) {
-                    if let Some((id, _)) = creds.split_once(':') {
-                        client_id = Some(id.to_string());
-                    }
-                }
-            }
+    let credential = match extract_credential(
+        req.client_secret.as_deref(),
+        req.client_assertion.as_deref(),
+        req.client_assertion_type.as_deref(),
+        auth_header,
+    ) {
+        Ok(cred) => cred,
+        Err(e) => {
+            return Err(DeviceAuthorizationErrorResponse {
+                error: e.error,
+                error_description: e.error_description,
+            });
         }
-    }
+    };
 
-    let client_id = match client_id {
+    let client_id = match resolve_client_id(req.client_id.as_deref(), &credential) {
         Some(id) => id,
         None => {
             return Err(DeviceAuthorizationErrorResponse {
@@ -82,6 +92,13 @@ pub async fn handle_device_authorization(
             });
         }
     };
+
+    if let Err(_e) = authenticate_client(&client, &credential, config, op_store).await {
+        return Err(DeviceAuthorizationErrorResponse {
+            error: "invalid_client".to_string(),
+            error_description: "Client authentication failed".to_string(),
+        });
+    }
 
     if !client.allows_grant_type(&crate::client::GrantType::DeviceCode) {
         return Err(DeviceAuthorizationErrorResponse {
@@ -192,6 +209,9 @@ mod tests {
         let req = DeviceAuthorizationRequest {
             client_id: Some("device_client".to_string()),
             scope: Some("openid".to_string()),
+            client_secret: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
 
         let res = handle_device_authorization(
