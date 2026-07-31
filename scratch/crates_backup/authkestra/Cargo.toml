@@ -1,0 +1,71 @@
+[package]
+exclude.workspace = true
+name = "authkestra"
+version = "0.2.4"
+edition.workspace = true
+description = "A modular authentication framework for Rust"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+
+[dependencies]
+authkestra-engine = { workspace = true }
+authkestra-oidc = { workspace = true, optional = true }
+authkestra-axum = { workspace = true, optional = true }
+authkestra-actix = { workspace = true, optional = true }
+authkestra-providers = { workspace = true, optional = true }
+authkestra-resource = { workspace = true, optional = true }
+
+[dev-dependencies]
+reqwest = { version = "0.13", features = ["json"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+wiremock = "0.6"
+
+[features]
+default = []
+full = ["session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
+
+# Core features
+
+session = ["authkestra-engine/session"]
+token = ["authkestra-engine/token"]
+oidc = ["dep:authkestra-oidc"]
+resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
+
+# Web frameworks
+axum = ["dep:authkestra-axum", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
+actix = ["dep:authkestra-actix", "authkestra-actix/session", "authkestra-actix/token", "authkestra-actix/resource"]
+
+# Providers
+github = ["authkestra-providers/github"]
+google = ["authkestra-providers/google"]
+discord = ["authkestra-providers/discord"]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[[test]]
+name = "typestate_tests"
+required-features = ["full"]
+

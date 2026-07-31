@@ -11,7 +11,7 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 # Use the facade with the features you need
-authkestra = { version = "0.2.4", features = ["axum", "github"] }
+authkestra = { version = "0.2", features = ["axum", "github"] }
 ```
 
 For advanced users, individual crates are still available and can be used independently if preferred.
