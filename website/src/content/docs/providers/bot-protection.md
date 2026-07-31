@@ -11,7 +11,7 @@ Enable the `captcha` feature in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-engine = { version = "0.2.5", features = ["captcha"] }
+authkestra-engine = { version = "0.2", features = ["captcha"] }
 ```
 
 ## Configuration

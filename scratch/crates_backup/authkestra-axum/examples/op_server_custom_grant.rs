@@ -1,0 +1,280 @@
+//! # Axum OP Server with Custom Grant Type Example
+//!
+//! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Axum.
+use authkestra_engine::store::KvStore;
+
+use authkestra_axum::OpExt;
+use authkestra_engine::store::memory::MemoryStore;
+use authkestra_op::client::ClientStore;
+use authkestra_op::code::AuthorizationCodeStore;
+use authkestra_op::device::DeviceCodeStore;
+use authkestra_op::refresh::RefreshTokenStore;
+use authkestra_op::store::OpStore;
+
+use authkestra_engine::{AkEngine, TokenManager};
+use authkestra_op::{client::ClientRegistration, config::OpConfig};
+use axum::Router;
+
+use std::sync::Arc;
+
+use authkestra_axum::AxumState;
+
+#[derive(Clone, AxumState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkEngine,
+
+    #[authkestra(store)]
+    op_store: Arc<dyn authkestra_op::OpStore>,
+
+    #[authkestra(store)]
+    config: OpConfig,
+}
+
+// -------------------------------------------------------------------------
+// CUSTOM GRANT TYPE EXAMPLE
+// We wrap `CompositeOpStore` so we can override `handle_custom_grant`.
+// -------------------------------------------------------------------------
+struct MyCustomOpStore<C, A, R, D> {
+    inner: authkestra_op::store::CompositeOpStore<C, A, R, D>,
+}
+
+#[async_trait::async_trait]
+impl<C: ClientStore + Send + Sync, A: Send + Sync, R: Send + Sync, D: Send + Sync> ClientStore
+    for MyCustomOpStore<C, A, R, D>
+{
+    async fn find_client(
+        &self,
+        client_id: &str,
+    ) -> Result<Option<authkestra_op::client::ClientRegistration>, authkestra_op::error::OpError>
+    {
+        self.inner.find_client(client_id).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<C: Send + Sync, A: AuthorizationCodeStore + Send + Sync, R: Send + Sync, D: Send + Sync>
+    AuthorizationCodeStore for MyCustomOpStore<C, A, R, D>
+{
+    async fn store_code(
+        &self,
+        code: authkestra_op::code::AuthorizationCode,
+    ) -> Result<(), authkestra_op::error::OpError> {
+        self.inner.store_code(code).await
+    }
+    async fn consume_code(
+        &self,
+        code: &str,
+    ) -> Result<Option<authkestra_op::code::AuthorizationCode>, authkestra_op::error::OpError> {
+        self.inner.consume_code(code).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<C: Send + Sync, A: Send + Sync, R: RefreshTokenStore + Send + Sync, D: Send + Sync>
+    RefreshTokenStore for MyCustomOpStore<C, A, R, D>
+{
+    async fn store_token(
+        &self,
+        token: authkestra_op::refresh::RefreshToken,
+    ) -> Result<(), authkestra_op::error::OpError> {
+        self.inner.store_token(token).await
+    }
+    async fn consume_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<authkestra_op::refresh::RefreshToken>, authkestra_op::error::OpError> {
+        self.inner.consume_token(token).await
+    }
+    async fn get_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<authkestra_op::refresh::RefreshToken>, authkestra_op::error::OpError> {
+        self.inner.get_token(token).await
+    }
+    async fn revoke_token(&self, token: &str) -> Result<(), authkestra_op::error::OpError> {
+        self.inner.revoke_token(token).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<C: Send + Sync, A: Send + Sync, R: Send + Sync, D: DeviceCodeStore + Send + Sync>
+    DeviceCodeStore for MyCustomOpStore<C, A, R, D>
+{
+    async fn store_device_code(
+        &self,
+        session: authkestra_op::device::DeviceCodeSession,
+    ) -> Result<(), authkestra_op::error::OpError> {
+        self.inner.store_device_code(session).await
+    }
+    async fn get_device_code(
+        &self,
+        device_code: &str,
+    ) -> Result<Option<authkestra_op::device::DeviceCodeSession>, authkestra_op::error::OpError>
+    {
+        self.inner.get_device_code(device_code).await
+    }
+    async fn get_by_user_code(
+        &self,
+        user_code: &str,
+    ) -> Result<Option<authkestra_op::device::DeviceCodeSession>, authkestra_op::error::OpError>
+    {
+        self.inner.get_by_user_code(user_code).await
+    }
+    async fn update_device_code(
+        &self,
+        session: authkestra_op::device::DeviceCodeSession,
+    ) -> Result<(), authkestra_op::error::OpError> {
+        self.inner.update_device_code(session).await
+    }
+    async fn delete_device_code(
+        &self,
+        device_code: &str,
+    ) -> Result<(), authkestra_op::error::OpError> {
+        self.inner.delete_device_code(device_code).await
+    }
+    async fn consume_device_code(
+        &self,
+        device_code: &str,
+    ) -> Result<Option<authkestra_op::device::DeviceCodeSession>, authkestra_op::error::OpError>
+    {
+        self.inner.consume_device_code(device_code).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<
+        C: ClientStore + Send + Sync,
+        A: AuthorizationCodeStore + Send + Sync,
+        R: RefreshTokenStore + Send + Sync,
+        D: DeviceCodeStore + Send + Sync,
+    > OpStore for MyCustomOpStore<C, A, R, D>
+{
+    async fn handle_custom_grant(
+        &self,
+        grant_type: &str,
+        _req: authkestra_op::handlers::token::TokenRequest,
+        client_id: String,
+        _client: authkestra_op::client::ClientRegistration,
+        _config: &authkestra_op::config::OpConfig,
+        tokens: &authkestra_engine::token::TokenManager,
+    ) -> Result<
+        authkestra_op::handlers::token::TokenResponse,
+        authkestra_op::handlers::token::TokenErrorResponse,
+    > {
+        if grant_type == "urn:example:custom" {
+            // Safe to issue here: the framework already verified this client is authorized
+            // for "urn:example:custom" (via `client.allows_grant_type`) before dispatching
+            // to this method, so no extra grant-type check is needed.
+            //
+            // In a real implementation you would validate the custom payload here
+            // (e.g. a signed assertion, a license key, a device attestation, etc.)
+            // before issuing the token. This demo intentionally skips that step because
+            // it only exists to illustrate the wiring pattern, not a real credential exchange.
+            let access_token = tokens
+                .issue_client_token(&client_id, 3600, None, None)
+                .unwrap();
+            return Ok(authkestra_op::handlers::token::TokenResponse {
+                access_token,
+                token_type: "Bearer".to_string(),
+                expires_in: 3600,
+                refresh_token: None,
+                id_token: None,
+                scope: None,
+            });
+        }
+
+        Err(authkestra_op::handlers::token::TokenErrorResponse {
+            error: "unsupported_grant_type".to_string(),
+            error_description: "Unsupported custom grant".to_string(),
+        })
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let token_manager = Arc::new(TokenManager::new(
+        b"my-super-secret-key-that-is-32bytes-long",
+        Some("issuer".to_string()),
+    ));
+
+    let clients = MemoryStore::new();
+    clients
+        .set(
+            "test-client",
+            ClientRegistration {
+                client_id: "test-client".to_string(),
+                client_secret_hash: None,
+                redirect_uris: vec!["http://localhost:3000/callback".to_string()],
+                require_pkce: true,
+                scopes: vec!["openid".to_string(), "profile".to_string()],
+                grant_types: vec![
+                    authkestra_op::client::GrantType::AuthorizationCode,
+                    authkestra_op::client::GrantType::Custom("urn:example:custom".to_string()),
+                ],
+                allowed_audiences: vec![],
+                token_endpoint_auth_method: None,
+                jwks: None,
+            },
+            std::time::Duration::from_secs(31536000),
+        )
+        .await
+        .unwrap();
+
+    let auth_codes = MemoryStore::new();
+    let refresh_tokens = MemoryStore::new();
+    let device_codes = MemoryStore::new();
+
+    let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(MyCustomOpStore {
+        inner: authkestra_op::store::CompositeOpStore::new(
+            clients,
+            auth_codes,
+            refresh_tokens,
+            device_codes,
+        ),
+    });
+
+    // TIP: authkestra uses traits (like `SessionStore`) for storage.
+    // This makes it easy to swap out backends! You could easily replace `MemoryStore`
+    // with `SqlKvStore` or `RedisStore` simply by changing the struct instantiated here.
+    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
+        Arc::new(authkestra_engine::store::memory::MemoryStore::new());
+    let session_config = authkestra_engine::SessionConfig {
+        cookie_name: "authkestra_sid".to_string(),
+        ..Default::default()
+    };
+
+    let auth = authkestra_engine::Engine::builder()
+        .session_store(session_store)
+        .session_config(session_config)
+        .token_manager(token_manager)
+        .build();
+
+    let state = AppState {
+        auth,
+        op_store,
+        config: OpConfig {
+            issuer: "http://localhost:3000".to_string(),
+            scopes_supported: vec![
+                "openid".to_string(),
+                "profile".to_string(),
+                "email".to_string(),
+            ],
+            response_types_supported: vec!["code".to_string()],
+            grant_types_supported: vec!["authorization_code".to_string()],
+            id_token_signing_alg: "RS256".to_string(),
+            access_token_ttl_secs: 3600,
+            authorization_code_ttl_secs: 600,
+            device_code_ttl_secs: 600,
+            token_exchange_enabled: true,
+        },
+    };
+
+    let app = Router::new()
+        .merge(state.op_axum_router())
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    println!("🚀 Axum OP Server running on http://localhost:8080");
+    axum::serve(listener, app).await.unwrap();
+}

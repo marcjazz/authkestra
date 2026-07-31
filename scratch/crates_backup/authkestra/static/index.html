@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authkestra Example</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+        .card { border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px; background: #f9f9f9; }
+        .btn { display: inline-block; background: #007bff; color: white; padding: 0.5rem 1rem; text-decoration: none; border-radius: 4px; }
+        .btn:hover { background: #0056b3; }
+        pre { background: #eee; padding: 1rem; overflow-x: auto; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Authkestra Example</h1>
+    <div id="app" class="card">
+        <p>Loading...</p>
+    </div>
+
+    <script>
+        async function checkStatus() {
+            try {
+                const res = await fetch('/api/user');
+                const app = document.getElementById('app');
+                if (res.ok) {
+                    const user = await res.json();
+                    app.innerHTML = `
+                        <h2>Welcome, ${user.id}!</h2>
+                        <p>You are successfully authenticated.</p>
+                        <h3>User Data:</h3>
+                        <pre>${JSON.stringify(user, null, 2)}</pre>
+                        <a href="/auth/logout" class="btn">Logout</a>
+                    `;
+                } else {
+                    app.innerHTML = `
+                        <h2>Not Authenticated</h2>
+                        <p>Please log in to continue.</p>
+                        <div id="login-methods">
+                             <a href="/auth/login" class="btn">Login</a>
+                        </div>
+                    `;
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+        checkStatus();
+    </script>
+</body>
+</html>
