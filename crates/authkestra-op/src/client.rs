@@ -57,6 +57,33 @@ impl<'de> Deserialize<'de> for GrantType {
     }
 }
 
+/// The single client-authentication method a client is bound to at the token
+/// endpoint (OIDC Core §9 / RFC 7591 `token_endpoint_auth_method`).
+///
+/// A registration names **one** method and the token endpoint accepts only
+/// that one. This is not pedantry: a client that may authenticate *either*
+/// with a shared secret *or* with a signed assertion is only ever as strong
+/// as the weaker of the two, so an attacker holding the leaked secret of a
+/// `private_key_jwt` client could simply present it instead and never touch
+/// the private key. Binding the registration to one method removes that
+/// downgrade entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenEndpointAuthMethod {
+    /// Shared secret presented in the HTTP `Authorization: Basic` header.
+    ClientSecretBasic,
+    /// Shared secret presented as the `client_secret` form field.
+    ClientSecretPost,
+    /// A JWT assertion signed by the client's private key and verified
+    /// against [`ClientRegistration::jwks`] (RFC 7523 §2.2). See
+    /// [`crate::client_assertion`].
+    PrivateKeyJwt,
+    /// No client authentication at all — public clients only, where PKCE
+    /// rather than a credential is what protects the exchange.
+    #[serde(rename = "none")]
+    NoAuth,
+}
+
 /// A registered OAuth2/OIDC client application.
 ///
 /// `redirect_uris` are matched **exactly** (no prefix/wildcard matching) —
@@ -82,6 +109,27 @@ pub struct ClientRegistration {
     /// during token exchange.
     #[serde(default)]
     pub allowed_audiences: Vec<String>,
+    /// The client-authentication method this client is bound to at `/token`.
+    ///
+    /// `None` means the registration predates this field. Such a client keeps
+    /// exactly the historical behaviour — a shared secret if
+    /// `client_secret_hash` is set, no authentication otherwise — and is
+    /// **never** accepted via `private_key_jwt`, which has to be opted into
+    /// explicitly. Enforcement lives in `handlers::token`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint_auth_method: Option<TokenEndpointAuthMethod>,
+    /// The client's public keys as an inline JWK Set (`{"keys": [...]}`) —
+    /// the public half of the keypair used for `private_key_jwt`. There is
+    /// deliberately no `jwks_uri` counterpart; see the module docs of
+    /// [`crate::client_assertion`] for why.
+    ///
+    /// Kept as raw JSON rather than a typed `JwkSet` for the same reason
+    /// `attestation::EnrolmentChallenge::public_jwk` is: a typed parse
+    /// silently drops members it has no field for — including a smuggled
+    /// private `d` — so the raw value is re-validated from scratch at every
+    /// use through `attestation::parse_public_jwk`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jwks: Option<serde_json::Value>,
 }
 
 impl ClientRegistration {
@@ -171,6 +219,8 @@ mod tests {
             scopes: vec![],
             require_pkce: false,
             allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
         };
 
         assert!(client.verify_secret("super_secret"));
@@ -193,6 +243,8 @@ mod tests {
             scopes: vec![],
             require_pkce: false,
             allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
         };
 
         assert!(!client.verify_secret("wrong_secret"));
@@ -208,6 +260,8 @@ mod tests {
             scopes: vec![],
             require_pkce: false,
             allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
         };
 
         assert!(!client.verify_secret("some_secret"));
@@ -227,6 +281,8 @@ mod tests {
             scopes: vec![],
             require_pkce: false,
             allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
         };
 
         let serialized = serde_json::to_string(&client).unwrap();

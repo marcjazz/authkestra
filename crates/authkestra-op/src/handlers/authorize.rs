@@ -254,6 +254,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -299,6 +301,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -346,6 +350,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: true,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -391,6 +397,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: true,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -436,6 +444,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: true,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -498,6 +508,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -564,6 +576,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false, // PKCE is optional
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )

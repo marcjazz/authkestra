@@ -90,6 +90,16 @@ macro_rules! impl_opstore_sql {
                         grant_types: grant_types.0,
                         scopes: scopes.0,
                         allowed_audiences: allowed_audiences.0,
+                        // Not persisted yet: adding `token_endpoint_auth_method`
+                        // and `jwks` columns needs an ALTER-based migration, and
+                        // this store's `migrate` is CREATE TABLE IF NOT EXISTS —
+                        // it would silently leave existing deployments with a
+                        // SELECT naming columns their table does not have. Until
+                        // that lands, a SqlxOpStore-backed client behaves exactly
+                        // as it does today (secret or public) and cannot use
+                        // private_key_jwt.
+                        token_endpoint_auth_method: None,
+                        jwks: None,
                     }))
                 } else {
                     Ok(None)

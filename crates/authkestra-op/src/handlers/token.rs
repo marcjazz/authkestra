@@ -1,5 +1,9 @@
-use crate::client::{ClientRegistration, GrantType};
+use crate::client::{ClientRegistration, GrantType, TokenEndpointAuthMethod};
+use crate::client_assertion::{
+    peek_client_assertion_subject, verify_client_assertion, CLIENT_ASSERTION_TYPE_JWT_BEARER,
+};
 use crate::config::OpConfig;
+use crate::error::OpError;
 use crate::refresh::RefreshToken;
 use crate::store::OpStore;
 use authkestra_engine::token::TokenManager;
@@ -43,6 +47,15 @@ pub struct TokenRequest {
     pub requested_token_type: Option<String>,
     /// The logical name of the target service where the client intends to use the requested security token.
     pub audience: Option<String>,
+
+    // Asymmetric client authentication (RFC 7523 §2.2)
+    /// The JWT the client signed with its own private key to authenticate
+    /// itself. See [`crate::client_assertion`].
+    pub client_assertion: Option<String>,
+    /// Must be
+    /// [`crate::client_assertion::CLIENT_ASSERTION_TYPE_JWT_BEARER`] when
+    /// `client_assertion` is present.
+    pub client_assertion_type: Option<String>,
 }
 
 /// Success response for the token endpoint.
@@ -89,24 +102,10 @@ pub async fn handle_token(
 ) -> Result<TokenResponse, TokenErrorResponse> {
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
 
-    // 0. Extract client credentials
-    let mut req_client_id = req.client_id.clone();
-    let mut req_client_secret = req.client_secret.clone();
+    // 0. Work out which credential — if any — the request presents.
+    let credential = extract_credential(&req, auth_header)?;
 
-    if let Some(auth) = auth_header {
-        if let Some(stripped) = auth.strip_prefix("Basic ") {
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(stripped) {
-                if let Ok(creds) = String::from_utf8(decoded) {
-                    if let Some((id, secret)) = creds.split_once(':') {
-                        req_client_id = Some(id.to_string());
-                        req_client_secret = Some(secret.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    let client_id = match req_client_id {
+    let client_id = match resolve_client_id(&req, &credential) {
         Some(id) => id,
         None => {
             tracing::warn!("Missing client_id in token request");
@@ -136,16 +135,15 @@ pub async fn handle_token(
         }
     };
 
-    // Verify secret if provided (required for confidential clients)
-    if client.client_secret_hash.is_some() {
-        let provided_secret = req_client_secret.as_deref().unwrap_or("");
-        if !client.verify_secret(provided_secret) {
-            tracing::warn!(client_id = %client_id, "Invalid client secret");
-            return Err(TokenErrorResponse {
-                error: "invalid_client".to_string(),
-                error_description: "Client authentication failed".to_string(),
-            });
-        }
+    // 2. Client authentication, against the one method this client is bound
+    //    to. A credential of a different kind is a failure and never a
+    //    fallback — see `authenticate_client`.
+    if let Err(e) = authenticate_client(&client, &credential, config, op_store).await {
+        tracing::warn!(client_id = %client_id, error = %e, "Client authentication failed");
+        return Err(TokenErrorResponse {
+            error: "invalid_client".to_string(),
+            error_description: "Client authentication failed".to_string(),
+        });
     }
 
     match req.grant_type.as_str() {
@@ -186,6 +184,211 @@ pub async fn handle_token(
                     tokens,
                 )
                 .await
+        }
+    }
+}
+
+/// The one credential a token request presents, and where it came from.
+///
+/// One value rather than a handful of `Option`s, so that "presented two
+/// credentials" is a case the code has to answer explicitly instead of an
+/// undocumented precedence order — and so the transport (`Basic` header vs
+/// request body) survives long enough to be checked against what the client
+/// registered.
+#[derive(Debug)]
+enum PresentedCredential {
+    /// A shared secret in the `Authorization: Basic` header. Carries the
+    /// `client_id` too, since that header is where it came from.
+    SecretBasic { client_id: String, secret: String },
+    /// A shared secret in the `client_secret` form field.
+    SecretPost { secret: String },
+    /// A JWT assertion signed by the client's own private key (RFC 7523).
+    Assertion(String),
+    /// No credential at all: a public client, or an unauthenticated request.
+    NoCredential,
+}
+
+/// Extracts the credential the request presents, refusing more than one.
+///
+/// RFC 6749 §2.3 forbids a client from using more than one authentication
+/// method in a single request, and RFC 7521 §4.2 repeats it for assertions.
+/// Accepting several and picking a winner by precedence is exactly how a
+/// downgrade slips in — an attacker holding a leaked secret appends it to a
+/// request and the weaker credential wins — so this is a hard error.
+///
+/// Note that `client_id` is not a credential: sending it in the body
+/// alongside a `Basic` header, or alongside an assertion, is fine.
+fn extract_credential(
+    req: &TokenRequest,
+    auth_header: Option<&str>,
+) -> Result<PresentedCredential, TokenErrorResponse> {
+    let basic = auth_header
+        .and_then(|auth| auth.strip_prefix("Basic "))
+        .and_then(|stripped| {
+            base64::engine::general_purpose::STANDARD
+                .decode(stripped)
+                .ok()
+        })
+        .and_then(|decoded| String::from_utf8(decoded).ok())
+        .and_then(|creds| {
+            creds
+                .split_once(':')
+                .map(|(id, secret)| (id.to_string(), secret.to_string()))
+        });
+
+    // An empty `client_secret=` form field is not a presented credential; some
+    // HTTP clients emit one for an absent value.
+    let post = req.client_secret.clone().filter(|s| !s.is_empty());
+
+    let assertion = match req.client_assertion.as_ref() {
+        Some(assertion) => match req.client_assertion_type.as_deref() {
+            Some(CLIENT_ASSERTION_TYPE_JWT_BEARER) => Some(assertion.clone()),
+            _ => {
+                tracing::warn!(
+                    "client_assertion presented with a missing or unsupported \
+                     client_assertion_type"
+                );
+                return Err(TokenErrorResponse {
+                    error: "invalid_request".to_string(),
+                    error_description: format!(
+                        "client_assertion_type must be {CLIENT_ASSERTION_TYPE_JWT_BEARER}"
+                    ),
+                });
+            }
+        },
+        None => None,
+    };
+
+    let presented =
+        u8::from(basic.is_some()) + u8::from(post.is_some()) + u8::from(assertion.is_some());
+    if presented > 1 {
+        tracing::warn!(
+            presented,
+            "token request presents more than one client authentication method"
+        );
+        return Err(TokenErrorResponse {
+            error: "invalid_request".to_string(),
+            error_description: "Only one client authentication method may be used per request"
+                .to_string(),
+        });
+    }
+
+    Ok(match (basic, post, assertion) {
+        (Some((client_id, secret)), _, _) => PresentedCredential::SecretBasic { client_id, secret },
+        (_, Some(secret), _) => PresentedCredential::SecretPost { secret },
+        (_, _, Some(assertion)) => PresentedCredential::Assertion(assertion),
+        (None, None, None) => PresentedCredential::NoCredential,
+    })
+}
+
+/// Works out which client the request claims to be.
+///
+/// With an assertion and no `client_id` parameter — which RFC 7521 §4.2 makes
+/// optional — the `sub` is read out of the *unverified* assertion. That is
+/// safe because it only chooses which registration to verify against: the
+/// assertion must then be signed by that client's registered key, and its
+/// `iss`/`sub` re-checked against that client's `client_id`. Naming someone
+/// else's `client_id` here just picks the key the forgery will fail against.
+fn resolve_client_id(req: &TokenRequest, credential: &PresentedCredential) -> Option<String> {
+    match credential {
+        PresentedCredential::SecretBasic { client_id, .. } => Some(client_id.clone()),
+        PresentedCredential::Assertion(assertion) => req
+            .client_id
+            .clone()
+            .or_else(|| peek_client_assertion_subject(assertion)),
+        _ => req.client_id.clone(),
+    }
+}
+
+/// Authenticates the client against the single method its registration names.
+///
+/// The shape of this match is the security property: a registration binds one
+/// method, and a credential of any other kind is rejected outright rather than
+/// verified on its own merits. Without that, a `private_key_jwt` client whose
+/// (unused, perhaps long-forgotten) secret leaked could be impersonated with
+/// that secret, and a `client_secret_*` client with a stale registered key
+/// could be impersonated with an assertion — a downgrade in both directions.
+///
+/// `token_endpoint_auth_method: None` is the pre-existing behaviour for
+/// registrations that predate the field, preserved exactly: a stored secret
+/// hash means a secret is required (from either transport, since those
+/// registrations never said which), and no stored hash means no client
+/// authentication. Such a registration is never accepted via
+/// `private_key_jwt` — asymmetric authentication has to be opted into.
+async fn authenticate_client(
+    client: &ClientRegistration,
+    credential: &PresentedCredential,
+    config: &OpConfig,
+    op_store: &dyn OpStore,
+) -> Result<(), OpError> {
+    use PresentedCredential as Cred;
+    use TokenEndpointAuthMethod as Method;
+
+    match (client.token_endpoint_auth_method, credential) {
+        (Some(Method::PrivateKeyJwt), Cred::Assertion(assertion)) => {
+            // RFC 7523 §3 accepts the token endpoint URL as `aud`; OIDC Core
+            // §9 also allows the issuer identifier, and real clients emit
+            // both.
+            let verified = verify_client_assertion(
+                assertion,
+                client,
+                &[config.token_endpoint(), config.issuer.clone()],
+            )?;
+
+            // Spending the `jti` is what turns a captured assertion from a
+            // bearer credential valid for its whole lifetime into a
+            // single-use one.
+            if !op_store
+                .record_client_assertion_jti(&verified.jti, verified.expires_at)
+                .await?
+            {
+                tracing::warn!(
+                    client_id = %client.client_id,
+                    "client assertion jti has already been spent — replay refused"
+                );
+                return Err(OpError::ClientAssertionReplayed);
+            }
+
+            tracing::info!(
+                client_id = %client.client_id,
+                "client authenticated via private_key_jwt"
+            );
+            Ok(())
+        }
+        (Some(Method::ClientSecretBasic), Cred::SecretBasic { secret, .. })
+        | (Some(Method::ClientSecretPost), Cred::SecretPost { secret }) => {
+            if client.verify_secret(secret) {
+                Ok(())
+            } else {
+                Err(OpError::InvalidClientCredentials)
+            }
+        }
+        (Some(Method::NoAuth), Cred::NoCredential) => Ok(()),
+
+        // Registered for one method, presenting another — including the right
+        // secret over the wrong transport, which OIDC Core §9 treats as two
+        // distinct methods.
+        (Some(_), _) => Err(OpError::AuthMethodNotPermitted),
+
+        // --- Registrations predating `token_endpoint_auth_method` ---
+        (None, Cred::Assertion(_)) => Err(OpError::AuthMethodNotPermitted),
+        (None, Cred::SecretBasic { secret, .. }) | (None, Cred::SecretPost { secret }) => {
+            if client.client_secret_hash.is_none() {
+                // Public client: a secret it never registered is ignored, as
+                // it always has been.
+                Ok(())
+            } else if client.verify_secret(secret) {
+                Ok(())
+            } else {
+                Err(OpError::InvalidClientCredentials)
+            }
+        }
+        (None, Cred::NoCredential) => {
+            if client.client_secret_hash.is_some() {
+                Err(OpError::InvalidClientCredentials)
+            } else {
+                Ok(())
+            }
         }
     }
 }
@@ -978,6 +1181,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
         let clients = authkestra_engine::store::memory::MemoryStore::<
             crate::client::ClientRegistration,
@@ -993,6 +1198,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1036,6 +1243,8 @@ mod tests {
                     scopes: vec!["openid".to_string()],
                     require_pkce: true,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1080,6 +1289,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
 
         let res = handle_token(
@@ -1115,6 +1326,8 @@ mod tests {
                     scopes: vec!["openid".to_string()],
                     require_pkce: true,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1154,6 +1367,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
         let res = handle_token(
             req,
@@ -1188,6 +1403,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1227,6 +1444,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
         let res = handle_token(
             req,
@@ -1261,6 +1480,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: true,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1300,6 +1521,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
         let res = handle_token(
             req,
@@ -1334,6 +1557,8 @@ mod tests {
                     scopes: vec!["custom".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1355,6 +1580,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
         let res = handle_token(
             req,
@@ -1389,6 +1616,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1423,6 +1652,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
         let res = handle_token(
             req,
@@ -1461,6 +1692,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         }
     }
 
@@ -1485,6 +1718,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1530,6 +1765,8 @@ mod tests {
                     scopes: vec!["scopeA".to_string(), "scopeC".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1576,6 +1813,8 @@ mod tests {
                     scopes: vec!["scopeB".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1619,6 +1858,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1663,6 +1904,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1707,6 +1950,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1751,6 +1996,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1795,6 +2042,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec!["serviceA".to_string()],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1843,6 +2092,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec!["serviceA".to_string()],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1887,6 +2138,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1940,6 +2193,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -1981,6 +2236,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
 
         let clients = authkestra_engine::store::memory::MemoryStore::<
@@ -1997,6 +2254,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -2040,6 +2299,8 @@ mod tests {
             actor_token_type: None,
             requested_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
         };
 
         let clients = authkestra_engine::store::memory::MemoryStore::<
@@ -2057,6 +2318,8 @@ mod tests {
                     scopes: vec![],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -2084,3 +2347,6 @@ mod tests {
 
 #[cfg(test)]
 mod device_tests;
+
+#[cfg(test)]
+mod client_auth_tests;
