@@ -1,11 +1,7 @@
-#[cfg(any(feature = "session", feature = "token"))]
-use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
-#[cfg(feature = "session")]
+use actix_web::{cookie::Cookie, http::header, web, HttpResponse};
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 use authkestra_engine::pkce::Pkce;
-#[cfg(not(feature = "session"))]
-use authkestra_engine::SessionConfig;
-use authkestra_engine::{state::OAuth2State, Engine, ErasedOAuthFlow, OAuth2Flow};
+use authkestra_engine::{Engine, ErasedOAuthFlow, OAuth2Flow};
 #[allow(unused_imports)]
 use std::sync::Arc;
 
@@ -175,7 +171,7 @@ pub async fn actix_login_handler<S, T>(
     let scopes_str = params.scope.clone().unwrap_or_default();
     let scopes: Vec<&str> = scopes_str
         .split(|c: char| [' ', ','].contains(&c))
-        .filter(|s| !s.is_empty())
+        .filter(|s: &&str| !s.is_empty())
         .collect();
 
     initiate_oauth_login_erased(
