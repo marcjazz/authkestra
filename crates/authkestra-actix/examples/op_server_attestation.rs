@@ -16,15 +16,21 @@ use actix_web::{web, App, HttpServer};
 use async_trait::async_trait;
 use authkestra_actix::op::{
     actix_complete_challenge_handler, actix_enrol_start_handler, actix_reissue_start_handler,
+    OpActixExt,
 };
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::TokenManager;
+use authkestra_engine::Engine;
 use authkestra_op::attestation::{
-    AttestationConfig, EnrolmentChallenge, EnrolmentChallengeStore, PrincipalType,
-    SecondFactorProof, SecondFactorVerifier,
+    AttestationConfig, EnrolmentChallenge, PrincipalType, SecondFactorProof, SecondFactorVerifier,
 };
+use authkestra_op::client::ClientRegistration;
+use authkestra_op::code::AuthorizationCode;
+use authkestra_op::device::DeviceCodeSession;
+use authkestra_op::refresh::RefreshToken;
+use authkestra_op::store::CompositeOpStore;
+use authkestra_op::Op;
 use authkestra_op::OpError;
-use base64::Engine;
+use base64::Engine as Base64Engine;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use p256::ecdsa::SigningKey;
 use p256::elliptic_curve::{JwkEcKey, PublicKey};
@@ -60,18 +66,42 @@ impl SecondFactorVerifier for DemoOtpVerifier {
 async fn main() -> std::io::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let challenges: Arc<dyn EnrolmentChallengeStore> =
-        Arc::new(MemoryStore::<EnrolmentChallenge>::new());
-    let second_factor: Arc<dyn SecondFactorVerifier> = Arc::new(DemoOtpVerifier);
-    let tokens = Arc::new(TokenManager::new(
-        b"example-only-32-byte-secret-key",
-        Some("https://op.example.test".to_string()),
+    let engine = Engine::builder()
+        .session_store(Arc::new(MemoryStore::<
+            authkestra_engine::auth::session::Session,
+        >::new()))
+        .jwt_secret(b"example-only-32-byte-secret-key")
+        .build();
+
+    let op_store = Arc::new(CompositeOpStore::new(
+        MemoryStore::<ClientRegistration>::new(),
+        MemoryStore::<AuthorizationCode>::new(),
+        MemoryStore::<RefreshToken>::new(),
+        MemoryStore::<DeviceCodeSession>::new(),
     ));
-    let attestation_config = AttestationConfig {
-        attestation_ttl_secs: 86_400,
-        attestation_reissue_after_secs: 43_200,
-        challenge_ttl_secs: 300,
-    };
+
+    let op = Op::builder()
+        .engine(engine)
+        .config(authkestra_op::config::OpConfig {
+            issuer: "https://op.example.test".to_string(),
+            scopes_supported: vec![],
+            response_types_supported: vec![],
+            grant_types_supported: vec![],
+            id_token_signing_alg: "ES256".to_string(),
+            authorization_code_ttl_secs: 600,
+            access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 600,
+            token_exchange_enabled: false,
+        })
+        .store(op_store)
+        .challenge_store(Arc::new(MemoryStore::<EnrolmentChallenge>::new()))
+        .second_factor_verifier(Arc::new(DemoOtpVerifier))
+        .attestation_config(AttestationConfig {
+            attestation_ttl_secs: 86_400,
+            attestation_reissue_after_secs: 43_200,
+            challenge_ttl_secs: 300,
+        })
+        .build();
 
     // Fixed port: unlike Axum's `TcpListener::bind`, `HttpServer::bind`
     // does not hand back an ephemeral port trivially before `run()`, and
@@ -80,11 +110,11 @@ async fn main() -> std::io::Result<()> {
     let addr: SocketAddr = "127.0.0.1:8092".parse().unwrap();
 
     let server = HttpServer::new(move || {
+        let op = op.clone();
         App::new()
-            .app_data(web::Data::new(challenges.clone()))
-            .app_data(web::Data::new(second_factor.clone()))
-            .app_data(web::Data::new(tokens.clone()))
-            .app_data(web::Data::new(attestation_config.clone()))
+            .configure(move |cfg| {
+                cfg.configure_op(op.clone());
+            })
             // No AttestationStatusProvider registered: re-issuance falls
             // back to copying the previous `att` claim forward (see that
             // trait's docs). `Option<web::Data<...>>` resolves to `None`

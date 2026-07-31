@@ -4,11 +4,12 @@ use std::sync::Arc;
 pub struct Missing;
 
 /// Device-bound signature verifier instance holding required configuration and state.
+#[derive(Clone)]
 pub struct DevSig<R = Missing> {
     /// Verifier Configuration.
     pub config: VerifierConfig,
     /// JWKS of the issuer.
-    pub jwks: IssuerJwks,
+    pub jwks: Arc<IssuerJwks>,
     /// Replay store backend.
     pub replay_store: R,
 }
@@ -27,7 +28,7 @@ impl DevSig<Missing> {
 /// A typestate builder for `DevSig`.
 pub struct DevSigBuilder<R> {
     config: Option<VerifierConfig>,
-    jwks: Option<IssuerJwks>,
+    jwks: Option<Arc<IssuerJwks>>,
     replay_store: R,
 }
 
@@ -37,9 +38,9 @@ impl<R> DevSigBuilder<R> {
         self.config = Some(config);
         self
     }
-    
+
     /// Set the issuer JWKS.
-    pub fn jwks(mut self, jwks: IssuerJwks) -> Self {
+    pub fn jwks(mut self, jwks: Arc<IssuerJwks>) -> Self {
         self.jwks = Some(jwks);
         self
     }
@@ -47,7 +48,10 @@ impl<R> DevSigBuilder<R> {
 
 impl DevSigBuilder<Missing> {
     /// Set the replay store, advancing the typestate.
-    pub fn replay_store(self, replay_store: Arc<dyn ReplayStore>) -> DevSigBuilder<Arc<dyn ReplayStore>> {
+    pub fn replay_store(
+        self,
+        replay_store: Arc<dyn ReplayStore>,
+    ) -> DevSigBuilder<Arc<dyn ReplayStore>> {
         DevSigBuilder {
             config: self.config,
             jwks: self.jwks,

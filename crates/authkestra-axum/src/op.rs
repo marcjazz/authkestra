@@ -518,3 +518,79 @@ impl<T> OpExt for T {
             .route("/reissue", post(axum_reissue_start_handler::<AppState>))
     }
 }
+
+use authkestra_engine::{Configured, Engine};
+pub type CompleteOp = authkestra_op::Op<
+    Engine<Configured<Arc<dyn crate::SessionStore>>, Configured<Arc<TokenManager>>>,
+    Arc<dyn authkestra_op::OpStore>,
+>;
+
+/// A newtype wrapper around `CompleteOp` to implement `axum::extract::FromRef` and bypass orphan rules.
+#[derive(Clone)]
+pub struct OpState(pub CompleteOp);
+
+impl FromRef<OpState> for Result<Arc<dyn authkestra_op::OpStore>, AxumError> {
+    fn from_ref(state: &OpState) -> Self {
+        Ok(state.0.store.clone())
+    }
+}
+
+impl FromRef<OpState> for Result<Arc<TokenManager>, AxumError> {
+    fn from_ref(state: &OpState) -> Self {
+        Ok(state.0.engine.token_manager.0.clone())
+    }
+}
+
+impl FromRef<OpState> for Result<Arc<dyn crate::SessionStore>, AxumError> {
+    fn from_ref(state: &OpState) -> Self {
+        Ok(state.0.engine.session_store.0.clone())
+    }
+}
+
+impl FromRef<OpState> for authkestra_engine::SessionConfig {
+    fn from_ref(state: &OpState) -> Self {
+        state.0.engine.session_config.clone()
+    }
+}
+
+impl FromRef<OpState> for OpConfig {
+    fn from_ref(state: &OpState) -> Self {
+        state.0.config.clone()
+    }
+}
+
+impl FromRef<OpState> for AttestationConfig {
+    fn from_ref(state: &OpState) -> Self {
+        state
+            .0
+            .attestation_config
+            .clone()
+            .expect("AttestationConfig must be provided for attestation routes")
+    }
+}
+
+impl FromRef<OpState> for Result<Arc<dyn EnrolmentChallengeStore>, AxumError> {
+    fn from_ref(state: &OpState) -> Self {
+        state
+            .0
+            .challenge_store
+            .clone()
+            .ok_or_else(|| AxumError::Internal("EnrolmentChallengeStore missing".to_string()))
+    }
+}
+
+impl FromRef<OpState> for Result<Arc<dyn SecondFactorVerifier>, AxumError> {
+    fn from_ref(state: &OpState) -> Self {
+        state
+            .0
+            .second_factor_verifier
+            .clone()
+            .ok_or_else(|| AxumError::Internal("SecondFactorVerifier missing".to_string()))
+    }
+}
+
+impl FromRef<OpState> for Option<Arc<dyn AttestationStatusProvider>> {
+    fn from_ref(state: &OpState) -> Self {
+        state.0.status_provider.clone()
+    }
+}

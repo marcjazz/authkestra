@@ -135,6 +135,12 @@ impl DeviceSignatureLayer {
     }
 }
 
+impl From<authkestra_devsig::DevSig<Arc<dyn ReplayStore>>> for DeviceSignatureLayer {
+    fn from(devsig: authkestra_devsig::DevSig<Arc<dyn ReplayStore>>) -> Self {
+        Self::new(devsig.config, devsig.jwks, devsig.replay_store)
+    }
+}
+
 impl<S> Layer<S> for DeviceSignatureLayer {
     type Service = DeviceSignatureService<S>;
 

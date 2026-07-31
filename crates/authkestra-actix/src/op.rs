@@ -342,3 +342,37 @@ impl<T> OpExt for T {
             .route("/reissue", web::post().to(actix_reissue_start_handler))
     }
 }
+
+use authkestra_engine::{Configured, Engine};
+type CompleteOp = authkestra_op::Op<
+    Engine<Configured<Arc<dyn crate::SessionStore>>, Configured<Arc<TokenManager>>>,
+    Arc<dyn authkestra_op::OpStore>,
+>;
+
+pub trait OpActixExt {
+    fn configure_op(self, op: CompleteOp) -> Self;
+}
+
+impl OpActixExt for &mut web::ServiceConfig {
+    fn configure_op(self, op: CompleteOp) -> Self {
+        self.app_data(web::Data::new(op.store.clone()))
+            .app_data(web::Data::new(op.engine.token_manager.0.clone()))
+            .app_data(web::Data::new(op.engine.session_store.0.clone()))
+            .app_data(web::Data::new(op.engine.session_config.clone()))
+            .app_data(web::Data::new(op.config.clone()));
+
+        if let Some(cfg) = op.attestation_config {
+            self.app_data(web::Data::new(cfg));
+        }
+        if let Some(store) = op.challenge_store {
+            self.app_data(web::Data::new(store));
+        }
+        if let Some(verifier) = op.second_factor_verifier {
+            self.app_data(web::Data::new(verifier));
+        }
+        if let Some(provider) = op.status_provider {
+            self.app_data(web::Data::new(provider));
+        }
+        self
+    }
+}

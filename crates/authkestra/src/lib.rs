@@ -6,8 +6,8 @@
 pub use authkestra_engine as core;
 
 /// Type alias for the Engine to support the Authkestra::builder() pattern.
-pub type Authkestra<S = authkestra_engine::Missing, T = authkestra_engine::Missing> = authkestra_engine::Engine<S, T>;
-
+pub type Authkestra<S = authkestra_engine::Missing, T = authkestra_engine::Missing> =
+    authkestra_engine::Engine<S, T>;
 
 pub use authkestra_engine as flow;
 

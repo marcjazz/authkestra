@@ -26,17 +26,19 @@
 
 use async_trait::async_trait;
 use authkestra_axum::op::OpExt;
-use authkestra_axum::AxumError;
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::TokenManager;
+use authkestra_engine::Engine;
 use authkestra_op::attestation::{
-    AttestationConfig, AttestationStatusProvider, EnrolmentChallenge, EnrolmentChallengeStore,
-    PrincipalType, SecondFactorProof, SecondFactorVerifier,
+    AttestationConfig, EnrolmentChallenge, PrincipalType, SecondFactorProof, SecondFactorVerifier,
 };
+use authkestra_op::client::ClientRegistration;
+use authkestra_op::code::AuthorizationCode;
+use authkestra_op::device::DeviceCodeSession;
+use authkestra_op::refresh::RefreshToken;
+use authkestra_op::store::CompositeOpStore;
+use authkestra_op::Op;
 use authkestra_op::OpError;
-use axum::extract::FromRef;
-use axum::Router;
-use base64::Engine;
+use base64::Engine as Base64Engine;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use p256::ecdsa::SigningKey;
 use p256::elliptic_curve::{JwkEcKey, PublicKey};
@@ -44,49 +46,6 @@ use p256::pkcs8::EncodePrivateKey;
 use rand_core::OsRng;
 use std::net::SocketAddr;
 use std::sync::Arc;
-
-/// The example's application state. Deliberately holds only what the three
-/// attestation handlers need — `authkestra_op::OpStore`/`OpConfig`/session
-/// wiring from the full OIDC surface are not required for this ceremony and
-/// are left out to keep this example focused.
-#[derive(Clone)]
-struct AppState {
-    challenges: Arc<dyn EnrolmentChallengeStore>,
-    second_factor: Arc<dyn SecondFactorVerifier>,
-    status_provider: Option<Arc<dyn AttestationStatusProvider>>,
-    tokens: Arc<TokenManager>,
-    attestation_config: AttestationConfig,
-}
-
-impl FromRef<AppState> for Result<Arc<dyn EnrolmentChallengeStore>, AxumError> {
-    fn from_ref(input: &AppState) -> Self {
-        Ok(input.challenges.clone())
-    }
-}
-
-impl FromRef<AppState> for Result<Arc<dyn SecondFactorVerifier>, AxumError> {
-    fn from_ref(input: &AppState) -> Self {
-        Ok(input.second_factor.clone())
-    }
-}
-
-impl FromRef<AppState> for Result<Arc<TokenManager>, AxumError> {
-    fn from_ref(input: &AppState) -> Self {
-        Ok(input.tokens.clone())
-    }
-}
-
-impl FromRef<AppState> for Option<Arc<dyn AttestationStatusProvider>> {
-    fn from_ref(input: &AppState) -> Self {
-        input.status_provider.clone()
-    }
-}
-
-impl FromRef<AppState> for AttestationConfig {
-    fn from_ref(input: &AppState) -> Self {
-        input.attestation_config.clone()
-    }
-}
 
 /// A stand-in second factor for this example: accepts one fixed demo OTP.
 /// A real deployment implements `SecondFactorVerifier` against an SMS/TOTP
@@ -115,24 +74,46 @@ impl SecondFactorVerifier for DemoOtpVerifier {
 async fn main() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let state = AppState {
-        challenges: Arc::new(MemoryStore::<EnrolmentChallenge>::new()),
-        second_factor: Arc::new(DemoOtpVerifier),
-        // No AttestationStatusProvider configured: re-issuance falls back to
-        // copying the previous `att` claim forward (see that trait's docs).
-        status_provider: None,
-        tokens: Arc::new(TokenManager::new(
-            b"example-only-32-byte-secret-key",
-            Some("https://op.example.test".to_string()),
-        )),
-        attestation_config: AttestationConfig {
+    let engine = Engine::builder()
+        .session_store(Arc::new(MemoryStore::<
+            authkestra_engine::auth::session::Session,
+        >::new()))
+        .jwt_secret(b"example-only-32-byte-secret-key")
+        .build();
+
+    let op_store = Arc::new(CompositeOpStore::new(
+        MemoryStore::<ClientRegistration>::new(),
+        MemoryStore::<AuthorizationCode>::new(),
+        MemoryStore::<RefreshToken>::new(),
+        MemoryStore::<DeviceCodeSession>::new(),
+    ));
+
+    let state = Op::builder()
+        .engine(engine)
+        .config(authkestra_op::config::OpConfig {
+            issuer: "https://op.example.test".to_string(),
+            scopes_supported: vec![],
+            response_types_supported: vec![],
+            grant_types_supported: vec![],
+            id_token_signing_alg: "ES256".to_string(),
+            authorization_code_ttl_secs: 600,
+            access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 600,
+            token_exchange_enabled: false,
+        })
+        .store(op_store)
+        .challenge_store(Arc::new(MemoryStore::<EnrolmentChallenge>::new()))
+        .second_factor_verifier(Arc::new(DemoOtpVerifier))
+        .attestation_config(AttestationConfig {
             attestation_ttl_secs: 86_400,
             attestation_reissue_after_secs: 43_200,
             challenge_ttl_secs: 300,
-        },
-    };
+        })
+        .build();
 
-    let app: Router<()> = state.op_axum_attestation_router().with_state(state);
+    let app: axum::Router<()> = state
+        .op_axum_attestation_router()
+        .with_state(authkestra_axum::op::OpState(state));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

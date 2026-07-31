@@ -5,6 +5,10 @@ description: Learn how Authkestra leverages the typestate pattern for compile-ti
 
 Authkestra relies heavily on Rust's **Typestate Pattern** through the `Authkestra::builder()` API. This design pattern ensures that your authentication stack is configured correctly *at compile-time*, completely eliminating an entire class of runtime panics and misconfigurations.
 
+:::tip[Authkestra is an Alias]
+When you use the `authkestra` facade crate, `Authkestra` is exposed as a type alias for `authkestra_engine::Engine`. This means `Authkestra::builder()` is exactly the same as `Engine::builder()`, but we use the `Authkestra` name at the highest level for better semantic alignment.
+:::
+
 ## What is the Typestate Pattern?
 
 In Rust, the typestate pattern is used to encode a state machine into the type system. Methods return new types representing the transitioned state, meaning certain methods simply do not exist unless the builder is in the correct state.

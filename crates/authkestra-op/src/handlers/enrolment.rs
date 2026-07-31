@@ -175,7 +175,6 @@ pub async fn handle_reissue_start(
     let jwk = parse_public_jwk(&req.public_jwk)?;
     let jkt = compute_cnf_jkt(&jwk)?;
 
-
     let bound_jkt = claims
         .extra
         .get("cnf")

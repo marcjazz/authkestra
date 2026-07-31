@@ -104,6 +104,12 @@ impl DeviceSignatureAuth {
     }
 }
 
+impl From<authkestra_devsig::DevSig<Arc<dyn ReplayStore>>> for DeviceSignatureAuth {
+    fn from(devsig: authkestra_devsig::DevSig<Arc<dyn ReplayStore>>) -> Self {
+        Self::new(devsig.config, devsig.jwks, devsig.replay_store)
+    }
+}
+
 impl<S, B> Transform<S, ServiceRequest> for DeviceSignatureAuth
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,

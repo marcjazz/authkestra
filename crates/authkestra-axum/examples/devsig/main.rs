@@ -51,9 +51,13 @@ async fn main() {
     let valid_signature =
         demo.mint_signature("POST", "/v1/transfer", Some(TRANSFER_BODY.as_bytes()));
 
-    let jwks = Arc::new(demo.jwks);
     let replay_store: Arc<dyn authkestra_devsig::ReplayStore> = Arc::new(demo.replay_store);
-    let layer = DeviceSignatureLayer::new(demo.config, jwks, replay_store);
+    let devsig = authkestra_devsig::DevSig::builder()
+        .config(demo.config)
+        .jwks(Arc::new(demo.jwks))
+        .replay_store(replay_store)
+        .build();
+    let layer = DeviceSignatureLayer::from(devsig);
 
     let app: Router<()> = Router::new()
         .route("/v1/transfer", post(transfer_handler))
