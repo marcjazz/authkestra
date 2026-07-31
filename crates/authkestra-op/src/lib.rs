@@ -9,8 +9,10 @@
 //! `op` feature flag) wrap these types into framework-native routes.
 //!
 //! ## Status
-//! This crate is a skeleton (RFC-003, PR `OP.0`). No handler logic has
-//! landed yet — see `docs/rfc-003-oidc-provider.md` for the full plan.
+//! Handler logic has landed (see `handlers` for the OIDC endpoint handlers
+//! — discovery, JWKS, authorize, token — and `handlers::enrolment` for the
+//! device/service attestation enrolment and re-issuance ceremony). See
+//! `docs/rfc-003-oidc-provider.md` for the RFC this crate implements.
 
 #![warn(missing_docs)]
 
@@ -58,7 +60,3 @@ pub mod sqlx_store;
 /// types).
 pub mod config;
 pub use config::OpConfig;
-
-// `handlers` lands in OP.2 onward (discovery, jwks, authorize, token,
-// userinfo). Left out of this skeleton PR deliberately — see RFC-003 §5 for
-// the planned module layout.

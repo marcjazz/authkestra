@@ -50,10 +50,22 @@ impl<S, T> From<Engine<S, T>> for AxumState<S, T> {
 }
 
 /// The extractor for a validated session.
-#[cfg(feature = "session")]
+///
+/// Gated on `flow`, not just `session`: this extractor pulls `SessionConfig`
+/// out of Axum state via `FromRef`, and `SessionConfig` is only exported
+/// under `flow` (see the `pub use authkestra_engine::{Engine, Missing,
+/// SessionConfig}` above). `op` enables `session` alone (no `flow`) —
+/// gating on `session` only meant `--features op` failed to compile
+/// standalone with `SessionConfig` undefined, even though `op`'s own code
+/// never uses `AuthSession`. If a `session`-without-`flow` consumer ever
+/// needs session extraction without the `Engine`/`AxumState` state shape,
+/// that's a real feature to design, not a cfg to loosen back to `session`
+/// alone — it would reintroduce this exact failure for every other
+/// `session`-without-`flow` combination.
+#[cfg(all(feature = "session", feature = "flow"))]
 pub struct AuthSession(pub Session);
 
-#[cfg(feature = "session")]
+#[cfg(all(feature = "session", feature = "flow"))]
 impl<S> FromRequestParts<S> for AuthSession
 where
     S: Send + Sync,

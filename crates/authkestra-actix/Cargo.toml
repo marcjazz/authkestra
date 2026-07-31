@@ -60,7 +60,16 @@ session = ["authkestra-engine/session"]
 flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engine/token"]
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
-op = ["dep:authkestra-op", "session", "token"]
+# Unlike authkestra-axum's `op` feature, this crate's own op.rs genuinely
+# uses `AuthSession` (actix_authorize_handler checks for an existing
+# browser session on /authorize to skip the login redirect) — AuthSession's
+# `FromRequest` impl here is gated on `all(flow, session)` because it reads
+# `SessionConfig` from actix app-data, and `SessionConfig` only exists
+# under `flow`. So `op` must enable `flow` itself in this crate, not just
+# `session` + `token` — omitting it left `--features op` uncompilable
+# standalone (`Option<AuthSession>` required `AuthSession: FromRequest`,
+# which didn't exist without `flow`).
+op = ["dep:authkestra-op", "flow", "session", "token"]
 macros = ["dep:authkestra-macros"]
 captcha = ["authkestra-engine/captcha"]
 devsig = ["dep:authkestra-devsig"]
