@@ -8,7 +8,7 @@
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
 use actix_web::{get, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use authkestra::flow::{Engine, OAuth2Flow};
+use authkestra_engine::flow::{Engine, OAuth2Flow};
 use authkestra_actix::{helpers, ActixState, AuthToken};
 use authkestra_engine::{AkApiEngine, TokenManagerState};
 use authkestra_providers::github::GithubProvider;

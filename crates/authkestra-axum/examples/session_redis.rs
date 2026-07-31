@@ -6,7 +6,7 @@
 //! - A running Redis instance
 //! - `REDIS_URL` environment variable (e.g., `redis://127.0.0.1/`)
 
-use authkestra::flow::Engine;
+use authkestra_engine::flow::Engine;
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::store::redis::RedisStore;

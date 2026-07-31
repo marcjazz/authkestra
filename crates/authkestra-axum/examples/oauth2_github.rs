@@ -6,7 +6,7 @@
 //! - `AUTHKESTRA_GITHUB_CLIENT_ID`
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
-use authkestra::flow::{Engine, OAuth2Flow};
+use authkestra_engine::flow::{Engine, OAuth2Flow};
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
 use authkestra_engine::{AkWebAppEngine, SessionConfig};

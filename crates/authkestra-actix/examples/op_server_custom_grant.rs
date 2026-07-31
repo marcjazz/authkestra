@@ -4,7 +4,7 @@
 use authkestra_engine::store::KvStore;
 
 use actix_web::{App, HttpServer};
-use authkestra::flow::Engine;
+use authkestra_engine::flow::Engine;
 use authkestra_actix::{ActixState, OpExt};
 use authkestra_engine::store::memory::MemoryStore;
 use authkestra_op::client::ClientStore;
