@@ -62,9 +62,12 @@ async fn main() -> std::io::Result<()> {
     let valid_signature =
         demo.mint_signature("POST", "/v1/transfer", Some(TRANSFER_BODY.as_bytes()));
 
-    let jwks = Arc::new(demo.jwks);
     let replay_store: Arc<dyn authkestra_devsig::ReplayStore> = Arc::new(demo.replay_store);
-    let config = demo.config;
+    let devsig = authkestra_devsig::DevSig::builder()
+        .config(demo.config)
+        .jwks(Arc::new(demo.jwks))
+        .replay_store(replay_store)
+        .build();
 
     let addr = format!("{}:{}", ADDR.0, ADDR.1);
     println!("authkestra-actix devsig example listening on http://{addr}");
@@ -87,7 +90,7 @@ async fn main() -> std::io::Result<()> {
     println!();
 
     HttpServer::new(move || {
-        let auth = DeviceSignatureAuth::new(config.clone(), jwks.clone(), replay_store.clone());
+        let auth = DeviceSignatureAuth::from(devsig.clone());
         App::new().wrap(auth).service(transfer_handler)
     })
     .bind(ADDR)?

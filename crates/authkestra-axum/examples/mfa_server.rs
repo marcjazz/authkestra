@@ -53,7 +53,7 @@ async fn main() {
     let origin = Url::parse("http://localhost:3000").unwrap();
     let webauthn = WebauthnBuilder::new(rp_id, &origin)
         .unwrap()
-        .rp_name("Authkestra MFA Demo")
+        .rp_name("Engine MFA Demo")
         .build()
         .unwrap();
 

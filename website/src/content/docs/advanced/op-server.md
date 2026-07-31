@@ -83,12 +83,13 @@ The relationship works like this:
 2. **Client Restriction**: When creating a `ClientRegistration` in your database, you give that client a subset of those scopes.
 3. **User Delegation**: When a user logs in, the `/authorize` flow ensures the requested scopes do not exceed what the client is permitted to ask for.
 
-## Documenting `OpConfig`
+## Building the OP State
 
 The behavior of your OpenID Provider is entirely driven by `OpConfig`. When building the state, you must configure this struct to declare what your server supports.
 
 ```rust
 use authkestra_op::config::OpConfig;
+use authkestra_op::Op;
 
 let config = OpConfig {
     // The canonical base URL of your OP Server. Used in JWT `iss` claims.
@@ -106,14 +107,18 @@ let config = OpConfig {
     // Cryptographic signing algorithm for issued ID tokens
     id_token_signing_alg: "RS256".to_string(),
     
-    // Lifespans for issued tokens
-    access_token_ttl_secs: 3600,
-    authorization_code_ttl_secs: 600,
-    device_code_ttl_secs: 600,
-    
-    // Feature flags
-    token_exchange_enabled: true,
+    // Endpoint locations
+    authorization_endpoint: "http://localhost:3000/authorize".to_string(),
+    token_endpoint: "http://localhost:3000/token".to_string(),
+    userinfo_endpoint: "http://localhost:3000/userinfo".to_string(),
+    jwks_uri: "http://localhost:3000/jwks.json".to_string(),
 };
+
+let op = Op::builder()
+    .engine(auth_engine) // Assumes an Engine with SessionStore and TokenManager
+    .config(config)
+    .store(op_store)
+    .build();
 ```
 
 ## Custom Grant Types
@@ -247,13 +252,13 @@ impl SecondFactorVerifier for SmsOrBootstrapVerifier {
 The three routes are wired through a router split from the standard OIDC surface, so an application that only wants plain OIDC never has to supply attestation-specific dependencies just to keep compiling:
 
 ```rust
-use authkestra_axum::OpExt;
+use authkestra_axum::op::{OpExt, OpState};
 use axum::Router;
 
 let app = Router::new()
-    .merge(state.op_axum_router())              // /authorize, /token, /userinfo, ...
-    .merge(state.op_axum_attestation_router())   // /enrol, /enrol/complete, /reissue
-    .with_state(state);
+    .merge(op.op_axum_router())              // /authorize, /token, /userinfo, ...
+    .merge(op.op_axum_attestation_router())  // /enrol, /enrol/complete, /reissue
+    .with_state(OpState(op));
 ```
 
 Actix wires the same three routes via `OpExt::op_actix_scope()`, resolving `EnrolmentChallengeStore`, `SecondFactorVerifier`, `TokenManager`, and `AttestationConfig` from `app_data` the same way the rest of the OP server's dependencies are resolved.
@@ -265,11 +270,11 @@ See `crates/authkestra/examples/axum/op_server_attestation.rs` and `crates/authk
 Once your stores and config are built, you wire the server routes using `op_axum_router()` (or `op_actix_router()`).
 
 ```rust
-use authkestra_axum::OpExt;
+use authkestra_axum::op::{OpExt, OpState};
 use axum::Router;
 
 // `op_axum_router()` automatically wires standard OIDC server endpoints!
-let app = Router::new().merge(state.op_axum_router()).with_state(state);
+let app = Router::new().merge(op.op_axum_router()).with_state(OpState(op));
 ```
 
 ### What Endpoints are Exposed?

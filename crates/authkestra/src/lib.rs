@@ -5,7 +5,10 @@
 
 pub use authkestra_engine as core;
 
-#[cfg(feature = "flow")]
+/// Type alias for the Engine to support the Authkestra::builder() pattern.
+pub type Authkestra<S = authkestra_engine::Missing, T = authkestra_engine::Missing> =
+    authkestra_engine::Engine<S, T>;
+
 pub use authkestra_engine as flow;
 
 #[cfg(feature = "session")]

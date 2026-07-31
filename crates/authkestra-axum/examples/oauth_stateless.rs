@@ -55,13 +55,13 @@ async fn main() {
         Err(_) => GithubProvider::new(client_id, client_secret, redirect_uri),
     };
 
-    // Initialize Authkestra in stateless mode (JWT only).
-    let auth_engine = Engine::builder()
+    // Initialize Engine in stateless mode (JWT only).
+    let authkestra = Engine::builder()
         .provider(OAuth2Flow::new(github_provider))
         .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
         .build();
 
-    let state = AppState { auth: auth_engine };
+    let state = AppState { auth: authkestra };
 
     let app = Router::new()
         .route("/api/user", get(get_user))

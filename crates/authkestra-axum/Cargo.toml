@@ -36,7 +36,7 @@ bytes = { version = "1", optional = true }
 [dev-dependencies]
 
 authkestra = { workspace = true, features = ["full"] }
-authkestra-engine = { workspace = true, features = ["flow", "token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
+authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
 authkestra-oidc = { workspace = true }
@@ -64,7 +64,7 @@ url = "2.5"
 default = ["macros"]
 macros = ["authkestra-macros"]
 session = ["authkestra-engine/session"]
-flow = ["authkestra-engine/flow", "authkestra-engine/session", "authkestra-engine/token"]
+
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
 op = ["dep:authkestra-op", "session", "token"]

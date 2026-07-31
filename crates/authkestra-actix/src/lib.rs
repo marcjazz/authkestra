@@ -2,15 +2,14 @@
 use actix_web::{dev::Payload, http::header, web, Error, FromRequest, HttpRequest};
 #[cfg(feature = "session")]
 pub use authkestra_engine::auth::{Session, SessionStore};
-#[cfg(all(feature = "flow", any(feature = "session", feature = "token")))]
+#[cfg(any(feature = "session", feature = "token"))]
 pub use authkestra_engine::Missing;
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub use authkestra_engine::SessionStoreState;
 #[cfg(feature = "token")]
 pub use authkestra_engine::TokenManager;
-#[cfg(all(feature = "flow", feature = "token"))]
+#[cfg(feature = "token")]
 pub use authkestra_engine::TokenManagerState;
-#[cfg(feature = "flow")]
 pub use authkestra_engine::{Engine, SessionConfig};
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use futures::future::LocalBoxFuture;
@@ -27,10 +26,8 @@ pub mod devsig;
 
 #[cfg(feature = "macros")]
 pub use authkestra_macros::ActixState;
-
-#[cfg(feature = "flow")]
 pub use helpers::actix_login_handler;
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub use helpers::{actix_callback_handler, actix_logout_handler};
 
 #[cfg(feature = "op")]
@@ -38,14 +35,10 @@ pub use op::OpExt;
 
 #[cfg(feature = "devsig")]
 pub use devsig::{AuthDeviceSignature, DeviceSignatureAuth};
-
-#[cfg(feature = "flow")]
 pub trait ActixExt<S, T> {
     fn actix_scope(&self) -> actix_web::Scope;
 }
-
-#[cfg(feature = "flow")]
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 impl<S, T> ActixExt<S, T> for Engine<S, T>
 where
     S: Clone + SessionStoreState + 'static,
@@ -72,7 +65,7 @@ where
 #[cfg(feature = "session")]
 pub struct AuthSession(pub Session);
 
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 impl FromRequest for AuthSession {
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
@@ -132,7 +125,7 @@ impl FromRequest for AuthSession {
 #[cfg(feature = "token")]
 pub struct AuthToken(pub authkestra_engine::Claims);
 
-#[cfg(all(feature = "flow", feature = "token"))]
+#[cfg(feature = "token")]
 impl FromRequest for AuthToken {
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;

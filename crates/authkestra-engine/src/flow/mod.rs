@@ -1,4 +1,4 @@
-//! # Authkestra Flow
+//! # Engine Flow
 //!
 //! `authkestra-flow` orchestrates authentication flows, such as OAuth2 Authorization Code,
 //! PKCE, Client Credentials, and Device Flow. It acts as the bridge between the core traits
@@ -7,8 +7,8 @@
 //! ## Key Components
 //!
 //! - **[`OAuth2Flow`]**: Orchestrates the standard OAuth2 Authorization Code flow.
-//! - **[`Authkestra`]**: The main service that holds providers, session stores, and token managers.
-//! - **[`AuthkestraBuilder`]**: A builder for configuring and creating an [`Authkestra`] instance.
+//! - **[`Engine`]**: The main service that holds providers, session stores, and token managers.
+//! - **[`EngineBuilder`]**: A builder for configuring and creating an [`Engine`] instance.
 //! - **[`CredentialsFlow`]**: Orchestrates direct credentials-based authentication (e.g., email/password).
 
 #![warn(missing_docs)]

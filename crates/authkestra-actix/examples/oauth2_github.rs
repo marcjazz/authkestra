@@ -65,7 +65,7 @@ async fn main() -> std::io::Result<()> {
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
-    let auth_engine = Engine::builder()
+    let authkestra = Engine::builder()
         .provider(OAuth2Flow::new(github_provider))
         .session_store(session_store)
         .session_config(SessionConfig {
@@ -75,7 +75,7 @@ async fn main() -> std::io::Result<()> {
         .build();
 
     let state = AppState {
-        auth: auth_engine.clone(),
+        auth: authkestra.clone(),
     };
 
     println!("🚀 Actix GitHub OAuth2 running on http://localhost:3000");

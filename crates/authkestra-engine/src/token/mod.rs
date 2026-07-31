@@ -15,7 +15,7 @@ pub struct Claims {
     pub nbf: Option<usize>,
     pub jti: Option<String>,
 
-    // Authkestra-specific core fields
+    // Engine-specific core fields
     pub scope: Option<String>,
     /// Optional identity data for user-centric tokens.
     /// If None, this is likely a machine-to-machine token.

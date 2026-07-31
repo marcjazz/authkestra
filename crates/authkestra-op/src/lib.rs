@@ -1,4 +1,4 @@
-//! # Authkestra OP
+//! # Engine OP
 //!
 //! `authkestra-op` implements the OpenID Provider (OP) side of OIDC: issuing
 //! tokens and running the authorization code grant, as opposed to
@@ -9,8 +9,7 @@
 //! `op` feature flag) wrap these types into framework-native routes.
 //!
 //! ## Status
-//! This crate is a skeleton (RFC-003, PR `OP.0`). No handler logic has
-//! landed yet — see `docs/rfc-003-oidc-provider.md` for the full plan.
+//! This crate implements the foundational authorization and attestation flows.
 
 #![warn(missing_docs)]
 
@@ -59,6 +58,7 @@ pub mod sqlx_store;
 pub mod config;
 pub use config::OpConfig;
 
-// `handlers` lands in OP.2 onward (discovery, jwks, authorize, token,
-// userinfo). Left out of this skeleton PR deliberately — see RFC-003 §5 for
-// the planned module layout.
+// `handlers` contains the implementation of the OP endpoints.
+/// Unified OpBuilder pattern
+pub mod builder;
+pub use builder::{Op, OpBuilder};

@@ -30,7 +30,7 @@ use authkestra_providers::github::GithubProvider;
 use authkestra_providers::google::GoogleProvider;
 
 // Initialize Authkestra in stateless mode supporting multiple providers
-let auth_engine = Engine::builder()
+let auth_engine = Authkestra::builder()
     .provider(OAuth2Flow::new(GithubProvider::new(...)))
     .provider(OAuth2Flow::new(GoogleProvider::new(...)))
     .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")

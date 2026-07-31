@@ -1,6 +1,6 @@
-//! # Authkestra Core
+//! # Engine Core
 //!
-//! `authkestra-core` provides the foundational traits and types for the Authkestra authentication framework.
+//! `authkestra-core` provides the foundational traits and types for the Engine authentication framework.
 //! It defines the core abstractions for identities, authentication flows and providers that are used across the entire ecosystem.
 
 #![warn(missing_docs)]
@@ -114,6 +114,13 @@ pub trait AuthMethod: Send + Sync {
     /// Default implementation returns false.
     async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
         Ok(false)
+    }
+
+    /// Indicates whether this method provides multi-factor-equivalent security.
+    /// If true, users logging in with this method will not be prompted for an additional MFA step.
+    /// Default implementation returns false.
+    fn is_mfa_equivalent(&self) -> bool {
+        false
     }
 }
 

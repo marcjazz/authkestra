@@ -74,7 +74,7 @@ async fn main() {
 
     let session_store_arc: Arc<dyn SessionStore> = Arc::new(session_store);
 
-    let auth_engine = Engine::builder()
+    let authkestra = Engine::builder()
         .session_store(session_store_arc)
         .session_config(SessionConfig {
             secure: false,
@@ -83,7 +83,7 @@ async fn main() {
         .build();
 
     let state = AppState {
-        auth: auth_engine.clone(),
+        auth: authkestra.clone(),
     };
 
     let app = Router::new()
@@ -91,7 +91,7 @@ async fn main() {
             env!("CARGO_MANIFEST_DIR"),
             "/examples/static"
         )))
-        .merge(auth_engine.axum_router::<AppState>())
+        .merge(authkestra.axum_router::<AppState>())
         .layer(CookieManagerLayer::new())
         .with_state(state);
 

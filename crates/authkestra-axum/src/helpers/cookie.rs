@@ -1,11 +1,11 @@
 #[cfg(feature = "session")]
 use authkestra_engine::auth::SessionConfig;
-#[cfg(any(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 use tower_cookies::cookie::SameSite;
-#[cfg(any(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 use tower_cookies::Cookie;
 
-#[cfg(any(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub fn to_axum_same_site(ss: authkestra_engine::SameSite) -> SameSite {
     match ss {
         authkestra_engine::SameSite::Lax => SameSite::Lax,

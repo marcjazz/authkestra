@@ -247,7 +247,7 @@ mod tests {
 
         // Register a TOTP key for user
         let (secret_b32, uri) = totp_method
-            .register_totp("user123", "Authkestra", "user123")
+            .register_totp("user123", "Engine", "user123")
             .await
             .unwrap();
         assert!(!secret_b32.is_empty());

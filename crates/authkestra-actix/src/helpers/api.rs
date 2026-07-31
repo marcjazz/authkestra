@@ -1,12 +1,10 @@
-#[cfg(any(feature = "flow", feature = "session", feature = "token"))]
+#[cfg(any(feature = "session", feature = "token"))]
 use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
 #[cfg(feature = "session")]
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
-#[cfg(feature = "flow")]
 use authkestra_engine::pkce::Pkce;
-#[cfg(all(feature = "flow", not(feature = "session")))]
+#[cfg(not(feature = "session"))]
 use authkestra_engine::SessionConfig;
-#[cfg(feature = "flow")]
 use authkestra_engine::{state::OAuth2State, Engine, ErasedOAuthFlow, OAuth2Flow};
 #[allow(unused_imports)]
 use std::sync::Arc;
@@ -29,7 +27,6 @@ pub struct OAuthLoginParams {
 /// Helper to initiate the OAuth2 login flow.
 ///
 /// This generates the authorization URL and sets a CSRF state cookie.
-#[cfg(feature = "flow")]
 pub fn initiate_oauth_login<P, M>(
     flow: &OAuth2Flow<P, M>,
     scopes: &[&str],
@@ -42,8 +39,6 @@ where
 {
     initiate_oauth_login_erased(flow, scopes, config, success_url)
 }
-
-#[cfg(feature = "flow")]
 pub fn initiate_oauth_login_erased(
     flow: &dyn ErasedOAuthFlow,
     scopes: &[&str],
@@ -77,7 +72,7 @@ pub fn initiate_oauth_login_erased(
 }
 
 /// Helper to handle the OAuth2 callback and create a server-side session.
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub async fn handle_oauth_callback<P, M>(
     req: HttpRequest,
     flow: &OAuth2Flow<P, M>,
@@ -93,7 +88,7 @@ where
     handle_oauth_callback_erased(req, flow, params, store, config, success_url).await
 }
 
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub async fn handle_oauth_callback_erased(
     req: HttpRequest,
     flow: &dyn ErasedOAuthFlow,
@@ -164,15 +159,13 @@ pub async fn handle_oauth_callback_erased(
         .cookie(remove_cookie)
         .finish())
 }
-
-#[cfg(feature = "flow")]
 pub async fn actix_login_handler<S, T>(
     path: web::Path<String>,
     authkestra: web::Data<Engine<S, T>>,
     params: web::Query<OAuthLoginParams>,
 ) -> impl actix_web::Responder {
     let provider = path.into_inner();
-    let flow = match authkestra.providers.get(&provider) {
+    let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
             return HttpResponse::NotFound().body(format!("Provider {provider} not found"));
@@ -193,7 +186,7 @@ pub async fn actix_login_handler<S, T>(
     )
 }
 
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub async fn actix_callback_handler<S, T>(
     req: HttpRequest,
     path: web::Path<String>,
@@ -204,7 +197,7 @@ where
     S: authkestra_engine::SessionStoreState,
 {
     let provider = path.into_inner();
-    let flow = match authkestra.providers.get(&provider) {
+    let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
             return Ok(HttpResponse::NotFound().body(format!("Provider {provider} not found")));
@@ -226,7 +219,7 @@ where
     Ok(response)
 }
 
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub async fn actix_logout_handler<S, T>(
     req: HttpRequest,
     authkestra: web::Data<Engine<S, T>>,
@@ -271,7 +264,7 @@ pub async fn logout(
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
-#[cfg(all(feature = "flow", feature = "token"))]
+#[cfg(feature = "token")]
 pub async fn handle_oauth_callback_jwt_erased(
     flow: &dyn ErasedOAuthFlow,
     req: &HttpRequest,
@@ -321,7 +314,7 @@ pub async fn handle_oauth_callback_jwt_erased(
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
-#[cfg(all(feature = "flow", feature = "token"))]
+#[cfg(feature = "token")]
 pub async fn handle_oauth_callback_jwt<P, M>(
     flow: &OAuth2Flow<P, M>,
     req: &HttpRequest,

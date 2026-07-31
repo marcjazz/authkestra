@@ -39,7 +39,7 @@ impl TokenManagerState for Configured<Arc<TokenManager>> {
     }
 }
 
-/// The central orchestrator for Authkestra.
+/// The central orchestrator for Engine.
 ///
 /// `Engine` ties together authentication methods, session management, and flows.
 /// It is constructed using the [`EngineBuilder`] which uses the Typestate pattern
@@ -301,23 +301,20 @@ impl<S, T> Engine<S, T> {
 
         // Check if user has MFA enrolled
         let mut enrolled_methods = Vec::new();
-        for (name, method) in self.auth_methods.iter().chain(self.mfa_methods.iter()) {
-            if name == "password" {
+        for (name, m) in self.auth_methods.iter().chain(self.mfa_methods.iter()) {
+            if name == "password" || name == method_name {
                 continue;
             }
             if !enrolled_methods.contains(name)
-                && method
-                    .has_enrolled(&identity.external_id)
-                    .await
-                    .unwrap_or(false)
+                && m.has_enrolled(&identity.external_id).await.unwrap_or(false)
             {
                 enrolled_methods.push(name.clone());
             }
         }
 
         // If this method was already an MFA method (e.g. WebAuthn primary), we don't prompt for MFA again.
-        // For now, if enrolled_methods is empty or if we used WebAuthn, we succeed.
-        if enrolled_methods.is_empty() || method_name != "password" {
+        // Or if the user has no other MFA methods enrolled.
+        if enrolled_methods.is_empty() || method.is_mfa_equivalent() {
             Ok(AuthResult::Success(identity))
         } else {
             // Issue MFA Token
@@ -408,7 +405,7 @@ impl<S> Engine<S, Configured<Arc<TokenManager>>> {
     }
 }
 
-/// Trait for Authkestra instances that have a session store configured.
+/// Trait for Engine instances that have a session store configured.
 pub trait HasSessionStore {
     /// Returns the session store.
     fn session_store(&self) -> Arc<dyn SessionStore>;
@@ -420,7 +417,7 @@ impl<T> HasSessionStore for Engine<Configured<Arc<dyn SessionStore>>, T> {
     }
 }
 
-/// Trait for Authkestra instances that have a token manager configured.
+/// Trait for Engine instances that have a token manager configured.
 #[cfg(feature = "token")]
 pub trait HasTokenManager {
     /// Returns the token manager.

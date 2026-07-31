@@ -167,13 +167,13 @@ pub async fn handle_reissue_start(
     challenges: &dyn EnrolmentChallengeStore,
     config: &AttestationConfig,
 ) -> Result<ChallengeResponse, OpError> {
-    let jwk = parse_public_jwk(&req.public_jwk)?;
-    let jkt = compute_cnf_jkt(&jwk)?;
-
     let claims = tokens.validate_token(&req.attestation, None).map_err(|e| {
         tracing::warn!(error = ?e, "presented attestation failed validation at re-issuance");
         OpError::AttestationInvalid
     })?;
+
+    let jwk = parse_public_jwk(&req.public_jwk)?;
+    let jkt = compute_cnf_jkt(&jwk)?;
 
     let bound_jkt = claims
         .extra
@@ -346,6 +346,50 @@ pub async fn handle_complete_challenge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pre-auth cost-amplification regression guard: `handle_reissue_start`
+    /// must validate the presented `attestation` BEFORE doing any work on
+    /// the caller-supplied `public_jwk` (parsing it, computing its
+    /// thumbprint). This was flagged in review — `parse_public_jwk` and
+    /// `compute_cnf_jkt` used to run first, letting any unauthenticated
+    /// caller force JSON parsing and a SHA-256 computation on every hit to
+    /// this endpoint just by supplying a garbage `attestation`.
+    ///
+    /// Proven here by supplying BOTH an invalid attestation AND a
+    /// malformed public_jwk (one `parse_public_jwk` would itself reject
+    /// with `OpError::BadJwk`) in the same request. If attestation
+    /// validation still ran first, the error must be `AttestationInvalid`
+    /// — never `BadJwk`, which would only surface if `parse_public_jwk`
+    /// had already run, meaning the old, vulnerable order had regressed.
+    #[tokio::test]
+    async fn reissue_validates_attestation_before_touching_the_presented_jwk() {
+        let challenges = MemoryStore::<EnrolmentChallenge>::new();
+        let tokens = test_tokens();
+        let config = test_config();
+
+        let malformed_jwk = serde_json::json!({"this": "is not a valid jwk"});
+
+        let err = handle_reissue_start(
+            ReissueStartRequest {
+                attestation: "not.a.valid.jws".to_string(),
+                public_jwk: malformed_jwk,
+                requested_cnf_jkt: None,
+            },
+            &tokens,
+            None,
+            &challenges,
+            &config,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(err, OpError::AttestationInvalid),
+            "expected AttestationInvalid (attestation checked first); got {err:?} — \
+             a BadJwk error here would mean parse_public_jwk ran before attestation \
+             validation, i.e. the pre-auth cost-amplification vector has regressed"
+        );
+    }
     use async_trait::async_trait;
     use authkestra_engine::store::memory::MemoryStore;
     use jsonwebtoken::{Algorithm, EncodingKey, Header};

@@ -25,7 +25,7 @@ use authkestra_engine::auth::totp::TotpAuthMethod;
 use authkestra_engine::engine::Engine;
 
 // `my_store` implements the `CredentialStore` trait (e.g. `SqlxCredentialStore`)
-let engine = Engine::builder()
+let engine = Authkestra::builder()
     .with_mfa_method(TotpAuthMethod::new(my_store)) // Step-up only!
     .build();
 ```
