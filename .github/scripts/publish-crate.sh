@@ -10,11 +10,11 @@ fi
 
 echo "Preparing publish for $CRATE"
 
-# Validate packaging first
-cargo publish --dry-run -p "$CRATE"
+# Validate packaging first (no-verify to avoid circular dev-dependency blocks)
+cargo publish --dry-run --no-verify -p "$CRATE"
 
 set +e
-PUBLISH_OUTPUT=$(cargo publish -p "$CRATE" 2>&1)
+PUBLISH_OUTPUT=$(cargo publish --no-verify -p "$CRATE" 2>&1)
 PUBLISH_EXIT=$?
 set -e
 
