@@ -16,9 +16,9 @@ Because OP Servers are an advanced use case, the OP logic is not included in the
 ```toml
 [dependencies]
 authkestra-op = "0.2.3"
-authkestra-axum = { version = "0.2", features = ["op"] }
+authkestra-axum = { version = "0.3", features = ["op"] }
 # Or if using Actix:
-# authkestra-actix = { version = "0.2", features = ["op"] }
+# authkestra-actix = { version = "0.3", features = ["op"] }
 ```
 
 ## The OpStore Interface
@@ -263,7 +263,7 @@ let app = Router::new()
 
 Actix wires the same three routes via `OpExt::op_actix_scope()`, resolving `EnrolmentChallengeStore`, `SecondFactorVerifier`, `TokenManager`, and `AttestationConfig` from `app_data` the same way the rest of the OP server's dependencies are resolved.
 
-See `crates/authkestra/examples/axum/op_server_attestation.rs` and `crates/authkestra/examples/actix/op_server_attestation.rs` in the repository for a runnable, end-to-end walkthrough of enrolment and re-issuance (no external services required — the challenge store is an in-memory `MemoryStore`), or the step-by-step [Device Attestation guide](/guides/device-attestation/) for a narrated version of the same flow.
+See `crates/authkestra/examples/axum_op_server_attestation.rs` and `crates/authkestra/examples/actix_op_server_attestation.rs` in the repository for a runnable, end-to-end walkthrough of enrolment and re-issuance (no external services required — the challenge store is an in-memory `MemoryStore`), or the step-by-step [Device Attestation guide](/guides/device-attestation/) for a narrated version of the same flow.
 
 ## Wiring the OP Endpoints
 

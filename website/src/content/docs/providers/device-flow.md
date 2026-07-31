@@ -13,7 +13,7 @@ The Device Flow logic is built natively into the `authkestra-engine`. Ensure you
 
 ```toml
 [dependencies]
-authkestra = { version = "0.2" }
+authkestra = { version = "0.3" }
 ```
 
 ## Using `DeviceFlow`

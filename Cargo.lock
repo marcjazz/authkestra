@@ -430,67 +430,13 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "authkestra"
-version = "0.2.6"
-dependencies = [
- "authkestra-actix",
- "authkestra-axum",
- "authkestra-engine",
- "authkestra-oidc",
- "authkestra-providers",
- "authkestra-resource",
- "reqwest",
- "serde_json",
- "tokio",
- "wiremock",
-]
-
-[[package]]
-name = "authkestra-actix"
-version = "0.2.6"
+version = "0.3.1"
 dependencies = [
  "actix-files",
- "actix-utils",
  "actix-web",
  "async-trait",
- "authkestra",
- "authkestra-devsig",
- "authkestra-engine",
- "authkestra-macros",
- "authkestra-oidc",
- "authkestra-op",
- "authkestra-providers",
- "authkestra-resource",
- "base64 0.22.1",
- "chrono",
- "dotenvy",
- "futures",
- "futures-util",
- "http 1.5.0",
- "jsonwebtoken",
- "p256",
- "rand 0.8.7",
- "rand_core 0.6.4",
- "redis",
- "reqwest",
- "rsa",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "authkestra-axum"
-version = "0.2.6"
-dependencies = [
- "actix-files",
- "async-trait",
- "authkestra",
+ "authkestra-actix",
+ "authkestra-axum",
  "authkestra-devsig",
  "authkestra-engine",
  "authkestra-macros",
@@ -500,10 +446,8 @@ dependencies = [
  "authkestra-resource",
  "axum",
  "base64 0.22.1",
- "bytes",
  "chrono",
  "dotenvy",
- "http-body-util",
  "jsonwebtoken",
  "p256",
  "rand 0.8.7",
@@ -520,16 +464,63 @@ dependencies = [
  "tower-http",
  "tower-layer",
  "tower-service",
- "tracing",
  "tracing-subscriber",
  "url",
  "uuid",
  "webauthn-rs",
+ "wiremock",
+]
+
+[[package]]
+name = "authkestra-actix"
+version = "0.3.1"
+dependencies = [
+ "actix-utils",
+ "actix-web",
+ "authkestra-devsig",
+ "authkestra-engine",
+ "authkestra-macros",
+ "authkestra-op",
+ "authkestra-resource",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "futures-util",
+ "http 1.5.0",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "authkestra-axum"
+version = "0.3.1"
+dependencies = [
+ "authkestra-devsig",
+ "authkestra-engine",
+ "authkestra-macros",
+ "authkestra-op",
+ "authkestra-resource",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "http-body-util",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "tower-cookies",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "authkestra-devsig"
-version = "0.2.6"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -548,18 +539,11 @@ dependencies = [
 
 [[package]]
 name = "authkestra-engine"
-version = "0.2.6"
+version = "0.3.1"
 dependencies = [
  "actix-files",
  "aes-gcm",
  "async-trait",
- "authkestra",
- "authkestra-engine",
- "authkestra-macros",
- "authkestra-oidc",
- "authkestra-op",
- "authkestra-providers",
- "authkestra-resource",
  "base64 0.22.1",
  "chrono",
  "dotenvy",
@@ -587,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-macros"
-version = "0.2.6"
+version = "0.3.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -597,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-oidc"
-version = "0.2.6"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "authkestra-engine",
@@ -614,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-op"
-version = "0.2.6"
+version = "0.3.1"
 dependencies = [
  "argon2",
  "async-trait",
@@ -641,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-providers"
-version = "0.2.6"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "authkestra-engine",
@@ -656,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-resource"
-version = "0.2.6"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "authkestra-engine",

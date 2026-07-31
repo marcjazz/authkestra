@@ -12,7 +12,7 @@ Authkestra includes a few generic KV stores. Enable the required feature flags t
 ```toml
 [dependencies]
 # Example: Using Redis and SQLite KV stores
-authkestra = { version = "0.2", features = ["redis", "sql-sqlite"] }
+authkestra = { version = "0.3", features = ["redis", "sql-sqlite"] }
 ```
 
 ### 1. Memory Store (`memory`)

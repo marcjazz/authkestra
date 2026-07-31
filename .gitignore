@@ -6,4 +6,5 @@ act_output.log
 *.pem
 *.rlib
 *.orig
-*.patchscratch/
+*.patch
+scratch/
