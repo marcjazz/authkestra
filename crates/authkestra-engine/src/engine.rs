@@ -306,10 +306,7 @@ impl<S, T> Engine<S, T> {
                 continue;
             }
             if !enrolled_methods.contains(name)
-                && m
-                    .has_enrolled(&identity.external_id)
-                    .await
-                    .unwrap_or(false)
+                && m.has_enrolled(&identity.external_id).await.unwrap_or(false)
             {
                 enrolled_methods.push(name.clone());
             }

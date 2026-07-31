@@ -161,13 +161,15 @@ impl AuthMethod for MockMfaMethod {
 
 #[tokio::test]
 async fn test_primary_method_requires_mfa() {
-    use crate::Engine;
     use crate::auth::AuthResult;
+    use crate::Engine;
 
     struct TestPasswordMethod;
     #[async_trait]
     impl AuthMethod for TestPasswordMethod {
-        fn name(&self) -> &str { "password" }
+        fn name(&self) -> &str {
+            "password"
+        }
         async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
             Ok(Identity {
                 provider_id: "password".to_string(),
@@ -185,12 +187,17 @@ async fn test_primary_method_requires_mfa() {
         .build();
 
     let res = engine
-        .authenticate(AuthInput::Password { identifier: "".to_string(), password: "".to_string() })
+        .authenticate(AuthInput::Password {
+            identifier: "".to_string(),
+            password: "".to_string(),
+        })
         .await
         .unwrap();
 
     match res {
-        AuthResult::MfaRequired { allowed_methods, .. } => {
+        AuthResult::MfaRequired {
+            allowed_methods, ..
+        } => {
             assert_eq!(allowed_methods, vec!["mock_mfa"]);
         }
         _ => panic!("Expected MFA required"),
@@ -199,14 +206,18 @@ async fn test_primary_method_requires_mfa() {
 
 #[tokio::test]
 async fn test_mfa_equivalent_bypasses_mfa() {
-    use crate::Engine;
     use crate::auth::AuthResult;
+    use crate::Engine;
 
     struct TestWebAuthnMethod;
     #[async_trait]
     impl AuthMethod for TestWebAuthnMethod {
-        fn name(&self) -> &str { "webauthn" }
-        fn is_mfa_equivalent(&self) -> bool { true }
+        fn name(&self) -> &str {
+            "webauthn"
+        }
+        fn is_mfa_equivalent(&self) -> bool {
+            true
+        }
         async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
             Ok(Identity {
                 provider_id: "webauthn".to_string(),
