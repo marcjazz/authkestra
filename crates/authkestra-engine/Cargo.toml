@@ -38,9 +38,9 @@ webauthn-rs = { version = "0.5.0", optional = true, features = ["danger-allow-st
 totp-rs = { version = "5.7", features = ["gen_secret", "otpauth"], optional = true }
 
 [features]
-default = ["token", "flow"]
+default = ["token"]
 token = []
-flow = []
+
 session = []
 memory = []
 redis = ["dep:redis"]
@@ -54,7 +54,7 @@ captcha = []
 [dev-dependencies]
 
 authkestra = { workspace = true, features = ["full"] }
-authkestra-engine = { workspace = true, features = ["flow", "token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
+authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
 authkestra-oidc = { workspace = true }

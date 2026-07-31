@@ -167,13 +167,14 @@ pub async fn handle_reissue_start(
     challenges: &dyn EnrolmentChallengeStore,
     config: &AttestationConfig,
 ) -> Result<ChallengeResponse, OpError> {
-    let jwk = parse_public_jwk(&req.public_jwk)?;
-    let jkt = compute_cnf_jkt(&jwk)?;
-
     let claims = tokens.validate_token(&req.attestation, None).map_err(|e| {
         tracing::warn!(error = ?e, "presented attestation failed validation at re-issuance");
         OpError::AttestationInvalid
     })?;
+
+    let jwk = parse_public_jwk(&req.public_jwk)?;
+    let jkt = compute_cnf_jkt(&jwk)?;
+
 
     let bound_jkt = claims
         .extra

@@ -1,4 +1,4 @@
-//! # Authkestra OP
+//! # Engine OP
 //!
 //! `authkestra-op` implements the OpenID Provider (OP) side of OIDC: issuing
 //! tokens and running the authorization code grant, as opposed to
@@ -62,3 +62,6 @@ pub use config::OpConfig;
 // `handlers` lands in OP.2 onward (discovery, jwks, authorize, token,
 // userinfo). Left out of this skeleton PR deliberately — see RFC-003 §5 for
 // the planned module layout.
+/// Unified OpBuilder pattern
+pub mod builder;
+pub use builder::{Op, OpBuilder};

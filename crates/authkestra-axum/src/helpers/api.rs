@@ -2,12 +2,11 @@
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "token")]
 use authkestra_engine::TokenManager;
-#[cfg(any(feature = "flow", feature = "session", feature = "token"))]
+#[cfg(any(feature = "session", feature = "token"))]
 use authkestra_engine::{
     pkce::Pkce,
     state::{Identity, OAuth2State, OAuthToken},
 };
-#[cfg(feature = "flow")]
 use authkestra_engine::{Engine, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "token")]
 use axum::Json;
@@ -19,9 +18,9 @@ use axum::{
 };
 #[allow(unused_imports)]
 use std::sync::Arc;
-#[cfg(any(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 use tower_cookies::cookie::SameSite;
-#[cfg(any(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 use tower_cookies::{Cookie, Cookies};
 
 #[cfg(feature = "session")]
@@ -42,7 +41,6 @@ pub struct OAuthLoginParams {
 /// Helper to initiate the OAuth2 login flow.
 ///
 /// This generates the authorization URL and sets a CSRF state cookie.
-#[cfg(feature = "flow")]
 pub fn initiate_oauth_login(
     flow: &dyn ErasedOAuthFlow,
     cookies: &Cookies,
@@ -75,7 +73,6 @@ pub fn initiate_oauth_login(
 }
 
 /// Internal helper to finalize the OAuth flow by validating state and exchanging the code.
-#[cfg(feature = "flow")]
 async fn finalize_callback_erased(
     flow: &dyn ErasedOAuthFlow,
     cookies: &Cookies,
@@ -123,7 +120,7 @@ async fn finalize_callback_erased(
 }
 
 /// Helper to handle the OAuth2 callback and create a server-side session.
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub async fn handle_oauth_callback_erased(
     flow: &dyn ErasedOAuthFlow,
     cookies: Cookies,
@@ -173,7 +170,7 @@ pub async fn handle_oauth_callback_erased(
 }
 
 /// Helper to handle the OAuth2 callback and create a server-side session.
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub async fn handle_oauth_callback<P, M>(
     flow: &OAuth2Flow<P, M>,
     cookies: Cookies,
@@ -190,7 +187,7 @@ where
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
-#[cfg(all(feature = "flow", feature = "token"))]
+#[cfg(feature = "token")]
 pub async fn handle_oauth_callback_jwt_erased(
     flow: &dyn ErasedOAuthFlow,
     cookies: Cookies,
@@ -219,7 +216,7 @@ pub async fn handle_oauth_callback_jwt_erased(
 }
 
 /// Helper to handle the OAuth2 callback and return a JWT for stateless auth.
-#[cfg(all(feature = "flow", feature = "token"))]
+#[cfg(feature = "token")]
 pub async fn handle_oauth_callback_jwt<P, M>(
     flow: &OAuth2Flow<P, M>,
     cookies: Cookies,
@@ -270,8 +267,6 @@ pub async fn logout(
 
     Ok(Redirect::to(redirect_to))
 }
-
-#[cfg(feature = "flow")]
 pub async fn axum_login_handler<AppState, S, T>(
     Path(provider): Path<String>,
     axum::extract::State(state): axum::extract::State<AppState>,
@@ -311,7 +306,7 @@ where
     Ok(redirect)
 }
 
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub async fn axum_callback_handler<AppState, S, T>(
     Path(provider): Path<String>,
     axum::extract::State(state): axum::extract::State<AppState>,
@@ -354,7 +349,7 @@ where
     })
 }
 
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub async fn axum_logout_handler<AppState, S, T>(
     axum::extract::State(state): axum::extract::State<AppState>,
     cookies: Cookies,

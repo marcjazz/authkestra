@@ -1,4 +1,4 @@
-#[cfg(any(feature = "flow", feature = "session", feature = "token"))]
+#[cfg(any(feature = "session", feature = "token"))]
 use actix_web::cookie::Cookie;
 #[cfg(feature = "session")]
 pub use authkestra_engine::auth::SessionConfig;

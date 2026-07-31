@@ -26,18 +26,18 @@ wiremock = "0.6"
 
 [features]
 default = []
-full = ["flow", "session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
+full = ["session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
 
 # Core features
-flow = ["authkestra-engine/flow"]
+
 session = ["authkestra-engine/session"]
 token = ["authkestra-engine/token"]
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
 
 # Web frameworks
-axum = ["dep:authkestra-axum", "authkestra-axum/flow", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
-actix = ["dep:authkestra-actix", "authkestra-actix/flow", "authkestra-actix/session", "authkestra-actix/token", "authkestra-actix/resource"]
+axum = ["dep:authkestra-axum", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
+actix = ["dep:authkestra-actix", "authkestra-actix/session", "authkestra-actix/token", "authkestra-actix/resource"]
 
 # Providers
 github = ["authkestra-providers/github"]

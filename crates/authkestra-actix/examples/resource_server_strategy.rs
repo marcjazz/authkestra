@@ -18,7 +18,7 @@ struct UserIdentity {
     scope: Option<String>,
 }
 
-/// AppState using Authkestra's `Guard`.
+/// AppState using Engine's `Guard`.
 #[derive(Clone, ActixState)]
 struct AppState {
     #[authkestra(store)]

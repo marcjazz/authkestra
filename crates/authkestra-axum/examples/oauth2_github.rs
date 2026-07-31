@@ -33,7 +33,7 @@ async fn main() {
     // =========================================================================
     // Initialize tracing subscriber for logging
     // =========================================================================
-    // This allows the user to capture logs emitted by Authkestra via `tracing`.
+    // This allows the user to capture logs emitted by Engine via `tracing`.
     // You can customize the log level by setting the `RUST_LOG` environment
     // variable (e.g., `RUST_LOG=debug`, `RUST_LOG=authkestra=info,my_app=debug`).
     // `tracing_subscriber::fmt::init()` installs a global default subscriber
@@ -76,7 +76,7 @@ async fn main() {
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
-    let auth_engine = Engine::builder()
+    let authkestra = Engine::builder()
         .provider(OAuth2Flow::new(github_provider))
         .session_store(session_store)
         .session_config(SessionConfig {
@@ -86,7 +86,7 @@ async fn main() {
         .build();
 
     let state = AppState {
-        auth: auth_engine.clone(),
+        auth: authkestra.clone(),
     };
 
     let app = Router::new()
@@ -95,7 +95,7 @@ async fn main() {
             "/examples/static"
         )))
         .route("/api/user", get(get_user))
-        .merge(auth_engine.axum_router())
+        .merge(authkestra.axum_router())
         .layer(CookieManagerLayer::new())
         .with_state(state);
 

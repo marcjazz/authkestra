@@ -41,7 +41,7 @@ async fn main() {
             .expect("Failed to connect to Redis"),
     );
 
-    let auth_engine = Engine::builder()
+    let authkestra = Engine::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false,
@@ -50,7 +50,7 @@ async fn main() {
         .build();
 
     let state = AppState {
-        auth: auth_engine.clone(),
+        auth: authkestra.clone(),
     };
 
     let app = Router::new()
@@ -59,7 +59,7 @@ async fn main() {
             "/examples/static"
         )))
         .route("/api/user", get(get_user))
-        .merge(auth_engine.axum_router())
+        .merge(authkestra.axum_router())
         .layer(CookieManagerLayer::new())
         .with_state(state);
 

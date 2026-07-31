@@ -1,6 +1,5 @@
 #[cfg(feature = "token")]
 pub use authkestra_engine::TokenManager;
-#[cfg(feature = "flow")]
 pub use authkestra_engine::{Engine, Missing, SessionConfig};
 #[cfg(feature = "resource")]
 pub use authkestra_resource::Guard;
@@ -34,15 +33,11 @@ extern crate self as authkestra_axum;
 
 #[cfg(feature = "macros")]
 pub use authkestra_macros::AxumState;
-
-#[cfg(feature = "flow")]
 #[derive(Clone, authkestra_macros::AxumState)]
 pub struct AxumState<S = Missing, T = Missing> {
     #[authkestra(engine)]
     pub authkestra: Engine<S, T>,
 }
-
-#[cfg(feature = "flow")]
 impl<S, T> From<Engine<S, T>> for AxumState<S, T> {
     fn from(authkestra: Engine<S, T>) -> Self {
         Self { authkestra }
@@ -206,7 +201,7 @@ where
     }
 }
 
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 pub trait AxumExt<S, T> {
     fn axum_router<AppState>(&self) -> axum::Router<AppState>
     where
@@ -216,7 +211,7 @@ pub trait AxumExt<S, T> {
         Result<Arc<dyn SessionStore>, AxumError>: FromRef<AppState>;
 }
 
-#[cfg(all(feature = "flow", feature = "session"))]
+#[cfg(feature = "session")]
 impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AxumExt<S, T>
     for Engine<S, T>
 {

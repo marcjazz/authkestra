@@ -79,3 +79,5 @@ pub use jwks::IssuerJwks;
 pub use replay::{InMemoryReplayStore, ReplayError, ReplayStore, UnavailableReplayStore};
 pub use request::SignedRequest;
 pub use verify::verify;
+pub mod builder;
+pub use builder::{DevSig, DevSigBuilder};

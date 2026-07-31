@@ -24,7 +24,7 @@ async fn main() -> std::io::Result<()> {
     let session_store: Arc<dyn SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::default());
 
-    let auth_engine = Engine::builder()
+    let authkestra = Engine::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false, // For local development
@@ -33,7 +33,7 @@ async fn main() -> std::io::Result<()> {
         .build();
 
     let state = AppState {
-        auth: auth_engine.clone(),
+        auth: authkestra.clone(),
     };
 
     println!("🚀 Actix Basic Setup running on http://localhost:3000");

@@ -1,4 +1,4 @@
-//! # Authkestra Macros
+//! # Engine Macros
 //!
 //! Procedural macros for authkestra framework integrations to eliminate boilerplate
 //! when integrating with custom application state.

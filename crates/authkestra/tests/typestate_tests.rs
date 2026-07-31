@@ -1,14 +1,11 @@
-use authkestra::flow::Engine;
+use authkestra::Authkestra;
 use authkestra_engine::state::Identity;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 #[tokio::test]
 async fn test_typestate_session_flow() {
-    // Start with Missing, Missing
-    let builder = Engine::builder();
-
-    // Configure session store -> transitions to Configured, Missing
+    let builder = Authkestra::builder();
     let auth = builder
         .session_store(Arc::new(
             authkestra_engine::store::memory::MemoryStore::default(),
@@ -33,10 +30,7 @@ async fn test_typestate_session_flow() {
 
 #[test]
 fn test_typestate_token_flow() {
-    // Start with Missing, Missing
-    let builder = Engine::builder();
-
-    // Configure token manager -> transitions to Missing, Configured
+    let builder = Authkestra::builder();
     let auth = builder.jwt_secret(b"secret").build();
 
     // issue_token should be available
@@ -57,7 +51,7 @@ fn test_typestate_token_flow() {
 
 #[tokio::test]
 async fn test_typestate_full_flow() {
-    let auth = Engine::builder()
+    let auth = Authkestra::builder()
         .session_store(Arc::new(
             authkestra_engine::store::memory::MemoryStore::default(),
         ))

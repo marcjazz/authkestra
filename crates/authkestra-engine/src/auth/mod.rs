@@ -1,6 +1,6 @@
-//! # Authkestra Core
+//! # Engine Core
 //!
-//! `authkestra-core` provides the foundational traits and types for the Authkestra authentication framework.
+//! `authkestra-core` provides the foundational traits and types for the Engine authentication framework.
 //! It defines the core abstractions for identities, authentication flows and providers that are used across the entire ecosystem.
 
 #![warn(missing_docs)]

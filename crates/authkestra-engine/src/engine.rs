@@ -39,7 +39,7 @@ impl TokenManagerState for Configured<Arc<TokenManager>> {
     }
 }
 
-/// The central orchestrator for Authkestra.
+/// The central orchestrator for Engine.
 ///
 /// `Engine` ties together authentication methods, session management, and flows.
 /// It is constructed using the [`EngineBuilder`] which uses the Typestate pattern
@@ -408,7 +408,7 @@ impl<S> Engine<S, Configured<Arc<TokenManager>>> {
     }
 }
 
-/// Trait for Authkestra instances that have a session store configured.
+/// Trait for Engine instances that have a session store configured.
 pub trait HasSessionStore {
     /// Returns the session store.
     fn session_store(&self) -> Arc<dyn SessionStore>;
@@ -420,7 +420,7 @@ impl<T> HasSessionStore for Engine<Configured<Arc<dyn SessionStore>>, T> {
     }
 }
 
-/// Trait for Authkestra instances that have a token manager configured.
+/// Trait for Engine instances that have a token manager configured.
 #[cfg(feature = "token")]
 pub trait HasTokenManager {
     /// Returns the token manager.

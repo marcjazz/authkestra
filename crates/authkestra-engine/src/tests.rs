@@ -103,7 +103,7 @@ async fn test_session_store_mock() {
 }
 
 #[test]
-fn test_auth_engine_builder_typestate() {
+fn test_authkestra_builder_typestate() {
     use crate::engine::Engine;
     use std::sync::Arc;
 
