@@ -24,6 +24,41 @@ serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 wiremock = "0.6"
 
+authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
+authkestra-resource = { workspace = true }
+authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
+authkestra-oidc = { workspace = true }
+authkestra-op = { workspace = true, features = ["sqlx-sqlite"] }
+authkestra-macros = { workspace = true }
+authkestra-devsig = { workspace = true }
+authkestra-axum = { workspace = true, features = ["devsig", "macros", "session", "token", "resource", "op", "captcha"] }
+authkestra-actix = { workspace = true, features = ["devsig", "macros", "session", "token", "resource", "op", "captcha"] }
+
+dotenvy = "0.15"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+redis = { version = "0.27", features = ["tokio-comp"] }
+tower-http = { version = "0.6", features = ["fs"] }
+actix-files = "0.6"
+rsa = "0.9"
+p256 = { version = "0.13", features = ["pem", "ecdsa", "jwk"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rand = "0.8"
+sha2 = "0.10"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+async-trait = "0.1.91"
+webauthn-rs = "0.5.0"
+url = "2.5"
+axum = { version = "0.8.8", features = ["macros"] }
+actix-web = "4"
+tower-cookies = "0.11.0"
+tower-layer = "0.3"
+tower-service = "0.3"
+jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+serde = { version = "1.0", features = ["derive"] }
+base64 = "0.22.1"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
 [features]
 default = []
 full = ["session", "token", "oidc", "axum", "actix", "github", "google", "discord"]

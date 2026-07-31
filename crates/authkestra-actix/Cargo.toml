@@ -29,31 +29,6 @@ chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 http = "1"
 
-[dev-dependencies]
-
-
-authkestra-engine = { path = "../authkestra-engine", features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
-authkestra-resource = { path = "../authkestra-resource" }
-authkestra-providers = { path = "../authkestra-providers", features = ["github", "google", "discord"] }
-authkestra-oidc = { path = "../authkestra-oidc" }
-authkestra-op = { path = "../authkestra-op", features = ["sqlx-sqlite"] }
-authkestra-macros = { path = "../authkestra-macros" }
-dotenvy = "0.15"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-redis = { version = "0.27", features = ["tokio-comp"] }
-reqwest = { version = "0.13", features = ["json"] }
-tower-http = { version = "0.6", features = ["fs"] }
-actix-files = "0.6"
-
-tokio = { version = "1", features = ["full"] }
-rsa = "0.9"
-p256 = { version = "0.13", features = ["pem", "ecdsa", "jwk"] }
-rand_core = { version = "0.6", features = ["getrandom"] }
-rand = "0.8"
-sha2 = "0.10"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-async-trait = "0.1.91"
-
 [features]
 default = []
 session = ["authkestra-engine/session"]
@@ -65,7 +40,4 @@ macros = ["dep:authkestra-macros"]
 captcha = ["authkestra-engine/captcha"]
 devsig = ["dep:authkestra-devsig"]
 
-[[example]]
-name = "actix_devsig"
-path = "examples/devsig/main.rs"
-required-features = ["devsig"]
+

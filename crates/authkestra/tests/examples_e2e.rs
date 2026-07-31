@@ -99,45 +99,45 @@ async fn run_oauth_example(package: &str, example_bin: &str, provider: &str, log
 #[tokio::test]
 async fn test_all_oauth_examples_sequentially() {
     run_oauth_example(
-        "authkestra-axum",
-        "oauth2_github",
+        "authkestra",
+        "axum_oauth2_github",
         "GITHUB",
         "/auth/login/github",
     )
     .await;
     run_oauth_example(
-        "authkestra-actix",
-        "oauth2_github",
+        "authkestra",
+        "actix_oauth2_github",
         "GITHUB",
         "/auth/login/github",
     )
     .await;
 
     run_oauth_example(
-        "authkestra-axum",
-        "oidc_google",
+        "authkestra",
+        "axum_oidc_google",
         "GOOGLE",
         "/auth/login/google",
     )
     .await;
     run_oauth_example(
-        "authkestra-actix",
-        "oidc_google",
+        "authkestra",
+        "actix_oidc_google",
         "GOOGLE",
         "/auth/login/google",
     )
     .await;
 
     run_oauth_example(
-        "authkestra-axum",
-        "oauth_stateless",
+        "authkestra",
+        "axum_oauth_stateless",
         "GITHUB",
         "/auth/github",
     )
     .await;
     run_oauth_example(
-        "authkestra-actix",
-        "oauth_stateless",
+        "authkestra",
+        "actix_oauth_stateless",
         "GITHUB",
         "/auth/github",
     )
