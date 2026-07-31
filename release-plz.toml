@@ -1,5 +1,3 @@
 [workspace]
-git_release_name = "v{{ version }}"
-git_tag_name = "v{{ version }}"
 publish_no_verify = true
 release_commits = "^(feat|fix|perf|refactor|revert)"
