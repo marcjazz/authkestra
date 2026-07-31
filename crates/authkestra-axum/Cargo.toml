@@ -35,7 +35,7 @@ bytes = { version = "1", optional = true }
 
 [dev-dependencies]
 
-authkestra = { workspace = true, features = ["full"] }
+
 authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
