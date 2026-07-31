@@ -1,13 +1,11 @@
-#[cfg(feature = "session")]
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "token")]
 use authkestra_engine::TokenManager;
-#[cfg(any(feature = "session", feature = "token"))]
 use authkestra_engine::{
     pkce::Pkce,
     state::{Identity, OAuth2State, OAuthToken},
 };
-use authkestra_engine::{Engine, ErasedOAuthFlow, OAuth2Flow};
+use authkestra_engine::{Engine, ErasedOAuthFlow};
 #[cfg(feature = "token")]
 use axum::Json;
 #[allow(unused_imports)]
@@ -18,9 +16,7 @@ use axum::{
 };
 #[allow(unused_imports)]
 use std::sync::Arc;
-#[cfg(feature = "session")]
 use tower_cookies::cookie::SameSite;
-#[cfg(feature = "session")]
 use tower_cookies::{Cookie, Cookies};
 
 #[cfg(feature = "session")]
