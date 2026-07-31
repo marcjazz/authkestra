@@ -213,6 +213,8 @@ async fn main() {
                     authkestra_op::client::GrantType::Custom("urn:example:custom".to_string()),
                 ],
                 allowed_audiences: vec![],
+                token_endpoint_auth_method: None,
+                jwks: None,
             },
             std::time::Duration::from_secs(31536000),
         )

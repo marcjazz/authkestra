@@ -55,6 +55,8 @@ async fn main() {
                 scopes: vec!["openid".to_string(), "profile".to_string()],
                 grant_types: vec![authkestra_op::client::GrantType::AuthorizationCode],
                 allowed_audiences: vec![],
+                token_endpoint_auth_method: None,
+                jwks: None,
             },
             std::time::Duration::from_secs(31536000),
         )

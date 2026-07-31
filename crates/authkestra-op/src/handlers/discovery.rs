@@ -65,6 +65,27 @@ impl OidcDiscovery {
             ],
         }
     }
+
+    /// Advertises `private_key_jwt` (RFC 7523 §2.2) in
+    /// `token_endpoint_auth_methods_supported`.
+    ///
+    /// Opt-in rather than part of [`OidcDiscovery::from_config`], because
+    /// whether this OP will actually honour an assertion is not something
+    /// `OpConfig` knows: the token endpoint implements the method
+    /// unconditionally, but it refuses every assertion unless the deployment's
+    /// `OpStore` also tracks spent `jti`s (see
+    /// `OpStore::record_client_assertion_jti`, which fails closed). A
+    /// discovery document promising a method the OP will reject at runtime is
+    /// worse than one that stays quiet, so the decision belongs to whoever
+    /// wired the store — call this alongside
+    /// `CompositeOpStore::with_client_assertion_store`.
+    pub fn with_private_key_jwt(mut self) -> Self {
+        let method = "private_key_jwt".to_string();
+        if !self.token_endpoint_auth_methods_supported.contains(&method) {
+            self.token_endpoint_auth_methods_supported.push(method);
+        }
+        self
+    }
 }
 
 #[cfg(test)]
@@ -111,5 +132,48 @@ mod tests {
         assert!(doc
             .id_token_signing_alg_values_supported
             .contains(&"RS256".to_string()));
+    }
+
+    fn discovery_config() -> OpConfig {
+        OpConfig {
+            issuer: "https://auth.example.com".to_string(),
+            scopes_supported: vec!["openid".to_string()],
+            response_types_supported: vec!["code".to_string()],
+            grant_types_supported: vec!["authorization_code".to_string()],
+            id_token_signing_alg: "RS256".to_string(),
+            authorization_code_ttl_secs: 60,
+            access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 600,
+            token_exchange_enabled: false,
+        }
+    }
+
+    /// The document must not promise a method the deployment may not have
+    /// wired a replay store for — silence is the honest default.
+    #[test]
+    fn private_key_jwt_is_not_advertised_by_default() {
+        let doc = OidcDiscovery::from_config(&discovery_config());
+        assert!(!doc
+            .token_endpoint_auth_methods_supported
+            .contains(&"private_key_jwt".to_string()));
+    }
+
+    #[test]
+    fn private_key_jwt_is_advertised_once_when_opted_in() {
+        let doc = OidcDiscovery::from_config(&discovery_config())
+            .with_private_key_jwt()
+            .with_private_key_jwt();
+
+        assert_eq!(
+            doc.token_endpoint_auth_methods_supported
+                .iter()
+                .filter(|m| *m == "private_key_jwt")
+                .count(),
+            1
+        );
+        // The methods that were already supported are untouched.
+        assert!(doc
+            .token_endpoint_auth_methods_supported
+            .contains(&"client_secret_basic".to_string()));
     }
 }

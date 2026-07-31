@@ -180,6 +180,8 @@ mod tests {
                     scopes: vec!["openid".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
                 },
                 std::time::Duration::from_secs(31536000),
             )
@@ -223,6 +225,8 @@ mod tests {
             actor_token: None,
             actor_token_type: None,
             audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
             requested_token_type: None,
             subject_token: None,
             subject_token_type: None,

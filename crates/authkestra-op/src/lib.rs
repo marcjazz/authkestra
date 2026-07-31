@@ -20,7 +20,15 @@ pub use error::OpError;
 
 /// Registered OAuth2/OIDC client applications.
 pub mod client;
-pub use client::{ClientRegistration, ClientStore, GrantType};
+pub use client::{ClientRegistration, ClientStore, GrantType, TokenEndpointAuthMethod};
+
+/// Asymmetric client authentication (`private_key_jwt`, RFC 7523 §2.2):
+/// assertion verification and the replay tracking it depends on.
+pub mod client_assertion;
+pub use client_assertion::{
+    ClientAssertionStore, MemoryClientAssertionStore, NoClientAssertionStore,
+    CLIENT_ASSERTION_TYPE_JWT_BEARER,
+};
 
 /// Authorization codes issued during the `/authorize` step and consumed at
 /// `/token`.
