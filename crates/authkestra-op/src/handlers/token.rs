@@ -103,9 +103,14 @@ pub async fn handle_token(
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
 
     // 0. Work out which credential — if any — the request presents.
-    let credential = extract_credential(&req, auth_header)?;
+    let credential = extract_credential(
+        req.client_secret.as_deref(),
+        req.client_assertion.as_deref(),
+        req.client_assertion_type.as_deref(),
+        auth_header,
+    )?;
 
-    let client_id = match resolve_client_id(&req, &credential) {
+    let client_id = match resolve_client_id(req.client_id.as_deref(), &credential) {
         Some(id) => id,
         None => {
             tracing::warn!("Missing client_id in token request");
@@ -196,7 +201,7 @@ pub async fn handle_token(
 /// request body) survives long enough to be checked against what the client
 /// registered.
 #[derive(Debug)]
-enum PresentedCredential {
+pub(crate) enum PresentedCredential {
     /// A shared secret in the `Authorization: Basic` header. Carries the
     /// `client_id` too, since that header is where it came from.
     SecretBasic { client_id: String, secret: String },
@@ -218,8 +223,10 @@ enum PresentedCredential {
 ///
 /// Note that `client_id` is not a credential: sending it in the body
 /// alongside a `Basic` header, or alongside an assertion, is fine.
-fn extract_credential(
-    req: &TokenRequest,
+pub(crate) fn extract_credential(
+    client_secret: Option<&str>,
+    client_assertion: Option<&str>,
+    client_assertion_type: Option<&str>,
     auth_header: Option<&str>,
 ) -> Result<PresentedCredential, TokenErrorResponse> {
     let basic = auth_header
@@ -238,11 +245,13 @@ fn extract_credential(
 
     // An empty `client_secret=` form field is not a presented credential; some
     // HTTP clients emit one for an absent value.
-    let post = req.client_secret.clone().filter(|s| !s.is_empty());
+    let post = client_secret
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
 
-    let assertion = match req.client_assertion.as_ref() {
-        Some(assertion) => match req.client_assertion_type.as_deref() {
-            Some(CLIENT_ASSERTION_TYPE_JWT_BEARER) => Some(assertion.clone()),
+    let assertion = match client_assertion {
+        Some(assertion) => match client_assertion_type {
+            Some(CLIENT_ASSERTION_TYPE_JWT_BEARER) => Some(assertion.to_string()),
             _ => {
                 tracing::warn!(
                     "client_assertion presented with a missing or unsupported \
@@ -289,14 +298,16 @@ fn extract_credential(
 /// assertion must then be signed by that client's registered key, and its
 /// `iss`/`sub` re-checked against that client's `client_id`. Naming someone
 /// else's `client_id` here just picks the key the forgery will fail against.
-fn resolve_client_id(req: &TokenRequest, credential: &PresentedCredential) -> Option<String> {
+pub(crate) fn resolve_client_id(
+    req_client_id: Option<&str>,
+    credential: &PresentedCredential,
+) -> Option<String> {
     match credential {
         PresentedCredential::SecretBasic { client_id, .. } => Some(client_id.clone()),
-        PresentedCredential::Assertion(assertion) => req
-            .client_id
-            .clone()
+        PresentedCredential::Assertion(assertion) => req_client_id
+            .map(|s| s.to_string())
             .or_else(|| peek_client_assertion_subject(assertion)),
-        _ => req.client_id.clone(),
+        _ => req_client_id.map(|s| s.to_string()),
     }
 }
 
@@ -315,7 +326,7 @@ fn resolve_client_id(req: &TokenRequest, credential: &PresentedCredential) -> Op
 /// registrations never said which), and no stored hash means no client
 /// authentication. Such a registration is never accepted via
 /// `private_key_jwt` — asymmetric authentication has to be opted into.
-async fn authenticate_client(
+pub(crate) async fn authenticate_client(
     client: &ClientRegistration,
     credential: &PresentedCredential,
     config: &OpConfig,
