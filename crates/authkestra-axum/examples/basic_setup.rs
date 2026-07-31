@@ -3,9 +3,9 @@
 //! This example demonstrates the most basic setup of Engine with Axum.
 //! It uses an in-memory session store and a mock authentication provider.
 
-use authkestra_engine::flow::Engine;
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
+use authkestra_engine::flow::Engine;
 use authkestra_engine::{AkWebAppEngine, SessionConfig};
 use axum::{
     response::{IntoResponse, Json},

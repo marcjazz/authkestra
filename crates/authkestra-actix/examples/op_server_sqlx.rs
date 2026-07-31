@@ -3,8 +3,8 @@
 //! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Actix.
 //! It uses the batteries-included `SqlxOpStore` for a production-ready relational database schema.
 use actix_web::{App, HttpServer};
-use authkestra_engine::flow::Engine;
 use authkestra_actix::{ActixState, OpExt};
+use authkestra_engine::flow::Engine;
 use authkestra_engine::TokenManager;
 use authkestra_op::config::OpConfig;
 use authkestra_op::sqlx_store::SqlxOpStore;
