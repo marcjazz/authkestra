@@ -4,9 +4,9 @@
 //! This example demonstrates how to use `SqlKvStore` (with SQLite) as a session store with Axum.
 //! It also demonstrates how to manage the database table lifecycle by calling `.migrate().await`.
 
-use authkestra::flow::Engine;
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::auth::SessionStore;
+use authkestra_engine::flow::Engine;
 use authkestra_engine::store::sql::SqlKvStore;
 use authkestra_engine::{AkWebAppEngine, SessionConfig};
 use axum::{

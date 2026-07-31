@@ -7,8 +7,8 @@
 //! - `AUTHKESTRA_GITHUB_CLIENT_ID`
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
-use authkestra::flow::{Engine, OAuth2Flow};
 use authkestra_axum::{helpers, AuthToken, AxumError, AxumState};
+use authkestra_engine::flow::{Engine, OAuth2Flow};
 use authkestra_engine::{token::TokenManager, AkApiEngine, Configured, Missing};
 use authkestra_providers::github::GithubProvider;
 use axum::{
