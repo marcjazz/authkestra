@@ -171,7 +171,7 @@ network call.
 
 ```toml
 [dependencies]
-authkestra-actix = { version = "0.2.4", features = ["devsig"] }
+authkestra-actix = { version = "0.3", features = ["devsig"] }
 authkestra-devsig = "0.1.0"
 ```
 
