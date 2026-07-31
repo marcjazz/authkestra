@@ -3,7 +3,7 @@ title: Typestate Builder Pattern
 description: Learn how Authkestra leverages the typestate pattern for compile-time safety.
 ---
 
-Authkestra relies heavily on Rust's **Typestate Pattern** through the `Engine::builder()` API. This design pattern ensures that your authentication stack is configured correctly *at compile-time*, completely eliminating an entire class of runtime panics and misconfigurations.
+Authkestra relies heavily on Rust's **Typestate Pattern** through the `Authkestra::builder()` API. This design pattern ensures that your authentication stack is configured correctly *at compile-time*, completely eliminating an entire class of runtime panics and misconfigurations.
 
 ## What is the Typestate Pattern?
 
@@ -13,7 +13,7 @@ For Authkestra, this means that the builder structurally guarantees you cannot u
 
 ## How Authkestra Uses It
 
-When you call `Engine::builder()`, it starts in an empty state. As you append configuration options (like providing an OAuth flow or a session store), the builder transitions through defined types.
+When you call `Authkestra::builder()`, it starts in an empty state. As you append configuration options (like providing an OAuth flow or a session store), the builder transitions through defined types.
 
 ### Example: Enforcing Session Configuration
 
@@ -33,7 +33,7 @@ let github_provider = GithubProvider::new(
 );
 
 // 2. Build the Engine
-let auth_engine = Engine::builder()
+let auth_engine = Authkestra::builder()
     .provider(OAuth2Flow::new(github_provider))
     // If you omit this line, methods reliant on a session store won't exist!
     .session_store(Arc::new(MemoryStore::default())) 
