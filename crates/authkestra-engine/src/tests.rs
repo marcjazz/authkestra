@@ -252,3 +252,49 @@ async fn test_mfa_equivalent_bypasses_mfa() {
         _ => panic!("Expected Success"),
     }
 }
+
+#[tokio::test]
+#[cfg(feature = "totp")]
+async fn test_totp_primary_requires_mfa() {
+    use crate::auth::AuthResult;
+    use crate::Engine;
+
+    struct TestTotpMethod;
+    #[async_trait]
+    impl AuthMethod for TestTotpMethod {
+        fn name(&self) -> &str {
+            "totp"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Ok(Identity {
+                provider_id: "totp".to_string(),
+                external_id: "user123".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+    }
+
+    let engine = Engine::builder()
+        .with_auth_method(TestTotpMethod)
+        .with_mfa_method(MockMfaMethod)
+        .build();
+
+    let res = engine
+        .authenticate(AuthInput::Totp {
+            user_id: "user123".to_string(),
+            code: "123456".to_string(),
+        })
+        .await
+        .unwrap();
+
+    match res {
+        AuthResult::MfaRequired {
+            allowed_methods, ..
+        } => {
+            assert_eq!(allowed_methods, vec!["mock_mfa"]);
+        }
+        _ => panic!("Expected MFA required for TOTP primary"),
+    }
+}
