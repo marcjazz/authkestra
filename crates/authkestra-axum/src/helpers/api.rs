@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 #[cfg(feature = "token")]
 use authkestra_engine::TokenManager;
@@ -5,7 +6,7 @@ use authkestra_engine::{
     pkce::Pkce,
     state::{Identity, OAuth2State, OAuthToken},
 };
-use authkestra_engine::{Engine, ErasedOAuthFlow};
+use authkestra_engine::{Engine, ErasedOAuthFlow, OAuth2Flow};
 #[cfg(feature = "token")]
 use axum::Json;
 #[allow(unused_imports)]

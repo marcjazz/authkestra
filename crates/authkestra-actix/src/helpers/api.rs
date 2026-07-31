@@ -1,7 +1,8 @@
-use actix_web::{cookie::Cookie, http::header, web, HttpResponse};
+#![allow(unused_imports)]
+use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 use authkestra_engine::pkce::Pkce;
-use authkestra_engine::{Engine, ErasedOAuthFlow, OAuth2Flow};
+use authkestra_engine::{state::OAuth2State, Engine, ErasedOAuthFlow, OAuth2Flow};
 #[allow(unused_imports)]
 use std::sync::Arc;
 
@@ -96,7 +97,7 @@ pub async fn handle_oauth_callback_erased(
     let cookie_name = "ak_state";
     let encrypted_state = req
         .cookie(cookie_name)
-        .map(|c| c.value().to_string())
+        .map(|c: Cookie| c.value().to_string())
         .ok_or_else(|| {
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
         })?;
@@ -242,7 +243,7 @@ pub async fn logout(
 ) -> Result<HttpResponse, actix_web::Error> {
     let session_id = req
         .cookie(&config.cookie_name)
-        .map(|c| c.value().to_string());
+        .map(|c: Cookie| c.value().to_string());
 
     if let Some(id) = session_id {
         store
@@ -273,7 +274,7 @@ pub async fn handle_oauth_callback_jwt_erased(
 
     let encrypted_state = req
         .cookie(cookie_name)
-        .map(|c| c.value().to_string())
+        .map(|c: Cookie| c.value().to_string())
         .ok_or_else(|| {
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
         })?;

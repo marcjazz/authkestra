@@ -24,7 +24,6 @@ impl AuthMethod for MockAuthMethod {
     }
 }
 
-
 struct MockProvider;
 #[async_trait]
 impl Provider for MockProvider {
