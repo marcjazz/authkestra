@@ -19,7 +19,7 @@ To use it, enable the respective feature flag on the `authkestra-op` crate (or v
 
 ```toml
 [dependencies]
-authkestra-op = { version = "0.2.4", features = ["sqlx-postgres"] }
+authkestra-op = { version = "0.2.5", features = ["sqlx-postgres"] }
 # or sqlx-mysql, sqlx-sqlite
 ```
 

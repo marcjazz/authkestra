@@ -36,6 +36,10 @@ export default defineConfig({
 						{ label: 'OIDC Provider (Client)', slug: 'providers/oidc' },
 						{ label: 'Client Credentials', slug: 'providers/client-credentials' },
 						{ label: 'Device Flow', slug: 'providers/device-flow' },
+						{ label: 'Passkeys (WebAuthn)', slug: 'providers/passkeys' },
+						{ label: 'TOTP (Authenticator Apps)', slug: 'providers/totp' },
+						{ label: 'Bot Protection (CAPTCHA)', slug: 'providers/bot-protection' },
+						{ label: 'Device Signatures', slug: 'providers/device-signatures' },
 					],
 				},
 				{
@@ -43,6 +47,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Resource Server (API)', slug: 'advanced/resource-server' },
 						{ label: 'OpenID Provider (OP)', slug: 'advanced/op-server' },
+						{ label: 'Device Attestation', slug: 'guides/device-attestation' },
 					],
 				},
 				{

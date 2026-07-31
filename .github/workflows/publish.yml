@@ -84,6 +84,7 @@ jobs:
         crate:
           - authkestra-oidc
           - authkestra-op
+          - authkestra-devsig
 
     steps:
       - name: Checkout repository

@@ -26,6 +26,8 @@ fn default_device_req(device_code: &str) -> TokenRequest {
         actor_token_type: None,
         requested_token_type: None,
         audience: None,
+        client_assertion: None,
+        client_assertion_type: None,
     }
 }
 
@@ -73,6 +75,8 @@ async fn setup_store(
                 scopes: vec![],
                 require_pkce: false,
                 allowed_audiences: vec![],
+                token_endpoint_auth_method: None,
+                jwks: None,
             },
             std::time::Duration::from_secs(31536000),
         )
@@ -161,6 +165,8 @@ async fn test_device_expired() {
                 scopes: vec![],
                 require_pkce: false,
                 allowed_audiences: vec![],
+                token_endpoint_auth_method: None,
+                jwks: None,
             },
             std::time::Duration::from_secs(31536000),
         )
@@ -246,6 +252,8 @@ async fn test_device_concurrency() {
                 scopes: vec![],
                 require_pkce: false,
                 allowed_audiences: vec![],
+                token_endpoint_auth_method: None,
+                jwks: None,
             },
             std::time::Duration::from_secs(31536000),
         )

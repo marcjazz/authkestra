@@ -15,7 +15,7 @@ pub struct Claims {
     pub nbf: Option<usize>,
     pub jti: Option<String>,
 
-    // Authkestra-specific core fields
+    // Engine-specific core fields
     pub scope: Option<String>,
     /// Optional identity data for user-centric tokens.
     /// If None, this is likely a machine-to-machine token.
@@ -267,6 +267,43 @@ impl TokenManager {
         encode(&header, &claims, &self.encoding_key).map_err(|e| AuthError::Token(e.to_string()))
     }
 
+    /// Issues a token with an explicit `typ` header and no `aud`, for
+    /// callers minting something that is not a standard OIDC ID/access/user
+    /// token and needs its own wire-format `typ` so verifiers can tell it
+    /// apart from those (e.g. `authkestra-op`'s device/service attestations,
+    /// whose contract requires `typ: "webank-attest+jws"` rather than the
+    /// default `"JWT"`). Additive alongside the `issue_*_token*` family
+    /// above; those are unchanged.
+    pub fn issue_custom_token(
+        &self,
+        sub: String,
+        expires_in_secs: u64,
+        typ: &str,
+        extra: HashMap<String, serde_json::Value>,
+    ) -> Result<String, AuthError> {
+        let now = chrono::Utc::now().timestamp() as usize;
+        let claims = Claims {
+            iss: self.issuer.clone(),
+            sub,
+            aud: None,
+            exp: now + expires_in_secs as usize,
+            iat: now,
+            nbf: Some(now),
+            jti: Some(uuid::Uuid::new_v4().to_string()),
+            scope: None,
+            identity: None,
+            extra,
+        };
+
+        let mut header = Header::new(self.alg);
+        header.typ = Some(typ.to_string());
+        if let Some(ref kid) = self.kid {
+            header.kid = Some(kid.clone());
+        }
+
+        encode(&header, &claims, &self.encoding_key).map_err(|e| AuthError::Token(e.to_string()))
+    }
+
     pub fn validate_token(
         &self,
         token: &str,
@@ -464,6 +501,26 @@ a0QMqKUcs8+YTy5R5K6qtw==
             .validate_token(&token, Some("client-2"))
             .unwrap_err();
         assert!(err.to_string().contains("InvalidAudience"));
+    }
+
+    #[test]
+    fn test_issue_custom_token_sets_typ_and_no_aud() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        let mut extra = HashMap::new();
+        extra.insert("cnf".to_string(), serde_json::json!({"jkt": "abc"}));
+
+        let token = manager
+            .issue_custom_token("device-1".to_string(), 60, "webank-attest+jws", extra)
+            .unwrap();
+
+        let header = jsonwebtoken::decode_header(&token).unwrap();
+        assert_eq!(header.typ.as_deref(), Some("webank-attest+jws"));
+
+        let claims = manager.validate_token(&token, None).unwrap();
+        assert_eq!(claims.sub, "device-1");
+        assert_eq!(claims.aud, None);
+        assert_eq!(claims.extra.get("cnf").unwrap()["jkt"], "abc");
     }
 
     #[test]

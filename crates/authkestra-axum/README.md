@@ -21,6 +21,12 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
   - `SessionConfig`: Customizable session settings (cookie name, secure, http_only, etc.).
 - **Macros**:
   - `FromRef`: Automatically generate `FromRef` implementations for your application state.
+- **Device-Bound Signature Authentication** (`devsig` feature):
+  - `DeviceSignatureLayer`: a `tower::Layer` that verifies `X-Signature` + `X-Attestation`
+    headers (per-request proof-of-possession, no session store, no per-request network call —
+    see `authkestra-devsig`) ahead of axum's own extraction.
+  - `AuthDeviceSignature`: extractor that reads the `DeviceIdentity` the layer already verified
+    back out of request extensions.
 
 ## Usage
 
@@ -28,7 +34,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.2.3", features = ["macros"] }
+authkestra-axum = { version = "0.2.4", features = ["macros"] }
 tower-cookies = "0.10" # Required for session support
 ```
 
@@ -140,6 +146,41 @@ fn app() -> Router {
 async fn protected_handler(Auth(user): Auth<User>) -> String {
     format!("Welcome, user {}!", user.id)
 }
+```
+
+### Device-Bound Signature Authentication
+
+Enable the `devsig` feature to protect a route with `authkestra-devsig`'s verifier: per-request
+proof-of-possession of a device-bound private key, with no session store and no per-request
+network call.
+
+```toml
+[dependencies]
+authkestra-axum = { version = "0.2.4", features = ["devsig"] }
+authkestra-devsig = "0.1.0"
+```
+
+```rust,ignore
+use authkestra_axum::devsig::{AuthDeviceSignature, DeviceSignatureLayer};
+use axum::{routing::post, Router};
+use std::sync::Arc;
+
+let layer = DeviceSignatureLayer::new(config, Arc::new(jwks), replay_store);
+
+let app = Router::new()
+    .route("/v1/payments/transfer", post(transfer_handler))
+    .layer(layer);
+
+async fn transfer_handler(AuthDeviceSignature(identity): AuthDeviceSignature) -> String {
+    format!("Transfer accepted for device {}", identity.device)
+}
+```
+
+See [`crates/authkestra-axum/examples/devsig/`](examples/devsig/) for a complete, runnable
+example:
+
+```bash
+cargo run -p authkestra-axum --example axum_devsig --features devsig
 ```
 
 ## Part of authkestra

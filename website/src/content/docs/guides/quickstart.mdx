@@ -16,7 +16,7 @@ Add the `authkestra` facade crate to your `Cargo.toml`. The facade re-exports al
 
 ```toml
 [dependencies]
-authkestra = { version = "0.2.4", features = ["axum", "github"] }
+authkestra = { version = "0.2.5", features = ["axum", "github"] }
 ```
 
   </TabItem>
@@ -24,7 +24,7 @@ authkestra = { version = "0.2.4", features = ["axum", "github"] }
 
 ```toml
 [dependencies]
-authkestra = { version = "0.2.4", features = ["actix", "github"] }
+authkestra = { version = "0.2.5", features = ["actix", "github"] }
 ```
 
   </TabItem>
@@ -35,7 +35,7 @@ authkestra = { version = "0.2.4", features = ["actix", "github"] }
 The core logic of Authkestra is identical regardless of which web framework you choose. First, we will initialize the Identity Provider (GitHub) and then construct the `Engine` using the Typestate Builder Pattern.
 
 ```rust
-use authkestra::flow::Engine;
+use authkestra::Authkestra;
 use authkestra_providers::github::GithubProvider;
 use authkestra_engine::store::memory::MemoryStore;
 use std::sync::Arc;
@@ -51,7 +51,7 @@ let github_provider = GithubProvider::new(
 let session_store = Arc::new(MemoryStore::default());
 
 // 3. Build the Authkestra Engine
-let auth_engine = Engine::builder()
+let auth_engine = Authkestra::builder()
     .provider(github_provider)
     .session_store(session_store)
     .build();
@@ -65,12 +65,12 @@ Once the engine is built, it's time to integrate it into your web framework's ro
   <TabItem label="Axum" icon="seti:rust">
 
 ```rust
-use authkestra_axum::AxumExt;
+use authkestra::axum::AxumExt;
 use axum::Router;
 use tower_cookies::CookieManagerLayer;
-use authkestra::flow::Engine;
-use authkestra_engine::AkWebAppEngine;
-use authkestra_axum::AxumState;
+use authkestra::core::engine::Engine;
+use authkestra::core::AkWebAppEngine;
+use authkestra::axum::AxumState;
 
 #[derive(Clone, AxumState)]
 struct AppState {
@@ -80,7 +80,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let auth_engine = /* setup engine as above */ Engine::builder().build();
+    let auth_engine = /* setup engine as above */ Authkestra::builder().build();
     let state = AppState { auth: auth_engine.clone() };
 
     let app = Router::new()
@@ -98,13 +98,13 @@ async fn main() {
   <TabItem label="Actix-web" icon="seti:rust">
 
 ```rust
-use authkestra_actix::ActixExt;
+use authkestra::actix::ActixExt;
 use actix_web::{App, HttpServer, web};
-use authkestra::flow::Engine;
+use authkestra::core::engine::Engine;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let auth_engine = /* setup engine as above */ Engine::builder().build();
+    let auth_engine = /* setup engine as above */ Authkestra::builder().build();
 
     HttpServer::new(move || {
         App::new()

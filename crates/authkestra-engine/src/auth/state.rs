@@ -17,6 +17,33 @@ pub struct Identity {
     pub attributes: HashMap<String, String>,
 }
 
+/// The result of an authentication attempt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AuthResult {
+    /// Authentication complete, issue a full session.
+    Success(Identity),
+    /// Primary authentication succeeded, but a second factor is required.
+    MfaRequired {
+        /// A temporary, short-lived token to bind the MFA submission to this session
+        mfa_token: String,
+        /// The external ID of the user trying to login
+        user_id: String,
+        /// A list of allowed second factors for this user
+        allowed_methods: Vec<String>,
+    },
+}
+
+/// Claims inside the temporary MFA JWT token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MfaTokenClaims {
+    /// Subject (the user ID)
+    pub sub: String,
+    /// Must be true for MFA tokens
+    pub mfa_pending: bool,
+    /// Expiration timestamp
+    pub exp: usize,
+}
+
 /// Represents the tokens returned by an OAuth2 provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthToken {

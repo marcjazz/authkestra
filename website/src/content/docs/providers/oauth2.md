@@ -17,7 +17,7 @@ If you are using multiple OAuth providers (e.g., GitHub and Google), you must en
 
 ```toml
 [dependencies]
-authkestra = { version = "0.2.4", features = ["github", "google"] }
+authkestra = { version = "0.2.5", features = ["github", "google"] }
 ```
 
 ## Stateless Engine Configuration
@@ -30,7 +30,7 @@ use authkestra_providers::github::GithubProvider;
 use authkestra_providers::google::GoogleProvider;
 
 // Initialize Authkestra in stateless mode supporting multiple providers
-let auth_engine = Engine::builder()
+let auth_engine = Authkestra::builder()
     .provider(OAuth2Flow::new(GithubProvider::new(...)))
     .provider(OAuth2Flow::new(GoogleProvider::new(...)))
     .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
