@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/marcjazz/authkestra/compare/v0.2.4...v0.3.1) - 2026-07-31
+
+### Fixed
+
+- move examples to root crate to permanently resolve cyclic publish failures ([#168](https://github.com/marcjazz/authkestra/pull/168))
+- remove circular dev-dependencies from axum and actix adapters ([#159](https://github.com/marcjazz/authkestra/pull/159))
+
+### Other
+
+- release v0.3.0 ([#166](https://github.com/marcjazz/authkestra/pull/166))
+- rollback workspace version to 0.2.4 ([#165](https://github.com/marcjazz/authkestra/pull/165))
+- merge develop into main (conflict free) ([#155](https://github.com/marcjazz/authkestra/pull/155))
+- Release/v0.2.5 ([#149](https://github.com/marcjazz/authkestra/pull/149))
+
 ## [0.3.0](https://github.com/marcjazz/authkestra/compare/v0.2.4...v0.3.0) - 2026-07-31
 
 ### Fixed

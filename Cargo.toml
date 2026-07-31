@@ -16,7 +16,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.3.0"
+version = "0.3.1"
 repository = "https://github.com/marcjazz/authkestra"
 license = "MIT OR Apache-2.0"
 keywords = ["auth", "authentication", "oauth2", "oidc"]
@@ -40,12 +40,12 @@ exclude = [
 [workspace.dependencies]
 authkestra-engine = { version = "0.3.0", path = "crates/authkestra-engine" }
 authkestra-providers = { version = "0.3.0", path = "crates/authkestra-providers" }
-authkestra-axum = { version = "0.3.0", path = "crates/authkestra-axum" }
+authkestra-axum = { version = "0.3.1", path = "crates/authkestra-axum" }
 authkestra-macros = { version = "0.3.0", path = "crates/authkestra-macros" }
 authkestra-oidc = { version = "0.3.0", path = "crates/authkestra-oidc" }
-authkestra-actix = { version = "0.3.0", path = "crates/authkestra-actix" }
+authkestra-actix = { version = "0.3.1", path = "crates/authkestra-actix" }
 authkestra-resource = { version = "0.3.0", path = "crates/authkestra-resource" }
-authkestra = { version = "0.3.0", path = "crates/authkestra" }
+authkestra = { version = "0.3.1", path = "crates/authkestra" }
 
 authkestra-op = { version = "0.3.0", path = "crates/authkestra-op" }
 authkestra-devsig = { version = "0.3.0", path = "crates/authkestra-devsig" }
