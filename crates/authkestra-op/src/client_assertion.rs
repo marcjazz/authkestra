@@ -24,7 +24,7 @@
 //! Everything here exists to make exactly one thing impossible: accepting an
 //! assertion that the client's registered *public* key did not sign. Hence
 //! the algorithm is derived from the key rather than from the
-//! attacker-controlled header ([`assertion_algorithms`]), symmetric
+//! attacker-controlled header (see `assertion_algorithms`), symmetric
 //! algorithms are refused before the key is even loaded, and a `jti` may be
 //! spent only once ([`ClientAssertionStore`]).
 
