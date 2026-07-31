@@ -50,7 +50,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BRANCH="release/v${{ github.event.inputs.version }}"
-          if gh pr view "$BRANCH" --json url -q .url 2>/dev/null; then
+          STATE=$(gh pr view "$BRANCH" --json state -q .state 2>/dev/null || echo "NONE")
+          if [ "$STATE" = "OPEN" ]; then
             echo "⚠️  PR already open for $BRANCH — force-push above already updated it, nothing more to do."
           else
             gh pr create \
