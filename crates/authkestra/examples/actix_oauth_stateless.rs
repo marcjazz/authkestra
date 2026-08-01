@@ -7,10 +7,10 @@
 //! - `AUTHKESTRA_GITHUB_CLIENT_ID`
 //! - `AUTHKESTRA_GITHUB_CLIENT_SECRET`
 
-use actix_web::{get, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use authkestra_actix::{helpers, ActixState, AuthToken};
+use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use authkestra_actix::{ActixState, ActixStatelessExt, AuthToken};
 use authkestra_engine::flow::{Engine, OAuth2Flow};
-use authkestra_engine::{AkApiEngine, TokenManagerState};
+use authkestra_engine::AkApiEngine;
 use authkestra_providers::github::GithubProvider;
 use serde_json::json;
 
@@ -65,73 +65,12 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(app_state.clone()))
             .configure(|cfg| app_state.configure_authkestra(cfg))
-            // Login route
-            .route("/auth/{provider}", web::get().to(login_handler))
-            // Callback route (stateless)
-            .route("/auth/callback/{provider}", web::get().to(callback_handler))
+            .service(app_state.auth.actix_scope_stateless())
             .service(get_user)
     })
     .bind(("0.0.0.0", 3000))?
     .run()
     .await
-}
-
-/// Custom login handler using Engine helpers.
-async fn login_handler(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-    params: web::Query<helpers::OAuthLoginParams>,
-) -> impl Responder {
-    let provider = path.into_inner();
-    let flow = match state.auth.providers.get(&provider) {
-        Some(f) => f,
-        None => {
-            return HttpResponse::NotFound().body(format!("Provider {provider} not found"));
-        }
-    };
-
-    let scopes_str = params.scope.clone().unwrap_or_default();
-    let scopes: Vec<&str> = scopes_str
-        .split(|c: char| [' ', ','].contains(&c))
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    helpers::initiate_oauth_login_erased(
-        flow.as_ref(),
-        &scopes,
-        &state.auth.session_config,
-        params.success_url.clone(),
-    )
-}
-
-/// Custom callback handler for stateless mode (returns JWT).
-async fn callback_handler(
-    req: HttpRequest,
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-    params: web::Query<helpers::OAuthCallbackParams>,
-) -> actix_web::Result<impl Responder> {
-    let provider = path.into_inner();
-    let flow = match state.auth.providers.get(&provider) {
-        Some(f) => f,
-        None => {
-            return Ok(HttpResponse::NotFound().body(format!("Provider {provider} not found")));
-        }
-    };
-
-    let token_manager = state.auth.token_manager.get_manager();
-
-    let res = helpers::handle_oauth_callback_jwt_erased(
-        flow.as_ref(),
-        &req,
-        params.into_inner(),
-        token_manager,
-        3600, // 1 hour
-        state.auth.session_config.clone(),
-    )
-    .await?;
-
-    Ok(res)
 }
 
 /// Protected endpoint using `AuthToken` extractor.

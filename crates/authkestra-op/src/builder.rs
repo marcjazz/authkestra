@@ -143,3 +143,133 @@ impl
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::{ClientRegistration, ClientStore};
+    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+    use crate::config::OpConfig;
+    use crate::device::{DeviceCodeSession, DeviceCodeStore};
+    use crate::error::OpError;
+    use crate::refresh::{RefreshToken, RefreshTokenStore};
+    use authkestra_engine::auth::session::{Session, SessionStore};
+    use authkestra_engine::{Engine, TokenManager};
+
+    struct DummyOpStore;
+
+    #[async_trait::async_trait]
+    impl ClientStore for DummyOpStore {
+        async fn find_client(&self, _id: &str) -> Result<Option<ClientRegistration>, OpError> {
+            Ok(None)
+        }
+    }
+    #[async_trait::async_trait]
+    impl AuthorizationCodeStore for DummyOpStore {
+        async fn store_code(&self, _code: AuthorizationCode) -> Result<(), OpError> {
+            Ok(())
+        }
+        async fn consume_code(&self, _code: &str) -> Result<Option<AuthorizationCode>, OpError> {
+            Ok(None)
+        }
+    }
+    #[async_trait::async_trait]
+    impl RefreshTokenStore for DummyOpStore {
+        async fn store_token(&self, _t: RefreshToken) -> Result<(), OpError> {
+            Ok(())
+        }
+        async fn consume_token(&self, _t: &str) -> Result<Option<RefreshToken>, OpError> {
+            Ok(None)
+        }
+        async fn get_token(&self, _t: &str) -> Result<Option<RefreshToken>, OpError> {
+            Ok(None)
+        }
+        async fn revoke_token(&self, _t: &str) -> Result<(), OpError> {
+            Ok(())
+        }
+    }
+    #[async_trait::async_trait]
+    impl DeviceCodeStore for DummyOpStore {
+        async fn store_device_code(&self, _s: DeviceCodeSession) -> Result<(), OpError> {
+            Ok(())
+        }
+        async fn get_device_code(&self, _dc: &str) -> Result<Option<DeviceCodeSession>, OpError> {
+            Ok(None)
+        }
+        async fn get_by_user_code(&self, _uc: &str) -> Result<Option<DeviceCodeSession>, OpError> {
+            Ok(None)
+        }
+        async fn update_device_code(&self, _s: DeviceCodeSession) -> Result<(), OpError> {
+            Ok(())
+        }
+        async fn delete_device_code(&self, _dc: &str) -> Result<(), OpError> {
+            Ok(())
+        }
+        async fn consume_device_code(
+            &self,
+            _dc: &str,
+        ) -> Result<Option<DeviceCodeSession>, OpError> {
+            Ok(None)
+        }
+    }
+    impl OpStore for DummyOpStore {}
+
+    struct DummySessionStore;
+    #[async_trait::async_trait]
+    impl SessionStore for DummySessionStore {
+        async fn save_session(
+            &self,
+            _session: &Session,
+        ) -> Result<(), authkestra_engine::error::AuthError> {
+            Ok(())
+        }
+        async fn load_session(
+            &self,
+            _id: &str,
+        ) -> Result<Option<Session>, authkestra_engine::error::AuthError> {
+            Ok(None)
+        }
+        async fn delete_session(
+            &self,
+            _id: &str,
+        ) -> Result<(), authkestra_engine::error::AuthError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_op_builder_flow() {
+        let store: Arc<dyn OpStore> = Arc::new(DummyOpStore);
+        let session_store: Arc<dyn SessionStore> = Arc::new(DummySessionStore);
+
+        let token_manager = TokenManager::new(
+            b"test_secret_key_needs_to_be_32_bytes_long_at_least",
+            Some("dummy_issuer".to_string()),
+        );
+
+        let engine = Engine::builder()
+            .session_store(session_store)
+            .token_manager(Arc::new(token_manager))
+            .build();
+
+        let config = OpConfig {
+            issuer: "http://localhost".to_string(),
+            scopes_supported: vec![],
+            response_types_supported: vec![],
+            grant_types_supported: vec![],
+            id_token_signing_alg: "RS256".to_string(),
+            authorization_code_ttl_secs: 60,
+            access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 300,
+            token_exchange_enabled: false,
+        };
+
+        let op = Op::builder()
+            .config(config)
+            .engine(engine)
+            .store(store)
+            .build();
+
+        assert_eq!(op.config.issuer, "http://localhost");
+    }
+}

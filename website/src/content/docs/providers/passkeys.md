@@ -62,13 +62,20 @@ Once the client returns the signed assertion, pass it to the engine's `authentic
 use authkestra_engine::auth::{AuthInput, AuthResult};
 
 let result = engine.authenticate(AuthInput::WebAuthnAuthentication {
+    // The internal user ID you are trying to authenticate
     user_id: "user_123".to_string(),
+    // `id` from the PublicKeyCredential response
     credential_id: "base64_url_credential_id".to_string(),
+    // `response.clientDataJSON` from the PublicKeyCredential response, base64url-encoded
     client_data_json: "base64_url_client_data".to_string(),
+    // `response.authenticatorData` from the PublicKeyCredential response, base64url-encoded
     authenticator_data: "base64_url_auth_data".to_string(),
+    // `response.signature` from the PublicKeyCredential response, base64url-encoded
     signature: "base64_url_signature".to_string(),
+    // `response.userHandle` from the PublicKeyCredential response, base64url-encoded (optional)
     user_handle: None, // Or Some("user_handle") if returned
-    auth_state_json: Some(auth_state_json_string), // Retrieved from your session store
+    // The state string stored during `start_webauthn`, retrieved from your session/cache store
+    auth_state_json: Some(auth_state_json_string),
 }).await?;
 
 match result {

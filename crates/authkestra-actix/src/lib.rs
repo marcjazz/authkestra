@@ -68,8 +68,8 @@ where
 #[cfg(feature = "token")]
 impl<S, T> ActixStatelessExt<S, T> for Engine<S, T>
 where
-    S: Clone + TokenManagerState + 'static,
-    T: Clone + 'static,
+    S: Clone + 'static,
+    T: Clone + TokenManagerState + 'static,
 {
     fn actix_scope_stateless(&self) -> actix_web::Scope {
         let mut scope = web::scope("/auth");

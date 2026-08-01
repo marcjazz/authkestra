@@ -336,7 +336,7 @@ pub async fn actix_callback_handler_stateless<S, T>(
     params: web::Query<OAuthCallbackParams>,
 ) -> actix_web::Result<impl actix_web::Responder>
 where
-    S: authkestra_engine::TokenManagerState,
+    T: authkestra_engine::TokenManagerState,
 {
     let provider = path.into_inner();
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
@@ -352,7 +352,7 @@ where
         flow.as_ref(),
         &req,
         callback_params,
-        authkestra.session_store.get_manager(),
+        authkestra.token_manager.get_manager(),
         3600, // Default 1 hour expiration
         authkestra.session_config.clone(),
     )

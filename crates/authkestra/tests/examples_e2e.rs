@@ -132,14 +132,14 @@ async fn test_all_oauth_examples_sequentially() {
         "authkestra",
         "axum_oauth_stateless",
         "GITHUB",
-        "/auth/github",
+        "/auth/login/github",
     )
     .await;
     run_oauth_example(
         "authkestra",
         "actix_oauth_stateless",
         "GITHUB",
-        "/auth/github",
+        "/auth/login/github",
     )
     .await;
 }

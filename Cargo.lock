@@ -567,6 +567,7 @@ dependencies = [
  "url",
  "uuid",
  "webauthn-rs",
+ "wiremock",
 ]
 
 [[package]]
@@ -594,6 +595,7 @@ dependencies = [
  "tokio",
  "tracing",
  "urlencoding",
+ "wiremock",
 ]
 
 [[package]]
