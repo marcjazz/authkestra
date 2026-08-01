@@ -2,6 +2,7 @@
 title: Stateless OAuth2
 description: Configuring Stateless OAuth with Authkestra.
 ---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 By default, OAuth2 logins often result in a server-side session being created. However, Authkestra allows you to build a strictly **stateless** flow where the authentication results in a JWT (JSON Web Token).
 
@@ -43,9 +44,18 @@ Because we are not using sessions, we **cannot** use the default `auth_engine.ax
 
 You can wire the endpoints automatically by using the stateless counterpart: `auth_engine.axum_router_stateless()` (or `auth_engine.actix_scope_stateless()` for Actix).
 
+<Tabs>
+<TabItem label="Axum">
 ```rust
 let app = axum::Router::new().merge(auth_engine.axum_router_stateless());
 ```
+</TabItem>
+<TabItem label="Actix Web">
+```rust
+let app = actix_web::App::new().service(auth_engine.actix_scope_stateless());
+```
+</TabItem>
+</Tabs>
 
 ### Wiring Routes Manually
 
@@ -55,8 +65,10 @@ Here is a step-by-step breakdown of how the manual handlers work:
 
 ### 1. The Login Handler
 
-The login handler intercepts the user's request and delegates to Authkestra's `axum_login_handler` helper. This helper securely generates the PKCE challenges and cookies before redirecting to the provider.
+The login handler intercepts the user's request and delegates to Authkestra's `axum_login_handler` or `actix_login_handler` helper. This helper securely generates the PKCE challenges and cookies before redirecting to the provider.
 
+<Tabs>
+<TabItem label="Axum">
 ```rust
 use axum::{extract::{Path, State, Query}, response::IntoResponse};
 use authkestra_axum::helpers;
@@ -72,11 +84,29 @@ async fn login_handler(
     helpers::axum_login_handler::<AppState, _, _>(Path(provider), State(state), Query(params), cookies).await
 }
 ```
+</TabItem>
+<TabItem label="Actix Web">
+```rust
+use actix_web::{web, Responder};
+use authkestra_actix::helpers;
+
+async fn login_handler(
+    path: web::Path<String>,
+    authkestra: web::Data<Engine<AppState, ()>>,
+    params: web::Query<helpers::OAuthLoginParams>,
+) -> impl Responder {
+    helpers::actix_login_handler(path, authkestra, params).await
+}
+```
+</TabItem>
+</Tabs>
 
 ### 2. The Callback Handler
 
 The callback handler is where the stateless magic happens. Instead of relying on a session store, we use `handle_oauth_callback_jwt_erased`.
 
+<Tabs>
+<TabItem label="Axum">
 ```rust
 async fn callback_handler(
     Path(provider): Path<String>,
@@ -102,5 +132,32 @@ async fn callback_handler(
     ).await
 }
 ```
+</TabItem>
+<TabItem label="Actix Web">
+```rust
+async fn callback_handler(
+    req: actix_web::HttpRequest,
+    path: web::Path<String>,
+    authkestra: web::Data<Engine<AppState, ()>>,
+    params: web::Query<helpers::OAuthCallbackParams>,
+) -> actix_web::Result<impl Responder> {
+    
+    let provider = path.into_inner();
+    let flow = authkestra.providers.get(&provider).unwrap();
+
+    let response = helpers::handle_oauth_callback_jwt_erased(
+        flow.as_ref(),
+        &req,
+        params.into_inner(),
+        authkestra.session_store.get_manager(),
+        3600,
+        authkestra.session_config.clone(),
+    ).await?;
+
+    Ok(response)
+}
+```
+</TabItem>
+</Tabs>
 
 By manually exposing these handlers, you gain absolute control over the HTTP response. You can append headers, write to custom databases, or return the JWT inside a JSON body.
