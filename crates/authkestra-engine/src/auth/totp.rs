@@ -55,7 +55,8 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
 }
 
 #[async_trait]
-impl<S: CredentialStore> AuthMethod for TotpAuthMethod<S> {
+#[async_trait]
+impl<S: CredentialStore + 'static> AuthMethod for TotpAuthMethod<S> {
     fn name(&self) -> &str {
         "totp"
     }

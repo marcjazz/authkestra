@@ -71,7 +71,9 @@ impl Demo {
     pub fn mint_attestation(&self) -> String {
         let jwk: Jwk = serde_json::from_value(self.device_jwk_json.clone())
             .expect("device jwk parses back as Jwk");
-        let thumbprint = jwk.thumbprint(jsonwebtoken::jwk::ThumbprintHash::SHA256);
+        let thumbprint = jwk
+            .thumbprint(jsonwebtoken::jwk::ThumbprintHash::SHA256)
+            .expect("compute thumbprint");
 
         let now = now_unix();
         let header =

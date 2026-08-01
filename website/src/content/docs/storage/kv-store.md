@@ -41,8 +41,9 @@ If you want to use a relational database but still leverage the simplicity of a 
 
 This is useful if you already have a Postgres, MySQL, or SQLite database running and want to avoid introducing Redis to your infrastructure for **generic session storage**.
 
-> [!WARNING]
-> `SqlKvStore` is **deprecated for OP-specific data** (OAuth clients, authorization codes, refresh tokens, device codes). If you are building an OpenID Provider, use [`SqlxOpStore`](/storage/sql-store) instead — it provides a normalized relational schema with proper foreign keys and `ON DELETE CASCADE`. `SqlKvStore` remains a valid option for session storage when Redis is not available.
+:::warning
+`SqlKvStore` is **deprecated for OP-specific data** (OAuth clients, authorization codes, refresh tokens, device codes). If you are building an OpenID Provider, use [`SqlxOpStore`](/storage/sql-store) instead — it provides a normalized relational schema with proper foreign keys and `ON DELETE CASCADE`. `SqlKvStore` remains a valid option for session storage when Redis is not available.
+:::
 
 ```rust
 use authkestra_engine::store::sql::SqlKvStore;

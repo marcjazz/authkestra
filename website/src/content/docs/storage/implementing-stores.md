@@ -37,9 +37,9 @@ impl<V: Send + Sync + 'static> KvStore<V> for MyRedisStore {
 }
 ```
 
-> [!CAUTION]
-> **Atomicity Requirements**
-> While `KvStore` handles basic storage, many operations in OAuth2 require strict atomicity to prevent Time-of-Check to Time-of-Use (TOCTOU) race conditions. For example, Authorization Codes and Device Codes MUST be single-use. If two parallel requests try to exchange the same code, only one must succeed.
+:::caution[Atomicity Requirements]
+While `KvStore` handles basic storage, many operations in OAuth2 require strict atomicity to prevent Time-of-Check to Time-of-Use (TOCTOU) race conditions. For example, Authorization Codes and Device Codes MUST be single-use. If two parallel requests try to exchange the same code, only one must succeed.
+:::
 
 To enforce this, you MUST also implement `AtomicConsume<T>` and `IndexedKvStore<T>` to provide atomic operations at the database layer.
 

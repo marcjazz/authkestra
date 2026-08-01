@@ -43,6 +43,22 @@ pub mod webauthn;
 #[cfg(feature = "totp")]
 pub mod totp;
 
+/// Trait for starting a WebAuthn authentication ceremony.
+#[cfg(feature = "webauthn")]
+pub trait WebAuthnStarter: Send + Sync {
+    /// Helper to generate an authentication challenge.
+    fn start_authentication(
+        &self,
+        passkeys: &[webauthn_rs::prelude::Passkey],
+    ) -> Result<
+        (
+            webauthn_rs::prelude::RequestChallengeResponse,
+            webauthn_rs::prelude::PasskeyAuthentication,
+        ),
+        AuthError,
+    >;
+}
+
 /// Represents the input for an authentication method.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
@@ -106,6 +122,12 @@ pub enum AuthInput {
 pub trait AuthMethod: Send + Sync {
     /// Returns the name of the authentication method.
     fn name(&self) -> &str;
+
+    /// Optional downcast to WebAuthnStarter
+    #[cfg(feature = "webauthn")]
+    fn as_webauthn_starter(&self) -> Option<&dyn WebAuthnStarter> {
+        None
+    }
 
     /// Authenticate a user with the given input.
     async fn authenticate(&self, input: AuthInput) -> Result<Identity, AuthError>;

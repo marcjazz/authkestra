@@ -339,6 +339,30 @@ impl<S, T> Engine<S, T> {
             })
         }
     }
+
+    /// Starts a WebAuthn authentication ceremony for a list of enrolled passkeys.
+    #[cfg(feature = "webauthn")]
+    pub fn start_webauthn(
+        &self,
+        passkeys: &[webauthn_rs::prelude::Passkey],
+    ) -> Result<
+        (
+            webauthn_rs::prelude::RequestChallengeResponse,
+            webauthn_rs::prelude::PasskeyAuthentication,
+        ),
+        AuthError,
+    > {
+        let method = self
+            .auth_methods
+            .get("webauthn")
+            .ok_or_else(|| AuthError::Internal("WebAuthn method not registered".into()))?;
+
+        let webauthn_starter = method.as_webauthn_starter().ok_or_else(|| {
+            AuthError::Internal("WebAuthn method doesn't implement starter".into())
+        })?;
+
+        webauthn_starter.start_authentication(passkeys)
+    }
 }
 
 // Methods available only when a session store is present

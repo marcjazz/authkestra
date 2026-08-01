@@ -51,14 +51,7 @@ When the user wants to sign in, call `start_authentication`. You must pass the u
 
 ```rust
 // `passkeys` is a `Vec<webauthn_rs::prelude::Passkey>` loaded from your store
-// Note: You extract the method from the engine's registry:
-let method = engine.auth_methods.get("webauthn").unwrap();
-// Downcast to access the specific WebAuthn start_authentication method
-// (This specific extraction will be simplified in a future release!)
-
-// For now, you can keep a direct reference to `WebAuthnAuthMethod` before passing it to the builder
-// if you need to call `start_authentication` frequently.
-let (challenge_response, auth_state) = webauthn_method.start_authentication(&passkeys)?;
+let (challenge_response, auth_state) = engine.start_webauthn(&passkeys)?;
 ```
 You return the `challenge_response` (which contains the `PublicKeyCredentialRequestOptions`) to the client so it can invoke `navigator.credentials.get()`. You must also temporarily store the `auth_state` (the internal session state) associated with this login attempt (e.g. in a session or Redis).
 

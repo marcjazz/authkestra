@@ -2,6 +2,7 @@
 title: Resource Server
 description: Protecting your APIs with Authkestra using OIDC discovery.
 ---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Authkestra isn't just for logging users in; you can also use it to build an **OAuth2 Resource Server** to protect your internal APIs using tokens (like JWTs) issued by an external provider (like Google or Auth0).
 
@@ -17,7 +18,7 @@ Like the OP Server, the Resource Server is an advanced component and is not incl
 
 ```toml
 [dependencies]
-authkestra-resource = "0.2.3"
+authkestra-resource = "0.3.0"
 authkestra-axum = { version = "0.3", features = ["resource"] }
 # Or if using Actix:
 # authkestra-actix = { version = "0.3", features = ["resource"] }
@@ -66,6 +67,8 @@ A core feature of Authkestra is **Flexible Chaining**. What if you want to suppo
 
 The `Guard` builder allows you to chain multiple strategies together. The request will pass if *any* of the chained strategies successfully validate it.
 
+<Tabs>
+<TabItem label="Axum" icon="seti:rust">
 ```rust
 use authkestra_axum::AxumState;
 use std::sync::Arc;
@@ -98,3 +101,41 @@ async fn protected(Auth(user): Auth<UserIdentity>) -> impl IntoResponse {
     }))
 }
 ```
+</TabItem>
+<TabItem label="Actix" icon="seti:rust">
+```rust
+use authkestra_actix::ActixState;
+use std::sync::Arc;
+
+// We chain the JWT strategy alongside an API Key strategy!
+let guard = Guard::builder()
+    .strategy(jwt_strategy)
+    .strategy(ApiKeyStrategy::new(...))
+    .build();
+
+#[derive(Clone, ActixState)]
+struct AppState {
+    #[authkestra(store)]
+    guard: Arc<Guard<UserIdentity>>,
+}
+```
+
+### 3. Protect Endpoints
+
+Now you can use the `Auth` extractor in your handlers. If the incoming request satisfies any of the chained strategies in your Guard, it is deserialized into your `UserIdentity` struct!
+
+```rust
+use authkestra_actix::Auth;
+use actix_web::{post, Responder, web::Json};
+
+#[post("/protected")]
+async fn protected(user: Auth<UserIdentity>) -> impl Responder {
+    let Auth(user) = user;
+    Json(serde_json::json!({
+        "message": "Access granted via Resource Server Strategy!",
+        "user": user,
+    }))
+}
+```
+</TabItem>
+</Tabs>

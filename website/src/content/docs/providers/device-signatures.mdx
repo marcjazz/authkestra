@@ -2,6 +2,7 @@
 title: Device Signatures
 description: How to implement device-bound signature authentication in Authkestra.
 ---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Authkestra supports device-bound signature authentication (proof-of-possession) through the `authkestra-devsig` crate. This allows you to cryptographically bind sessions or API requests to a specific hardware device, significantly reducing the risk of token theft.
 
@@ -17,7 +18,7 @@ Add the `authkestra-devsig` crate to your dependencies:
 
 ```toml
 [dependencies]
-authkestra-devsig = "0.1.0"
+authkestra-devsig = "0.3.0"
 ```
 
 ## How to use `authkestra-devsig`
@@ -48,8 +49,10 @@ let devsig = DevSig::builder()
     .build();
 ```
 
-### 2. Wiring the Middleware (Axum)
+### 2. Wiring the Middleware
 
+<Tabs>
+<TabItem label="Axum" icon="seti:rust">
 In Axum, `authkestra-axum` provides the `DeviceSignatureLayer` middleware and an `AuthDeviceSignature` extractor.
 
 ```rust
@@ -66,9 +69,8 @@ async fn transfer_handler(AuthDeviceSignature(identity): AuthDeviceSignature) ->
     format!("Verified request for subject: {}, device: {}", identity.subject, identity.device)
 }
 ```
-
-### 3. Wiring the Middleware (Actix)
-
+</TabItem>
+<TabItem label="Actix" icon="seti:rust">
 In Actix, `authkestra-actix` provides the equivalent `DeviceSignatureAuth` middleware and `AuthDeviceSignature` extractor.
 
 ```rust
@@ -88,5 +90,7 @@ HttpServer::new(move || {
     App::new().wrap(auth).service(transfer_handler)
 })
 ```
+</TabItem>
+</Tabs>
 
 By verifying the signature, you ensure that the request was genuinely initiated by the enrolled device, providing high-assurance authentication suitable for sensitive operations.

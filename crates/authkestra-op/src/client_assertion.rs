@@ -186,6 +186,7 @@ fn assertion_algorithms(jwk: &Jwk) -> Result<Vec<Algorithm>, OpError> {
                 "Ed25519 must be represented as an OctetKeyPair, not an EllipticCurve key"
                     .to_string(),
             )),
+            _ => Err(OpError::BadJwk("Unsupported elliptic curve".to_string())),
         },
         AlgorithmParameters::RSA(_) => Ok(vec![
             Algorithm::RS256,
@@ -199,6 +200,9 @@ fn assertion_algorithms(jwk: &Jwk) -> Result<Vec<Algorithm>, OpError> {
         AlgorithmParameters::OctetKey(_) => {
             unreachable!("symmetric keys are rejected by parse_public_jwk before this is reached")
         }
+        _ => Err(OpError::BadJwk(
+            "Unsupported algorithm parameter".to_string(),
+        )),
     }
 }
 

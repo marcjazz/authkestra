@@ -189,7 +189,14 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
 
         tracing::info!(user_id = %identity.external_id, "successfully retrieved identity from provider");
 
-        // TODO: Validate nonce if present in identity/ID token
+        if let Some(expected_nonce) = expected_state.nonce.as_deref() {
+            if let Some(returned_nonce) = identity.attributes.get("nonce") {
+                if returned_nonce != expected_nonce {
+                    tracing::error!("nonce mismatch in identity attributes");
+                    return Err(AuthError::Token("Nonce mismatch".to_string()));
+                }
+            }
+        }
 
         let local_user = if let Some(mapper) = &self.mapper {
             tracing::debug!("mapping user identity");

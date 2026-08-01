@@ -143,7 +143,8 @@ pub fn verify_bound_and_signed(
              bad_jwk instead of propagating the panic"
         );
         VerifyError::BadJwk("embedded jwk is not a supported/consistent key shape".to_string())
-    })?;
+    })?
+    .map_err(|e| VerifyError::BadJwk(format!("jwk thumbprint failed: {e}")))?;
     if !constant_time_eq(&thumbprint, cnf_jkt) {
         tracing::warn!(
             target: "authkestra_devsig",
@@ -232,6 +233,7 @@ fn curve_is_consistent(algorithm: &AlgorithmParameters) -> bool {
         AlgorithmParameters::EllipticCurve(p) => !matches!(p.curve, EllipticCurve::Ed25519),
         AlgorithmParameters::OctetKeyPair(p) => matches!(p.curve, EllipticCurve::Ed25519),
         AlgorithmParameters::RSA(_) | AlgorithmParameters::OctetKey(_) => true,
+        _ => false,
     }
 }
 
