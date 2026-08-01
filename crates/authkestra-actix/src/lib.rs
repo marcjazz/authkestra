@@ -38,6 +38,10 @@ pub use devsig::{AuthDeviceSignature, DeviceSignatureAuth};
 pub trait ActixExt<S, T> {
     fn actix_scope(&self) -> actix_web::Scope;
 }
+#[cfg(feature = "token")]
+pub trait ActixStatelessExt<S, T> {
+    fn actix_scope_stateless(&self) -> actix_web::Scope;
+}
 #[cfg(feature = "session")]
 impl<S, T> ActixExt<S, T> for Engine<S, T>
 where
@@ -56,6 +60,28 @@ where
             web::get().to(actix_callback_handler::<S, T>),
         );
         scope = scope.route("/logout", web::get().to(actix_logout_handler::<S, T>));
+
+        scope
+    }
+}
+
+#[cfg(feature = "token")]
+impl<S, T> ActixStatelessExt<S, T> for Engine<S, T>
+where
+    S: Clone + TokenManagerState + 'static,
+    T: Clone + 'static,
+{
+    fn actix_scope_stateless(&self) -> actix_web::Scope {
+        let mut scope = web::scope("/auth");
+
+        scope = scope.route(
+            "/login/{provider}",
+            web::get().to(helpers::actix_login_handler::<S, T>),
+        );
+        scope = scope.route(
+            "/callback/{provider}",
+            web::get().to(helpers::actix_callback_handler_stateless::<S, T>),
+        );
 
         scope
     }

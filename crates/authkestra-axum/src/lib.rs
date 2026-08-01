@@ -214,6 +214,16 @@ pub trait AxumExt<S, T> {
         Result<Arc<dyn SessionStore>, AxumError>: FromRef<AppState>;
 }
 
+#[cfg(feature = "token")]
+pub trait AxumStatelessExt<S, T> {
+    fn axum_router_stateless<AppState>(&self) -> axum::Router<AppState>
+    where
+        AppState: Clone + Send + Sync + 'static,
+        Engine<S, T>: FromRef<AppState>,
+        SessionConfig: FromRef<AppState>,
+        Result<Arc<TokenManager>, AxumError>: FromRef<AppState>;
+}
+
 #[cfg(feature = "session")]
 impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AxumExt<S, T>
     for Engine<S, T>
@@ -238,6 +248,30 @@ impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AxumExt
             .route(
                 "/auth/logout",
                 get(helpers::axum_logout_handler::<AppState, S, T>),
+            )
+    }
+}
+
+#[cfg(feature = "token")]
+impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AxumStatelessExt<S, T>
+    for Engine<S, T>
+{
+    fn axum_router_stateless<AppState>(&self) -> axum::Router<AppState>
+    where
+        AppState: Clone + Send + Sync + 'static,
+        Engine<S, T>: FromRef<AppState>,
+        SessionConfig: FromRef<AppState>,
+        Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
+    {
+        use axum::routing::get;
+        axum::Router::new()
+            .route(
+                "/auth/login/{provider}",
+                get(helpers::axum_login_handler::<AppState, S, T>),
+            )
+            .route(
+                "/auth/callback/{provider}",
+                get(helpers::axum_callback_handler_stateless::<AppState, S, T>),
             )
     }
 }

@@ -37,9 +37,19 @@ let auth_engine = Authkestra::builder()
     .build();
 ```
 
-## Wiring the Routes Manually
+## Wiring the Routes
 
-Because we are not using sessions, we **cannot** use the automatic `auth_engine.axum_router()`. Instead, you must manually define your `/auth/:provider` and `/auth/callback/:provider` routes.
+Because we are not using sessions, we **cannot** use the default `auth_engine.axum_router()`. 
+
+You can wire the endpoints automatically by using the stateless counterpart: `auth_engine.axum_router_stateless()` (or `auth_engine.actix_scope_stateless()` for Actix).
+
+```rust
+let app = axum::Router::new().merge(auth_engine.axum_router_stateless());
+```
+
+### Wiring Routes Manually
+
+If you need absolute control over the HTTP response, you can bypass the automatic router. Instead, you manually define your `/auth/:provider` and `/auth/callback/:provider` routes.
 
 Here is a step-by-step breakdown of how the manual handlers work:
 

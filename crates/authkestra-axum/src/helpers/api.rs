@@ -346,6 +346,49 @@ where
     })
 }
 
+#[cfg(feature = "token")]
+pub async fn axum_callback_handler_stateless<AppState, S, T>(
+    Path(provider): Path<String>,
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Query(params): Query<OAuthCallbackParams>,
+    cookies: Cookies,
+) -> Result<impl IntoResponse, AxumError>
+where
+    AppState: Clone + Send + Sync + 'static,
+    Engine<S, T>: axum::extract::FromRef<AppState>,
+    SessionConfig: axum::extract::FromRef<AppState>,
+    Result<Arc<TokenManager>, AxumError>: axum::extract::FromRef<AppState>,
+{
+    use axum::extract::FromRef;
+    let authkestra = Engine::<S, T>::from_ref(&state);
+    let session_config = SessionConfig::from_ref(&state);
+    let token_manager = <Result<Arc<TokenManager>, AxumError>>::from_ref(&state)?;
+
+    let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
+        Some(f) => f,
+        None => {
+            return Err(AxumError::Internal("Provider not found".to_string()));
+        }
+    };
+
+    handle_oauth_callback_jwt_erased(
+        flow.as_ref(),
+        cookies,
+        params,
+        token_manager,
+        3600, // Default 1 hour expiration
+        session_config,
+    )
+    .await
+    .map_err(|(status, msg)| {
+        if status == StatusCode::UNAUTHORIZED {
+            AxumError::Unauthorized(msg)
+        } else {
+            AxumError::Internal(msg)
+        }
+    })
+}
+
 #[cfg(feature = "session")]
 pub async fn axum_logout_handler<AppState, S, T>(
     axum::extract::State(state): axum::extract::State<AppState>,
