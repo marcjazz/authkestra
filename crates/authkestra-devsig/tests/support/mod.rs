@@ -44,7 +44,9 @@ impl KeyPair {
             EncodingKey::from_ec_pem(pem.as_bytes()).expect("EncodingKey::from_ec_pem");
         let jwk = Jwk::from_encoding_key(&encoding_key, Algorithm::ES256)
             .expect("derive public jwk from EC encoding key");
-        let thumbprint = jwk.thumbprint(jsonwebtoken::jwk::ThumbprintHash::SHA256);
+        let thumbprint = jwk
+            .thumbprint(jsonwebtoken::jwk::ThumbprintHash::SHA256)
+            .expect("compute thumbprint");
         let jwk_json = serde_json::to_value(&jwk).expect("serialize device jwk");
         Self {
             encoding_key,

@@ -40,7 +40,7 @@ impl CredentialStore for MemoryCredentialStore {
 
 // Shared App State
 struct AppState {
-    engine: Engine<authkestra_engine::engine::Missing, authkestra_engine::engine::Missing>, // Using stateless engine for this example
+    engine: Engine, // Using stateless engine for this example
 }
 
 #[tokio::main]

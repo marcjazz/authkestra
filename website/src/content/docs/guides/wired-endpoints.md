@@ -25,11 +25,15 @@ This endpoint **handles the provider's redirect callback**.
 - It exchanges the authorization code for an Access Token (and optionally an ID Token).
 - It establishes a server-side session and issues a session cookie to the client.
 
-## Manual Route Wiring (Stateless Mode & Custom Flows)
+## Automatic Route Wiring (Stateless Mode)
 
 What if you don't want to use sessions at all? For example, in a purely **Stateless OAuth2** flow, you want the callback to return a JSON Web Token (JWT) in the response body instead of setting a session cookie.
 
-In this scenario, the automatic `axum_router()` will not work because it assumes a session-based flow. Instead, you manually define your routes and call Authkestra's `helpers`. (See the **Stateless OAuth2** page for a detailed breakdown of how these manual handlers work).
+For stateless environments, Authkestra provides the `auth_engine.axum_router_stateless()` and `auth_engine.actix_scope_stateless()` counterparts. They generate the same endpoints, but the callback handler will return a JWT instead of initializing a server-side session.
+
+## Manual Route Wiring & Custom Flows
+
+If you need absolute control over the HTTP response (e.g. to append headers, write to custom databases, or augment the JWT response), you can bypass the automatic routers entirely. Instead, you manually define your routes and call Authkestra's `helpers`. (See the **Stateless OAuth2** page for a detailed breakdown of how these manual handlers work).
 
 ## Multiple Providers
 

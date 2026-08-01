@@ -21,14 +21,16 @@ Here is how Authkestra compares to the most popular Rust alternatives.
 | **Configuration Safety** | 🛡️ Strict (Typestates) | ✅ Standard Builder | ❌ N/A (External Config) |
 | **State Management**| Stateless (Encrypted Cookies)| Stateful (DB) | Stateful (Dedicated DB) |
 | **Data Architecture** | Agnostic Trait-Based (Any DB) | Built-in Adapters / ORMs | 100% Yours |
-| **WebAuthn / Passkeys**| ⏳ Coming Soon | ✅ Native Support | ✅ Full Support |
-| **Bot Protection** | ⏳ Coming Soon | ✅ Plugins Available | ✅ Built-in |
+| **WebAuthn / Passkeys**| ✅ Native Support | ✅ Native Support | ✅ Full Support |
+| **Multi-factor Auth (MFA)** | ✅ Native Support | ✅ Native Support | ✅ Full Support |
+| **Device Signatures**| ✅ Built-in | ❌ | ❌ |
+| **Bot Protection** | ✅ Built-in | ✅ Plugins Available | ✅ Built-in |
 
 ## Detailed Comparisons
 
 <Tabs>
   <TabItem label="vs. better-auth.rs">
-    **better-auth.rs** is a fantastic, feature-rich library (ported from JS) that excels at "batteries-included" user management. It has great database handling with built-in adapters and ORM integrations, and it offers advanced features like Passkeys and 2FA out of the box (which are coming soon to Authkestra!).
+    **better-auth.rs** is a fantastic, feature-rich library (ported from JS) that excels at "batteries-included" user management. It has great database handling with built-in adapters and ORM integrations, and it offers advanced features like Passkeys and 2FA out of the box.
     
     * **Scope**: It is primarily a Relying Party and session manager. It does not provide the capability to build an OpenID Provider (minting tokens for third parties).
     * **Authkestra's Edge**: Authkestra distinguishes itself in two major ways. First, it provides the engine to build your own **OpenID Provider (OP)**, allowing your Rust backend to serve as the central identity authority for multiple downstream clients and mobile apps. Second, it enforces orchestration correctness at compile time using the **Typestate Builder Pattern**—meaning invalid authentication flow combinations literally will not compile. While `better-auth` offers a more opinionated database layer, Authkestra focuses on absolute architectural flexibility and compile-time guarantees.

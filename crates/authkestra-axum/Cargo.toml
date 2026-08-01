@@ -17,7 +17,7 @@ authkestra-macros = { workspace = true, optional = true, features = ["axum"] }
 authkestra-op = { workspace = true, optional = true }
 authkestra-devsig = { workspace = true, optional = true }
 axum = { version = "0.8.8", features = ["macros"] }
-jsonwebtoken = "10.3.0"
+jsonwebtoken = "11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tower-cookies = "0.11.0"

@@ -3,7 +3,7 @@ title: Device Attestation
 description: Step-by-step walkthrough of enrolling a device key and re-issuing its attestation against a running authkestra-op server.
 ---
 
-This guide walks through the **device/service attestation** ceremony end to end: generating a keypair, enrolling it against an `authkestra-op` server, receiving a short-lived attestation, and silently renewing it before it expires. It narrates exactly what the two runnable examples in the repository do — `crates/authkestra/examples/axum_op_server_attestation.rs` and `crates/authkestra/examples/actix_op_server_attestation.rs` — so you can follow along and then adapt the same steps into your own mobile client or backend service.
+This guide walks through the **device/service attestation** ceremony end to end: generating a keypair, enrolling it against an `authkestra-op` server, receiving a short-lived attestation, and silently renewing it before it expires. It narrates exactly what the two runnable examples in the repository do — [`crates/authkestra/examples/axum_op_server_attestation.rs`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/axum_op_server_attestation.rs) and [`crates/authkestra/examples/actix_op_server_attestation.rs`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/actix_op_server_attestation.rs) — so you can follow along and then adapt the same steps into your own mobile client or backend service.
 
 This is the how-to companion to the [Device/Service Attestation Issuance](/advanced/op-server/#deviceservice-attestation-issuance) reference, which covers the API shape (`AttestationConfig`, `SecondFactorVerifier`, wiring) in more depth. If you're implementing the *verifying* side of a request signed with one of these attestations, see the `authkestra-devsig` section of the adapters chapter instead — this guide only covers issuance.
 
@@ -126,5 +126,5 @@ If the server has an `AttestationStatusProvider` configured, re-issuance is also
 
 Both example files run this entire sequence — enrolment followed by one re-issuance — against a real in-process server, printing each step's response as it goes. They're the best place to see the full, working request/response cycle in one place, and a reasonable starting point to copy from when wiring up your own mobile client or backend service:
 
-- `crates/authkestra/examples/axum_op_server_attestation.rs`
-- `crates/authkestra/examples/actix_op_server_attestation.rs`
+- [`crates/authkestra/examples/axum_op_server_attestation.rs`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/axum_op_server_attestation.rs)
+- [`crates/authkestra/examples/actix_op_server_attestation.rs`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/actix_op_server_attestation.rs)

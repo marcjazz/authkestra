@@ -47,7 +47,13 @@ impl OAuthProvider for MockOAuthProvider {
                     external_id: "user123".to_string(),
                     email: Some("user@example.com".to_string()),
                     username: Some("user".to_string()),
-                    attributes: HashMap::new(),
+                    attributes: {
+                        let mut attrs = HashMap::new();
+                        if let Some(n) = _nonce {
+                            attrs.insert("nonce".to_string(), n.to_string());
+                        }
+                        attrs
+                    },
                 },
                 OAuthToken {
                     access_token: "token".to_string(),

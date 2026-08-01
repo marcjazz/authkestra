@@ -189,7 +189,12 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
 
         tracing::info!(user_id = %identity.external_id, "successfully retrieved identity from provider");
 
-        // TODO: Validate nonce if present in identity/ID token
+        if let Some(expected_nonce) = expected_state.nonce.as_deref() {
+            if identity.attributes.get("nonce").map(|s| s.as_str()) != Some(expected_nonce) {
+                tracing::error!("nonce mismatch or missing in identity attributes");
+                return Err(AuthError::Token("Nonce mismatch".to_string()));
+            }
+        }
 
         let local_user = if let Some(mapper) = &self.mapper {
             tracing::debug!("mapping user identity");
@@ -212,5 +217,171 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
     /// Revoke an access token.
     pub async fn revoke_token(&self, token: &str) -> Result<(), AuthError> {
         self.provider.revoke_token(token).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::{Provider, ProviderConfig};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+
+    struct MockProvider {
+        id: String,
+        auth_url: String,
+        expected_code: String,
+        identity: Identity,
+        token: OAuthToken,
+    }
+
+    #[async_trait]
+    impl Provider for MockProvider {
+        async fn config(&self) -> ProviderConfig {
+            ProviderConfig {
+                id: self.id.clone(),
+                name: self.id.clone(),
+                extra: HashMap::new(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl OAuthProvider for MockProvider {
+        fn provider_id(&self) -> &str {
+            &self.id
+        }
+
+        fn get_authorization_url(
+            &self,
+            state: &str,
+            _scopes: &[&str],
+            _code_challenge: Option<&str>,
+            _nonce: Option<&str>,
+        ) -> String {
+            format!("{}?state={}", self.auth_url, state)
+        }
+
+        async fn exchange_code_for_identity(
+            &self,
+            code: &str,
+            _code_verifier: Option<&str>,
+            _nonce: Option<&str>,
+        ) -> Result<(Identity, OAuthToken), AuthError> {
+            if code == self.expected_code {
+                Ok((self.identity.clone(), self.token.clone()))
+            } else {
+                Err(AuthError::Token("Invalid code".to_string()))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_flow_initiate() {
+        let provider = MockProvider {
+            id: "mock".to_string(),
+            auth_url: "http://mock/auth".to_string(),
+            expected_code: "code123".to_string(),
+            identity: Identity {
+                provider_id: "mock".to_string(),
+                external_id: "1".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            },
+            token: OAuthToken {
+                access_token: "acc".to_string(),
+                token_type: "Bearer".to_string(),
+                expires_in: None,
+                refresh_token: None,
+                scope: None,
+                id_token: None,
+            },
+        };
+
+        let flow = OAuth2Flow::new(provider).with_scopes(vec!["scope1"]);
+        let (url, state) = flow.initiate_login(&["scope2"], None);
+        assert!(url.contains("http://mock/auth?state="));
+        assert_eq!(state.provider_id, "mock");
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_flow_finalize_success() {
+        let provider = MockProvider {
+            id: "mock".to_string(),
+            auth_url: "http://mock/auth".to_string(),
+            expected_code: "code123".to_string(),
+            identity: Identity {
+                provider_id: "mock".to_string(),
+                external_id: "1".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            },
+            token: OAuthToken {
+                access_token: "acc".to_string(),
+                token_type: "Bearer".to_string(),
+                expires_in: None,
+                refresh_token: None,
+                scope: None,
+                id_token: None,
+            },
+        };
+
+        let flow = OAuth2Flow::new(provider);
+        let expected_state = OAuth2State {
+            state: "state123".to_string(),
+            nonce: None,
+            code_verifier: None,
+            success_url: None,
+            provider_id: "mock".to_string(),
+            expires_at: 0,
+        };
+
+        let (ident, tok, _) = flow
+            .finalize_login("code123", "state123", &expected_state)
+            .await
+            .unwrap();
+        assert_eq!(ident.external_id, "1");
+        assert_eq!(tok.access_token, "acc");
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_flow_finalize_csrf_mismatch() {
+        let provider = MockProvider {
+            id: "mock".to_string(),
+            auth_url: "http://mock/auth".to_string(),
+            expected_code: "code123".to_string(),
+            identity: Identity {
+                provider_id: "mock".to_string(),
+                external_id: "1".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            },
+            token: OAuthToken {
+                access_token: "acc".to_string(),
+                token_type: "Bearer".to_string(),
+                expires_in: None,
+                refresh_token: None,
+                scope: None,
+                id_token: None,
+            },
+        };
+
+        let flow = OAuth2Flow::new(provider);
+        let expected_state = OAuth2State {
+            state: "state123".to_string(),
+            nonce: None,
+            code_verifier: None,
+            success_url: None,
+            provider_id: "mock".to_string(),
+            expires_at: 0,
+        };
+
+        let result = flow
+            .finalize_login("code123", "wrong_state", &expected_state)
+            .await;
+        assert!(matches!(result, Err(AuthError::CsrfMismatch)));
     }
 }

@@ -327,3 +327,36 @@ where
     handle_oauth_callback_jwt_erased(flow, req, params, token_manager, expires_in_secs, config)
         .await
 }
+
+#[cfg(feature = "token")]
+pub async fn actix_callback_handler_stateless<S, T>(
+    req: HttpRequest,
+    path: web::Path<String>,
+    authkestra: web::Data<Engine<S, T>>,
+    params: web::Query<OAuthCallbackParams>,
+) -> actix_web::Result<impl actix_web::Responder>
+where
+    T: authkestra_engine::TokenManagerState,
+{
+    let provider = path.into_inner();
+    let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
+        Some(f) => f,
+        None => {
+            return Ok(HttpResponse::NotFound().body(format!("Provider {provider} not found")));
+        }
+    };
+
+    let callback_params = params.into_inner();
+
+    let response = handle_oauth_callback_jwt_erased(
+        flow.as_ref(),
+        &req,
+        callback_params,
+        authkestra.token_manager.get_manager(),
+        3600, // Default 1 hour expiration
+        authkestra.session_config.clone(),
+    )
+    .await?;
+
+    Ok(response)
+}

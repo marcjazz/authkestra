@@ -49,16 +49,6 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
         Ok(passkey)
     }
 
-    /// Helper to generate an authentication challenge.
-    pub fn start_authentication(
-        &self,
-        passkeys: &[Passkey],
-    ) -> Result<(RequestChallengeResponse, PasskeyAuthentication), AuthError> {
-        self.webauthn
-            .start_passkey_authentication(passkeys)
-            .map_err(|e| AuthError::Internal(format!("WebAuthn auth failed to start: {e}")))
-    }
-
     /// Helper to finalize passkey authentication
     pub fn finish_authentication(
         &self,
@@ -71,10 +61,25 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
     }
 }
 
+impl<S: CredentialStore + 'static> crate::auth::WebAuthnStarter for WebAuthnAuthMethod<S> {
+    fn start_authentication(
+        &self,
+        passkeys: &[Passkey],
+    ) -> Result<(RequestChallengeResponse, PasskeyAuthentication), AuthError> {
+        self.webauthn
+            .start_passkey_authentication(passkeys)
+            .map_err(|e| AuthError::Internal(format!("WebAuthn auth failed to start: {e}")))
+    }
+}
+
 #[async_trait]
-impl<S: CredentialStore> AuthMethod for WebAuthnAuthMethod<S> {
+impl<S: CredentialStore + 'static> AuthMethod for WebAuthnAuthMethod<S> {
     fn name(&self) -> &str {
         "webauthn"
+    }
+
+    fn as_webauthn_starter(&self) -> Option<&dyn crate::auth::WebAuthnStarter> {
+        Some(self)
     }
 
     fn is_mfa_equivalent(&self) -> bool {

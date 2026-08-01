@@ -51,14 +51,7 @@ When the user wants to sign in, call `start_authentication`. You must pass the u
 
 ```rust
 // `passkeys` is a `Vec<webauthn_rs::prelude::Passkey>` loaded from your store
-// Note: You extract the method from the engine's registry:
-let method = engine.auth_methods.get("webauthn").unwrap();
-// Downcast to access the specific WebAuthn start_authentication method
-// (This specific extraction will be simplified in a future release!)
-
-// For now, you can keep a direct reference to `WebAuthnAuthMethod` before passing it to the builder
-// if you need to call `start_authentication` frequently.
-let (challenge_response, auth_state) = webauthn_method.start_authentication(&passkeys)?;
+let (challenge_response, auth_state) = engine.start_webauthn(&passkeys)?;
 ```
 You return the `challenge_response` (which contains the `PublicKeyCredentialRequestOptions`) to the client so it can invoke `navigator.credentials.get()`. You must also temporarily store the `auth_state` (the internal session state) associated with this login attempt (e.g. in a session or Redis).
 
@@ -69,13 +62,20 @@ Once the client returns the signed assertion, pass it to the engine's `authentic
 use authkestra_engine::auth::{AuthInput, AuthResult};
 
 let result = engine.authenticate(AuthInput::WebAuthnAuthentication {
+    // The internal user ID you are trying to authenticate
     user_id: "user_123".to_string(),
+    // `id` from the PublicKeyCredential response
     credential_id: "base64_url_credential_id".to_string(),
+    // `response.clientDataJSON` from the PublicKeyCredential response, base64url-encoded
     client_data_json: "base64_url_client_data".to_string(),
+    // `response.authenticatorData` from the PublicKeyCredential response, base64url-encoded
     authenticator_data: "base64_url_auth_data".to_string(),
+    // `response.signature` from the PublicKeyCredential response, base64url-encoded
     signature: "base64_url_signature".to_string(),
+    // `response.userHandle` from the PublicKeyCredential response, base64url-encoded (optional)
     user_handle: None, // Or Some("user_handle") if returned
-    auth_state_json: Some(auth_state_json_string), // Retrieved from your session store
+    // The state string stored during `start_webauthn`, retrieved from your session/cache store
+    auth_state_json: Some(auth_state_json_string),
 }).await?;
 
 match result {

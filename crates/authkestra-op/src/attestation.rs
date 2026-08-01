@@ -283,6 +283,9 @@ pub fn parse_public_jwk(raw: &Value) -> Result<Jwk, OpError> {
         AlgorithmParameters::OctetKey(_) => Err(OpError::BadJwk(
             "symmetric keys are never valid for device/service attestation".to_string(),
         )),
+        _ => Err(OpError::BadJwk(
+            "Unsupported algorithm parameter".to_string(),
+        )),
     }
 }
 
@@ -317,7 +320,8 @@ pub fn compute_cnf_jkt(jwk: &Jwk) -> Result<String, OpError> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         jwk.thumbprint(ThumbprintHash::SHA256)
     })) {
-        Ok(thumbprint) => Ok(thumbprint),
+        Ok(Ok(thumbprint)) => Ok(thumbprint),
+        Ok(Err(e)) => Err(OpError::BadJwk(format!("jwk thumbprint failed: {e}"))),
         Err(_panic) => {
             tracing::warn!(
                 "jwk.thumbprint() panicked on a structurally-inconsistent key; rejecting as \
@@ -363,12 +367,16 @@ fn expected_algorithm(jwk: &Jwk) -> Result<Algorithm, OpError> {
                 "Ed25519 must be represented as an OctetKeyPair, not an EllipticCurve key"
                     .to_string(),
             )),
+            _ => Err(OpError::BadJwk("Unsupported elliptic curve".to_string())),
         },
         AlgorithmParameters::RSA(_) => Ok(Algorithm::RS256),
         AlgorithmParameters::OctetKeyPair(_) => Ok(Algorithm::EdDSA),
         AlgorithmParameters::OctetKey(_) => {
             unreachable!("symmetric keys are rejected by parse_public_jwk before this is reached")
         }
+        _ => Err(OpError::BadJwk(
+            "Unsupported algorithm parameter".to_string(),
+        )),
     }
 }
 

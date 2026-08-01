@@ -15,7 +15,7 @@ Because OP Servers are an advanced use case, the OP logic is not included in the
 
 ```toml
 [dependencies]
-authkestra-op = "0.2.3"
+authkestra-op = "0.3.0"
 authkestra-axum = { version = "0.3", features = ["op"] }
 # Or if using Actix:
 # authkestra-actix = { version = "0.3", features = ["op"] }
@@ -47,10 +47,11 @@ let op_store = CompositeOpStore::new(
 );
 ```
 
-> [!TIP]
-> **Implementing Custom Stores:** If you build your own combined store type (e.g. `struct MyCustomStore { ... }`), you must explicitly implement the `OpStore` trait for it (`impl OpStore for MyCustomStore {}`). This is a minor breaking change from `0.2.3` where a blanket implementation was provided, which was removed to allow for overriding the `handle_custom_grant` method.
+:::tip[Implementing Custom Stores]
+**Implementing Custom Stores:** If you build your own combined store type (e.g. `struct MyCustomStore { ... }`), you must explicitly implement the `OpStore` trait for it (`impl OpStore for MyCustomStore {}`). This is a minor breaking change from `0.2.3` where a blanket implementation was provided, which was removed to allow for overriding the `handle_custom_grant` method.
+:::
 
-Check the `op_server.rs` example in the repository for full database wiring code.
+Check the [op_server.rs](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/op_server.rs) example in the repository for full database wiring code.
 
 ## Supported Grant Types
 
@@ -106,12 +107,6 @@ let config = OpConfig {
     
     // Cryptographic signing algorithm for issued ID tokens
     id_token_signing_alg: "RS256".to_string(),
-    
-    // Endpoint locations
-    authorization_endpoint: "http://localhost:3000/authorize".to_string(),
-    token_endpoint: "http://localhost:3000/token".to_string(),
-    userinfo_endpoint: "http://localhost:3000/userinfo".to_string(),
-    jwks_uri: "http://localhost:3000/jwks.json".to_string(),
 };
 
 let op = Op::builder()
@@ -263,7 +258,7 @@ let app = Router::new()
 
 Actix wires the same three routes via `OpExt::op_actix_scope()`, resolving `EnrolmentChallengeStore`, `SecondFactorVerifier`, `TokenManager`, and `AttestationConfig` from `app_data` the same way the rest of the OP server's dependencies are resolved.
 
-See `crates/authkestra/examples/axum_op_server_attestation.rs` and `crates/authkestra/examples/actix_op_server_attestation.rs` in the repository for a runnable, end-to-end walkthrough of enrolment and re-issuance (no external services required — the challenge store is an in-memory `MemoryStore`), or the step-by-step [Device Attestation guide](/guides/device-attestation/) for a narrated version of the same flow.
+See [`crates/authkestra/examples/axum_op_server_attestation.rs`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/axum_op_server_attestation.rs) and [`crates/authkestra/examples/actix_op_server_attestation.rs`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/actix_op_server_attestation.rs) in the repository for a runnable, end-to-end walkthrough of enrolment and re-issuance (no external services required — the challenge store is an in-memory `MemoryStore`), or the step-by-step [Device Attestation guide](/guides/device-attestation/) for a narrated version of the same flow.
 
 ## Wiring the OP Endpoints
 
