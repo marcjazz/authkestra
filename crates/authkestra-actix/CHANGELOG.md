@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/marcjazz/authkestra/compare/authkestra-actix-v0.3.2...authkestra-actix-v0.3.3) - 2026-08-02
+
+### Fixed
+
+- *(deps)* let consumers choose the TLS backend instead of forcing aws-lc-rs ([#179](https://github.com/marcjazz/authkestra/pull/179))
+
 ## [0.3.2](https://github.com/marcjazz/authkestra/compare/authkestra-actix-v0.3.1...authkestra-actix-v0.3.2) - 2026-08-01
 
 ### Added
