@@ -11,15 +11,15 @@ categories.workspace = true
 readme.workspace = true
 
 [dependencies]
-authkestra-engine = { workspace = true }
-authkestra-oidc = { workspace = true, optional = true }
-authkestra-axum = { workspace = true, optional = true }
-authkestra-actix = { workspace = true, optional = true }
-authkestra-providers = { workspace = true, optional = true }
-authkestra-resource = { workspace = true, optional = true }
+authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-oidc = { workspace = true, optional = true, default-features = false }
+authkestra-axum = { workspace = true, optional = true, default-features = false }
+authkestra-actix = { workspace = true, optional = true, default-features = false }
+authkestra-providers = { workspace = true, optional = true, default-features = false }
+authkestra-resource = { workspace = true, optional = true, default-features = false }
 
 [dev-dependencies]
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 wiremock = "0.6"
@@ -60,8 +60,27 @@ uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [features]
-default = []
+default = ["rustls-aws-lc-rs"]
 full = ["session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
+
+# TLS backend, forwarded to every sub-crate that speaks HTTPS. See
+# authkestra-engine's documentation for the `rustls-no-provider` contract.
+rustls-aws-lc-rs = [
+    "authkestra-engine/rustls-aws-lc-rs",
+    "authkestra-oidc?/rustls-aws-lc-rs",
+    "authkestra-axum?/rustls-aws-lc-rs",
+    "authkestra-actix?/rustls-aws-lc-rs",
+    "authkestra-providers?/rustls-aws-lc-rs",
+    "authkestra-resource?/rustls-aws-lc-rs",
+]
+rustls-no-provider = [
+    "authkestra-engine/rustls-no-provider",
+    "authkestra-oidc?/rustls-no-provider",
+    "authkestra-axum?/rustls-no-provider",
+    "authkestra-actix?/rustls-no-provider",
+    "authkestra-providers?/rustls-no-provider",
+    "authkestra-resource?/rustls-no-provider",
+]
 
 # Core features
 
@@ -71,7 +90,7 @@ oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
 
 # Web frameworks
-axum = ["dep:authkestra-axum", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
+axum = ["dep:authkestra-axum", "authkestra-axum/macros", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
 actix = ["dep:authkestra-actix", "authkestra-actix/session", "authkestra-actix/token", "authkestra-actix/resource"]
 
 # Providers

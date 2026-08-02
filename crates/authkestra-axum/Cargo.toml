@@ -11,10 +11,10 @@ categories.workspace = true
 readme = "README.md"
 
 [dependencies]
-authkestra-engine = { workspace = true }
-authkestra-resource = { workspace = true, optional = true }
+authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-resource = { workspace = true, optional = true, default-features = false }
 authkestra-macros = { workspace = true, optional = true, features = ["axum"] }
-authkestra-op = { workspace = true, optional = true }
+authkestra-op = { workspace = true, optional = true, default-features = false }
 authkestra-devsig = { workspace = true, optional = true }
 axum = { version = "0.8.8", features = ["macros"] }
 jsonwebtoken = "11"
@@ -36,7 +36,7 @@ bytes = { version = "1", optional = true }
 
 
 [features]
-default = ["macros"]
+default = ["macros", "rustls-aws-lc-rs"]
 macros = ["authkestra-macros"]
 session = ["authkestra-engine/session"]
 
@@ -50,6 +50,19 @@ devsig = [
     "dep:tower-service",
     "dep:http-body-util",
     "dep:bytes",
+]
+
+# TLS backend, forwarded to authkestra-engine. See its documentation for the
+# `rustls-no-provider` contract.
+rustls-aws-lc-rs = [
+    "authkestra-engine/rustls-aws-lc-rs",
+    "authkestra-resource?/rustls-aws-lc-rs",
+    "authkestra-op?/rustls-aws-lc-rs",
+]
+rustls-no-provider = [
+    "authkestra-engine/rustls-no-provider",
+    "authkestra-resource?/rustls-no-provider",
+    "authkestra-op?/rustls-no-provider",
 ]
 
 

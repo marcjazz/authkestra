@@ -11,15 +11,27 @@ categories.workspace = true
 readme.workspace = true
 
 [features]
-default = []
+default = ["rustls-aws-lc-rs"]
 github = []
 google = []
 discord = ["urlencoding"]
 
+# TLS backend, forwarded to authkestra-engine. See its documentation for the
+# `rustls-no-provider` contract.
+rustls-aws-lc-rs = ["authkestra-engine/rustls-aws-lc-rs"]
+rustls-no-provider = ["authkestra-engine/rustls-no-provider"]
+
 [dependencies]
-authkestra-engine = { workspace = true }
+authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
 async-trait = "0.1"
-reqwest = { version = "0.13.1", features = ["json", "form"] }
+# TLS backend comes from authkestra-engine's `rustls-*` features (see above).
+reqwest = { version = "0.13.1", default-features = false, features = [
+    "json",
+    "form",
+    "charset",
+    "http2",
+    "system-proxy",
+] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 urlencoding = { version = "2.1", optional = true }
