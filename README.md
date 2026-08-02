@@ -16,6 +16,40 @@ authkestra = { version = "0.3", features = ["axum", "github"] }
 
 For advanced users, individual crates are still available and can be used independently if preferred.
 
+### 🔐 TLS backend
+
+Authkestra talks to identity providers over HTTPS, so it needs a TLS backend. It
+is selected by a feature flag rather than by `reqwest`'s defaults, so you can
+choose the crypto provider yourself:
+
+| Feature | Backend | Notes |
+| --- | --- | --- |
+| `rustls-aws-lc-rs` | rustls + [`aws-lc-rs`](https://crates.io/crates/aws-lc-rs) | **Default.** Compiles C and assembly, so it needs a C toolchain. |
+| `rustls-no-provider` | rustls, provider chosen by you | Pure-Rust builds (`ring`), `*-unknown-linux-musl`, `cargo-deny` policies that ban `aws-lc-rs`. |
+
+The default keeps the historical behaviour, so no change is needed unless you
+want to get off `aws-lc-rs`. To do that, turn the default off and install a
+provider yourself:
+
+```toml
+[dependencies]
+authkestra = { version = "0.3", default-features = false, features = ["axum", "github", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+```
+
+```rust,ignore
+// Must run before any Authkestra call that builds an HTTP client,
+// otherwise reqwest panics at client construction.
+rustls::crypto::ring::default_provider()
+    .install_default()
+    .expect("failed to install rustls crypto provider");
+```
+
+Every Authkestra crate that speaks HTTPS exposes the same two features and
+forwards them to `authkestra-engine`. Cargo features are additive, so if any
+crate in your graph still enables `rustls-aws-lc-rs`, `aws-lc-rs` comes back —
+check with `cargo tree -i aws-lc-rs -e features`.
+
 ## 🚀 Features
 
 - **Modular & Unified Core**: Following our RFC-001 architecture, core concerns are unified in `authkestra-engine` while adapters like `authkestra-axum` and `authkestra-actix` provide seamless framework integrations.

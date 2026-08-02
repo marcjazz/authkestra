@@ -11,16 +11,30 @@ categories.workspace = true
 readme = "README.md"
 
 [dependencies]
-authkestra-engine = { workspace = true }
+authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
 async-trait = "0.1"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.13.1", features = ["json"] }
+# TLS backend comes from authkestra-engine's `rustls-*` features (see below).
+reqwest = { version = "0.13.1", default-features = false, features = [
+    "json",
+    "charset",
+    "http2",
+    "system-proxy",
+] }
 tokio = { version = "1.0", features = ["full"] }
 thiserror = "2.0.18"
 http = "1"
 base64 = "0.22.1"
+
+[features]
+default = ["rustls-aws-lc-rs"]
+
+# TLS backend, forwarded to authkestra-engine. See its documentation for the
+# `rustls-no-provider` contract.
+rustls-aws-lc-rs = ["authkestra-engine/rustls-aws-lc-rs"]
+rustls-no-provider = ["authkestra-engine/rustls-no-provider"]
 
 [dev-dependencies]
 wiremock = "0.6"
