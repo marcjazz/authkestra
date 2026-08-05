@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4](https://github.com/marcjazz/authkestra/compare/authkestra-v0.3.3...authkestra-v0.3.4) - 2026-08-05
+
+### Other
+
+- updated the following local packages: authkestra-engine, authkestra-engine, authkestra-providers, authkestra-providers, authkestra-resource, authkestra-resource, authkestra-op, authkestra-axum, authkestra-axum, authkestra-oidc, authkestra-oidc, authkestra-actix, authkestra-actix
+
 ## [0.3.3](https://github.com/marcjazz/authkestra/compare/authkestra-v0.3.2...authkestra-v0.3.3) - 2026-08-02
 
 ### Fixed

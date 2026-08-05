@@ -430,7 +430,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "authkestra"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "actix-files",
  "actix-web",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-actix"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "actix-utils",
  "actix-web",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-axum"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "authkestra-devsig",
  "authkestra-engine",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-devsig"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-engine"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "actix-files",
  "aes-gcm",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-macros"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -582,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-oidc"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "async-trait",
  "authkestra-engine",
@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-op"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "argon2",
  "async-trait",
@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-providers"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "async-trait",
  "authkestra-engine",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-resource"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "async-trait",
  "authkestra-engine",

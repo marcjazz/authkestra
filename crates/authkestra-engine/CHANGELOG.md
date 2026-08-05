@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.3.3...authkestra-engine-v0.3.4) - 2026-08-05
+
+### Fixed
+
+- *(engine)* derive the asymmetric decoding key from the public half ([#182](https://github.com/marcjazz/authkestra/pull/182))
+
 ## [0.3.3](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.3.2...authkestra-engine-v0.3.3) - 2026-08-02
 
 ### Fixed
