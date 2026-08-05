@@ -61,8 +61,6 @@ impl TokenManager {
     ) -> Result<Self, AuthError> {
         let encoding_key = EncodingKey::from_rsa_pem(private_key_pem)
             .map_err(|e| AuthError::Token(e.to_string()))?;
-        let decoding_key = DecodingKey::from_rsa_pem(private_key_pem)
-            .map_err(|e| AuthError::Token(e.to_string()))?;
 
         let pem_str = std::str::from_utf8(private_key_pem)
             .map_err(|_| AuthError::Token("Invalid PEM UTF-8".into()))?;
@@ -88,6 +86,12 @@ impl TokenManager {
             n: Some(n),
             e: Some(e),
         };
+
+        // The decoding key must come from the PUBLIC half. `DecodingKey::from_rsa_pem`
+        // expects a public-key PEM; handed a private one it still constructs, but every
+        // later `validate_token` fails with `InvalidSignature`. Deriving it from the JWK
+        // we just built keeps both halves provably in sync with what `/jwks` publishes.
+        let decoding_key = jwk.to_decoding_key()?;
 
         Ok(Self {
             encoding_key,
@@ -333,6 +337,36 @@ mod tests {
     use crate::auth::state::Identity;
     use std::collections::HashMap;
 
+    /// Throwaway RSA-2048 private key, test-only.
+    const TEST_RSA_PRIVATE_KEY_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDA5hJIcQ+2rxMz
+VM8ZH5WAmguCr0xmNDAdy0IzzsUeFLG7BebB7izOkU36J4t8t5tUaQwrBMnx2Fvt
+VqJjbdE242UDpvWF/8m9zJ2HR5298cbwT5cGMKLB0HWzDMahugs+Bbh2lCgwyLZk
+Tr3Diwxp5SwFew/Wb+Ke9cNG9Hu5IFH3BCuJ839d9hfqisIeYrBPfb52xxckM37R
+7zSGu/eDP/HZAeLkQuptZJW4A3u7xni14u4qyqXDqsHsYFNgJaxMSAwWgBRY6HNu
+TnvBArTXCiVfL+F73B2L6mdYr64g+QS9nK9v97MlJu/E3mSduz54pren4mpCHc9m
+/S2+VjCZAgMBAAECggEAASC9qQbGnL7XuExRDOIn/m4bWx92ehjo0lCTibhpY3LW
+umbSbpfbhmmuSj3CjW9VZsaM3hBTgSjoTX72lbY/eIUXD7c0memUK5pV4XcEIrQw
+AZlPIye6ckx4I7ZGnKasO8FoAel9dd7DXw36AuBK3LBzJwtzkEFsBc0e3/wixqmG
+UJBbbt/+5ya7CxyjuePaQhKtkLD5R6DpvN2XnCYq5nHJNJdvSVg1pOzsTHYIf+Ee
+2Rz42fGsfFKqeEQCcBFRZaGb/ELeP4c6UZdktZAvmHb1p1fursVZc6X9JXmiJ2OJ
+Kv2H2tMKuysP8L0fXFOMgkH2SVt6rcdHkO6xhlhWsQKBgQDqR8rAJeEE5BFoXA8T
+VVW6CLMlW51x4ey7PEGOaYh39dTG2Q+GZQBZ9G+SZk3f5Y85UCACSyc//4qaz/c3
+0nWsegZ+JPyymmuc79wzIAFFvXB7pL6wyn0Ed1P620kOZTtA8iBcXrsuxL+KP7iu
+MXfWmU1QiZpbndILtyDnY+70uwKBgQDSyCljWkydQCaPU+fiAXLxP8CvcJTSSNQD
+mVUlwJ+OpHnU+Alsi1rBavMgUtLlYbFqzH7NmYrLC8Yadq3ZOwLt0VEK0r8qstAL
+7QCDUD2WNuQjpZupRnXuMUl3iXB96i2gb+VQKGuUAJvVWjdIbYa4+Gu+sBMfcDcX
+dBihDLuEuwKBgAgX4tEwfc2Fc3R/eaXZVNTQaB/qQk4k1+C//CPHUYeTXn5gEUE7
+S//PiesszZPmgkQgmHp7zidP1KH0fT3Yb2g97ut8q54f54fMYXcCrAiUusYKsuu4
+kwkMdkI8QRHWPW3I74VBYIYFFfjYqrCZ1OH8+cbGeiagFRmCggh8U0zxAoGAVW3u
+6Ge22Z0gg8LcHsu7jG/sZq7Ygool8/d3fT+e669Z+ak2GJo6hF4WgClRdMqtn72W
+PzpV+ImjFyK2v26dd0n48MwN0v56N/ss1Av3iiRhPtlmR6tZLNspDZvUzhPVvkrb
+xCs9vtSoVEamVWKe0eVNthGjDoDqs0TInq2MavUCgYB6REavSJs/CLkSS7iimjxZ
+G7g5YQi9/p1lXLOEUDiwEmvRr0XTwzzxUsIc535IXhh/ZUYpthenW+qBBzn85pEC
+TowIqciHu5redqlQ8rITA8/AOY98vaDIhppDg1rfpnHHaZHFbXD/keYAEbhBtbvf
+a0QMqKUcs8+YTy5R5K6qtw==
+-----END PRIVATE KEY-----";
+
     #[test]
     fn test_claims_serialization() {
         let mut extra = HashMap::new();
@@ -392,37 +426,8 @@ mod tests {
 
     #[test]
     fn test_token_manager_asymmetric_issuance() {
-        let pem = b"-----BEGIN PRIVATE KEY-----
-MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDA5hJIcQ+2rxMz
-VM8ZH5WAmguCr0xmNDAdy0IzzsUeFLG7BebB7izOkU36J4t8t5tUaQwrBMnx2Fvt
-VqJjbdE242UDpvWF/8m9zJ2HR5298cbwT5cGMKLB0HWzDMahugs+Bbh2lCgwyLZk
-Tr3Diwxp5SwFew/Wb+Ke9cNG9Hu5IFH3BCuJ839d9hfqisIeYrBPfb52xxckM37R
-7zSGu/eDP/HZAeLkQuptZJW4A3u7xni14u4qyqXDqsHsYFNgJaxMSAwWgBRY6HNu
-TnvBArTXCiVfL+F73B2L6mdYr64g+QS9nK9v97MlJu/E3mSduz54pren4mpCHc9m
-/S2+VjCZAgMBAAECggEAASC9qQbGnL7XuExRDOIn/m4bWx92ehjo0lCTibhpY3LW
-umbSbpfbhmmuSj3CjW9VZsaM3hBTgSjoTX72lbY/eIUXD7c0memUK5pV4XcEIrQw
-AZlPIye6ckx4I7ZGnKasO8FoAel9dd7DXw36AuBK3LBzJwtzkEFsBc0e3/wixqmG
-UJBbbt/+5ya7CxyjuePaQhKtkLD5R6DpvN2XnCYq5nHJNJdvSVg1pOzsTHYIf+Ee
-2Rz42fGsfFKqeEQCcBFRZaGb/ELeP4c6UZdktZAvmHb1p1fursVZc6X9JXmiJ2OJ
-Kv2H2tMKuysP8L0fXFOMgkH2SVt6rcdHkO6xhlhWsQKBgQDqR8rAJeEE5BFoXA8T
-VVW6CLMlW51x4ey7PEGOaYh39dTG2Q+GZQBZ9G+SZk3f5Y85UCACSyc//4qaz/c3
-0nWsegZ+JPyymmuc79wzIAFFvXB7pL6wyn0Ed1P620kOZTtA8iBcXrsuxL+KP7iu
-MXfWmU1QiZpbndILtyDnY+70uwKBgQDSyCljWkydQCaPU+fiAXLxP8CvcJTSSNQD
-mVUlwJ+OpHnU+Alsi1rBavMgUtLlYbFqzH7NmYrLC8Yadq3ZOwLt0VEK0r8qstAL
-7QCDUD2WNuQjpZupRnXuMUl3iXB96i2gb+VQKGuUAJvVWjdIbYa4+Gu+sBMfcDcX
-dBihDLuEuwKBgAgX4tEwfc2Fc3R/eaXZVNTQaB/qQk4k1+C//CPHUYeTXn5gEUE7
-S//PiesszZPmgkQgmHp7zidP1KH0fT3Yb2g97ut8q54f54fMYXcCrAiUusYKsuu4
-kwkMdkI8QRHWPW3I74VBYIYFFfjYqrCZ1OH8+cbGeiagFRmCggh8U0zxAoGAVW3u
-6Ge22Z0gg8LcHsu7jG/sZq7Ygool8/d3fT+e669Z+ak2GJo6hF4WgClRdMqtn72W
-PzpV+ImjFyK2v26dd0n48MwN0v56N/ss1Av3iiRhPtlmR6tZLNspDZvUzhPVvkrb
-xCs9vtSoVEamVWKe0eVNthGjDoDqs0TInq2MavUCgYB6REavSJs/CLkSS7iimjxZ
-G7g5YQi9/p1lXLOEUDiwEmvRr0XTwzzxUsIc535IXhh/ZUYpthenW+qBBzn85pEC
-TowIqciHu5redqlQ8rITA8/AOY98vaDIhppDg1rfpnHHaZHFbXD/keYAEbhBtbvf
-a0QMqKUcs8+YTy5R5K6qtw==
------END PRIVATE KEY-----";
-
         let manager = TokenManager::new_asymmetric(
-            pem,
+            TEST_RSA_PRIVATE_KEY_PEM,
             Some("issuer".to_string()),
             Some("my-kid-123".to_string()),
         )
@@ -452,6 +457,53 @@ a0QMqKUcs8+YTy5R5K6qtw==
             jsonwebtoken::decode::<Claims>(&token, &decoding_key, &validation).unwrap();
         assert_eq!(token_data.claims.sub, "user123");
         assert_eq!(token_data.header.kid.as_deref(), Some("my-kid-123"));
+    }
+
+    /// Regression test for the asymmetric decoding key being derived from the
+    /// private half instead of the public one.
+    ///
+    /// `test_token_manager_asymmetric_issuance` above verifies via the
+    /// published JWK, which exercises `Jwk::to_decoding_key` rather than the
+    /// manager's own `decoding_key` — so it stays green either way. This one
+    /// goes through `validate_token`, which is the path `/reissue` and
+    /// `/userinfo` actually take.
+    #[test]
+    fn test_asymmetric_manager_validates_its_own_tokens() {
+        let manager = TokenManager::new_asymmetric(
+            TEST_RSA_PRIVATE_KEY_PEM,
+            Some("issuer".to_string()),
+            Some("my-kid-123".to_string()),
+        )
+        .unwrap();
+
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_user_token(identity, 3600, None, None)
+            .unwrap();
+
+        let claims = manager.validate_token(&token, None).unwrap();
+        assert_eq!(claims.sub, "user123");
+        assert_eq!(claims.iss, Some("issuer".to_string()));
+
+        // Same round trip for the attestation shape `/reissue` presents.
+        let attestation = manager
+            .issue_custom_token(
+                "device-1".to_string(),
+                60,
+                "webank-attest+jws",
+                HashMap::new(),
+            )
+            .unwrap();
+
+        let attest_claims = manager.validate_token(&attestation, None).unwrap();
+        assert_eq!(attest_claims.sub, "device-1");
     }
 
     #[test]
