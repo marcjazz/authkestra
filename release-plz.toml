@@ -1,6 +1,6 @@
 [workspace]
 publish_no_verify = true
-release_commits = "^(feat|fix|perf|refactor|revert)"
+release_always = true
 
 # All crates share `version.workspace = true`, so they must be bumped as a
 # single unit. Without this, release-plz may try to bump authkestra-engine to
