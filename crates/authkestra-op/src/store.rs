@@ -66,11 +66,13 @@ pub trait OpStore:
     /// re-minting an `id_token`, or a non-default rotation policy — without
     /// forking the crate.
     ///
-    /// **The default reproduces today's built-in behavior exactly** —
-    /// consume-and-rotate the refresh token and re-mint an access token
-    /// (see `default_handle_refresh_token`). Any `OpStore` that does not
-    /// override this method behaves identically to before this method
-    /// existed.
+    /// The default (see `default_handle_refresh_token`) consumes and
+    /// rotates the refresh token, re-mints an access token, and — mirroring
+    /// `handle_authorization_code` — re-mints an `id_token` too when the
+    /// stored scope includes `openid` (OIDC Core §12.2 makes this optional;
+    /// this crate now exercises that option instead of always omitting it).
+    /// Any `OpStore` that does not override this method gets that behavior
+    /// automatically; nothing about the trait or dispatch changes for it.
     async fn handle_refresh_token(
         &self,
         req: crate::handlers::token::TokenRequest,

@@ -931,6 +931,28 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         }
     };
 
+    // Per OIDC Core §12.2, an id_token MAY be re-minted on refresh; a client
+    // that never requested `openid` gets none, mirroring how
+    // `handle_authorization_code` gates `issue_id_token` on the same scope
+    // check. Refresh tokens don't carry a `nonce` (only auth codes do,
+    // reflecting the original `/authorize` request) — Core §12.2 lists
+    // `nonce` as OPTIONAL on a refreshed id_token, so omitting it is
+    // conformant, not a shortcut.
+    let id_token = if old_rt.scope.contains("openid") {
+        match tokens.issue_id_token(old_rt.identity.clone(), &client_id, None, expires_in) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                tracing::error!(error = ?e, "Failed to issue id token");
+                return Err(TokenErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: "Failed to generate ID token".to_string(),
+                });
+            }
+        }
+    } else {
+        None
+    };
+
     tracing::info!(
         client_id = %client_id,
         "Successfully refreshed tokens"
@@ -940,7 +962,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         access_token,
         token_type: "Bearer".to_string(),
         expires_in,
-        id_token: None, // usually id_token is not issued on refresh unless openid scope is present, simplify for now
+        id_token,
         refresh_token: Some(new_refresh_val),
         scope: scope_opt,
     })
@@ -2081,6 +2103,100 @@ mod tests {
         )
         .await;
         assert_eq!(second.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_issues_id_token_when_openid_scope_present() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        refresh
+            .store_token(RefreshToken {
+                token: "rt-openid".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                scope: "openid profile".to_string(),
+                expires_at: Utc::now() + Duration::days(1),
+            })
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            refresh_test_req("rt-openid"),
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                refresh,
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &test_tokens(),
+        )
+        .await;
+
+        let resp = res.unwrap();
+        assert!(
+            resp.id_token.is_some(),
+            "openid scope should get a refreshed id_token"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_omits_id_token_without_openid_scope() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        refresh
+            .store_token(RefreshToken {
+                token: "rt-no-openid".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                scope: "profile".to_string(),
+                expires_at: Utc::now() + Duration::days(1),
+            })
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            refresh_test_req("rt-no-openid"),
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                refresh,
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &test_tokens(),
+        )
+        .await;
+
+        let resp = res.unwrap();
+        assert_eq!(
+            resp.id_token, None,
+            "no openid scope should mean no id_token, same as before this feature existed"
+        );
     }
 
     // --- Token Exchange DoD Tests ---
