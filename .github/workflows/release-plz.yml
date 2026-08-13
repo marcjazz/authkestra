@@ -8,6 +8,10 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '**.md'
 
 jobs:
   release-plz:

@@ -3,9 +3,20 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE*'
   pull_request:
-    # Trigger on any pull request
     types: [opened, synchronize, reopened]
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE*'
 
 jobs:
   test:
