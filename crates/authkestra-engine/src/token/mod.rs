@@ -85,6 +85,8 @@ impl TokenManager {
             alg: Some("RS256".to_string()),
             n: Some(n),
             e: Some(e),
+            crv: None,
+            x: None,
         };
 
         // The decoding key must come from the PUBLIC half. `DecodingKey::from_rsa_pem`
@@ -99,6 +101,64 @@ impl TokenManager {
             issuer,
             kid: Some(kid_val),
             alg: Algorithm::RS256,
+            public_jwk: Some(jwk),
+        })
+    }
+
+    /// Creates a TokenManager for asymmetric signing with Ed25519 (EdDSA).
+    /// `private_key_pem` must be a valid Ed25519 private key in PKCS#8 PEM
+    /// format (`-----BEGIN PRIVATE KEY-----`), e.g. as produced by
+    /// `openssl genpkey -algorithm ed25519`.
+    ///
+    /// Mirrors `new_asymmetric` (RS256): OP/external verification should use
+    /// this path when downstream resource servers require EdDSA-signed
+    /// tokens; internal resource servers can continue to use `new` (HS256).
+    /// The published JWK (`public_jwk`) is the OKP shape from RFC 8037, so
+    /// pair this with #188 (`Jwk`'s OKP support) to publish a verifiable
+    /// `/jwks.json` for the resulting deployment.
+    pub fn new_ed25519(
+        private_key_pem: &[u8],
+        issuer: Option<String>,
+        kid: Option<String>,
+    ) -> Result<Self, AuthError> {
+        let encoding_key = EncodingKey::from_ed_pem(private_key_pem)
+            .map_err(|e| AuthError::Token(e.to_string()))?;
+
+        let pem_str = std::str::from_utf8(private_key_pem)
+            .map_err(|_| AuthError::Token("Invalid PEM UTF-8".into()))?;
+
+        use ed25519_dalek::pkcs8::DecodePrivateKey;
+        let signing_key = ed25519_dalek::SigningKey::from_pkcs8_pem(pem_str)
+            .map_err(|e| AuthError::Token(format!("Failed to parse Ed25519 key: {}", e)))?;
+
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let x = URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes());
+
+        let kid_val = kid.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        let jwk = crate::token::jwk::Jwk {
+            kid: Some(kid_val.clone()),
+            kty: "OKP".to_string(),
+            alg: Some("EdDSA".to_string()),
+            n: None,
+            e: None,
+            crv: Some("Ed25519".to_string()),
+            x: Some(x),
+        };
+
+        // Same rationale as `new_asymmetric`: derive the decoding key from
+        // the JWK we just built (the public half) rather than from the
+        // private PEM, so both provably agree with what `/jwks` publishes.
+        // See the regression note on that constructor and the test below
+        // named after it.
+        let decoding_key = jwk.to_decoding_key()?;
+
+        Ok(Self {
+            encoding_key,
+            decoding_key,
+            issuer,
+            kid: Some(kid_val),
+            alg: Algorithm::EdDSA,
             public_jwk: Some(jwk),
         })
     }
@@ -365,6 +425,18 @@ xCs9vtSoVEamVWKe0eVNthGjDoDqs0TInq2MavUCgYB6REavSJs/CLkSS7iimjxZ
 G7g5YQi9/p1lXLOEUDiwEmvRr0XTwzzxUsIc535IXhh/ZUYpthenW+qBBzn85pEC
 TowIqciHu5redqlQ8rITA8/AOY98vaDIhppDg1rfpnHHaZHFbXD/keYAEbhBtbvf
 a0QMqKUcs8+YTy5R5K6qtw==
+-----END PRIVATE KEY-----";
+
+    /// Throwaway Ed25519 private key (PKCS#8 PEM), test-only. Generated with
+    /// `openssl genpkey -algorithm ed25519`.
+    const TEST_ED25519_PRIVATE_KEY_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIKIPR2jojpdobYr1M/pjIRuMONpZGYQ+y5yxSqKX9T9/
+-----END PRIVATE KEY-----";
+
+    /// A second, distinct throwaway Ed25519 private key, test-only — used to
+    /// prove a token signed by one key is rejected by another key's manager.
+    const TEST_ED25519_PRIVATE_KEY_PEM_B: &[u8] = b"-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
 -----END PRIVATE KEY-----";
 
     #[test]
@@ -723,6 +795,265 @@ a0QMqKUcs8+YTy5R5K6qtw==
         assert_eq!(
             claims.extra.get("nonce"),
             Some(&serde_json::json!("real-nonce"))
+        );
+    }
+
+    #[test]
+    fn test_token_manager_ed25519_issuance() {
+        let manager = TokenManager::new_ed25519(
+            TEST_ED25519_PRIVATE_KEY_PEM,
+            Some("issuer".to_string()),
+            Some("my-ed25519-kid".to_string()),
+        )
+        .unwrap();
+
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_user_token(identity, 3600, None, None)
+            .unwrap();
+
+        let header = jsonwebtoken::decode_header(&token).unwrap();
+        assert_eq!(header.alg, Algorithm::EdDSA);
+        assert_eq!(header.kid.as_deref(), Some("my-ed25519-kid"));
+    }
+
+    /// Proves #187 and #188 actually compose end-to-end: mint a token with
+    /// the Ed25519 constructor, then verify it using ONLY the decoding key
+    /// derived from the published JWK (the OKP shape `/jwks.json` would
+    /// serve) — not the manager's own internal decoding key. This is the
+    /// round trip a real resource server performs against a real JWKS
+    /// endpoint.
+    #[test]
+    fn test_ed25519_token_round_trips_via_published_jwk() {
+        let manager = TokenManager::new_ed25519(
+            TEST_ED25519_PRIVATE_KEY_PEM,
+            Some("issuer".to_string()),
+            Some("my-ed25519-kid".to_string()),
+        )
+        .unwrap();
+
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_user_token(identity, 3600, None, None)
+            .unwrap();
+
+        let jwk = manager.public_jwk().unwrap();
+        assert_eq!(jwk.kid.as_deref(), Some("my-ed25519-kid"));
+
+        let decoding_key = jwk.to_decoding_key().unwrap();
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::EdDSA);
+        validation.set_issuer(&["issuer"]);
+
+        let token_data =
+            jsonwebtoken::decode::<Claims>(&token, &decoding_key, &validation).unwrap();
+        assert_eq!(token_data.claims.sub, "user123");
+        assert_eq!(token_data.header.kid.as_deref(), Some("my-ed25519-kid"));
+    }
+
+    /// Same shape as `test_asymmetric_manager_validates_its_own_tokens`
+    /// (RS256): goes through `validate_token`, the path `/reissue` and
+    /// `/userinfo` actually take, rather than the published-JWK path above.
+    #[test]
+    fn test_ed25519_manager_validates_its_own_tokens() {
+        let manager = TokenManager::new_ed25519(
+            TEST_ED25519_PRIVATE_KEY_PEM,
+            Some("issuer".to_string()),
+            Some("my-ed25519-kid".to_string()),
+        )
+        .unwrap();
+
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_user_token(identity, 3600, None, None)
+            .unwrap();
+
+        let claims = manager.validate_token(&token, None).unwrap();
+        assert_eq!(claims.sub, "user123");
+        assert_eq!(claims.iss, Some("issuer".to_string()));
+    }
+
+    /// `public_jwk()` for an Ed25519 manager must emit spec-correct OKP JSON
+    /// (RFC 8037 §2): `kty: "OKP"`, `crv: "Ed25519"`, `x` present and
+    /// base64url-encoded to exactly 32 bytes, and no stray RSA fields (`n`,
+    /// `e`) on the wire.
+    #[test]
+    fn test_ed25519_public_jwk_is_spec_correct_okp_json() {
+        let manager = TokenManager::new_ed25519(
+            TEST_ED25519_PRIVATE_KEY_PEM,
+            Some("issuer".to_string()),
+            Some("my-ed25519-kid".to_string()),
+        )
+        .unwrap();
+
+        let jwk = manager.public_jwk().unwrap();
+        assert_eq!(jwk.kty, "OKP");
+        assert_eq!(jwk.alg.as_deref(), Some("EdDSA"));
+        assert_eq!(jwk.crv.as_deref(), Some("Ed25519"));
+        assert!(jwk.n.is_none());
+        assert!(jwk.e.is_none());
+
+        let x = jwk.x.as_ref().expect("OKP JWK must have 'x'");
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let decoded = URL_SAFE_NO_PAD
+            .decode(x)
+            .expect("'x' must be valid base64url (unpadded)");
+        assert_eq!(decoded.len(), 32, "Ed25519 public key must be 32 bytes");
+
+        let value = serde_json::to_value(&jwk).unwrap();
+        let obj = value.as_object().unwrap();
+        assert_eq!(obj.get("kty").unwrap(), "OKP");
+        assert_eq!(obj.get("crv").unwrap(), "Ed25519");
+        assert_eq!(obj.get("alg").unwrap(), "EdDSA");
+        assert!(obj.contains_key("x"));
+        assert!(
+            !obj.contains_key("n"),
+            "OKP JWK must not serialize the RSA 'n' field, got: {}",
+            value
+        );
+        assert!(
+            !obj.contains_key("e"),
+            "OKP JWK must not serialize the RSA 'e' field, got: {}",
+            value
+        );
+    }
+
+    /// Same spec-correctness check for the RSA shape, unchanged by the OKP
+    /// addition: no stray `crv`/`x` fields on the wire.
+    #[test]
+    fn test_rsa_public_jwk_still_omits_okp_fields() {
+        let manager = TokenManager::new_asymmetric(
+            TEST_RSA_PRIVATE_KEY_PEM,
+            Some("issuer".to_string()),
+            Some("my-kid-123".to_string()),
+        )
+        .unwrap();
+
+        let jwk = manager.public_jwk().unwrap();
+        let value = serde_json::to_value(&jwk).unwrap();
+        let obj = value.as_object().unwrap();
+        assert_eq!(obj.get("kty").unwrap(), "RSA");
+        assert!(obj.contains_key("n"));
+        assert!(obj.contains_key("e"));
+        assert!(
+            !obj.contains_key("crv"),
+            "RSA JWK must not serialize the OKP 'crv' field, got: {}",
+            value
+        );
+        assert!(
+            !obj.contains_key("x"),
+            "RSA JWK must not serialize the OKP 'x' field, got: {}",
+            value
+        );
+    }
+
+    /// Wrong-key rejection: a token signed by one Ed25519 manager must be
+    /// rejected when verified against a *different* Ed25519 manager's
+    /// published JWK — proving the JWKS round trip actually checks the
+    /// signature rather than trivially accepting any well-formed EdDSA JWT.
+    #[test]
+    fn test_ed25519_token_rejected_by_wrong_key_jwk() {
+        let signer = TokenManager::new_ed25519(
+            TEST_ED25519_PRIVATE_KEY_PEM,
+            Some("issuer".to_string()),
+            Some("kid-a".to_string()),
+        )
+        .unwrap();
+        let other = TokenManager::new_ed25519(
+            TEST_ED25519_PRIVATE_KEY_PEM_B,
+            Some("issuer".to_string()),
+            Some("kid-b".to_string()),
+        )
+        .unwrap();
+
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = signer.issue_user_token(identity, 3600, None, None).unwrap();
+
+        // Verifying with the signer's own manager still works.
+        assert!(signer.validate_token(&token, None).is_ok());
+
+        // Verifying with a different key's manager must fail.
+        let err = other.validate_token(&token, None).unwrap_err();
+        assert!(err.to_string().contains("InvalidSignature"));
+
+        // Same result going through the published-JWK path a real resource
+        // server would use.
+        let wrong_jwk = other.public_jwk().unwrap();
+        let decoding_key = wrong_jwk.to_decoding_key().unwrap();
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::EdDSA);
+        validation.set_issuer(&["issuer"]);
+        let err = jsonwebtoken::decode::<Claims>(&token, &decoding_key, &validation).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            &jsonwebtoken::errors::ErrorKind::InvalidSignature
+        );
+    }
+
+    /// A tampered payload (claims byte flipped after signing, signature
+    /// left as-is) must be rejected, whichever algorithm signed it —
+    /// guards against a validator that only checks structural shape.
+    #[test]
+    fn test_ed25519_tampered_token_rejected() {
+        let manager = TokenManager::new_ed25519(
+            TEST_ED25519_PRIVATE_KEY_PEM,
+            Some("issuer".to_string()),
+            Some("my-ed25519-kid".to_string()),
+        )
+        .unwrap();
+
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_user_token(identity, 3600, None, None)
+            .unwrap();
+
+        let mut parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        // Corrupt a single character in the base64url payload segment.
+        let mut payload = parts[1].to_string();
+        let last = payload.pop().unwrap();
+        let replacement = if last == 'A' { 'B' } else { 'A' };
+        payload.push(replacement);
+        parts[1] = &payload;
+        let tampered = parts.join(".");
+
+        let err = manager.validate_token(&tampered, None).unwrap_err();
+        assert!(
+            err.to_string().contains("InvalidSignature") || err.to_string().contains("Json"),
+            "unexpected error for tampered token: {err}"
         );
     }
 }

@@ -39,6 +39,12 @@ jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 tokio = { version = "1.0", features = ["full"] }
 aes-gcm = "0.10.3"
 rsa = "0.9.6"
+# Only used to derive the public key (for JWKS publishing) from an Ed25519
+# PKCS#8 private key PEM — jsonwebtoken's own EncodingKey/DecodingKey types
+# don't expose the raw key material needed for that. Already resolved in the
+# workspace as jsonwebtoken's own `rust_crypto` EdDSA backend; the `pem`
+# feature here only turns on its (already-present) `pkcs8`/PEM decoding.
+ed25519-dalek = { version = "2", features = ["pem"] }
 
 redis = { version = "0.27", features = ["tokio-comp"], optional = true }
 sqlx = { version = "0.8.2", optional = true }
