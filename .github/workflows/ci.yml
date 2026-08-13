@@ -3,15 +3,26 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE*'
   pull_request:
-    # Trigger on any pull request
     types: [opened, synchronize, reopened]
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE*'
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo registry and build
@@ -22,7 +33,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo registry and build
@@ -33,7 +44,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo registry and build
@@ -44,7 +55,7 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo registry and build
