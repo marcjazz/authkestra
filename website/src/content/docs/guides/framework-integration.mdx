@@ -8,7 +8,7 @@ Authkestra provides first-class support for both the `axum` and `actix-web` web 
 
 ## Prerequisites
 
-Ensure you have enabled the correct web framework feature on the `authkestra` crate in your `Cargo.toml`. Also, since session management is stateful, make sure the `session` feature is enabled.
+Ensure you have enabled the correct web framework feature on the `authkestra` crate in your `Cargo.toml`.
 
 <Tabs>
   <TabItem label="Axum" icon="seti:rust">
@@ -31,13 +31,13 @@ authkestra = { version = "0.3", features = ["actix", "session"] }
 
 ## The `AuthSession` Extractor
 
-The primary way to interact with an authenticated user in a handler is via the `AuthSession` extractor. It automatically validates the session and injects the user's identity.
+The primary way to interact with an authenticated user in a handler when using sessions is via the `AuthSession` extractor. It automatically validates the session from cookies and injects the user's identity.
 
 <Tabs>
   <TabItem label="Axum" icon="seti:rust">
 
 ```rust
-use authkestra_axum::{AuthSession, AxumError};
+use authkestra::axum::{AuthSession, AxumError};
 use axum::response::{IntoResponse, Json};
 use serde_json::json;
 
@@ -57,7 +57,7 @@ pub async fn my_handler(
   <TabItem label="Actix-web" icon="seti:rust">
 
 ```rust
-use authkestra_actix::{AuthSession, ActixError};
+use authkestra::actix::{AuthSession, ActixError};
 use actix_web::{get, HttpResponse, Responder};
 
 #[get("/api/user")]
@@ -78,27 +78,88 @@ async fn get_user(session: Result<AuthSession, ActixError>) -> impl Responder {
   </TabItem>
 </Tabs>
 
-## Router Setup
+## The `AuthToken` Extractor
 
-To wire up the endpoints, you use `axum_router()` or `actix_router()` on the built Engine.
+For stateless JWT authentication, Authkestra provides the `AuthToken` extractor which reads and validates the `Authorization: Bearer <token>` header.
 
 <Tabs>
   <TabItem label="Axum" icon="seti:rust">
 
 ```rust
-use authkestra_axum::AxumExt;
+use authkestra::axum::{AuthToken, AxumError};
+use axum::response::{IntoResponse, Json};
+use serde_json::json;
+
+pub async fn token_protected_handler(
+    token: Result<AuthToken, AxumError>
+) -> impl IntoResponse {
+    match token {
+        Ok(AuthToken(claims)) => Json(json!({
+            "message": "Valid Token!",
+            "sub": claims.sub,
+        })),
+        Err(_) => Json(json!({ "error": "Invalid or missing token" }))
+    }
+}
+```
+  </TabItem>
+  <TabItem label="Actix-web" icon="seti:rust">
+
+```rust
+use authkestra::actix::{AuthToken, ActixError};
+use actix_web::{get, HttpResponse, Responder};
+
+#[get("/api/protected")]
+async fn get_protected(token: Result<AuthToken, ActixError>) -> impl Responder {
+    match token {
+        Ok(AuthToken(claims)) => HttpResponse::Ok().json(
+            serde_json::json!({
+                "message": "Valid Token!",
+                "sub": claims.sub,
+            })
+        ),
+        Err(_) => HttpResponse::Unauthorized().json(
+            serde_json::json!({ "error": "Invalid token" })
+        ),
+    }
+}
+```
+  </TabItem>
+</Tabs>
+
+## Router Setup
+
+To wire up standard authentication endpoints automatically, use `axum_router()` / `axum_router_stateless()` for Axum, or `actix_router()` / `actix_router_stateless()` for Actix-web on the built `Engine`.
+
+<Tabs>
+  <TabItem label="Axum" icon="seti:rust">
+
+```rust
+use authkestra::axum::{AxumExt, AxumState};
+use authkestra::core::AkWebAppEngine;
+use axum::Router;
+use tower_cookies::CookieManagerLayer;
+
+#[derive(Clone, AxumState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkWebAppEngine,
+}
+
+let state = AppState { auth: auth_engine.clone() };
 
 let app = Router::new()
     .merge(auth_engine.axum_router())
     .layer(CookieManagerLayer::new())
-    .with_state(AppState { auth: auth_engine });
+    .with_state(state);
 ```
 
   </TabItem>
   <TabItem label="Actix-web" icon="seti:rust">
 
 ```rust
-use authkestra_actix::ActixExt;
+use actix_web::{web, App, HttpServer};
+use authkestra::actix::ActixExt;
 
 HttpServer::new(move || {
     App::new()

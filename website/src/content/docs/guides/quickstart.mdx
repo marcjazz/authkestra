@@ -17,6 +17,8 @@ Add the `authkestra` facade crate to your `Cargo.toml`. The facade re-exports al
 ```toml
 [dependencies]
 authkestra = { version = "0.3", features = ["axum", "github"] }
+tower-cookies = "0.10"
+tokio = { version = "1", features = ["full"] }
 ```
 
   </TabItem>
@@ -25,6 +27,7 @@ authkestra = { version = "0.3", features = ["axum", "github"] }
 ```toml
 [dependencies]
 authkestra = { version = "0.3", features = ["actix", "github"] }
+actix-web = "4"
 ```
 
   </TabItem>
@@ -32,19 +35,19 @@ authkestra = { version = "0.3", features = ["actix", "github"] }
 
 ## Setting Up the Engine
 
-The core logic of Authkestra is identical regardless of which web framework you choose. First, we will initialize the Identity Provider (GitHub) and then construct the `Engine` using the Typestate Builder Pattern.
+The core logic of Authkestra is identical regardless of which web framework you choose. First, initialize the Identity Provider (`GithubProvider`) and construct the `Engine` using the Typestate Builder Pattern (`Authkestra::builder()`).
 
 ```rust
 use authkestra::Authkestra;
-use authkestra_providers::github::GithubProvider;
-use authkestra_engine::store::memory::MemoryStore;
+use authkestra::providers::github::GithubProvider;
+use authkestra::store::memory::MemoryStore;
 use std::sync::Arc;
 
 // 1. Initialize the GitHub Provider
 let github_provider = GithubProvider::new(
     "YOUR_CLIENT_ID".to_string(), 
     "YOUR_CLIENT_SECRET".to_string(), 
-    "http://localhost:3000/auth/github/callback".to_string()
+    "http://localhost:3000/auth/callback/github".to_string()
 );
 
 // 2. Setup the Session Store
@@ -59,18 +62,20 @@ let auth_engine = Authkestra::builder()
 
 ## Wiring the Router
 
-Once the engine is built, it's time to integrate it into your web framework's routing layer. Authkestra provides specialized adapters (`authkestra-axum` and `authkestra-actix`) that automatically map the standard authentication endpoints for you.
+Once the engine is built, integrate it into your web framework's routing layer. Authkestra provides specialized adapters (`authkestra-axum` and `authkestra-actix`) that automatically map standard authentication endpoints.
 
 <Tabs>
   <TabItem label="Axum" icon="seti:rust">
 
 ```rust
-use authkestra::axum::AxumExt;
-use axum::Router;
-use tower_cookies::CookieManagerLayer;
-use authkestra::core::engine::Engine;
+use authkestra::axum::{AxumExt, AxumState};
 use authkestra::core::AkWebAppEngine;
-use authkestra::axum::AxumState;
+use authkestra::providers::github::GithubProvider;
+use authkestra::store::memory::MemoryStore;
+use authkestra::Authkestra;
+use axum::Router;
+use std::sync::Arc;
+use tower_cookies::CookieManagerLayer;
 
 #[derive(Clone, AxumState)]
 struct AppState {
@@ -80,11 +85,19 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let auth_engine = /* setup engine as above */ Authkestra::builder().build();
+    let auth_engine = Authkestra::builder()
+        .provider(GithubProvider::new(
+            "YOUR_CLIENT_ID".to_string(),
+            "YOUR_CLIENT_SECRET".to_string(),
+            "http://localhost:3000/auth/callback/github".to_string(),
+        ))
+        .session_store(Arc::new(MemoryStore::default()))
+        .build();
+
     let state = AppState { auth: auth_engine.clone() };
 
     let app = Router::new()
-        // `axum_router()` automatically wires standard login endpoints!
+        // `axum_router()` automatically wires `/auth/login/{provider}` and `/auth/callback/{provider}`
         .merge(auth_engine.axum_router())
         .layer(CookieManagerLayer::new())
         .with_state(state);
@@ -98,18 +111,28 @@ async fn main() {
   <TabItem label="Actix-web" icon="seti:rust">
 
 ```rust
+use actix_web::{web, App, HttpServer};
 use authkestra::actix::ActixExt;
-use actix_web::{App, HttpServer, web};
-use authkestra::core::engine::Engine;
+use authkestra::providers::github::GithubProvider;
+use authkestra::store::memory::MemoryStore;
+use authkestra::Authkestra;
+use std::sync::Arc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let auth_engine = /* setup engine as above */ Authkestra::builder().build();
+    let auth_engine = Authkestra::builder()
+        .provider(GithubProvider::new(
+            "YOUR_CLIENT_ID".to_string(),
+            "YOUR_CLIENT_SECRET".to_string(),
+            "http://localhost:3000/auth/callback/github".to_string(),
+        ))
+        .session_store(Arc::new(MemoryStore::default()))
+        .build();
 
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(auth_engine.clone()))
-            // `actix_router()` automatically wires standard login endpoints!
+            // `actix_router()` automatically wires `/auth/login/{provider}` and `/auth/callback/{provider}`
             .configure(|cfg| auth_engine.actix_router(cfg))
     })
     .bind("0.0.0.0:3000")?
@@ -121,4 +144,4 @@ async fn main() -> std::io::Result<()> {
   </TabItem>
 </Tabs>
 
-With just these few lines of code, your application is now fully equipped to handle stateless OAuth logins, validate standard OIDC responses, and issue secure sessions!
+With just these few lines of code, your application is now fully equipped to handle OAuth logins, validate responses, and issue secure sessions!

@@ -4,17 +4,17 @@ description: Configuring Stateless OAuth with Authkestra.
 ---
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-By default, OAuth2 logins often result in a server-side session being created. However, Authkestra allows you to build a strictly **stateless** flow where the authentication results in a JWT (JSON Web Token).
+By default, OAuth2 logins can create a server-side session. However, Authkestra allows you to build a strictly **stateless** flow where authentication results in a signed JWT (JSON Web Token).
 
-"Stateless" means that the entire flow can be completed *without* using a session store. 
+"Stateless" means that the entire flow can be completed *without* using a session store.
 
 ## The OAuth2 Standard
 
-Authkestra strictly implements the [OAuth 2.0 Authorization Framework (RFC 6749)](https://datatracker.ietf.org/doc/html/rfc6749) and [PKCE (RFC 7636)](https://datatracker.ietf.org/doc/html/rfc7636). We didn't invent these protocols; we just provide a memory-safe, idiomatic Rust engine to execute them.
+Authkestra strictly implements the [OAuth 2.0 Authorization Framework (RFC 6749)](https://datatracker.ietf.org/doc/html/rfc6749) and [PKCE (RFC 7636)](https://datatracker.ietf.org/doc/html/rfc7636). We provide a memory-safe, idiomatic Rust engine to execute them.
 
 ## Prerequisites
 
-If you are using multiple OAuth providers (e.g., GitHub and Google), you must enable their respective feature flags:
+If you are using multiple OAuth providers (e.g., GitHub and Google), enable their respective feature flags:
 
 ```toml
 [dependencies]
@@ -23,55 +23,59 @@ authkestra = { version = "0.3", features = ["github", "google"] }
 
 ## Stateless Engine Configuration
 
-Notice how we completely omit `.session_store()` and use `.jwt_secret()` instead. You can also chain multiple providers back-to-back:
+Notice how we completely omit `.session_store()` and use `.jwt_secret()` instead. You can chain multiple providers directly:
 
 ```rust
-use authkestra::flow::{Engine, OAuth2Flow};
-use authkestra_providers::github::GithubProvider;
-use authkestra_providers::google::GoogleProvider;
+use authkestra::Authkestra;
+use authkestra::providers::github::GithubProvider;
+use authkestra::providers::google::GoogleProvider;
 
 // Initialize Authkestra in stateless mode supporting multiple providers
 let auth_engine = Authkestra::builder()
-    .provider(OAuth2Flow::new(GithubProvider::new(...)))
-    .provider(OAuth2Flow::new(GoogleProvider::new(...)))
+    .provider(GithubProvider::new(
+        "GITHUB_CLIENT_ID".into(),
+        "GITHUB_CLIENT_SECRET".into(),
+        "http://localhost:3000/auth/callback/github".into(),
+    ))
+    .provider(GoogleProvider::new(
+        "GOOGLE_CLIENT_ID".into(),
+        "GOOGLE_CLIENT_SECRET".into(),
+        "http://localhost:3000/auth/callback/google".into(),
+    ))
     .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
     .build();
 ```
 
 ## Wiring the Routes
 
-Because we are not using sessions, we **cannot** use the default `auth_engine.axum_router()`. 
-
-You can wire the endpoints automatically by using the stateless counterpart: `auth_engine.axum_router_stateless()` (or `auth_engine.actix_scope_stateless()` for Actix).
+Because we are not using sessions, we use the stateless router counterpart: `auth_engine.axum_router_stateless()` for Axum or `auth_engine.actix_router_stateless()` for Actix-web.
 
 <Tabs>
 <TabItem label="Axum">
 ```rust
+use authkestra::axum::AxumStatelessExt;
+
 let app = axum::Router::new().merge(auth_engine.axum_router_stateless());
 ```
 </TabItem>
 <TabItem label="Actix Web">
 ```rust
-let app = actix_web::App::new().service(auth_engine.actix_scope_stateless());
+use authkestra::actix::ActixStatelessExt;
+
+let app = actix_web::App::new().configure(|cfg| auth_engine.actix_router_stateless(cfg));
 ```
 </TabItem>
 </Tabs>
 
-### Wiring Routes Manually
+### Wiring Handlers Manually
 
-If you need absolute control over the HTTP response, you can bypass the automatic router. Instead, you manually define your `/auth/:provider` and `/auth/callback/:provider` routes.
-
-Here is a step-by-step breakdown of how the manual handlers work:
-
-### 1. The Login Handler
-
-The login handler intercepts the user's request and delegates to Authkestra's `axum_login_handler` or `actix_login_handler` helper. This helper securely generates the PKCE challenges and cookies before redirecting to the provider.
+If you need absolute control over the HTTP response, you can bypass the automatic router and handle requests manually using Authkestra's helpers in `authkestra-axum` or `authkestra-actix`.
 
 <Tabs>
 <TabItem label="Axum">
 ```rust
 use axum::{extract::{Path, State, Query}, response::IntoResponse};
-use authkestra_axum::helpers;
+use authkestra::axum::helpers;
 
 async fn login_handler(
     Path(provider): Path<String>,
@@ -79,8 +83,6 @@ async fn login_handler(
     Query(params): Query<helpers::OAuthLoginParams>,
     cookies: tower_cookies::Cookies,
 ) -> impl IntoResponse {
-    // We pass the framework extractors directly into the helper.
-    // The helper handles generating the state, nonce, and the 302 Redirect.
     helpers::axum_login_handler::<AppState, _, _>(Path(provider), State(state), Query(params), cookies).await
 }
 ```
@@ -88,7 +90,7 @@ async fn login_handler(
 <TabItem label="Actix Web">
 ```rust
 use actix_web::{web, Responder};
-use authkestra_actix::helpers;
+use authkestra::actix::helpers;
 
 async fn login_handler(
     path: web::Path<String>,
@@ -101,63 +103,4 @@ async fn login_handler(
 </TabItem>
 </Tabs>
 
-### 2. The Callback Handler
-
-The callback handler is where the stateless magic happens. Instead of relying on a session store, we use `handle_oauth_callback_jwt_erased`.
-
-<Tabs>
-<TabItem label="Axum">
-```rust
-async fn callback_handler(
-    Path(provider): Path<String>,
-    State(state): State<AppState>,
-    Query(params): Query<helpers::OAuthCallbackParams>,
-    cookies: tower_cookies::Cookies,
-) -> Result<impl IntoResponse, AxumError> {
-    
-    // Extract the token manager (injected via .jwt_secret() earlier)
-    let token_manager = <Result<Arc<TokenManager>, AxumError>>::from_ref(&state)?;
-    
-    // Resolve which provider (e.g. github vs google) was requested
-    let flow = state.auth.providers.get(&provider).unwrap();
-
-    // The helper exchanges the code for tokens and issues a custom JWT
-    helpers::handle_oauth_callback_jwt_erased(
-        flow.as_ref(), 
-        cookies, 
-        params, 
-        token_manager, 
-        3600, // Token TTL in seconds
-        state.auth.session_config
-    ).await
-}
-```
-</TabItem>
-<TabItem label="Actix Web">
-```rust
-async fn callback_handler(
-    req: actix_web::HttpRequest,
-    path: web::Path<String>,
-    authkestra: web::Data<Engine<AppState, ()>>,
-    params: web::Query<helpers::OAuthCallbackParams>,
-) -> actix_web::Result<impl Responder> {
-    
-    let provider = path.into_inner();
-    let flow = authkestra.providers.get(&provider).unwrap();
-
-    let response = helpers::handle_oauth_callback_jwt_erased(
-        flow.as_ref(),
-        &req,
-        params.into_inner(),
-        authkestra.session_store.get_manager(),
-        3600,
-        authkestra.session_config.clone(),
-    ).await?;
-
-    Ok(response)
-}
-```
-</TabItem>
-</Tabs>
-
-By manually exposing these handlers, you gain absolute control over the HTTP response. You can append headers, write to custom databases, or return the JWT inside a JSON body.
+By manually exposing these handlers, you gain full control over the HTTP response. You can append headers, record analytics, or return the JWT inside a custom JSON body.
