@@ -8,9 +8,9 @@ Authkestra isn't just for logging users in; you can also use it to build an **OA
 
 ## What is a Resource Server?
 
-According to [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749#section-1.1), a Resource Server is the server hosting the protected resources, capable of accepting and responding to protected resource requests using access tokens.
+According to [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749#section-1.1), a Resource Server is the server hosting protected resources, capable of accepting and responding to protected resource requests using access tokens.
 
-To securely validate an external JWT, the Resource Server must verify the cryptographic signature using the external provider's public keys (JWKS, defined in [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517)).
+To securely validate an external JWT, the Resource Server verifies the cryptographic signature using the external provider's public keys (JWKS, defined in [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517)).
 
 ## Prerequisites
 
@@ -18,10 +18,19 @@ Like the OP Server, the Resource Server is an advanced component and is not incl
 
 ```toml
 [dependencies]
-authkestra-resource = "0.3.0"
-authkestra-axum = { version = "0.3", features = ["resource"] }
+authkestra-resource = "0.4.0"
+authkestra-axum = { version = "0.4", features = ["resource"] }
 # Or if using Actix:
-# authkestra-actix = { version = "0.3", features = ["resource"] }
+# authkestra-actix = { version = "0.4", features = ["resource"] }
+```
+
+### TLS Backend Selection
+
+Outbound HTTP requests for JWKS discovery require a TLS backend. Authkestra enables `rustls-aws-lc-rs` by default. If your project uses a different TLS implementation (such as `ring`), you can select `rustls-no-provider` and install your own `rustls::CryptoProvider`:
+
+```toml
+[dependencies]
+authkestra-resource = { version = "0.4.0", default-features = false, features = ["rustls-no-provider"] }
 ```
 
 ## Building with Authkestra Guard
@@ -30,7 +39,7 @@ Authkestra provides the `authkestra-resource` crate, which features a `Guard` an
 
 ### 1. Configure the Strategy
 
-First, we set up the `ValidationConfig` and point it to the issuer's JWKS URL. The strategy will automatically fetch and cache the public keys in the background to eliminate per-request latency.
+First, set up `ValidationConfig` and point it to the issuer's JWKS URL. The strategy automatically fetches and caches public keys in the background.
 
 ```rust
 use authkestra_resource::{jwt::JwtStrategy, jwt::ValidationConfig, Guard};
@@ -46,12 +55,13 @@ let validation_config = ValidationConfig::builder()
 let jwt_strategy = JwtStrategy::<UserIdentity>::new(validation_config);
 ```
 
-### Advanced JWT Validation
+### Advanced Cryptography & JWT Validation
 
-The `ValidationConfig::builder()` supports several advanced validation rules to enforce strict security policies:
+The `ValidationConfig::builder()` supports advanced validation rules and cryptographic key types:
 
-- **Multi-Audience Support**: If your API serves multiple distinct clients, you can configure it to accept tokens minted for any of those audiences by chaining `.audiences(["client_a", "client_b"])`. (You can still use `.audience("single_client")` for backward compatibility).
-- **Strict Key IDs (`kid`)**: By default, if a JWT is missing the `kid` (Key ID) header, Authkestra will gracefully fall back to the first available key in the JWKS. To strictly reject malformed tokens that lack a `kid`, chain `.require_kid(true)`.
+- **Supported Signing Algorithms**: Supports `RS256`, `RS384`, `RS512`, `ES256`, `ES384`, and `EdDSA` (`Ed25519` OKP keys).
+- **Multi-Audience Support**: To accept tokens minted for any of multiple distinct client IDs, chain `.audiences(["client_a", "client_b"])`.
+- **Strict Key IDs (`kid`)**: To strictly reject malformed tokens that lack a `kid` header instead of falling back to the first JWKS key, chain `.require_kid(true)`.
 
 ```rust
 let advanced_config = ValidationConfig::builder()
@@ -63,9 +73,7 @@ let advanced_config = ValidationConfig::builder()
 
 ### 2. Flexible Strategy Chaining
 
-A core feature of Authkestra is **Flexible Chaining**. What if you want to support *multiple* types of authentication on the same endpoint? For instance, accepting an OIDC JWT *or* a custom API key? 
-
-The `Guard` builder allows you to chain multiple strategies together. The request will pass if *any* of the chained strategies successfully validate it.
+The `Guard` builder allows you to chain multiple strategies together. A request passes if *any* of the chained strategies successfully validate it (e.g., accepting an OIDC JWT *or* an API key).
 
 <Tabs>
 <TabItem label="Axum" icon="seti:rust">
@@ -88,7 +96,7 @@ struct AppState {
 
 ### 3. Protect Endpoints
 
-Now you can use the `Auth` extractor in your handlers. If the incoming request satisfies any of the chained strategies in your Guard, it is deserialized into your `UserIdentity` struct!
+Now use the `Auth` extractor in your handlers. If the incoming request satisfies any strategy in your Guard, it is deserialized into your `UserIdentity` struct:
 
 ```rust
 use authkestra_axum::Auth;
@@ -122,7 +130,7 @@ struct AppState {
 
 ### 3. Protect Endpoints
 
-Now you can use the `Auth` extractor in your handlers. If the incoming request satisfies any of the chained strategies in your Guard, it is deserialized into your `UserIdentity` struct!
+Now use the `Auth` extractor in your handlers:
 
 ```rust
 use authkestra_actix::Auth;
