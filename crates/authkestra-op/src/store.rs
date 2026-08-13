@@ -55,6 +55,36 @@ pub trait OpStore:
             error_description: "Unsupported grant type".to_string(),
         })
     }
+
+    /// Handle a `refresh_token` grant request during token exchange.
+    ///
+    /// A defaulted method, same reasoning as `handle_custom_grant`: the
+    /// built-in dispatch in `handlers::token::handle_token` used to match the
+    /// literal string `"refresh_token"` and call straight into the built-in
+    /// handler, with no seam an `OpStore` implementor could intercept. That
+    /// made it impossible to substitute custom refresh behavior — e.g.
+    /// re-minting an `id_token`, or a non-default rotation policy — without
+    /// forking the crate.
+    ///
+    /// **The default reproduces today's built-in behavior exactly** —
+    /// consume-and-rotate the refresh token and re-mint an access token
+    /// (see `default_handle_refresh_token`). Any `OpStore` that does not
+    /// override this method behaves identically to before this method
+    /// existed.
+    async fn handle_refresh_token(
+        &self,
+        req: crate::handlers::token::TokenRequest,
+        client_id: String,
+        client: crate::client::ClientRegistration,
+        config: &crate::config::OpConfig,
+        tokens: &authkestra_engine::token::TokenManager,
+    ) -> Result<crate::handlers::token::TokenResponse, crate::handlers::token::TokenErrorResponse>
+    {
+        crate::handlers::token::default_handle_refresh_token(
+            req, client_id, client, config, self, tokens,
+        )
+        .await
+    }
 }
 
 /// A helper struct that implements `OpStore` by delegating to 5 individual stores.

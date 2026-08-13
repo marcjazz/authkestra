@@ -159,7 +159,15 @@ pub async fn handle_token(
             handle_client_credentials(req, client_id, client, config, tokens).await
         }
         "refresh_token" => {
-            handle_refresh_token(req, client_id, client, config, op_store, tokens).await
+            // Routed through the `OpStore` seam (mirrors `handle_custom_grant`)
+            // so an integrator can substitute its own refresh handling —
+            // e.g. to re-mint an `id_token` or apply a custom rotation
+            // policy — without forking this crate. The default
+            // implementation reproduces the built-in behavior below via
+            // `default_handle_refresh_token`.
+            op_store
+                .handle_refresh_token(req, client_id, client, config, tokens)
+                .await
         }
         "urn:ietf:params:oauth:grant-type:device_code" => {
             handle_device_code(req, client_id, client, config, op_store, tokens).await
@@ -819,12 +827,18 @@ async fn handle_client_credentials(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn handle_refresh_token(
+/// The built-in `refresh_token` grant handling.
+///
+/// This is the default body for [`crate::store::OpStore::handle_refresh_token`]
+/// — split out as a free function so the trait's default method can call it
+/// without duplicating the logic, while `handle_token` reaches it exclusively
+/// through the trait method (so an override actually takes effect).
+pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     req: TokenRequest,
     client_id: String,
     client: ClientRegistration,
     config: &OpConfig,
-    op_store: &dyn OpStore,
+    op_store: &S,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     if !client.allows_grant_type(&GrantType::RefreshToken) {
@@ -1682,6 +1696,391 @@ mod tests {
         .await;
         assert!(res.is_ok());
         assert!(res.unwrap().refresh_token.is_some());
+    }
+
+    // --- OpStore::handle_refresh_token override seam (issue #189) ---
+
+    /// A minimal `OpStore` wrapper that delegates every method to an inner
+    /// `OpStore` except `handle_refresh_token`, which it overrides with a
+    /// canned response. Proves the override actually reaches the dispatch
+    /// site in `handle_token`, not just that the trait compiles.
+    struct OverridingRefreshStore<Inner> {
+        inner: Inner,
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> crate::client::ClientStore for OverridingRefreshStore<Inner> {
+        async fn find_client(
+            &self,
+            client_id: &str,
+        ) -> Result<Option<ClientRegistration>, OpError> {
+            self.inner.find_client(client_id).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> crate::code::AuthorizationCodeStore for OverridingRefreshStore<Inner> {
+        async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+            self.inner.store_code(code).await
+        }
+
+        async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
+            self.inner.consume_code(code).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> RefreshTokenStore for OverridingRefreshStore<Inner> {
+        async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+            self.inner.store_token(token).await
+        }
+
+        async fn get_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+            self.inner.get_token(token).await
+        }
+
+        async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+            self.inner.revoke_token(token).await
+        }
+
+        async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+            self.inner.consume_token(token).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> crate::device::DeviceCodeStore for OverridingRefreshStore<Inner> {
+        async fn store_device_code(
+            &self,
+            session: crate::device::DeviceCodeSession,
+        ) -> Result<(), OpError> {
+            self.inner.store_device_code(session).await
+        }
+
+        async fn get_device_code(
+            &self,
+            device_code: &str,
+        ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+            self.inner.get_device_code(device_code).await
+        }
+
+        async fn get_by_user_code(
+            &self,
+            user_code: &str,
+        ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+            self.inner.get_by_user_code(user_code).await
+        }
+
+        async fn update_device_code(
+            &self,
+            session: crate::device::DeviceCodeSession,
+        ) -> Result<(), OpError> {
+            self.inner.update_device_code(session).await
+        }
+
+        async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+            self.inner.delete_device_code(device_code).await
+        }
+
+        async fn consume_device_code(
+            &self,
+            device_code: &str,
+        ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+            self.inner.consume_device_code(device_code).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> OpStore for OverridingRefreshStore<Inner> {
+        async fn handle_refresh_token(
+            &self,
+            _req: TokenRequest,
+            _client_id: String,
+            _client: ClientRegistration,
+            _config: &OpConfig,
+            _tokens: &TokenManager,
+        ) -> Result<TokenResponse, TokenErrorResponse> {
+            Ok(TokenResponse {
+                access_token: "overridden-access-token".to_string(),
+                token_type: "Bearer".to_string(),
+                expires_in: 42,
+                id_token: Some("overridden-id-token".to_string()),
+                refresh_token: Some("overridden-refresh-token".to_string()),
+                scope: Some("overridden-scope".to_string()),
+            })
+        }
+    }
+
+    fn refresh_test_client() -> ClientRegistration {
+        ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![GrantType::RefreshToken],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
+        }
+    }
+
+    fn refresh_test_req(refresh_token: &str) -> TokenRequest {
+        TokenRequest {
+            grant_type: "refresh_token".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: Some(refresh_token.to_string()),
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_is_overridable_by_op_store() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let store =
+            OverridingRefreshStore {
+                inner:
+                    crate::store::CompositeOpStore::new(
+                        clients,
+                        authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                        authkestra_engine::store::memory::MemoryStore::<RefreshToken>::new(),
+                        authkestra_engine::store::memory::MemoryStore::<
+                            crate::device::DeviceCodeSession,
+                        >::new(),
+                    ),
+            };
+
+        // Deliberately a token no store has ever issued: if dispatch fell
+        // through to the built-in handler instead of the override, this
+        // would fail closed with `invalid_grant`, not succeed.
+        let req = refresh_test_req("no-such-token");
+
+        let res = handle_token(req, None, &test_config(false), &store, &test_tokens()).await;
+
+        let resp =
+            res.expect("the override should have been invoked instead of the built-in handler");
+        assert_eq!(resp.access_token, "overridden-access-token");
+        assert_eq!(resp.id_token.as_deref(), Some("overridden-id-token"));
+        assert_eq!(
+            resp.refresh_token.as_deref(),
+            Some("overridden-refresh-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_default_behavior_is_unchanged_without_override() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        refresh
+            .store_token(RefreshToken {
+                token: "rt-default".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                // Non-openid scope: the built-in handler's `id_token: None`
+                // is a fixed point here regardless of whether a later change
+                // teaches it to issue one for the `openid` scope.
+                scope: "profile".to_string(),
+                expires_at: Utc::now() + Duration::days(1),
+            })
+            .await
+            .unwrap();
+
+        // A store that does NOT override `handle_refresh_token` — this is
+        // the compatibility guarantee: it must behave identically to before
+        // the trait method existed.
+        let res = handle_token(
+            refresh_test_req("rt-default"),
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                refresh.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+            &test_tokens(),
+        )
+        .await;
+
+        let resp = res.unwrap();
+        assert_eq!(resp.scope.as_deref(), Some("profile"));
+        assert_eq!(resp.id_token, None);
+        assert_ne!(resp.refresh_token.as_deref(), Some("rt-default"));
+        // The old refresh token was consumed (single-use rotation).
+        assert!(refresh.get_token("rt-default").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_rejects_unknown_token() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            refresh_test_req("does-not-exist"),
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+            &test_tokens(),
+        )
+        .await;
+
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_rejects_expired_token() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        // `store_token` derives the underlying KV TTL from `expires_at`, so
+        // an already-past `expires_at` would get evicted at the storage
+        // layer before the handler's own expiry check ever runs. Write
+        // through `set` directly with a real TTL so the token is still
+        // present, and the handler's `Utc::now() > expires_at` check
+        // (`handlers/token.rs`, `default_handle_refresh_token`) is what
+        // rejects it.
+        refresh
+            .set(
+                "rt-expired",
+                RefreshToken {
+                    token: "rt-expired".to_string(),
+                    client_id: "client1".to_string(),
+                    identity: test_identity(),
+                    scope: "profile".to_string(),
+                    expires_at: Utc::now() - Duration::minutes(1),
+                },
+                std::time::Duration::from_secs(60),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            refresh_test_req("rt-expired"),
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                refresh,
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+            &test_tokens(),
+        )
+        .await;
+
+        let err = res.unwrap_err();
+        assert_eq!(err.error, "invalid_grant");
+        assert_eq!(err.error_description, "Refresh token expired");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_rejects_replay_of_a_rotated_token() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        refresh
+            .store_token(RefreshToken {
+                token: "rt-once".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                scope: "profile".to_string(),
+                expires_at: Utc::now() + Duration::days(1),
+            })
+            .await
+            .unwrap();
+
+        let store = crate::store::CompositeOpStore::new(
+            clients,
+            authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+            refresh,
+            authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+        );
+        let tokens = test_tokens();
+
+        let first = handle_token(
+            refresh_test_req("rt-once"),
+            None,
+            &test_config(false),
+            &store,
+            &tokens,
+        )
+        .await;
+        assert!(first.is_ok());
+
+        // Replaying the now-rotated token must fail, not succeed a second
+        // time.
+        let second = handle_token(
+            refresh_test_req("rt-once"),
+            None,
+            &test_config(false),
+            &store,
+            &tokens,
+        )
+        .await;
+        assert_eq!(second.unwrap_err().error, "invalid_grant");
     }
 
     // --- Token Exchange DoD Tests ---
