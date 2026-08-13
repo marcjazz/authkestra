@@ -1,3 +1,47 @@
 [workspace]
 publish_no_verify = true
 release_commits = "^(feat|fix|perf|refactor|revert)"
+
+# All crates share `version.workspace = true`, so they must be bumped as a
+# single unit. Without this, release-plz may try to bump authkestra-engine to
+# 0.4.0 (breaking API) while leaving authkestra-devsig at 0.3.x, causing
+# `cargo update` to fail because `^0.3.x` doesn't match `0.4.0`.
+[[package]]
+name = "authkestra-engine"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-providers"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-axum"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-macros"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-oidc"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-actix"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-resource"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-op"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-devsig"
+version_group = "authkestra"
