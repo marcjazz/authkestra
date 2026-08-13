@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.3.4...authkestra-op-v0.4.0) - 2026-08-13
+
+### Added
+
+- *(engine)* add Ed25519/EdDSA signing and OKP JWKS support ([#190](https://github.com/marcjazz/authkestra/pull/190))
+
+### Other
+
+- make refresh_token overridable via OpStore, issue id_token on openid scope ([#191](https://github.com/marcjazz/authkestra/pull/191))
+
 ## [0.3.4](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.3.3...authkestra-op-v0.3.4) - 2026-08-05
 
 ### Other
