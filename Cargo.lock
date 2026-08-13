@@ -547,6 +547,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dotenvy",
+ "ed25519-dalek",
  "http 1.5.0",
  "jsonwebtoken",
  "rand 0.9.5",

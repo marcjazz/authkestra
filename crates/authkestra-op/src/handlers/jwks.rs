@@ -48,6 +48,8 @@ mod tests {
             kid: Some("123".to_string()),
             n: Some("abc".to_string()),
             e: Some("AQAB".to_string()),
+            crv: None,
+            x: None,
         };
         let response = JwksResponse::new(Some(jwk.clone()));
         assert_eq!(response.keys.len(), 1);
@@ -62,6 +64,8 @@ mod tests {
             kid: Some("key-1".into()),
             n: Some("n1".into()),
             e: Some("AQAB".into()),
+            crv: None,
+            x: None,
         };
         let jwk2 = Jwk {
             kty: "RSA".into(),
@@ -69,6 +73,8 @@ mod tests {
             kid: Some("key-2".into()),
             n: Some("n2".into()),
             e: Some("AQAB".into()),
+            crv: None,
+            x: None,
         };
         let response = JwksResponse::new(vec![jwk1, jwk2]);
         assert_eq!(response.keys.len(), 2);

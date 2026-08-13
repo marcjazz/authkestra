@@ -61,6 +61,8 @@ fn generate_rsa_key(kid: Option<&str>) -> TestKey {
         alg: Some("RS256".to_string()),
         n: Some(n),
         e: Some(e),
+        crv: None,
+        x: None,
     };
 
     TestKey { encoding_key, jwk }
