@@ -57,6 +57,10 @@ pub mod refresh;
 pub mod store;
 pub use store::OpStore;
 
+#[cfg(feature = "redis")]
+/// Redis-backed implementations.
+pub mod redis_store;
+
 #[cfg(feature = "sqlx")]
 /// Native SQL implementations using sqlx.
 pub mod sqlx_store;
