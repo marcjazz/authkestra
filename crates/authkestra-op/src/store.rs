@@ -87,6 +87,36 @@ pub trait OpStore:
         )
         .await
     }
+
+    /// Handle a `urn:ietf:params:oauth:grant-type:token-exchange` (RFC 8693)
+    /// grant request during token exchange.
+    ///
+    /// A defaulted method, same reasoning as `handle_refresh_token`: the
+    /// built-in dispatch in `handlers::token::handle_token` used to call the
+    /// built-in handler directly, with no seam an `OpStore` implementor could
+    /// intercept. That made it impossible to stamp custom claims onto the
+    /// exchanged token — e.g. `TokenManager::issue_user_token_with_extra`
+    /// exists precisely for this, but the built-in handler had no way to
+    /// reach it — without forking the crate.
+    ///
+    /// The default (see `default_handle_token_exchange`) reproduces the
+    /// existing exchange logic. Any `OpStore` that does not override this
+    /// method gets that behavior automatically; nothing about the trait or
+    /// dispatch changes for it.
+    async fn handle_token_exchange(
+        &self,
+        req: crate::handlers::token::TokenRequest,
+        client_id: String,
+        client: crate::client::ClientRegistration,
+        config: &crate::config::OpConfig,
+        tokens: &authkestra_engine::token::TokenManager,
+    ) -> Result<crate::handlers::token::TokenResponse, crate::handlers::token::TokenErrorResponse>
+    {
+        crate::handlers::token::default_handle_token_exchange(
+            req, client_id, client, config, tokens,
+        )
+        .await
+    }
 }
 
 /// A helper struct that implements `OpStore` by delegating to 5 individual stores.
