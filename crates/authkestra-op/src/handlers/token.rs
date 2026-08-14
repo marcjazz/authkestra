@@ -1152,7 +1152,11 @@ pub async fn default_handle_token_exchange(
     };
 
     let mut id_token = None;
-    if requested_token_type == "urn:ietf:params:oauth:token-type:id_token" || final_scope_str.as_ref().is_some_and(|s| s.contains("openid")) {
+    if requested_token_type == "urn:ietf:params:oauth:token-type:id_token"
+        || final_scope_str
+            .as_ref()
+            .is_some_and(|s| s.contains("openid"))
+    {
         match tokens.issue_id_token(identity, &client_id, None, expires_in) {
             Ok(t) => id_token = Some(t),
             Err(e) => {
