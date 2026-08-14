@@ -1050,9 +1050,15 @@ async fn handle_token_exchange(
         }
     };
 
-    // Audience Binding: either the subject token was issued TO this client (azp or aud = client_id)
-    // or this client is in the intended audience.
-    let is_intended_aud = claims.aud.as_deref() == Some(client_id.as_str());
+    // Audience Binding: this client must be a member of the subject token's
+    // `aud` claim, which per RFC 7519 §4.1.3 may be a single string or an
+    // array of strings (e.g. a Keycloak realm with multiple
+    // `oidc-audience-mapper` entries). `azp` is not read here — this crate's
+    // `Claims` has no such field, and there is no dedicated `azp` check.
+    let is_intended_aud = claims
+        .aud
+        .as_ref()
+        .is_some_and(|aud| aud.contains(&client_id));
     if !is_intended_aud {
         tracing::warn!(
             client_id = %client_id,
@@ -1206,6 +1212,39 @@ mod tests {
         tokens
             .issue_user_token(test_identity(), 3600, scope, Some(client_id.to_string()))
             .unwrap()
+    }
+
+    /// Like `issue_subject_token`, but mints a subject token whose `aud`
+    /// claim is a JSON array (RFC 7519 §4.1.3), the shape a stock Keycloak
+    /// realm with multiple `oidc-audience-mapper` entries produces. Built by
+    /// hand with `jsonwebtoken::encode` because `TokenManager`'s issuance
+    /// methods only ever emit a single-string `aud`. The signing secret
+    /// below must match `test_tokens()`'s so `TokenManager::validate_token`
+    /// can verify the result.
+    fn issue_subject_token_multi_aud(audiences: &[&str], scope: Option<String>) -> String {
+        let now = chrono::Utc::now().timestamp() as usize;
+        let raw_claims = serde_json::json!({
+            "sub": "user123",
+            "aud": audiences,
+            "exp": now + 3600,
+            "iat": now,
+            "scope": scope,
+            "identity": {
+                "provider_id": "test",
+                "external_id": "user123",
+                "email": null,
+                "username": "user123",
+                "attributes": {}
+            }
+        });
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &raw_claims,
+            &jsonwebtoken::EncodingKey::from_secret(
+                b"super_secret_key_that_is_long_enough_for_hmac",
+            ),
+        )
+        .unwrap()
     }
 
     // --- Pre-existing restored tests ---
@@ -2269,6 +2308,105 @@ mod tests {
         assert_eq!(res.unwrap_err().error, "invalid_grant");
     }
 
+    /// #206: a subject token whose `aud` is a JSON array must exchange
+    /// successfully when the requesting client_id is *any one* of the
+    /// listed audiences, not just when it's the sole audience.
+    #[tokio::test]
+    async fn test_tx_multi_audience_subject_token_allowed() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token_multi_aud(&["client1", "client2"], None);
+        let req = default_tx_req(&subject_token);
+
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &tokens
+        )
+        .await;
+        assert!(
+            res.is_ok(),
+            "client1 is a member of the array aud, exchange should succeed: {res:?}"
+        );
+    }
+
+    /// #206 companion: when the requesting client_id is absent from the
+    /// subject token's array `aud`, exchange must still be rejected —
+    /// membership, not mere array-shape acceptance, is the check.
+    #[tokio::test]
+    async fn test_tx_multi_audience_subject_token_disallowed() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token_multi_aud(&["client2", "client3"], None);
+        let req = default_tx_req(&subject_token);
+
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &tokens
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
     #[tokio::test]
     async fn test_tx_scope_escalation_narrow() {
         let tokens = test_tokens();
@@ -2594,7 +2732,7 @@ mod tests {
         let claim = tokens
             .validate_token(&res.unwrap().access_token, None)
             .unwrap();
-        assert_eq!(claim.aud.unwrap(), "serviceA");
+        assert!(claim.aud.unwrap().contains("serviceA"));
     }
 
     #[tokio::test]
@@ -2691,7 +2829,7 @@ mod tests {
             .validate_token(&res.unwrap().access_token, None)
             .unwrap();
         // default aud should be config.issuer
-        assert_eq!(claim.aud.unwrap(), "https://auth.example.com");
+        assert!(claim.aud.unwrap().contains("https://auth.example.com"));
     }
 
     #[tokio::test]
