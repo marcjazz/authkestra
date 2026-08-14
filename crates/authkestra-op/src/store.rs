@@ -87,6 +87,26 @@ pub trait OpStore:
         )
         .await
     }
+
+    /// Extensibility seam for the `urn:ietf:params:oauth:grant-type:token-exchange` grant.
+    ///
+    /// Analogous to `handle_refresh_token`, this allows an `OpStore` implementor
+    /// to override default behavior — for example, to inject custom claims via
+    /// `TokenManager::issue_user_token_with_extra`, or to enforce specific constraints.
+    async fn handle_token_exchange(
+        &self,
+        req: crate::handlers::token::TokenRequest,
+        client_id: String,
+        client: crate::client::ClientRegistration,
+        config: &crate::config::OpConfig,
+        tokens: &authkestra_engine::token::TokenManager,
+    ) -> Result<crate::handlers::token::TokenResponse, crate::handlers::token::TokenErrorResponse>
+    {
+        crate::handlers::token::default_handle_token_exchange(
+            req, client_id, client, config, tokens,
+        )
+        .await
+    }
 }
 
 /// A helper struct that implements `OpStore` by delegating to 5 individual stores.

@@ -4,12 +4,28 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum Audience {
+    Single(String),
+    Multi(Vec<String>),
+}
+
+impl Audience {
+    pub fn contains(&self, aud: &str) -> bool {
+        match self {
+            Audience::Single(s) => s == aud,
+            Audience::Multi(vec) => vec.iter().any(|s| s == aud),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     // Standard OIDC claims
     pub iss: Option<String>,
     pub sub: String,
-    pub aud: Option<String>,
+    pub aud: Option<Audience>,
     pub exp: usize,
     pub iat: usize,
     pub nbf: Option<usize>,
@@ -208,7 +224,7 @@ impl TokenManager {
         let claims = Claims {
             iss: self.issuer.clone(),
             sub: identity.external_id.clone(),
-            aud,
+            aud: aud.map(Audience::Single),
             exp: expiration,
             iat: now,
             nbf: Some(now),
@@ -261,7 +277,7 @@ impl TokenManager {
         let mut claims = Claims {
             iss: self.issuer.clone(),
             sub: identity.external_id.clone(),
-            aud: Some(client_id.to_string()),
+            aud: Some(Audience::Single(client_id.to_string())),
             exp: expiration,
             iat: now,
             nbf: Some(now),
@@ -313,7 +329,7 @@ impl TokenManager {
         let claims = Claims {
             iss: self.issuer.clone(),
             sub: client_id.to_string(),
-            aud,
+            aud: aud.map(Audience::Single),
             exp: expiration,
             iat: now,
             nbf: Some(now),
@@ -450,7 +466,7 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
         let claims = Claims {
             iss: Some("issuer".to_string()),
             sub: "user123".to_string(),
-            aud: Some("audience".to_string()),
+            aud: Some(Audience::Single("audience".to_string())),
             exp: 1000,
             iat: 500,
             nbf: Some(500),
@@ -597,7 +613,7 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
 
         assert_eq!(claims.iss, Some("issuer".to_string()));
         assert_eq!(claims.sub, "user123");
-        assert_eq!(claims.aud, Some("client-1".to_string()));
+        assert_eq!(claims.aud, Some(Audience::Single("client-1".to_string())));
         assert_eq!(claims.extra.get("nonce").unwrap(), "nonce123");
     }
     #[test]
@@ -618,7 +634,7 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
 
         // Validate with correct audience
         let claims = manager.validate_token(&token, Some("client-1")).unwrap();
-        assert_eq!(claims.aud, Some("client-1".to_string()));
+        assert_eq!(claims.aud, Some(Audience::Single("client-1".to_string())));
 
         // Validate with incorrect audience (should fail)
         let err = manager

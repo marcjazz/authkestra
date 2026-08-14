@@ -27,6 +27,7 @@ url = { workspace = true }
 sha2 = { workspace = true }
 argon2 = "0.5.3"
 sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "json", "chrono"] }
+redis = { version = "0.27", features = ["tokio-comp"], optional = true }
 
 [features]
 default = ["rustls-aws-lc-rs"]
@@ -35,6 +36,7 @@ sqlx = ["dep:sqlx"]
 sqlx-postgres = ["sqlx", "sqlx/postgres"]
 sqlx-sqlite = ["sqlx", "sqlx/sqlite"]
 sqlx-mysql = ["sqlx", "sqlx/mysql"]
+redis = ["dep:redis"]
 
 # TLS backend, forwarded to authkestra-engine. See its documentation for the
 # `rustls-no-provider` contract.
@@ -50,7 +52,7 @@ rustls-no-provider = [
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
 testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql"] }
+testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql", "redis"] }
 # Test-only: generating real EC P-256 keypairs and signing enrolment
 # challenges with them, to exercise the attestation ceremony end-to-end
 # rather than mocking the crypto away. Already present in the dependency

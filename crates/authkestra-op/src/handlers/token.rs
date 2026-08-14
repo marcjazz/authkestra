@@ -173,7 +173,9 @@ pub async fn handle_token(
             handle_device_code(req, client_id, client, config, op_store, tokens).await
         }
         "urn:ietf:params:oauth:grant-type:token-exchange" => {
-            handle_token_exchange(req, client_id, client, config, tokens).await
+            op_store
+                .handle_token_exchange(req, client_id, client, config, tokens)
+                .await
         }
         _ => {
             if !client.allows_grant_type(&crate::client::GrantType::Custom(req.grant_type.clone()))
@@ -968,7 +970,8 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     })
 }
 
-async fn handle_token_exchange(
+/// Default implementation for the token exchange grant type.
+pub async fn default_handle_token_exchange(
     req: TokenRequest,
     client_id: String,
     client: crate::client::ClientRegistration,
@@ -1019,12 +1022,15 @@ async fn handle_token_exchange(
         .requested_token_type
         .as_deref()
         .unwrap_or("urn:ietf:params:oauth:token-type:access_token");
-    if requested_token_type != "urn:ietf:params:oauth:token-type:access_token" {
+    if requested_token_type != "urn:ietf:params:oauth:token-type:access_token"
+        && requested_token_type != "urn:ietf:params:oauth:token-type:id_token"
+    {
         tracing::warn!(requested_token_type = %requested_token_type, "Unsupported requested_token_type");
         return Err(TokenErrorResponse {
             error: "invalid_request".to_string(),
-            error_description: "Unsupported requested_token_type. Only access_token is supported."
-                .to_string(),
+            error_description:
+                "Unsupported requested_token_type. Only access_token and id_token are supported."
+                    .to_string(),
         });
     }
 
@@ -1050,9 +1056,12 @@ async fn handle_token_exchange(
         }
     };
 
-    // Audience Binding: either the subject token was issued TO this client (azp or aud = client_id)
-    // or this client is in the intended audience.
-    let is_intended_aud = claims.aud.as_deref() == Some(client_id.as_str());
+    // Audience Binding: the subject token must have been issued to this client
+    // (the client_id must be present in the `aud` array/string).
+    let is_intended_aud = claims
+        .aud
+        .as_ref()
+        .is_some_and(|a| a.contains(client_id.as_str()));
     if !is_intended_aud {
         tracing::warn!(
             client_id = %client_id,
@@ -1126,17 +1135,39 @@ async fn handle_token_exchange(
     };
 
     let expires_in = config.access_token_ttl_secs;
-    let access_token =
-        match tokens.issue_user_token(identity, expires_in, final_scope_str.clone(), new_aud) {
-            Ok(t) => t,
+    let access_token = match tokens.issue_user_token(
+        identity.clone(),
+        expires_in,
+        final_scope_str.clone(),
+        new_aud,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to issue access token during exchange");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to generate token".to_string(),
+            });
+        }
+    };
+
+    let mut id_token = None;
+    if requested_token_type == "urn:ietf:params:oauth:token-type:id_token" || final_scope_str.as_ref().is_some_and(|s| s.contains("openid")) {
+        match tokens.issue_id_token(identity, &client_id, None, expires_in) {
+            Ok(t) => id_token = Some(t),
             Err(e) => {
-                tracing::error!(error = ?e, "Failed to issue access token during exchange");
-                return Err(TokenErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: "Failed to generate token".to_string(),
-                });
+                tracing::error!(error = ?e, "Failed to issue id token during exchange");
+                // Don't fail the entire grant if only the id_token fails, unless
+                // id_token was explicitly the only thing requested.
+                if requested_token_type == "urn:ietf:params:oauth:token-type:id_token" {
+                    return Err(TokenErrorResponse {
+                        error: "server_error".to_string(),
+                        error_description: "Failed to generate id_token".to_string(),
+                    });
+                }
             }
-        };
+        }
+    }
 
     tracing::info!(
         client_id = %client_id,
@@ -1147,7 +1178,7 @@ async fn handle_token_exchange(
         access_token,
         token_type: "Bearer".to_string(),
         expires_in,
-        id_token: None,
+        id_token,
         refresh_token: None,
         scope: final_scope_str,
     })
@@ -2594,7 +2625,10 @@ mod tests {
         let claim = tokens
             .validate_token(&res.unwrap().access_token, None)
             .unwrap();
-        assert_eq!(claim.aud.unwrap(), "serviceA");
+        assert_eq!(
+            claim.aud.unwrap(),
+            authkestra_engine::token::Audience::Single("serviceA".to_string())
+        );
     }
 
     #[tokio::test]
@@ -2691,7 +2725,10 @@ mod tests {
             .validate_token(&res.unwrap().access_token, None)
             .unwrap();
         // default aud should be config.issuer
-        assert_eq!(claim.aud.unwrap(), "https://auth.example.com");
+        assert_eq!(
+            claim.aud.unwrap(),
+            authkestra_engine::token::Audience::Single("https://auth.example.com".to_string())
+        );
     }
 
     #[tokio::test]

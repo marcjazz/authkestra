@@ -613,6 +613,7 @@ dependencies = [
  "p256",
  "rand 0.9.5",
  "rand_core 0.6.4",
+ "redis",
  "serde",
  "serde_json",
  "sha2",
