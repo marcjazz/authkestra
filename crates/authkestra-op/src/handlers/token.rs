@@ -1033,12 +1033,15 @@ pub(crate) async fn default_handle_token_exchange(
         .requested_token_type
         .as_deref()
         .unwrap_or("urn:ietf:params:oauth:token-type:access_token");
-    if requested_token_type != "urn:ietf:params:oauth:token-type:access_token" {
+    if requested_token_type != "urn:ietf:params:oauth:token-type:access_token"
+        && requested_token_type != "urn:ietf:params:oauth:token-type:id_token"
+    {
         tracing::warn!(requested_token_type = %requested_token_type, "Unsupported requested_token_type");
         return Err(TokenErrorResponse {
             error: "invalid_request".to_string(),
-            error_description: "Unsupported requested_token_type. Only access_token is supported."
-                .to_string(),
+            error_description:
+                "Unsupported requested_token_type. Only access_token and id_token are supported."
+                    .to_string(),
         });
     }
 
@@ -1140,6 +1143,34 @@ pub(crate) async fn default_handle_token_exchange(
     };
 
     let expires_in = config.access_token_ttl_secs;
+    let granted_openid = final_scope_str
+        .as_deref()
+        .is_some_and(|s| s.split_whitespace().any(|scope| scope == "openid"));
+
+    // Per OIDC Core §12.2 / RFC 8693 §2.1, an id_token accompanies the
+    // access token when the `openid` scope is in the final granted scope —
+    // mirroring how `handle_authorization_code` and
+    // `default_handle_refresh_token` gate `issue_id_token` on the same
+    // check. `requested_token_type: id_token` is a client signal that it
+    // wants one, but the crate's `TokenResponse` always carries an
+    // `access_token`; id_token issuance itself stays scope-gated so it does
+    // not depend on which requested_token_type value was sent. No nonce is
+    // reflected, since RFC 8693 exchange requests don't carry one.
+    let id_token = if granted_openid {
+        match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                tracing::error!(error = ?e, "Failed to issue id token during exchange");
+                return Err(TokenErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: "Failed to generate ID token".to_string(),
+                });
+            }
+        }
+    } else {
+        None
+    };
+
     let access_token =
         match tokens.issue_user_token(identity, expires_in, final_scope_str.clone(), new_aud) {
             Ok(t) => t,
@@ -1161,7 +1192,7 @@ pub(crate) async fn default_handle_token_exchange(
         access_token,
         token_type: "Bearer".to_string(),
         expires_in,
-        id_token: None,
+        id_token,
         refresh_token: None,
         scope: final_scope_str,
     })
@@ -2985,6 +3016,159 @@ mod tests {
         )
         .await;
         assert_eq!(res.unwrap_err().error, "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_tx_issues_id_token_when_openid_scope_granted() {
+        let tokens = test_tokens();
+        let subject_token =
+            issue_subject_token(&tokens, "client1", Some("openid profile".to_string()));
+        let req = default_tx_req(&subject_token);
+
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec!["openid".to_string(), "profile".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &tokens
+        )
+        .await;
+
+        let resp = res.unwrap();
+        assert!(
+            resp.id_token.is_some(),
+            "openid scope should get an id_token from the token-exchange grant, mirroring \
+             handle_authorization_code and default_handle_refresh_token"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tx_omits_id_token_without_openid_scope() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", Some("profile".to_string()));
+        let req = default_tx_req(&subject_token);
+
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec!["profile".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &tokens
+        )
+        .await;
+
+        let resp = res.unwrap();
+        assert_eq!(
+            resp.id_token, None,
+            "no openid scope should mean no id_token, same as before this feature existed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tx_requested_token_type_id_token_accepted() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", Some("openid".to_string()));
+        let mut req = default_tx_req(&subject_token);
+        req.requested_token_type = Some("urn:ietf:params:oauth:token-type:id_token".to_string());
+
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &tokens
+        )
+        .await;
+
+        assert!(
+            res.is_ok(),
+            "requested_token_type: id_token must be accepted per RFC 8693 §2.1, got {:?}",
+            res.err()
+        );
     }
 
     #[tokio::test]
