@@ -7,7 +7,14 @@ pub struct OidcDiscovery {
     /// The OP's Issuer identifier.
     pub issuer: String,
     /// URL of the OP's OAuth 2.0 Authorization Endpoint.
-    pub authorization_endpoint: String,
+    ///
+    /// Omitted entirely (not sent as `null`) when this provider's
+    /// `grant_types_supported` does not include `authorization_code` — e.g.
+    /// a deployment that owns no users and only serves token-exchange
+    /// and/or refresh_token grants has no `/authorize` route at all, so
+    /// advertising one would point clients at an endpoint that 404s.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorization_endpoint: Option<String>,
     /// URL of the OP's OAuth 2.0 Token Endpoint.
     pub token_endpoint: String,
     /// URL of the OP's JSON Web Key Set document.
@@ -39,7 +46,11 @@ impl OidcDiscovery {
     pub fn from_config(config: &OpConfig) -> Self {
         Self {
             issuer: config.issuer.clone(),
-            authorization_endpoint: config.authorization_endpoint(),
+            authorization_endpoint: config
+                .grant_types_supported
+                .iter()
+                .any(|grant| grant == "authorization_code")
+                .then(|| config.authorization_endpoint()),
             token_endpoint: config.token_endpoint(),
             jwks_uri: config.jwks_url(),
             userinfo_endpoint: Some(config.userinfo_endpoint()),
@@ -112,7 +123,7 @@ mod tests {
         assert_eq!(doc.issuer, "https://auth.example.com");
         assert_eq!(
             doc.authorization_endpoint,
-            "https://auth.example.com/authorize"
+            Some("https://auth.example.com/authorize".to_string())
         );
         assert_eq!(doc.token_endpoint, "https://auth.example.com/token");
         assert_eq!(doc.jwks_uri, "https://auth.example.com/jwks.json");
@@ -175,5 +186,47 @@ mod tests {
         assert!(doc
             .token_endpoint_auth_methods_supported
             .contains(&"client_secret_basic".to_string()));
+    }
+
+    /// A provider that serves no `authorization_code` grant (e.g. a
+    /// token-exchange-only deployment with no `/authorize` route at all)
+    /// must not advertise an `authorization_endpoint` that 404s. Asserted
+    /// against the serialized JSON, not the Rust field, so this test's
+    /// expectations hold regardless of whether the field is typed as a
+    /// plain `String` or an omittable `Option<String>`.
+    #[test]
+    fn authorization_endpoint_omitted_when_no_auth_code_grant() {
+        let mut config = discovery_config();
+        config.grant_types_supported = vec![
+            "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
+            "refresh_token".to_string(),
+        ];
+        config.response_types_supported = vec![];
+
+        let doc = OidcDiscovery::from_config(&config);
+        let json = serde_json::to_value(&doc).unwrap();
+
+        assert!(
+            json.get("authorization_endpoint").is_none(),
+            "a provider serving no authorization_code grant must not advertise \
+             an authorization_endpoint that 404s; got {:?}",
+            json.get("authorization_endpoint")
+        );
+    }
+
+    /// A provider that does serve `authorization_code` must keep advertising
+    /// `authorization_endpoint` exactly as before — byte-identical JSON, not
+    /// just field presence.
+    #[test]
+    fn authorization_endpoint_present_and_byte_identical_when_auth_code_grant_supported() {
+        let doc = OidcDiscovery::from_config(&discovery_config());
+        let json = serde_json::to_value(&doc).unwrap();
+
+        assert_eq!(
+            json.get("authorization_endpoint"),
+            Some(&serde_json::Value::String(
+                "https://auth.example.com/authorize".to_string()
+            ))
+        );
     }
 }
