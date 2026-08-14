@@ -4,12 +4,53 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// The `aud` (audience) claim, per RFC 7519 §4.1.3: either a single
+/// case-sensitive string, or a JSON array of such strings.
+///
+/// `#[serde(untagged)]` tries variants in declaration order on
+/// deserialization, so a bare JSON string matches [`Audience::Single`]
+/// first, and only a JSON array falls through to [`Audience::Multiple`].
+/// Serialization is not affected by declaration order — each variant
+/// serializes as its own shape — so a token minted with a single audience
+/// still serializes as a bare string, not a one-element array, matching
+/// every token this crate has ever issued.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Audience {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl Audience {
+    /// True if `value` is present in this audience, whichever shape it was
+    /// deserialized from. This is the "matches ANY" membership test that
+    /// replaces exact-string-equality comparisons against `aud`.
+    pub fn contains(&self, value: &str) -> bool {
+        match self {
+            Audience::Single(s) => s == value,
+            Audience::Multiple(values) => values.iter().any(|s| s == value),
+        }
+    }
+}
+
+impl From<String> for Audience {
+    fn from(value: String) -> Self {
+        Audience::Single(value)
+    }
+}
+
+impl From<&str> for Audience {
+    fn from(value: &str) -> Self {
+        Audience::Single(value.to_string())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     // Standard OIDC claims
     pub iss: Option<String>,
     pub sub: String,
-    pub aud: Option<String>,
+    pub aud: Option<Audience>,
     pub exp: usize,
     pub iat: usize,
     pub nbf: Option<usize>,
@@ -208,7 +249,7 @@ impl TokenManager {
         let claims = Claims {
             iss: self.issuer.clone(),
             sub: identity.external_id.clone(),
-            aud,
+            aud: aud.map(Audience::from),
             exp: expiration,
             iat: now,
             nbf: Some(now),
@@ -261,7 +302,7 @@ impl TokenManager {
         let mut claims = Claims {
             iss: self.issuer.clone(),
             sub: identity.external_id.clone(),
-            aud: Some(client_id.to_string()),
+            aud: Some(Audience::from(client_id)),
             exp: expiration,
             iat: now,
             nbf: Some(now),
@@ -313,7 +354,7 @@ impl TokenManager {
         let claims = Claims {
             iss: self.issuer.clone(),
             sub: client_id.to_string(),
-            aud,
+            aud: aud.map(Audience::from),
             exp: expiration,
             iat: now,
             nbf: Some(now),
@@ -450,7 +491,7 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
         let claims = Claims {
             iss: Some("issuer".to_string()),
             sub: "user123".to_string(),
-            aud: Some("audience".to_string()),
+            aud: Some(Audience::from("audience")),
             exp: 1000,
             iat: 500,
             nbf: Some(500),
@@ -597,7 +638,7 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
 
         assert_eq!(claims.iss, Some("issuer".to_string()));
         assert_eq!(claims.sub, "user123");
-        assert_eq!(claims.aud, Some("client-1".to_string()));
+        assert_eq!(claims.aud, Some(Audience::from("client-1")));
         assert_eq!(claims.extra.get("nonce").unwrap(), "nonce123");
     }
     #[test]
@@ -618,7 +659,7 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
 
         // Validate with correct audience
         let claims = manager.validate_token(&token, Some("client-1")).unwrap();
-        assert_eq!(claims.aud, Some("client-1".to_string()));
+        assert_eq!(claims.aud, Some(Audience::from("client-1")));
 
         // Validate with incorrect audience (should fail)
         let err = manager
@@ -1055,6 +1096,86 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
             err.to_string().contains("InvalidSignature") || err.to_string().contains("Json"),
             "unexpected error for tampered token: {err}"
         );
+    }
+
+    /// #206 repro: a stock Keycloak realm with two `oidc-audience-mapper`
+    /// entries mints `"aud"` as a JSON array (RFC 7519 §4.1.3 allows this).
+    /// `validate_token` calls `jsonwebtoken::decode::<Claims>`, which
+    /// deserializes the payload into `Claims` before any of
+    /// `jsonwebtoken`'s own validation runs — so this fails at
+    /// deserialization, not at a validation check, and `expected_aud: None`
+    /// (which turns `Validation::validate_aud` off) makes no difference.
+    #[test]
+    fn test_validate_token_accepts_array_aud() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        let raw_claims = serde_json::json!({
+            "iss": "issuer",
+            "sub": "user123",
+            "aud": ["client-1", "client-2"],
+            "exp": (chrono::Utc::now().timestamp() as usize) + 3600,
+            "iat": chrono::Utc::now().timestamp() as usize,
+        });
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &raw_claims,
+            &jsonwebtoken::EncodingKey::from_secret(b"secret"),
+        )
+        .unwrap();
+
+        let claims = manager
+            .validate_token(&token, None)
+            .expect("multi-audience subject token must deserialize");
+        let aud = claims.aud.expect("aud claim must be present");
+        assert!(aud.contains("client-1"));
+        assert!(aud.contains("client-2"));
+        assert!(!aud.contains("client-3"));
+    }
+
+    /// Companion to `test_validate_token_accepts_array_aud`: a subject token
+    /// with a plain string `aud` (the shape every token this crate has ever
+    /// issued) must keep working exactly as before the `Audience` enum was
+    /// introduced.
+    #[test]
+    fn test_validate_token_still_accepts_string_aud() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_id_token(identity, "client-1", None, 3600)
+            .unwrap();
+
+        let claims = manager.validate_token(&token, None).unwrap();
+        let aud = claims.aud.expect("aud claim must be present");
+        assert!(aud.contains("client-1"));
+        assert!(!aud.contains("client-2"));
+    }
+
+    /// Serialization symmetry guarantee: a single audience must still
+    /// serialize as a bare JSON string, not a one-element array, so every
+    /// token this crate has ever issued (and any consumer relying on that
+    /// shape) is unaffected by `Audience` gaining array support.
+    #[test]
+    fn test_audience_single_round_trips_as_bare_string() {
+        let single = Audience::Single("client-1".to_string());
+        let serialized = serde_json::to_string(&single).unwrap();
+        assert_eq!(serialized, "\"client-1\"");
+
+        let deserialized: Audience = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, single);
+
+        let multiple = Audience::Multiple(vec!["client-1".to_string(), "client-2".to_string()]);
+        let serialized_multi = serde_json::to_string(&multiple).unwrap();
+        assert_eq!(serialized_multi, "[\"client-1\",\"client-2\"]");
+
+        let deserialized_multi: Audience = serde_json::from_str(&serialized_multi).unwrap();
+        assert_eq!(deserialized_multi, multiple);
     }
 }
 pub mod jwk;
