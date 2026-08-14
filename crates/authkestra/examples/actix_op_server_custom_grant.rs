@@ -180,6 +180,7 @@ impl<
                 refresh_token: None,
                 id_token: None,
                 scope: None,
+                issued_token_type: None,
             });
         }
 
