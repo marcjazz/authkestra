@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.4.0...authkestra-engine-v0.5.0) - 2026-08-15
+
+### Fixed
+
+- *(engine)* honor extra["jti"] as a jti override, stop emitting duplicate-key JWTs ([#215](https://github.com/marcjazz/authkestra/pull/215))
+- *(engine,op)* accept array-shaped aud claims in token exchange ([#207](https://github.com/marcjazz/authkestra/pull/207))
+
 ## [0.4.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.3.4...authkestra-engine-v0.4.0) - 2026-08-13
 
 ### Added

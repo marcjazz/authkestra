@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.4.0...authkestra-op-v0.5.0) - 2026-08-15
+
+### Fixed
+
+- *(op)* add issued_token_type to token-exchange response, expose default_handle_token_exchange ([#217](https://github.com/marcjazz/authkestra/pull/217))
+- *(op)* omit authorization_endpoint when unsupported, gate authorization_code on client grant ([#214](https://github.com/marcjazz/authkestra/pull/214))
+- *(engine,op)* accept array-shaped aud claims in token exchange ([#207](https://github.com/marcjazz/authkestra/pull/207))
+
+### Other
+
+- make token-exchange grant overridable via OpStore, support id_token ([#208](https://github.com/marcjazz/authkestra/pull/208))
+
 ## [0.4.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.3.4...authkestra-op-v0.4.0) - 2026-08-13
 
 ### Added
