@@ -11,6 +11,7 @@ categories.workspace = true
 readme.workspace = true
 
 [dependencies]
+redis = { version = "0.27", optional = true, features = ["tokio-comp", "connection-manager"] }
 authkestra-engine = { workspace = true, default-features = false, features = ["token", "memory"] }
 authkestra-resource = { workspace = true, default-features = false }
 serde = { version = "1.0", features = ["derive"] }
@@ -29,6 +30,7 @@ argon2 = "0.5.3"
 sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "json", "chrono"] }
 
 [features]
+redis = ["dep:redis"]
 default = ["rustls-aws-lc-rs"]
 
 sqlx = ["dep:sqlx"]
@@ -50,7 +52,7 @@ rustls-no-provider = [
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
 testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql"] }
+testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql", "redis"] }
 # Test-only: generating real EC P-256 keypairs and signing enrolment
 # challenges with them, to exercise the attestation ceremony end-to-end
 # rather than mocking the crypto away. Already present in the dependency
