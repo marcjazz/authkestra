@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.5.0...authkestra-op-v0.5.1) - 2026-08-15
+
+### Added
+
+- *(op)* add RedisClientAssertionStore backed by redis ([#211](https://github.com/marcjazz/authkestra/pull/211))
+
 ## [0.5.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.4.0...authkestra-op-v0.5.0) - 2026-08-15
 
 ### Fixed
