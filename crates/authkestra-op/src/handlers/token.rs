@@ -591,6 +591,15 @@ async fn handle_authorization_code(
     op_store: &dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
+    if !client.allows_grant_type(&GrantType::AuthorizationCode) {
+        tracing::warn!(client_id = %client_id, "Client not authorized for authorization_code grant");
+        return Err(TokenErrorResponse {
+            error: "unauthorized_client".to_string(),
+            error_description: "Client is not authorized to use authorization_code grant type"
+                .to_string(),
+        });
+    }
+
     let code_str = req.code.as_ref().unwrap();
     let req_redirect_uri = req.redirect_uri.as_deref().unwrap_or("");
 
@@ -1356,6 +1365,80 @@ mod tests {
         )
         .await;
         assert_eq!(res.unwrap_err().error, "unauthorized_client");
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_grant_rejected_when_client_not_granted() {
+        // `client1` is registered without `authorization_code` in its
+        // `grant_types` — unlike `handle_device_code`,
+        // `handle_client_credentials`, `default_handle_refresh_token`, and
+        // `default_handle_token_exchange`, `handle_authorization_code` must
+        // reject this the same way, before ever looking up a code.
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("some-code".to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
+        };
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://cb".to_string()],
+                    grant_types: vec![GrantType::ClientCredentials],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                refresh.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &test_tokens()
+        )
+        .await;
+        let err = res.unwrap_err();
+        assert_eq!(err.error, "unauthorized_client");
+        assert_eq!(
+            err.error_description,
+            "Client is not authorized to use authorization_code grant type"
+        );
     }
 
     #[tokio::test]
