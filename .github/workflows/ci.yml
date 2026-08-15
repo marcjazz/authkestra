@@ -64,3 +64,10 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Run coverage and fail if under threshold
         run: cargo llvm-cov --workspace --all-features --fail-under-lines 60
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
