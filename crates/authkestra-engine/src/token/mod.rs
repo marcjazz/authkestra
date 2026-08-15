@@ -45,6 +45,29 @@ impl From<&str> for Audience {
     }
 }
 
+/// Removes a caller-supplied `jti` from `extra`, if present as a JSON
+/// string, so it can be assigned to the named `Claims::jti` field instead
+/// of staying in the flattened `extra` map. Falls back to a generated
+/// UUIDv4 when `extra` has no usable `"jti"` entry — either absent, or
+/// present but not a JSON string (RFC 7519 §4.1.7 requires `jti` to be a
+/// string).
+///
+/// This is the fix for #212: `Claims::extra` is `#[serde(flatten)]`ed
+/// alongside the named `jti` field, so a `"jti"` entry left in `extra`
+/// would serialize twice under the same key — a payload `TokenManager`
+/// could mint but never decode again (`serde_json` hard-errors on a
+/// literal duplicate field, flattened or not). Removing the key here,
+/// unconditionally, guarantees the wire payload can never carry two `jti`
+/// entries, and doubles as the override mechanism: a caller who needs a
+/// non-UUID id format (e.g. CUID2) supplies it via `extra["jti"]` and it
+/// is used verbatim.
+fn take_jti(extra: &mut HashMap<String, serde_json::Value>) -> String {
+    match extra.remove("jti") {
+        Some(serde_json::Value::String(jti)) => jti,
+        _ => uuid::Uuid::new_v4().to_string(),
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     // Standard OIDC claims
@@ -234,17 +257,24 @@ impl TokenManager {
     /// database round-trip. Keys in `extra` take precedence over any
     /// same-named field set elsewhere in `extra` by this method; they cannot
     /// override the top-level standard claims (`sub`, `aud`, `exp`, etc.)
-    /// since those are not part of the flattened map.
+    /// since those are not part of the flattened map, with one exception:
+    /// `jti` is a reserved key. If `extra["jti"]` is a JSON string, it is
+    /// removed from `extra` and used verbatim as the token's `jti` claim
+    /// instead of a generated UUIDv4 — see [`take_jti`] for why this has to
+    /// happen this way rather than leaving the key in `extra`. `nbf`
+    /// (not-before, set to issuance time) and `identity` are unconditional
+    /// parts of this token's contract and have no opt-out.
     pub fn issue_user_token_with_extra(
         &self,
         identity: Identity,
         expires_in_secs: u64,
         scope: Option<String>,
         aud: Option<String>,
-        extra: HashMap<String, serde_json::Value>,
+        mut extra: HashMap<String, serde_json::Value>,
     ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
+        let jti = take_jti(&mut extra);
 
         let claims = Claims {
             iss: self.issuer.clone(),
@@ -253,7 +283,7 @@ impl TokenManager {
             exp: expiration,
             iat: now,
             nbf: Some(now),
-            jti: Some(uuid::Uuid::new_v4().to_string()),
+            jti: Some(jti),
             scope,
             identity: Some(identity),
             extra,
@@ -288,16 +318,22 @@ impl TokenManager {
     /// is left as-is. This preserves OIDC `nonce` semantics — it reflects
     /// what the client sent in the authorization request — and keeps it from
     /// being accidentally clobbered by unrelated custom claims.
+    ///
+    /// `jti` is likewise reserved: see
+    /// [`Self::issue_user_token_with_extra`] for how `extra["jti"]`
+    /// overrides the generated one. `nbf` and `identity` are unconditional
+    /// on this path too, with no opt-out.
     pub fn issue_id_token_with_extra(
         &self,
         identity: Identity,
         client_id: &str,
         nonce: Option<String>,
         expires_in_secs: u64,
-        extra: HashMap<String, serde_json::Value>,
+        mut extra: HashMap<String, serde_json::Value>,
     ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
+        let jti = take_jti(&mut extra);
 
         let mut claims = Claims {
             iss: self.issuer.clone(),
@@ -306,7 +342,7 @@ impl TokenManager {
             exp: expiration,
             iat: now,
             nbf: Some(now),
-            jti: Some(uuid::Uuid::new_v4().to_string()),
+            jti: Some(jti),
             scope: None,
             identity: Some(identity),
             extra,
@@ -339,17 +375,19 @@ impl TokenManager {
 
     /// Issues a machine-to-machine (M2M) token for a client, stamping the
     /// given `extra` claims onto the token in addition to the standard/core
-    /// claims. See [`Self::issue_user_token_with_extra`] for the rationale.
+    /// claims. See [`Self::issue_user_token_with_extra`] for the rationale,
+    /// including the `extra["jti"]` override.
     pub fn issue_client_token_with_extra(
         &self,
         client_id: &str,
         expires_in_secs: u64,
         scope: Option<String>,
         aud: Option<String>,
-        extra: HashMap<String, serde_json::Value>,
+        mut extra: HashMap<String, serde_json::Value>,
     ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
+        let jti = take_jti(&mut extra);
 
         let claims = Claims {
             iss: self.issuer.clone(),
@@ -358,7 +396,7 @@ impl TokenManager {
             exp: expiration,
             iat: now,
             nbf: Some(now),
-            jti: Some(uuid::Uuid::new_v4().to_string()),
+            jti: Some(jti),
             scope,
             identity: None,
             extra,
@@ -378,15 +416,17 @@ impl TokenManager {
     /// apart from those (e.g. `authkestra-op`'s device/service attestations,
     /// whose contract requires `typ: "webank-attest+jws"` rather than the
     /// default `"JWT"`). Additive alongside the `issue_*_token*` family
-    /// above; those are unchanged.
+    /// above; those are unchanged. `extra["jti"]` is honored the same way
+    /// as [`Self::issue_user_token_with_extra`].
     pub fn issue_custom_token(
         &self,
         sub: String,
         expires_in_secs: u64,
         typ: &str,
-        extra: HashMap<String, serde_json::Value>,
+        mut extra: HashMap<String, serde_json::Value>,
     ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
+        let jti = take_jti(&mut extra);
         let claims = Claims {
             iss: self.issuer.clone(),
             sub,
@@ -394,7 +434,7 @@ impl TokenManager {
             exp: now + expires_in_secs as usize,
             iat: now,
             nbf: Some(now),
-            jti: Some(uuid::Uuid::new_v4().to_string()),
+            jti: Some(jti),
             scope: None,
             identity: None,
             extra,
@@ -688,6 +728,30 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
         assert_eq!(claims.extra.get("cnf").unwrap()["jkt"], "abc");
     }
 
+    /// Same jti-override coverage as
+    /// `test_issue_user_token_with_extra_jti_override_no_duplicate_key`,
+    /// exercised on `issue_custom_token`.
+    #[test]
+    fn test_issue_custom_token_jti_override_round_trips() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "jti".to_string(),
+            serde_json::json!("caller-supplied-cuid2"),
+        );
+
+        let token = manager
+            .issue_custom_token("device-1".to_string(), 60, "webank-attest+jws", extra)
+            .unwrap();
+        let claims = manager
+            .validate_token(&token, None)
+            .expect("TokenManager must be able to decode the token it just issued");
+
+        assert_eq!(claims.jti, Some("caller-supplied-cuid2".to_string()));
+        assert!(!claims.extra.contains_key("jti"));
+    }
+
     #[test]
     fn test_issue_user_token_with_extra_round_trips_custom_claims() {
         let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
@@ -737,6 +801,74 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
         assert!(claims.extra.is_empty());
     }
 
+    /// Regression test for #212: `extra["jti"]` used to be merged onto the
+    /// token alongside the named `Claims::jti` field via
+    /// `#[serde(flatten)]`, producing a wire payload with two `"jti"` keys
+    /// that `TokenManager` itself could not decode (serde hard-errors on a
+    /// literal duplicate field). This asserts both halves of that bug are
+    /// gone: the payload has exactly one `jti` key, and it carries the
+    /// caller's value, not a generated one.
+    #[test]
+    fn test_issue_user_token_with_extra_jti_override_no_duplicate_key() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "jti".to_string(),
+            serde_json::json!("caller-supplied-cuid2"),
+        );
+
+        let token = manager
+            .issue_user_token_with_extra(identity, 3600, None, None, extra)
+            .unwrap();
+
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let payload_b64 = token.split('.').nth(1).unwrap();
+        let payload_json = String::from_utf8(URL_SAFE_NO_PAD.decode(payload_b64).unwrap()).unwrap();
+        assert_eq!(
+            payload_json.matches("\"jti\"").count(),
+            1,
+            "wire payload must contain exactly one jti key, got: {payload_json}"
+        );
+
+        let claims = manager
+            .validate_token(&token, None)
+            .expect("TokenManager must be able to decode the token it just issued");
+        assert_eq!(claims.jti, Some("caller-supplied-cuid2".to_string()));
+    }
+
+    /// Proves the default path (no `jti` in `extra`) is unchanged: a
+    /// generated UUIDv4 is still stamped when the caller doesn't supply one.
+    #[test]
+    fn test_issue_user_token_with_extra_default_jti_is_still_generated_uuid() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let token = manager
+            .issue_user_token_with_extra(identity, 3600, None, None, HashMap::new())
+            .unwrap();
+        let claims = manager.validate_token(&token, None).unwrap();
+
+        let jti = claims.jti.expect("jti must still be generated by default");
+        assert!(
+            uuid::Uuid::parse_str(&jti).is_ok(),
+            "default-path jti must still be a UUID, got: {jti}"
+        );
+    }
+
     #[test]
     fn test_issue_client_token_with_extra_round_trips_custom_claims() {
         let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
@@ -765,6 +897,30 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
         let claims = manager.validate_token(&token, None).unwrap();
 
         assert!(claims.extra.is_empty());
+    }
+
+    /// Same jti-override coverage as
+    /// `test_issue_user_token_with_extra_jti_override_no_duplicate_key`,
+    /// exercised on the client (M2M) token path.
+    #[test]
+    fn test_issue_client_token_with_extra_jti_override_round_trips() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "jti".to_string(),
+            serde_json::json!("caller-supplied-cuid2"),
+        );
+
+        let token = manager
+            .issue_client_token_with_extra("client-1", 3600, None, None, extra)
+            .unwrap();
+        let claims = manager
+            .validate_token(&token, None)
+            .expect("TokenManager must be able to decode the token it just issued");
+
+        assert_eq!(claims.jti, Some("caller-supplied-cuid2".to_string()));
+        assert!(!claims.extra.contains_key("jti"));
     }
 
     #[test]
@@ -837,6 +993,37 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
             claims.extra.get("nonce"),
             Some(&serde_json::json!("real-nonce"))
         );
+    }
+
+    /// Same jti-override coverage as
+    /// `test_issue_user_token_with_extra_jti_override_no_duplicate_key`,
+    /// exercised on the id-token path.
+    #[test]
+    fn test_issue_id_token_with_extra_jti_override_round_trips() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+        let identity = Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "jti".to_string(),
+            serde_json::json!("caller-supplied-cuid2"),
+        );
+
+        let token = manager
+            .issue_id_token_with_extra(identity, "client-1", None, 3600, extra)
+            .unwrap();
+        let claims = manager
+            .validate_token(&token, None)
+            .expect("TokenManager must be able to decode the token it just issued");
+
+        assert_eq!(claims.jti, Some("caller-supplied-cuid2".to_string()));
+        assert!(!claims.extra.contains_key("jti"));
     }
 
     #[test]
