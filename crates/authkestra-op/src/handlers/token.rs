@@ -76,6 +76,15 @@ pub struct TokenResponse {
     /// The scope of the granted tokens.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    /// The type of token issued in `access_token`, as an RFC 8693 §3 URN
+    /// (e.g. `urn:ietf:params:oauth:token-type:access_token`).
+    ///
+    /// REQUIRED by RFC 8693 §2.2.1 on a `token-exchange` grant response, so
+    /// the client can tell what it actually got back. `None` — and omitted
+    /// from the wire response — for every other grant, whose response shape
+    /// is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issued_token_type: Option<String>,
 }
 
 /// Error response for the token endpoint.
@@ -571,6 +580,7 @@ async fn handle_device_code(
                     id_token,
                     refresh_token: issued_refresh_token,
                     scope: scope_opt,
+                    issued_token_type: None,
                 })
             } else {
                 Err(TokenErrorResponse {
@@ -776,6 +786,7 @@ async fn handle_authorization_code(
         id_token,
         refresh_token: issued_refresh_token,
         scope: scope_opt,
+        issued_token_type: None,
     })
 }
 
@@ -839,6 +850,7 @@ async fn handle_client_credentials(
         id_token: None, // client credentials does not issue ID tokens
         refresh_token: None,
         scope: requested_scope,
+        issued_token_type: None,
     })
 }
 
@@ -981,6 +993,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         id_token,
         refresh_token: Some(new_refresh_val),
         scope: scope_opt,
+        issued_token_type: None,
     })
 }
 
@@ -991,7 +1004,14 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
 /// — split out as a free function so the trait's default method can call it
 /// without duplicating the logic, while `handle_token` reaches it exclusively
 /// through the trait method (so an override actually takes effect).
-pub(crate) async fn default_handle_token_exchange(
+///
+/// `pub` (not `pub(crate)`) so an `OpStore::handle_token_exchange` override
+/// outside this crate can delegate to it and post-process the result — e.g.
+/// stamping extra claims via `TokenManager::issue_user_token_with_extra` —
+/// instead of having to reimplement the RFC 8693 validation (subject-token
+/// validation, audience binding, scope intersection,
+/// `subject_token_type`/`requested_token_type` checks) from scratch.
+pub async fn default_handle_token_exchange(
     req: TokenRequest,
     client_id: String,
     client: crate::client::ClientRegistration,
@@ -1210,6 +1230,11 @@ pub(crate) async fn default_handle_token_exchange(
         id_token,
         refresh_token: None,
         scope: final_scope_str,
+        // RFC 8693 §2.2.1: REQUIRED on a token-exchange response. `access_token`
+        // always carries an access token here regardless of the requested
+        // `requested_token_type` — see the id_token issuance comment above for
+        // why that value doesn't change which field the access token lives in.
+        issued_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
     })
 }
 
@@ -1811,7 +1836,13 @@ mod tests {
             &test_tokens()
         )
         .await;
-        assert!(res.is_ok());
+        let resp = res.unwrap();
+        // Read via the serialized wire shape, not the Rust field directly,
+        // so this assertion compiles unmodified: `issued_token_type` is
+        // RFC 8693 §2.2.1's requirement for the token-exchange grant only —
+        // client_credentials must keep an identical response shape.
+        let value = serde_json::to_value(&resp).unwrap();
+        assert!(value.get("issued_token_type").is_none());
     }
 
     #[tokio::test]
@@ -1884,7 +1915,14 @@ mod tests {
         )
         .await;
         assert!(res.is_ok());
-        assert!(res.unwrap().refresh_token.is_some());
+        let resp = res.unwrap();
+        assert!(resp.refresh_token.is_some());
+        // Read via the serialized wire shape, not the Rust field directly,
+        // so this assertion compiles unmodified: `issued_token_type` is
+        // RFC 8693 §2.2.1's requirement for the token-exchange grant only —
+        // refresh_token must keep an identical response shape.
+        let value = serde_json::to_value(&resp).unwrap();
+        assert!(value.get("issued_token_type").is_none());
     }
 
     // --- OpStore::handle_refresh_token override seam (issue #189) ---
@@ -1996,6 +2034,7 @@ mod tests {
                 id_token: Some("overridden-id-token".to_string()),
                 refresh_token: Some("overridden-refresh-token".to_string()),
                 scope: Some("overridden-scope".to_string()),
+                issued_token_type: None,
             })
         }
     }
@@ -2475,6 +2514,7 @@ mod tests {
                 id_token: Some("overridden-tx-id-token".to_string()),
                 refresh_token: None,
                 scope: Some("overridden-scope".to_string()),
+                issued_token_type: None,
             })
         }
     }
@@ -2593,6 +2633,61 @@ mod tests {
         assert_eq!(resp.scope.as_deref(), Some("profile"));
         assert_eq!(resp.id_token, None);
         assert_eq!(resp.refresh_token, None);
+    }
+
+    #[tokio::test]
+    async fn test_tx_issued_token_type_present_and_correct() {
+        let tokens = test_tokens();
+        let subject_token = issue_subject_token(&tokens, "client1", Some("profile".to_string()));
+        let req = default_tx_req(&subject_token);
+
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::TokenExchange],
+                    scopes: vec!["profile".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            req,
+            None,
+            &test_config(true),
+            &crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+            &tokens,
+        )
+        .await;
+
+        let resp = res.unwrap();
+        // Read via the serialized wire shape rather than the Rust field
+        // directly, so this test compiles unmodified: RFC 8693 §2.2.1 makes
+        // `issued_token_type` a REQUIRED response parameter on a
+        // token-exchange grant response, and its absence on the wire is
+        // exactly the gap this test guards against.
+        let value = serde_json::to_value(&resp).unwrap();
+        assert_eq!(
+            value.get("issued_token_type").and_then(|v| v.as_str()),
+            Some("urn:ietf:params:oauth:token-type:access_token"),
+        );
     }
 
     // --- Token Exchange DoD Tests ---
