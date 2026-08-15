@@ -2,27 +2,37 @@ use crate::client_assertion::ClientAssertionStore;
 use crate::error::OpError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use redis::aio::ConnectionManager;
 
 /// A Redis-backed store for client assertions to prevent replay attacks.
 #[derive(Clone)]
 pub struct RedisClientAssertionStore {
-    client: redis::Client,
+    conn: ConnectionManager,
     prefix: String,
 }
 
 impl RedisClientAssertionStore {
     /// Creates a new RedisClientAssertionStore from a redis URL and a key prefix.
-    pub fn new(redis_url: &str, prefix: String) -> Result<Self, OpError> {
+    pub async fn new(redis_url: &str, prefix: String) -> Result<Self, OpError> {
         let client = redis::Client::open(redis_url).map_err(|e| {
-            tracing::error!("Failed to open redis client: {e}");
+            tracing::error!(error = %e, "Failed to open redis client");
             OpError::Storage
         })?;
-        Ok(Self { client, prefix })
+        Self::with_client(client, prefix).await
     }
 
     /// Creates a new RedisClientAssertionStore from an existing redis client and a key prefix.
-    pub fn with_client(client: redis::Client, prefix: String) -> Self {
-        Self { client, prefix }
+    pub async fn with_client(client: redis::Client, prefix: String) -> Result<Self, OpError> {
+        let conn = client.get_connection_manager().await.map_err(|e| {
+            tracing::error!(error = %e, "Failed to create Redis connection manager");
+            OpError::Storage
+        })?;
+        Ok(Self::with_connection_manager(conn, prefix))
+    }
+
+    /// Creates a new RedisClientAssertionStore from a pre-configured `ConnectionManager`.
+    pub fn with_connection_manager(conn: ConnectionManager, prefix: String) -> Self {
+        Self { conn, prefix }
     }
 
     fn key(&self, jti: &str) -> String {
@@ -33,21 +43,14 @@ impl RedisClientAssertionStore {
 #[async_trait]
 impl ClientAssertionStore for RedisClientAssertionStore {
     async fn record_jti(&self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, OpError> {
-        let mut conn = self
-            .client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Redis connection error");
-                OpError::Storage
-            })?;
-
         let now = Utc::now();
         if expires_at <= now {
+            tracing::debug!(jti = %jti, "Assertion is already expired; refusing without querying Redis");
             return Ok(false);
         }
         let ttl_secs = (expires_at - now).num_seconds().max(1) as u64;
 
+        let mut conn = self.conn.clone();
         let res: Option<String> = redis::cmd("SET")
             .arg(self.key(jti))
             .arg("1")
@@ -63,5 +66,48 @@ impl ClientAssertionStore for RedisClientAssertionStore {
 
         // If res is Some("OK"), it means SET NX succeeded (the JTI is new).
         Ok(res.is_some())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use testcontainers::runners::AsyncRunner;
+    use testcontainers_modules::redis::REDIS_PORT;
+
+    #[tokio::test]
+    async fn test_redis_client_assertion_store_replay_protection() {
+        let node = testcontainers_modules::redis::Redis::default()
+            .start()
+            .await
+            .unwrap();
+        let host_port = node.get_host_port_ipv4(REDIS_PORT).await.unwrap();
+        let redis_url = format!("redis://127.0.0.1:{host_port}");
+
+        let store = RedisClientAssertionStore::new(&redis_url, "test_jti".to_string())
+            .await
+            .unwrap();
+
+        let exp = Utc::now() + chrono::Duration::seconds(60);
+
+        // 1. First record_jti succeeds (returns true)
+        let first = store.record_jti("unique-jti-1", exp).await.unwrap();
+        assert!(first, "First presentation of JTI must succeed");
+
+        // 2. Second record_jti before expiration fails (returns false - replay prevented)
+        let second = store.record_jti("unique-jti-1", exp).await.unwrap();
+        assert!(!second, "Replay of same JTI must be rejected");
+
+        // 3. Different JTI succeeds
+        let another = store.record_jti("unique-jti-2", exp).await.unwrap();
+        assert!(another, "Different JTI must succeed");
+
+        // 4. Expired timestamp returns false immediately
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let expired = store.record_jti("unique-jti-3", past).await.unwrap();
+        assert!(
+            !expired,
+            "Already-expired assertion must be rejected immediately"
+        );
     }
 }
