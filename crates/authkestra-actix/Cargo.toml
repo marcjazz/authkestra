@@ -53,4 +53,18 @@ rustls-no-provider = [
     "authkestra-op?/rustls-no-provider",
 ]
 
+[dev-dependencies]
+async-trait = "0.1"
 
+# Integration tests drive a real `actix_web::App` built with `Engine::actix_scope()`
+# / `actix_scope_stateless()`, so they need the corresponding adapter features. Kept
+# as separate `[[test]]` targets (rather than `#[cfg(feature = ...)]` inside one file)
+# so `cargo test -p authkestra-actix` without `--all-features` simply skips them
+# instead of failing to compile.
+[[test]]
+name = "engine_session_integration"
+required-features = ["macros", "session"]
+
+[[test]]
+name = "engine_token_integration"
+required-features = ["macros", "token"]

@@ -65,4 +65,20 @@ rustls-no-provider = [
     "authkestra-op?/rustls-no-provider",
 ]
 
+[dev-dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
 
+# Integration tests drive the real `axum::Router` produced by `Engine::axum_router()`
+# / `axum_router_stateless()`, so they need the corresponding adapter features. Kept
+# as separate `[[test]]` targets (rather than `#[cfg(feature = ...)]` inside one file)
+# so `cargo test -p authkestra-axum` without `--all-features` simply skips them instead
+# of failing to compile, matching the pattern used by `authkestra`'s `typestate_tests`.
+[[test]]
+name = "engine_session_integration"
+required-features = ["macros", "session"]
+
+[[test]]
+name = "engine_token_integration"
+required-features = ["macros", "token"]
