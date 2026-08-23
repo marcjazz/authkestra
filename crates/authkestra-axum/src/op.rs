@@ -1,4 +1,5 @@
 use crate::AxumError;
+use authkestra_engine::token::cert_binding::ClientCertificateDer;
 use authkestra_engine::TokenManager;
 use authkestra_op::{
     attestation::{
@@ -14,13 +15,13 @@ use authkestra_op::{
             CompleteChallengeRequest, EnrolStartRequest, ReissueStartRequest,
         },
         jwks::JwksResponse,
-        token::{handle_token, TokenRequest},
+        token::{handle_token_with_client_cert, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
     OpError,
 };
 use axum::{
-    extract::{Form, FromRef, Query, State},
+    extract::{Extension, Form, FromRef, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Json,
@@ -145,9 +146,18 @@ where
 }
 
 /// Handler for the token endpoint.
+///
+/// `cert` is an RFC 8705 (§224) hook, not a TLS implementation: this crate
+/// does not terminate mTLS itself, so `cert` is only ever `Some` if a host
+/// application's own middleware/acceptor inserted a `ClientCertificateDer`
+/// request extension ahead of this handler (e.g. an `axum-server` rustls
+/// acceptor configured to require and expose client certificates, or a
+/// trusted reverse-proxy header the host has already validated and decoded
+/// to DER). See `ClientCertificateDer`'s doc comment.
 pub async fn axum_token_handler<AppState>(
     State(state): State<AppState>,
     headers: HeaderMap,
+    cert: Option<Extension<ClientCertificateDer>>,
     Form(req): Form<TokenRequest>,
 ) -> Response
 where
@@ -171,12 +181,15 @@ where
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
 
-    match handle_token(
+    let client_cert_der = cert.map(|Extension(ClientCertificateDer(der))| der);
+
+    match handle_token_with_client_cert(
         req,
         auth_header,
         &config,
         op_store.as_ref(),
         tokens.as_ref(),
+        client_cert_der.as_deref(),
     )
     .await
     {

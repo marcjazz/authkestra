@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use authkestra_engine::{
     error::AuthError,
     strategy::{utils, AuthenticationStrategy},
-    token::Claims,
+    token::{
+        cert_binding::{constant_time_eq, x5t_s256_thumbprint, ClientCertificateDer},
+        Claims,
+    },
 };
 use http::request::Parts;
 use jsonwebtoken::{decode, decode_header, Algorithm, Validation};
@@ -131,6 +134,15 @@ pub struct ValidationConfig {
     pub audience: Vec<String>,
     pub algorithms: Vec<Algorithm>,
     pub require_kid: bool,
+    /// When `true`, enforce RFC 8705 §3.1 certificate binding: a token
+    /// carrying a `cnf.x5t#S256` claim is only accepted if the same
+    /// certificate (by SHA-256 thumbprint) was presented on the connection
+    /// used to redeem it, and is rejected outright if no certificate was
+    /// presented at all. Off by default for backward compatibility — with
+    /// this `false`, a certificate-bound token is still accepted as a plain
+    /// bearer token, same as before this option existed. See
+    /// [`JwtStrategy`] and issue #224.
+    pub require_cert_binding: bool,
 }
 
 impl ValidationConfig {
@@ -149,6 +161,7 @@ pub struct ValidationConfigBuilder {
     audience: Vec<String>,
     algorithms: Vec<Algorithm>,
     require_kid: bool,
+    require_cert_binding: bool,
 }
 
 impl ValidationConfigBuilder {
@@ -200,6 +213,13 @@ impl ValidationConfigBuilder {
         self
     }
 
+    /// When `true`, enforce RFC 8705 §3.1 certificate binding. See
+    /// [`ValidationConfig::require_cert_binding`]. Off by default.
+    pub fn require_cert_binding(mut self, value: bool) -> Self {
+        self.require_cert_binding = value;
+        self
+    }
+
     /// Build a `ValidationConfig`.
     pub fn build(self) -> ValidationConfig {
         ValidationConfig {
@@ -217,6 +237,7 @@ impl ValidationConfigBuilder {
                 self.algorithms
             },
             require_kid: self.require_kid,
+            require_cert_binding: self.require_cert_binding,
         }
     }
 }
@@ -225,6 +246,7 @@ impl ValidationConfigBuilder {
 pub struct JwtStrategy<I> {
     cache: JwksCache,
     validation: Validation,
+    require_cert_binding: bool,
     _marker: std::marker::PhantomData<I>,
 }
 
@@ -247,6 +269,7 @@ impl<I> JwtStrategy<I> {
         Self {
             cache,
             validation,
+            require_cert_binding: config.require_cert_binding,
             _marker: std::marker::PhantomData,
         }
     }
@@ -260,13 +283,96 @@ where
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
         if let Some(token) = utils::extract_bearer_token(&parts.headers) {
             match validate_jwt_generic::<I>(token, &self.cache, &self.validation).await {
-                Ok(claims) => Ok(Some(claims)),
+                Ok(claims) => {
+                    if self.require_cert_binding {
+                        // Re-decode as `CnfClaim` to read `cnf.x5t#S256`
+                        // regardless of what identity type `I` the caller
+                        // asked for — `I` is not required to expose `cnf`
+                        // itself, so this can't be read off of `claims`
+                        // above. The token was already fully verified by the
+                        // decode above; this second decode reuses the same
+                        // cache/validation and cannot itself fail
+                        // differently, short of key rotation racing between
+                        // the two calls, which is treated the same as any
+                        // other verification failure: reject.
+                        let cnf_claim = match validate_jwt_generic::<CnfClaim>(
+                            token,
+                            &self.cache,
+                            &self.validation,
+                        )
+                        .await
+                        {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "failed to re-decode token while checking RFC 8705 certificate binding");
+                                return Ok(None);
+                            }
+                        };
+
+                        let cert_der = parts
+                            .extensions
+                            .get::<ClientCertificateDer>()
+                            .map(|c| c.0.as_slice());
+
+                        if let Err(e) = verify_cert_binding(cert_der, cnf_claim.cnf.as_ref()) {
+                            tracing::warn!(error = %e, "RFC 8705 certificate-binding check failed; rejecting token");
+                            return Ok(None);
+                        }
+                    }
+                    Ok(Some(claims))
+                }
                 Err(ValidationError::InvalidToken(_)) | Err(ValidationError::Jwt(_)) => Ok(None),
                 Err(e) => Err(AuthError::Token(e.to_string())),
             }
         } else {
             Ok(None)
         }
+    }
+}
+
+/// The subset of a token's claims this crate needs to check RFC 8705
+/// certificate binding — just the `cnf` confirmation claim, decoded
+/// independently of whatever identity type `I` a `JwtStrategy<I>` caller
+/// asked for.
+#[derive(Debug, Deserialize)]
+struct CnfClaim {
+    #[serde(default)]
+    cnf: Option<serde_json::Value>,
+}
+
+/// Verifies RFC 8705 §3.1 certificate binding for a decoded token's `cnf`
+/// claim.
+///
+/// - If the token carries no `cnf.x5t#S256` claim at all, it is not
+///   certificate-bound; this always succeeds (nothing to check).
+/// - If it does, `cert_der` — the DER bytes of the certificate presented on
+///   the current connection, if any — must be present and its SHA-256
+///   thumbprint must match, in constant time. A certificate-bound token is
+///   **never** accepted as a plain bearer token: an absent certificate is
+///   rejected exactly like a mismatched one.
+pub fn verify_cert_binding(
+    cert_der: Option<&[u8]>,
+    cnf: Option<&serde_json::Value>,
+) -> Result<(), ValidationError> {
+    let expected = cnf.and_then(|v| v.get("x5t#S256")).and_then(|v| v.as_str());
+
+    match (cert_der, expected) {
+        (Some(cert_der), Some(expected)) => {
+            let actual = x5t_s256_thumbprint(cert_der);
+            if constant_time_eq(&actual, expected) {
+                Ok(())
+            } else {
+                Err(ValidationError::InvalidToken(
+                    "presented mTLS client certificate does not match the token's cnf.x5t#S256"
+                        .to_string(),
+                ))
+            }
+        }
+        (None, Some(_)) => Err(ValidationError::InvalidToken(
+            "token is certificate-bound (cnf.x5t#S256) but no client certificate was presented"
+                .to_string(),
+        )),
+        (_, None) => Ok(()),
     }
 }
 
@@ -311,4 +417,66 @@ pub async fn validate_paseto(_token: &str, _key: &[u8]) -> Result<Claims, Valida
     Err(ValidationError::Paseto(
         "PASETO validation not yet fully implemented with JWKS".to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cnf_with_thumbprint(thumbprint: &str) -> serde_json::Value {
+        serde_json::json!({ "x5t#S256": thumbprint })
+    }
+
+    #[test]
+    fn accepts_when_no_cnf_claim_present_regardless_of_certificate() {
+        // Not a certificate-bound token: nothing to check, with or without a
+        // presented certificate.
+        assert!(verify_cert_binding(None, None).is_ok());
+        assert!(verify_cert_binding(Some(b"some-cert"), None).is_ok());
+    }
+
+    #[test]
+    fn accepts_matching_certificate() {
+        let cert_der = b"a fake DER-encoded certificate for testing";
+        let thumbprint = x5t_s256_thumbprint(cert_der);
+        let cnf = cnf_with_thumbprint(&thumbprint);
+
+        assert!(verify_cert_binding(Some(cert_der), Some(&cnf)).is_ok());
+    }
+
+    #[test]
+    fn rejects_mismatched_certificate() {
+        let bound_cert = b"the certificate the token was actually bound to";
+        let presented_cert = b"a different certificate presented on this connection";
+        let thumbprint = x5t_s256_thumbprint(bound_cert);
+        let cnf = cnf_with_thumbprint(&thumbprint);
+
+        let err = verify_cert_binding(Some(presented_cert), Some(&cnf))
+            .expect_err("a mismatched certificate must be rejected");
+        assert!(matches!(err, ValidationError::InvalidToken(_)));
+    }
+
+    #[test]
+    fn rejects_absent_certificate_for_a_certificate_bound_token() {
+        let bound_cert = b"the certificate the token was actually bound to";
+        let thumbprint = x5t_s256_thumbprint(bound_cert);
+        let cnf = cnf_with_thumbprint(&thumbprint);
+
+        // No certificate at all was presented on this connection.
+        let err = verify_cert_binding(None, Some(&cnf)).expect_err(
+            "a certificate-bound token must never be accepted with no certificate presented",
+        );
+        assert!(matches!(err, ValidationError::InvalidToken(_)));
+    }
+
+    #[test]
+    fn rejects_when_cnf_is_present_but_has_no_x5t_s256_member() {
+        // A `cnf` claim using a different confirmation method (e.g. `jkt`
+        // for a key-bound token) is not an `x5t#S256` binding — but is
+        // handled as "no certificate-binding claim" here, not "invalid",
+        // since this function only speaks RFC 8705's `x5t#S256` shape.
+        let cnf = serde_json::json!({ "jkt": "some-other-thumbprint" });
+        assert!(verify_cert_binding(None, Some(&cnf)).is_ok());
+        assert!(verify_cert_binding(Some(b"cert"), Some(&cnf)).is_ok());
+    }
 }

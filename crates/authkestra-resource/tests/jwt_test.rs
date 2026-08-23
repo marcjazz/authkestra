@@ -8,6 +8,7 @@
 //! key lookup, signature + claim validation) is exercised end to end.
 
 use authkestra_engine::strategy::AuthenticationStrategy;
+use authkestra_engine::token::cert_binding::{x5t_s256_thumbprint, ClientCertificateDer};
 use authkestra_engine::token::jwk::Jwk;
 use authkestra_resource::jwt::{
     validate_jwt_generic, JwksCache, JwtStrategy, ValidationConfig, ValidationError,
@@ -68,7 +69,7 @@ fn generate_rsa_key(kid: Option<&str>) -> TestKey {
     TestKey { encoding_key, jwk }
 }
 
-fn sign_token(key: &EncodingKey, kid: Option<&str>, claims: &TestClaims) -> String {
+fn sign_token<T: Serialize>(key: &EncodingKey, kid: Option<&str>, claims: &T) -> String {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = kid.map(|s| s.to_string());
     encode(&header, claims, key).expect("failed to sign token")
@@ -301,4 +302,184 @@ async fn strategy_surfaces_strict_kid_rejection_as_an_error_not_a_silent_none() 
         result.is_err(),
         "a strict-kid rejection must surface as Err(AuthError), not be swallowed as Ok(None)"
     );
+}
+
+// --- RFC 8705 certificate-bound (`cnf.x5t#S256`) access token tests -------
+//
+// Covers issue #224: a `client_credentials` token stamped with
+// `cnf.x5t#S256` (see `authkestra-op`'s `handle_client_credentials` tests
+// for the OP-side stamping half) must be rejected by
+// `JwtStrategy::require_cert_binding` unless the *same* certificate — by
+// SHA-256 thumbprint — is presented on the connection used to redeem it.
+
+/// Claims shape carrying an optional RFC 8705 `cnf` confirmation claim,
+/// separate from `TestClaims` above so the existing tests in this file stay
+/// untouched.
+#[derive(Debug, Serialize, Deserialize)]
+struct CertBoundClaims {
+    sub: String,
+    exp: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aud: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cnf: Option<serde_json::Value>,
+}
+
+/// Builds an `http::request::Parts` carrying a `Bearer` token and,
+/// optionally, a `ClientCertificateDer` request extension — standing in for
+/// whatever a host application's mTLS-terminating layer would have inserted
+/// (see `ClientCertificateDer`'s doc comment).
+fn bearer_request_parts(token: &str, cert_der: Option<&[u8]>) -> http::request::Parts {
+    let mut request = Request::builder()
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .body(())
+        .unwrap();
+    if let Some(cert_der) = cert_der {
+        request
+            .extensions_mut()
+            .insert(ClientCertificateDer(cert_der.to_vec()));
+    }
+    let (parts, _) = request.into_parts();
+    parts
+}
+
+#[tokio::test]
+async fn cert_binding_accepts_token_when_presented_certificate_matches() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let cert_der = b"a fake DER-encoded client certificate for testing";
+    let thumbprint = x5t_s256_thumbprint(cert_der);
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_cert_binding(true)
+        .build();
+    let strategy: JwtStrategy<CertBoundClaims> = JwtStrategy::new(config);
+
+    let claims = CertBoundClaims {
+        sub: "service-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "x5t#S256": thumbprint })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let parts = bearer_request_parts(&token, Some(cert_der));
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error");
+    let identity = result.expect(
+        "a certificate-bound token, redeemed with the same certificate it was bound to, must be accepted",
+    );
+    assert_eq!(identity.sub, "service-a");
+}
+
+#[tokio::test]
+async fn cert_binding_rejects_token_when_presented_certificate_is_mismatched() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let bound_cert_der = b"the certificate the token was actually bound to";
+    let presented_cert_der = b"a different, attacker-controlled certificate";
+    let thumbprint = x5t_s256_thumbprint(bound_cert_der);
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_cert_binding(true)
+        .build();
+    let strategy: JwtStrategy<CertBoundClaims> = JwtStrategy::new(config);
+
+    let claims = CertBoundClaims {
+        sub: "service-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "x5t#S256": thumbprint })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let parts = bearer_request_parts(&token, Some(presented_cert_der));
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error");
+    assert!(
+        result.is_none(),
+        "a certificate-bound token presented with the WRONG certificate must be rejected"
+    );
+}
+
+#[tokio::test]
+async fn cert_binding_rejects_token_when_no_certificate_is_presented() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let bound_cert_der = b"the certificate the token was actually bound to";
+    let thumbprint = x5t_s256_thumbprint(bound_cert_der);
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_cert_binding(true)
+        .build();
+    let strategy: JwtStrategy<CertBoundClaims> = JwtStrategy::new(config);
+
+    let claims = CertBoundClaims {
+        sub: "service-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "x5t#S256": thumbprint })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    // No `ClientCertificateDer` extension at all — e.g. a stolen bearer
+    // token replayed from a peer with no client certificate, or one that
+    // is mTLS-authenticated but under a different certificate than the
+    // token was bound to.
+    let parts = bearer_request_parts(&token, None);
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error");
+    assert!(
+        result.is_none(),
+        "a certificate-bound token presented with NO certificate at all must be rejected, \
+         exactly like a mismatched one — mTLS alone does not restore proof-of-possession"
+    );
+}
+
+#[tokio::test]
+async fn cert_binding_is_not_enforced_when_require_cert_binding_is_false() {
+    // Backward compatibility: a certificate-bound token is still accepted
+    // as a plain bearer token when the resource server has not opted into
+    // `require_cert_binding`.
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let bound_cert_der = b"the certificate the token was actually bound to";
+    let thumbprint = x5t_s256_thumbprint(bound_cert_der);
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+    assert!(!config.require_cert_binding);
+    let strategy: JwtStrategy<CertBoundClaims> = JwtStrategy::new(config);
+
+    let claims = CertBoundClaims {
+        sub: "service-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "x5t#S256": thumbprint })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let parts = bearer_request_parts(&token, None);
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error")
+        .expect(
+            "without require_cert_binding, a certificate-bound token is still a valid bearer token",
+        );
+    assert_eq!(result.sub, "service-a");
 }

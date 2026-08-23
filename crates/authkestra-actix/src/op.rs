@@ -1,4 +1,5 @@
-use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, Responder};
+use authkestra_engine::token::cert_binding::ClientCertificateDer;
 use authkestra_engine::TokenManager;
 use authkestra_op::{
     attestation::{
@@ -14,7 +15,7 @@ use authkestra_op::{
             CompleteChallengeRequest, EnrolStartRequest, ReissueStartRequest,
         },
         jwks::JwksResponse,
-        token::{handle_token, TokenRequest},
+        token::{handle_token_with_client_cert, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
     OpError,
@@ -105,6 +106,13 @@ pub async fn actix_device_authorization_handler(
     }
 }
 
+/// Handler for the token endpoint.
+///
+/// Certificate binding (RFC 8705, issue #224): this crate does not
+/// terminate mTLS itself. `client_cert_der` below is only ever `Some` if a
+/// host application's own middleware/acceptor inserted a
+/// `ClientCertificateDer` into the actix request's extension map ahead of
+/// this handler — see `ClientCertificateDer`'s doc comment.
 #[allow(clippy::too_many_arguments)]
 pub async fn actix_token_handler(
     http_req: HttpRequest,
@@ -120,12 +128,18 @@ pub async fn actix_token_handler(
         .get(actix_web::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
 
-    match handle_token(
+    let client_cert_der = http_req
+        .extensions()
+        .get::<ClientCertificateDer>()
+        .map(|c| c.0.clone());
+
+    match handle_token_with_client_cert(
         req.into_inner(),
         auth_header,
         config.get_ref(),
         op_store.get_ref().as_ref(),
         tokens.get_ref().as_ref(),
+        client_cert_der.as_deref(),
     )
     .await
     {
