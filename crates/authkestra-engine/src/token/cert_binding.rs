@@ -42,6 +42,22 @@ use sha2::{Digest, Sha256};
 /// If nothing ever inserts one, callers simply see `None` throughout, and
 /// `client_credentials` tokens are issued as plain (unbound) bearer tokens,
 /// same as before this existed.
+///
+/// # The source of these bytes is the entire security boundary
+///
+/// **Inserting a `ClientCertificateDer` from a source that has not
+/// cryptographically verified the certificate — i.e. actually terminated
+/// mTLS and validated the chain — provides no security benefit and a false
+/// sense of one.**
+///
+/// Nothing here parses X.509, validates a chain, or checks that these bytes
+/// are even DER; [`x5t_s256_thumbprint`] hashes whatever it is handed. So a
+/// binding built from, say, a reverse-proxy header that relays a
+/// client-supplied value the proxy never verified degrades to "proof that
+/// the caller knows a byte string the caller chose" — while looking
+/// *identical* to a real RFC 8705 binding: a `cnf.x5t#S256` claim is present
+/// and `require_cert_binding` accepts it. Issuance and verification trust the
+/// same extension, so both fail together, and silently.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientCertificateDer(pub Vec<u8>);
 

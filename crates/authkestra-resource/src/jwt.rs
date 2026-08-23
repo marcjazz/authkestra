@@ -470,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_when_cnf_is_present_but_has_no_x5t_s256_member() {
+    fn accepts_when_cnf_is_present_but_has_no_x5t_s256_member() {
         // A `cnf` claim using a different confirmation method (e.g. `jkt`
         // for a key-bound token) is not an `x5t#S256` binding — but is
         // handled as "no certificate-binding claim" here, not "invalid",
