@@ -264,8 +264,17 @@ mod tests {
     #[test]
     fn revocation_endpoint_not_advertised_by_default() {
         let doc = OidcDiscovery::from_config(&discovery_config());
-        let json = serde_json::to_value(&doc).unwrap();
 
+        // Assert on the field itself, not just the serialized key: a JSON-only
+        // check would pass even if the field were removed entirely, since an
+        // absent key is trivially absent.
+        assert!(
+            doc.revocation_endpoint.is_none(),
+            "from_config must leave revocation_endpoint unset; got {:?}",
+            doc.revocation_endpoint
+        );
+
+        let json = serde_json::to_value(&doc).unwrap();
         assert!(
             json.get("revocation_endpoint").is_none(),
             "revocation_endpoint must be omitted (not null) when not opted in; got {:?}",
