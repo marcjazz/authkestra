@@ -22,6 +22,11 @@ async fn get_token_succeeds_and_parses_the_token_response() {
         .and(path("/token"))
         .and(body_string_contains("grant_type=client_credentials"))
         .and(body_string_contains("client_id=test_client"))
+        // Assert the secret is actually sent. Without this, dropping
+        // client_secret from the form entirely — i.e. sending unauthenticated
+        // client_credentials requests — leaves every test in this file green.
+        // Found by mutation-testing the suite during review of #232.
+        .and(body_string_contains("client_secret=test_secret"))
         .and(body_string_contains("scope=read+write"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": "mock_access_token",
@@ -51,6 +56,7 @@ async fn get_token_without_scopes_omits_the_scope_parameter() {
     Mock::given(method("POST"))
         .and(path("/token"))
         .and(body_string_contains("grant_type=client_credentials"))
+        .and(body_string_contains("client_secret=test_secret"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": "mock_access_token",
             "token_type": "Bearer"
