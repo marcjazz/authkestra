@@ -1,7 +1,13 @@
+use authkestra_engine::token::jwk::Jwk;
 use authkestra_engine::OAuthProvider;
-use authkestra_oidc::provider::OidcProvider;
+use authkestra_oidc::provider::{Claims, OidcProvider};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+use rsa::traits::PublicKeyParts;
+use rsa::RsaPrivateKey;
 use serde_json::json;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -97,4 +103,210 @@ async fn test_oidc_exchange_code() {
     // It should fail to decode the JWT because the signature is invalid/missing,
     // but it exercises the exchange_code_for_identity fn!
     assert!(res.is_err());
+}
+
+// --- Regression tests for #225: `Validation::default()` is HS256-only and
+// checks neither `iss` nor `aud`, so a real RS256 IdP's ID token was rejected
+// on algorithm mismatch before any claim check ran, and a token with a wrong
+// `iss`/`aud` would have passed unnoticed (except that HS256-only made the
+// aud=None/validate_aud=true combination reject unconditionally). These
+// tests sign real RS256 tokens and drive `exchange_code_for_identity`
+// through discovery + JWKS + token-endpoint mocks end to end. ---
+
+struct TestKey {
+    encoding_key: EncodingKey,
+    jwk: Jwk,
+}
+
+/// Generates a fresh RSA key pair and wraps it as both a signing key and the
+/// public `Jwk` representation that would be published on a JWKS endpoint.
+fn generate_rsa_key(kid: &str) -> TestKey {
+    let mut rng = rand::thread_rng();
+    let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate RSA key");
+    let pem = private_key
+        .to_pkcs8_pem(LineEnding::LF)
+        .expect("failed to encode PKCS8 PEM");
+    let encoding_key =
+        EncodingKey::from_rsa_pem(pem.as_bytes()).expect("failed to build encoding key");
+
+    let n = URL_SAFE_NO_PAD.encode(private_key.n().to_bytes_be());
+    let e = URL_SAFE_NO_PAD.encode(private_key.e().to_bytes_be());
+
+    let jwk = Jwk {
+        kid: Some(kid.to_string()),
+        kty: "RSA".to_string(),
+        alg: Some("RS256".to_string()),
+        n: Some(n),
+        e: Some(e),
+        crv: None,
+        x: None,
+    };
+
+    TestKey { encoding_key, jwk }
+}
+
+fn sign_claims(key: &EncodingKey, kid: &str, claims: &Claims) -> String {
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(kid.to_string());
+    encode(&header, claims, key).expect("failed to sign RS256 ID token")
+}
+
+fn future_exp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600
+}
+
+/// Mounts discovery, JWKS and token-endpoint mocks for `mock_server` and
+/// returns a discovered `OidcProvider` plus the RSA key used to sign
+/// whatever `id_token` the caller mounts on the `/token` response.
+async fn setup_provider(mock_server: &MockServer, client_id: &str) -> (OidcProvider, TestKey) {
+    Mock::given(method("GET"))
+        .and(path("/.well-known/openid-configuration"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": mock_server.uri(),
+            "authorization_endpoint": format!("{}/authorize", mock_server.uri()),
+            "token_endpoint": format!("{}/token", mock_server.uri()),
+            "jwks_uri": format!("{}/jwks.json", mock_server.uri()),
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"]
+        })))
+        .mount(mock_server)
+        .await;
+
+    let key = generate_rsa_key("kid-1");
+
+    Mock::given(method("GET"))
+        .and(path("/jwks.json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "keys": [key.jwk]
+        })))
+        .mount(mock_server)
+        .await;
+
+    let provider = OidcProvider::discover(
+        client_id.to_string(),
+        "test_secret".to_string(),
+        "http://localhost/callback".to_string(),
+        &mock_server.uri(),
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+
+    (provider, key)
+}
+
+async fn mount_token_response(mock_server: &MockServer, id_token: &str) {
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "acc_tok",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "id_token": id_token
+        })))
+        .mount(mock_server)
+        .await;
+}
+
+#[tokio::test]
+async fn rs256_id_token_with_correct_iss_and_aud_verifies() {
+    let mock_server = MockServer::start().await;
+    let (provider, key) = setup_provider(&mock_server, "test_client").await;
+
+    let claims = Claims {
+        sub: "user-123".to_string(),
+        iss: mock_server.uri(),         // matches the discovered issuer
+        aud: "test_client".to_string(), // matches client_id
+        exp: future_exp(),
+        email: Some("user@example.com".to_string()),
+        name: Some("Test User".to_string()),
+        picture: None,
+        nonce: Some("nonce-123".to_string()),
+    };
+    let id_token = sign_claims(&key.encoding_key, "kid-1", &claims);
+    mount_token_response(&mock_server, &id_token).await;
+
+    let (identity, _token) = provider
+        .exchange_code_for_identity("code123", None, Some("nonce-123"))
+        .await
+        .expect("a correctly-signed RS256 ID token with matching iss/aud must verify");
+
+    assert_eq!(identity.external_id, "user-123");
+    assert_eq!(identity.email.as_deref(), Some("user@example.com"));
+    // Regression coverage for #225 Defect 5: the verified nonce claim must be
+    // surfaced in `attributes["nonce"]` so `OAuth2Flow::finalize_login`'s
+    // second nonce check (which reads it back from there) has real data.
+    assert_eq!(
+        identity.attributes.get("nonce").map(String::as_str),
+        Some("nonce-123")
+    );
+}
+
+#[tokio::test]
+async fn rs256_id_token_with_wrong_issuer_is_rejected() {
+    let mock_server = MockServer::start().await;
+    let (provider, key) = setup_provider(&mock_server, "test_client").await;
+
+    let claims = Claims {
+        sub: "user-123".to_string(),
+        iss: "https://attacker.example".to_string(), // does NOT match discovered issuer
+        aud: "test_client".to_string(),
+        exp: future_exp(),
+        email: None,
+        name: None,
+        picture: None,
+        nonce: None,
+    };
+    let id_token = sign_claims(&key.encoding_key, "kid-1", &claims);
+    mount_token_response(&mock_server, &id_token).await;
+
+    let err = provider
+        .exchange_code_for_identity("code123", None, None)
+        .await
+        .expect_err("an ID token whose iss does not match the discovered issuer must be rejected");
+    assert!(matches!(err, authkestra_engine::error::AuthError::Token(_)));
+    // Pin down *why* it was rejected: the signature and algorithm are both
+    // valid here, so this must be the issuer check, not incidental
+    // algorithm-mismatch noise from #225 Defect 2 masking Defect 3.
+    assert!(
+        err.to_string().contains("InvalidIssuer"),
+        "expected an InvalidIssuer rejection, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn rs256_id_token_with_wrong_audience_is_rejected() {
+    let mock_server = MockServer::start().await;
+    let (provider, key) = setup_provider(&mock_server, "test_client").await;
+
+    let claims = Claims {
+        sub: "user-123".to_string(),
+        iss: mock_server.uri(),
+        aud: "some_other_client".to_string(), // does NOT match client_id
+        exp: future_exp(),
+        email: None,
+        name: None,
+        picture: None,
+        nonce: None,
+    };
+    let id_token = sign_claims(&key.encoding_key, "kid-1", &claims);
+    mount_token_response(&mock_server, &id_token).await;
+
+    let err = provider
+        .exchange_code_for_identity("code123", None, None)
+        .await
+        .expect_err("an ID token whose aud does not match client_id must be rejected");
+    assert!(matches!(err, authkestra_engine::error::AuthError::Token(_)));
+    // Pin down *why* it was rejected: the signature and algorithm are both
+    // valid here, so this must be the audience check, not incidental
+    // algorithm-mismatch noise from #225 Defect 2 masking Defect 4.
+    assert!(
+        err.to_string().contains("InvalidAudience"),
+        "expected an InvalidAudience rejection, got: {err}"
+    );
 }

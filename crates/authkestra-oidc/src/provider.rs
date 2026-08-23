@@ -8,7 +8,7 @@ use authkestra_engine::{
     OAuthProvider,
 };
 use authkestra_resource::jwt::{validate_jwt_generic, JwksCache};
-use jsonwebtoken::Validation;
+use jsonwebtoken::{Algorithm, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
@@ -21,6 +21,11 @@ pub struct OidcProvider {
     metadata: Arc<std::sync::RwLock<ProviderMetadata>>,
     http_client: reqwest::Client,
     cache: Arc<std::sync::RwLock<Arc<JwksCache>>>,
+    /// Overrides the ID-token `Validation` policy computed by
+    /// [`default_validation`]. `None` (the default from [`OidcProvider::discover`])
+    /// means "derive `iss`/`aud`/`algorithms` from the discovery document and
+    /// `client_id`"; see [`OidcProvider::with_validation`].
+    validation_override: Option<Validation>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -89,6 +94,7 @@ impl OidcProvider {
             metadata: Arc::new(std::sync::RwLock::new(metadata)),
             http_client: client.clone(),
             cache: Arc::new(std::sync::RwLock::new(cache)),
+            validation_override: None,
         };
 
         // Spawn background refresh task
@@ -162,6 +168,49 @@ impl OidcProvider {
     pub async fn get_metadata(&self) -> ProviderMetadata {
         self.metadata.read().unwrap().clone()
     }
+
+    /// Overrides the ID-token validation policy used by
+    /// [`OidcProvider::exchange_code_for_identity`].
+    ///
+    /// By default (see [`default_validation`]) the provider derives `iss`
+    /// from the discovered issuer, `aud` from `client_id`, and `algorithms`
+    /// from the discovery document's `id_token_signing_alg_values_supported`
+    /// (falling back to RS256). Use this to accept additional/alternate
+    /// audiences, add clock-skew leeway, or otherwise diverge from that
+    /// default when a given IdP requires it. See issue #225.
+    pub fn with_validation(mut self, validation: Validation) -> Self {
+        self.validation_override = Some(validation);
+        self
+    }
+}
+
+/// Builds the default ID-token `Validation` policy from discovered metadata.
+///
+/// `jsonwebtoken::Validation::default()` is HS256-only and checks neither
+/// `iss` nor `aud` (see #225), which both rejects every RS256-signed ID
+/// token (Keycloak, Auth0, Google, ...) and, independently, would silently
+/// skip the issuer/audience checks the OIDC Core spec (3.1.3.7) requires
+/// even if HS256 were in use. This builds a spec-compliant default instead:
+/// `iss` must equal the discovered issuer, `aud` must contain `client_id`,
+/// and `algorithms` is taken from the discovery document (falling back to
+/// RS256, the most common IdP default, if the document omits it).
+fn default_validation(metadata: &ProviderMetadata, client_id: &str) -> Validation {
+    let algorithms = metadata
+        .id_token_signing_alg_values_supported
+        .as_ref()
+        .map(|algs| {
+            algs.iter()
+                .filter_map(|alg| alg.parse::<Algorithm>().ok())
+                .collect::<Vec<_>>()
+        })
+        .filter(|algs| !algs.is_empty())
+        .unwrap_or_else(|| vec![Algorithm::RS256]);
+
+    let mut validation = Validation::new(algorithms[0]);
+    validation.algorithms = algorithms;
+    validation.set_issuer(std::slice::from_ref(&metadata.issuer));
+    validation.set_audience(std::slice::from_ref(&client_id.to_string()));
+    validation
 }
 
 #[async_trait]
@@ -266,7 +315,16 @@ impl OAuthProvider for OidcProvider {
         tracing::debug!("validating OIDC ID Token");
         // 2. Validate ID Token using the validator
         let cache = self.cache.read().unwrap().clone(); // Clone the Arc, releasing the lock immediately
-        let claims = validate_jwt_generic::<Claims>(&id_token, &cache, &Validation::default())
+        let validation = self
+            .validation_override
+            .clone()
+            .unwrap_or_else(|| default_validation(&metadata, &self.client_id));
+        tracing::debug!(
+            algorithms = ?validation.algorithms,
+            issuer = ?metadata.issuer,
+            "using ID token validation policy"
+        );
+        let claims = validate_jwt_generic::<Claims>(&id_token, &cache, &validation)
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "failed to validate OIDC ID Token");
@@ -285,6 +343,13 @@ impl OAuthProvider for OidcProvider {
         let mut attributes = HashMap::new();
         if let Some(picture) = claims.picture {
             attributes.insert("picture".to_string(), picture);
+        }
+        // authkestra-engine's `OAuth2Flow::finalize_login` re-checks the nonce
+        // by reading it back out of `identity.attributes["nonce"]`; without
+        // this, that check always fails (see #225 Defect 5), since
+        // `OAuth2Flow::initiate_login` always generates a nonce to check.
+        if let Some(claim_nonce) = &claims.nonce {
+            attributes.insert("nonce".to_string(), claim_nonce.clone());
         }
 
         let identity = Identity {
