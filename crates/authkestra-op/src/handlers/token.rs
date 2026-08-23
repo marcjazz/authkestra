@@ -822,21 +822,45 @@ async fn handle_client_credentials(
         }
     }
 
-    let access_token = match tokens.issue_client_token(
-        &client_id,
-        expires_in,
-        requested_scope.clone(),
-        Some(client_id.clone()),
-    ) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!(error = ?e, "Failed to issue access token for client credentials");
+    // Determine the resource audience for the new token, mirroring the
+    // `client.allowed_audiences` check `default_handle_token_exchange`
+    // already performs (RFC 8707 resource indicators). When the caller
+    // doesn't request an audience, keep the pre-existing behavior of
+    // scoping the token to the client's own `client_id` rather than
+    // defaulting to `config.issuer` — unlike token-exchange, there is no
+    // established convention here and changing the no-audience default
+    // would be a silent behavioral break for existing integrators.
+    let aud = if let Some(requested_aud) = req.audience.clone() {
+        if !client.allowed_audiences.contains(&requested_aud) {
+            tracing::warn!(
+                client_id = %client_id,
+                audience = %requested_aud,
+                "Requested audience is not allowed for this client"
+            );
             return Err(TokenErrorResponse {
-                error: "server_error".to_string(),
-                error_description: "Failed to generate token".to_string(),
+                error: "invalid_target".to_string(),
+                error_description: "Requested audience is not allowed".to_string(),
             });
         }
+        tracing::debug!(client_id = %client_id, audience = %requested_aud, "Issuing client_credentials token bound to requested audience");
+        requested_aud
+    } else {
+        tracing::debug!(client_id = %client_id, "No audience requested; defaulting client_credentials token audience to client_id");
+        client_id.clone()
     };
+
+    let access_token =
+        match tokens.issue_client_token(&client_id, expires_in, requested_scope.clone(), Some(aud))
+        {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(error = ?e, "Failed to issue access token for client credentials");
+                return Err(TokenErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: "Failed to generate token".to_string(),
+                });
+            }
+        };
 
     tracing::info!(
         client_id = %client_id,
@@ -1843,6 +1867,139 @@ mod tests {
         // client_credentials must keep an identical response shape.
         let value = serde_json::to_value(&resp).unwrap();
         assert!(value.get("issued_token_type").is_none());
+    }
+
+    /// Regression test for #223: `client_credentials` must reject a
+    /// requested `audience` that isn't in `client.allowed_audiences`, using
+    /// the same `invalid_target` error shape as
+    /// `default_handle_token_exchange`'s equivalent check.
+    #[tokio::test]
+    async fn test_client_credentials_rejects_disallowed_audience() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::ClientCredentials],
+                    scopes: vec!["custom".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec!["serviceA".to_string()],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let req = TokenRequest {
+            grant_type: "client_credentials".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: Some("custom".to_string()),
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: Some("serviceB".to_string()),
+            client_assertion: None,
+            client_assertion_type: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &test_tokens()
+        )
+        .await;
+        let err = res.unwrap_err();
+        assert_eq!(err.error, "invalid_target");
+    }
+
+    /// Regression test for #223: an audience that IS in
+    /// `client.allowed_audiences` must be honored and land in the issued
+    /// token's `aud` claim, instead of always being overwritten with the
+    /// caller's own `client_id`.
+    #[tokio::test]
+    async fn test_client_credentials_allowed_audience_lands_in_aud() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::ClientCredentials],
+                    scopes: vec!["custom".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec!["serviceA".to_string()],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let req = TokenRequest {
+            grant_type: "client_credentials".to_string(),
+            code: None,
+            redirect_uri: None,
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: Some("custom".to_string()),
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: Some("serviceA".to_string()),
+            client_assertion: None,
+            client_assertion_type: None,
+        };
+        let tokens = test_tokens();
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &tokens
+        )
+        .await;
+        let resp = res.unwrap();
+        let claims = tokens.validate_token(&resp.access_token, None).unwrap();
+        assert!(claims
+            .aud
+            .as_ref()
+            .is_some_and(|aud| aud.contains("serviceA")));
     }
 
     #[tokio::test]
