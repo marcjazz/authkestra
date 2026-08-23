@@ -178,6 +178,15 @@ impl OidcProvider {
     /// (falling back to RS256). Use this to accept additional/alternate
     /// audiences, add clock-skew leeway, or otherwise diverge from that
     /// default when a given IdP requires it. See issue #225.
+    ///
+    /// # This replaces the derived policy — it does not extend it
+    ///
+    /// Whatever you pass becomes the entire policy. `Validation::new` starts
+    /// with no issuer and no audience configured, so passing a bare
+    /// `Validation::new(Algorithm::RS256)` silently disables the `iss` and
+    /// `aud` checks [`default_validation`] would otherwise apply —
+    /// reintroducing exactly the gaps #225 fixed. Call `set_issuer` and
+    /// `set_audience` on the `Validation` you supply.
     pub fn with_validation(mut self, validation: Validation) -> Self {
         self.validation_override = Some(validation);
         self

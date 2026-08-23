@@ -75,6 +75,14 @@ validation.set_audience(&["your_client_id", "another_allowed_audience"]);
 let provider = provider.with_validation(validation);
 ```
 
+> **`with_validation` replaces the derived policy — it does not extend it.**
+> Whatever you pass becomes the entire policy. `Validation::new(alg)` starts
+> with no issuer set and no audience set, so a bare
+> `provider.with_validation(Validation::new(Algorithm::RS256))` silently
+> disables the `iss` and `aud` checks altogether. Always call `set_issuer`
+> and `set_audience` on the `Validation` you supply, as the example above
+> does.
+
 ## Part of authkestra
 
 This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.
