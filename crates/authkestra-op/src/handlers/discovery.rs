@@ -37,6 +37,17 @@ pub struct OidcDiscovery {
     pub token_endpoint_auth_methods_supported: Vec<String>,
     /// JSON array containing a list of the Claim Names of the Claims that the OpenID Provider MAY be able to supply.
     pub claims_supported: Vec<String>,
+    /// URL of the OP's OAuth 2.0 revocation endpoint (RFC 7009), as defined
+    /// by RFC 8414 §2.
+    ///
+    /// Omitted entirely (not sent as `null`) rather than populated from
+    /// `OpConfig`, because whether a revocation route exists at all is not
+    /// something `from_config` knows: `authkestra-op` does not ship a
+    /// revocation handler itself, so this is only true once a consumer
+    /// mounts its own RFC 7009 `/revoke` route on top of this crate's token
+    /// endpoint and stores. See [`OidcDiscovery::with_revocation_endpoint`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revocation_endpoint: Option<String>,
 }
 
 use crate::config::OpConfig;
@@ -74,6 +85,7 @@ impl OidcDiscovery {
                 "name".to_string(),
                 "email".to_string(),
             ],
+            revocation_endpoint: None,
         }
     }
 
@@ -95,6 +107,22 @@ impl OidcDiscovery {
         if !self.token_endpoint_auth_methods_supported.contains(&method) {
             self.token_endpoint_auth_methods_supported.push(method);
         }
+        self
+    }
+
+    /// Advertises `revocation_endpoint` (RFC 8414 §2) at the given URL.
+    ///
+    /// Opt-in rather than part of [`OidcDiscovery::from_config`] for the
+    /// same reason `private_key_jwt` support is layered on via
+    /// [`OidcDiscovery::with_private_key_jwt`] rather than baked into
+    /// `from_config`: `OpConfig` has no notion of a revocation route, since
+    /// `authkestra-op` doesn't implement RFC 7009 itself. A consumer that
+    /// mounts its own `/revoke` handler on top of this crate's token
+    /// endpoint and stores should call this once that route exists, rather
+    /// than every `from_config` caller being forced to supply a URL for an
+    /// endpoint that may not exist.
+    pub fn with_revocation_endpoint(mut self, url: impl Into<String>) -> Self {
+        self.revocation_endpoint = Some(url.into());
         self
     }
 }
@@ -228,5 +256,91 @@ mod tests {
                 "https://auth.example.com/authorize".to_string()
             ))
         );
+    }
+
+    /// `from_config` alone must not advertise a revocation endpoint:
+    /// `authkestra-op` doesn't implement RFC 7009 itself, so promising one
+    /// by default would point clients at a route that may not exist.
+    #[test]
+    fn revocation_endpoint_not_advertised_by_default() {
+        let doc = OidcDiscovery::from_config(&discovery_config());
+        let json = serde_json::to_value(&doc).unwrap();
+
+        assert!(
+            json.get("revocation_endpoint").is_none(),
+            "revocation_endpoint must be omitted (not null) when not opted in; got {:?}",
+            json.get("revocation_endpoint")
+        );
+    }
+
+    #[test]
+    fn revocation_endpoint_advertised_once_opted_in() {
+        let doc = OidcDiscovery::from_config(&discovery_config())
+            .with_revocation_endpoint("https://auth.example.com/oauth2/revoke");
+
+        assert_eq!(
+            doc.revocation_endpoint,
+            Some("https://auth.example.com/oauth2/revoke".to_string())
+        );
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert_eq!(
+            json.get("revocation_endpoint"),
+            Some(&serde_json::Value::String(
+                "https://auth.example.com/oauth2/revoke".to_string()
+            ))
+        );
+    }
+
+    /// A discovery document that advertises `revocation_endpoint` must
+    /// surface it back on deserialization (RFC 8414 §2).
+    #[test]
+    fn deserializes_revocation_endpoint_when_present() {
+        let json = serde_json::json!({
+            "issuer": "https://auth.example.com",
+            "token_endpoint": "https://auth.example.com/token",
+            "jwks_uri": "https://auth.example.com/jwks.json",
+            "userinfo_endpoint": "https://auth.example.com/userinfo",
+            "scopes_supported": ["openid"],
+            "response_types_supported": ["code"],
+            "response_modes_supported": ["query"],
+            "grant_types_supported": ["authorization_code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+            "token_endpoint_auth_methods_supported": ["client_secret_basic"],
+            "claims_supported": ["sub"],
+            "revocation_endpoint": "https://auth.example.com/oauth2/revoke",
+        });
+
+        let doc: OidcDiscovery = serde_json::from_value(json).unwrap();
+
+        assert_eq!(
+            doc.revocation_endpoint,
+            Some("https://auth.example.com/oauth2/revoke".to_string())
+        );
+    }
+
+    /// A discovery document with no `revocation_endpoint` field at all must
+    /// still parse, with the field defaulting to `None`.
+    #[test]
+    fn deserializes_without_revocation_endpoint() {
+        let json = serde_json::json!({
+            "issuer": "https://auth.example.com",
+            "token_endpoint": "https://auth.example.com/token",
+            "jwks_uri": "https://auth.example.com/jwks.json",
+            "userinfo_endpoint": "https://auth.example.com/userinfo",
+            "scopes_supported": ["openid"],
+            "response_types_supported": ["code"],
+            "response_modes_supported": ["query"],
+            "grant_types_supported": ["authorization_code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+            "token_endpoint_auth_methods_supported": ["client_secret_basic"],
+            "claims_supported": ["sub"],
+        });
+
+        let doc: OidcDiscovery = serde_json::from_value(json).unwrap();
+
+        assert_eq!(doc.revocation_endpoint, None);
     }
 }
