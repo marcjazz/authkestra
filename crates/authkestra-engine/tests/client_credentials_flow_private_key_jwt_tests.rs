@@ -93,7 +93,7 @@ async fn sends_a_private_key_jwt_assertion_with_the_right_shape() {
         Some("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
     );
     assert!(
-        form.get("client_secret").is_none(),
+        !form.contains_key("client_secret"),
         "private_key_jwt must never also send a client_secret"
     );
 
@@ -245,6 +245,6 @@ async fn client_secret_flow_is_unaffected() {
         form.get("client_secret").map(String::as_str),
         Some("shh-secret")
     );
-    assert!(form.get("client_assertion").is_none());
-    assert!(form.get("client_assertion_type").is_none());
+    assert!(!form.contains_key("client_assertion"));
+    assert!(!form.contains_key("client_assertion_type"));
 }
