@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.5.2...authkestra-oidc-v0.5.3) - 2026-08-24
+
+### Fixed
+
+- *(oidc)* derive ID-token Validation from discovery instead of Validation::default() ([#228](https://github.com/marcjazz/authkestra/pull/228))
+
 ## [0.3.4](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.3.3...authkestra-oidc-v0.3.4) - 2026-08-05
 
 ### Other

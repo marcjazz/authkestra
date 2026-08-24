@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.5.2...authkestra-op-v0.5.3) - 2026-08-24
+
+### Added
+
+- *(engine)* add private_key_jwt client authentication to ClientCredentialsFlow ([#229](https://github.com/marcjazz/authkestra/pull/229))
+- *(op)* add revocation_endpoint field to OidcDiscovery (RFC 8414 §2) ([#226](https://github.com/marcjazz/authkestra/pull/226))
+
+### Fixed
+
+- *(op)* validate requested audience against allowed_audiences in client_credentials ([#230](https://github.com/marcjazz/authkestra/pull/230))
+
 ## [0.5.1](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.5.0...authkestra-op-v0.5.1) - 2026-08-15
 
 ### Added

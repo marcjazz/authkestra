@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.5.2...authkestra-axum-v0.5.3) - 2026-08-24
+
+### Other
+
+- *(axum,actix)* add E2E integration tests for engine adapters ([#232](https://github.com/marcjazz/authkestra/pull/232))
+
 ## [0.5.2](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.5.1...authkestra-axum-v0.5.2) - 2026-08-24
 
 ### Fixed
