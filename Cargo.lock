@@ -477,6 +477,7 @@ version = "0.5.2"
 dependencies = [
  "actix-utils",
  "actix-web",
+ "async-trait",
  "authkestra-devsig",
  "authkestra-engine",
  "authkestra-macros",
@@ -498,6 +499,7 @@ dependencies = [
 name = "authkestra-axum"
 version = "0.5.2"
 dependencies = [
+ "async-trait",
  "authkestra-devsig",
  "authkestra-engine",
  "authkestra-macros",
@@ -511,6 +513,8 @@ dependencies = [
  "jsonwebtoken",
  "serde",
  "serde_json",
+ "tokio",
+ "tower",
  "tower-cookies",
  "tower-layer",
  "tower-service",
