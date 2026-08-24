@@ -6,11 +6,13 @@ use crate::config::OpConfig;
 use crate::error::OpError;
 use crate::refresh::RefreshToken;
 use crate::store::OpStore;
+use authkestra_engine::token::cert_binding::x5t_s256_thumbprint;
 use authkestra_engine::token::TokenManager;
 use base64::Engine;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashMap;
 
 /// Request payload for the token endpoint.
 #[derive(Debug, Deserialize, Clone)]
@@ -101,6 +103,14 @@ pub struct TokenErrorResponse {
 /// This handles different OAuth2 grant types such as `authorization_code`,
 /// `client_credentials`, and `refresh_token`, issuing appropriate access tokens,
 /// ID tokens, and refresh tokens based on the request and client configuration.
+///
+/// This is a thin wrapper around
+/// [`handle_token_with_client_cert`] that always passes `None` for the
+/// caller's mTLS client certificate — kept so every existing call site
+/// (this crate's own extensive `handle_token` test suite among them, plus
+/// any downstream integrator) keeps compiling unchanged. Callers that want
+/// RFC 8705 certificate-bound `client_credentials` tokens (issue #224) call
+/// [`handle_token_with_client_cert`] directly instead.
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_token(
     req: TokenRequest,
@@ -108,6 +118,32 @@ pub async fn handle_token(
     config: &OpConfig,
     op_store: &dyn OpStore,
     tokens: &TokenManager,
+) -> Result<TokenResponse, TokenErrorResponse> {
+    handle_token_with_client_cert(req, auth_header, config, op_store, tokens, None).await
+}
+
+/// Same as [`handle_token`], but additionally takes the DER bytes of the
+/// mTLS client certificate presented on the current connection, if any.
+///
+/// This crate does not terminate TLS itself; `client_cert_der` is whatever
+/// the caller's HTTP framework adapter surfaced for this request — see
+/// `authkestra_engine::token::cert_binding::ClientCertificateDer`'s doc
+/// comment for how `authkestra-axum`/`authkestra-actix` source it, and note
+/// neither does so automatically without a host-supplied mTLS-terminating
+/// layer.
+///
+/// `client_cert_der` only affects the `client_credentials` grant (see
+/// [`handle_client_credentials`]), which stamps an RFC 8705 §3
+/// `cnf.x5t#S256` confirmation claim onto the issued access token when a
+/// certificate is present. It is ignored by every other grant type.
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_token_with_client_cert(
+    req: TokenRequest,
+    auth_header: Option<&str>,
+    config: &OpConfig,
+    op_store: &dyn OpStore,
+    tokens: &TokenManager,
+    client_cert_der: Option<&[u8]>,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
 
@@ -165,7 +201,7 @@ pub async fn handle_token(
             handle_authorization_code(req, client_id, client, config, op_store, tokens).await
         }
         "client_credentials" => {
-            handle_client_credentials(req, client_id, client, config, tokens).await
+            handle_client_credentials(req, client_id, client, config, tokens, client_cert_der).await
         }
         "refresh_token" => {
             // Routed through the `OpStore` seam (mirrors `handle_custom_grant`)
@@ -790,12 +826,33 @@ async fn handle_authorization_code(
     })
 }
 
+/// Handles the `client_credentials` grant (RFC 6749 §4.4).
+///
+/// `client_cert_der`, if present, is the DER-encoded mTLS client certificate
+/// presented on the current connection — see
+/// [`handle_token_with_client_cert`]'s doc comment for where it comes from.
+/// When present, the issued access token is bound to it per RFC 8705 §3: a
+/// `cnf: {"x5t#S256": "<thumbprint>"}` confirmation claim is stamped onto
+/// the token, and a resource server that requires certificate binding
+/// (`authkestra_resource::jwt::ValidationConfig::require_cert_binding`)
+/// rejects the token unless the *same* certificate is presented on the
+/// connection used to redeem it. Generic mTLS between services proves who
+/// opened the connection; it does not by itself prove the presenter is who
+/// the token was issued to — this claim is what closes that gap (see issue
+/// #224).
+///
+/// Binding is presence-triggered: any certificate the caller supplies is
+/// bound, unconditionally. Whether certificate binding should instead be an
+/// explicit opt-in *per client* (a new `ClientRegistration` field) is a
+/// deliberate design choice left open here for a maintainer decision — see
+/// the PR description.
 async fn handle_client_credentials(
     req: TokenRequest,
     client_id: String,
     client: ClientRegistration,
     config: &OpConfig,
     tokens: &TokenManager,
+    client_cert_der: Option<&[u8]>,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     if !client.allows_grant_type(&GrantType::ClientCredentials) {
         tracing::warn!(client_id = %client_id, "Client not authorized for client_credentials grant");
@@ -849,21 +906,44 @@ async fn handle_client_credentials(
         client_id.clone()
     };
 
-    let access_token =
-        match tokens.issue_client_token(&client_id, expires_in, requested_scope.clone(), Some(aud))
-        {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to issue access token for client credentials");
-                return Err(TokenErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: "Failed to generate token".to_string(),
-                });
-            }
-        };
+    // RFC 8705 §3: stamp a certificate-bound `cnf.x5t#S256` confirmation
+    // claim when the connection presented an mTLS client certificate, so
+    // the token is proof-of-possession-bound rather than a plain replayable
+    // bearer token for its whole TTL.
+    let mut extra = HashMap::new();
+    if let Some(cert_der) = client_cert_der {
+        let thumbprint = x5t_s256_thumbprint(cert_der);
+        tracing::debug!(
+            client_id = %client_id,
+            x5t_s256 = %thumbprint,
+            "Binding client_credentials access token to presented mTLS client certificate (RFC 8705)"
+        );
+        extra.insert(
+            "cnf".to_string(),
+            serde_json::json!({ "x5t#S256": thumbprint }),
+        );
+    }
+
+    let access_token = match tokens.issue_client_token_with_extra(
+        &client_id,
+        expires_in,
+        requested_scope.clone(),
+        Some(aud),
+        extra,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to issue access token for client credentials");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to generate token".to_string(),
+            });
+        }
+    };
 
     tracing::info!(
         client_id = %client_id,
+        certificate_bound = client_cert_der.is_some(),
         "Successfully issued tokens for client credentials grant"
     );
 
@@ -1869,26 +1949,49 @@ mod tests {
         assert!(value.get("issued_token_type").is_none());
     }
 
-    /// Regression test for #223: `client_credentials` must reject a
-    /// requested `audience` that isn't in `client.allowed_audiences`, using
-    /// the same `invalid_target` error shape as
-    /// `default_handle_token_exchange`'s equivalent check.
-    #[tokio::test]
-    async fn test_client_credentials_rejects_disallowed_audience() {
+    /// Builds the same single-client store `test_client_credentials` above
+    /// uses, factored out so the certificate-binding tests below don't
+    /// repeat it. `allowed_audiences` defaults empty; callers that need a
+    /// specific audience build their own store inline (see the audience
+    /// tests below).
+    async fn client_credentials_store(
+        client_id: &str,
+    ) -> crate::store::CompositeOpStore<
+        authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
+        authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
+        authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>,
+        authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
+    > {
+        client_credentials_store_with_audiences(client_id, vec![]).await
+    }
+
+    /// As [`client_credentials_store`], but lets the caller set
+    /// `allowed_audiences` — needed by the audience-enforcement tests and by
+    /// [`test_client_credentials_stamps_cnf_and_honors_audience_together`],
+    /// which exercises both #223 and #224 on the same request.
+    async fn client_credentials_store_with_audiences(
+        client_id: &str,
+        allowed_audiences: Vec<String>,
+    ) -> crate::store::CompositeOpStore<
+        authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
+        authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
+        authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>,
+        authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
+    > {
         let clients = authkestra_engine::store::memory::MemoryStore::<
             crate::client::ClientRegistration,
         >::new();
         clients
             .set(
-                "client1",
+                client_id,
                 ClientRegistration {
-                    client_id: "client1".to_string(),
+                    client_id: client_id.to_string(),
                     client_secret_hash: None,
                     redirect_uris: vec![],
                     grant_types: vec![GrantType::ClientCredentials],
                     scopes: vec!["custom".to_string()],
                     require_pkce: false,
-                    allowed_audiences: vec!["serviceA".to_string()],
+                    allowed_audiences,
                     token_endpoint_auth_method: None,
                     jwks: None,
                 },
@@ -1896,11 +1999,30 @@ mod tests {
             )
             .await
             .unwrap();
-        let req = TokenRequest {
+        crate::store::CompositeOpStore::new(
+            clients,
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+        )
+    }
+
+    fn client_credentials_request(client_id: &str) -> TokenRequest {
+        client_credentials_request_with_audience(client_id, None)
+    }
+
+    /// As [`client_credentials_request`], but lets the caller set the
+    /// requested `audience`.
+    fn client_credentials_request_with_audience(
+        client_id: &str,
+        audience: Option<&str>,
+    ) -> TokenRequest {
+        TokenRequest {
             grant_type: "client_credentials".to_string(),
             code: None,
             redirect_uri: None,
-            client_id: Some("client1".to_string()),
+            client_id: Some(client_id.to_string()),
             client_secret: None,
             code_verifier: None,
             scope: Some("custom".to_string()),
@@ -1911,22 +2033,124 @@ mod tests {
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
-            audience: Some("serviceB".to_string()),
+            audience: audience.map(|a| a.to_string()),
             client_assertion: None,
             client_assertion_type: None,
-        };
-        let res = handle_token(
-            req,
+        }
+    }
+
+    /// Issue #224: a `client_credentials` token issued over a connection
+    /// that presented an mTLS client certificate must carry an RFC 8705 §3
+    /// `cnf.x5t#S256` confirmation claim whose value is the base64url
+    /// SHA-256 thumbprint of that certificate's DER bytes.
+    ///
+    /// This is the test that fails against the pre-fix behavior: before
+    /// this change, `handle_client_credentials` always called
+    /// `tokens.issue_client_token` (no `extra` claims at all), so no amount
+    /// of certificate presentation ever produced a `cnf` claim.
+    #[tokio::test]
+    async fn test_client_credentials_stamps_cnf_x5t_s256_when_certificate_presented() {
+        let store = client_credentials_store("client1").await;
+
+        let cert_der = b"a fake DER-encoded mTLS client certificate for testing";
+        let expected_thumbprint =
+            authkestra_engine::token::cert_binding::x5t_s256_thumbprint(cert_der);
+
+        let tokens = test_tokens();
+        let resp = handle_token_with_client_cert(
+            client_credentials_request("client1"),
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
-                clients.clone(),
-                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
-            ),
-            ),
-            &test_tokens()
+            &store,
+            &tokens,
+            Some(cert_der),
+        )
+        .await
+        .expect("client_credentials with a presented certificate should succeed");
+
+        let claims = tokens
+            .validate_token(&resp.access_token, Some("client1"))
+            .expect("issued token must validate");
+
+        let cnf = claims
+            .extra
+            .get("cnf")
+            .expect("a certificate was presented; the token must carry a cnf claim");
+        assert_eq!(
+            cnf.get("x5t#S256").and_then(|v| v.as_str()),
+            Some(expected_thumbprint.as_str()),
+            "cnf.x5t#S256 must be the SHA-256/base64url thumbprint of the presented certificate's DER bytes"
+        );
+    }
+
+    /// Companion to the test above: with no certificate presented on the
+    /// connection, `client_credentials` keeps issuing a plain bearer token
+    /// with no `cnf` claim at all — this feature must be additive, not
+    /// force certificate binding onto every deployment.
+    #[tokio::test]
+    async fn test_client_credentials_omits_cnf_when_no_certificate_presented() {
+        let store = client_credentials_store("client1").await;
+
+        let tokens = test_tokens();
+        let resp = handle_token_with_client_cert(
+            client_credentials_request("client1"),
+            None,
+            &test_config(false),
+            &store,
+            &tokens,
+            None,
+        )
+        .await
+        .expect("client_credentials with no certificate should still succeed");
+
+        let claims = tokens
+            .validate_token(&resp.access_token, Some("client1"))
+            .expect("issued token must validate");
+        assert!(
+            !claims.extra.contains_key("cnf"),
+            "no certificate was presented; the token must not carry a cnf claim"
+        );
+    }
+
+    /// `handle_token` (the plain 5-argument entry point every existing
+    /// caller uses) must keep behaving exactly like passing `None` to
+    /// `handle_token_with_client_cert` — no `cnf` claim, ever.
+    #[tokio::test]
+    async fn test_handle_token_without_cert_param_never_stamps_cnf() {
+        let store = client_credentials_store("client1").await;
+
+        let tokens = test_tokens();
+        let resp = handle_token(
+            client_credentials_request("client1"),
+            None,
+            &test_config(false),
+            &store,
+            &tokens,
+        )
+        .await
+        .unwrap();
+
+        let claims = tokens
+            .validate_token(&resp.access_token, Some("client1"))
+            .unwrap();
+        assert!(!claims.extra.contains_key("cnf"));
+    }
+
+    /// Regression test for #223: `client_credentials` must reject a
+    /// requested `audience` that isn't in `client.allowed_audiences`, using
+    /// the same `invalid_target` error shape as
+    /// `default_handle_token_exchange`'s equivalent check.
+    #[tokio::test]
+    async fn test_client_credentials_rejects_disallowed_audience() {
+        let store =
+            client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
+
+        let res = handle_token(
+            client_credentials_request_with_audience("client1", Some("serviceB")),
+            None,
+            &test_config(false),
+            &store,
+            &test_tokens(),
         )
         .await;
         let err = res.unwrap_err();
@@ -1939,59 +2163,16 @@ mod tests {
     /// caller's own `client_id`.
     #[tokio::test]
     async fn test_client_credentials_allowed_audience_lands_in_aud() {
-        let clients = authkestra_engine::store::memory::MemoryStore::<
-            crate::client::ClientRegistration,
-        >::new();
-        clients
-            .set(
-                "client1",
-                ClientRegistration {
-                    client_id: "client1".to_string(),
-                    client_secret_hash: None,
-                    redirect_uris: vec![],
-                    grant_types: vec![GrantType::ClientCredentials],
-                    scopes: vec!["custom".to_string()],
-                    require_pkce: false,
-                    allowed_audiences: vec!["serviceA".to_string()],
-                    token_endpoint_auth_method: None,
-                    jwks: None,
-                },
-                std::time::Duration::from_secs(31536000),
-            )
-            .await
-            .unwrap();
-        let req = TokenRequest {
-            grant_type: "client_credentials".to_string(),
-            code: None,
-            redirect_uri: None,
-            client_id: Some("client1".to_string()),
-            client_secret: None,
-            code_verifier: None,
-            scope: Some("custom".to_string()),
-            refresh_token: None,
-            subject_token: None,
-            subject_token_type: None,
-            device_code: None,
-            actor_token: None,
-            actor_token_type: None,
-            requested_token_type: None,
-            audience: Some("serviceA".to_string()),
-            client_assertion: None,
-            client_assertion_type: None,
-        };
+        let store =
+            client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
+
         let tokens = test_tokens();
         let res = handle_token(
-            req,
+            client_credentials_request_with_audience("client1", Some("serviceA")),
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
-                clients.clone(),
-                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
-                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
-                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
-            ),
-            ),
-            &tokens
+            &store,
+            &tokens,
         )
         .await;
         let resp = res.unwrap();
@@ -2000,6 +2181,53 @@ mod tests {
             .aud
             .as_ref()
             .is_some_and(|aud| aud.contains("serviceA")));
+    }
+
+    /// #223 and #224 land in the same statement in `handle_client_credentials`
+    /// and were merged by hand rather than by git's automatic resolution —
+    /// this test is the reason: a request carrying BOTH a requested
+    /// `audience` and a presented client certificate must get a token with
+    /// the requested `aud` AND a `cnf.x5t#S256` claim. Before the merge was
+    /// fixed, whichever side's PR happened to win the conflict would compile
+    /// fine while silently dropping the other feature.
+    #[tokio::test]
+    async fn test_client_credentials_stamps_cnf_and_honors_audience_together() {
+        let store =
+            client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
+
+        let cert_der = b"a fake DER-encoded mTLS client certificate for testing";
+        let expected_thumbprint =
+            authkestra_engine::token::cert_binding::x5t_s256_thumbprint(cert_der);
+
+        let tokens = test_tokens();
+        let resp = handle_token_with_client_cert(
+            client_credentials_request_with_audience("client1", Some("serviceA")),
+            None,
+            &test_config(false),
+            &store,
+            &tokens,
+            Some(cert_der),
+        )
+        .await
+        .expect("a request with both an allowed audience and a certificate should succeed");
+
+        let claims = tokens.validate_token(&resp.access_token, None).unwrap();
+        assert!(
+            claims
+                .aud
+                .as_ref()
+                .is_some_and(|aud| aud.contains("serviceA")),
+            "the requested audience must still land in aud when a certificate is also presented"
+        );
+        let cnf = claims
+            .extra
+            .get("cnf")
+            .expect("a certificate was presented; the token must still carry a cnf claim");
+        assert_eq!(
+            cnf.get("x5t#S256").and_then(|v| v.as_str()),
+            Some(expected_thumbprint.as_str()),
+            "cnf.x5t#S256 must still be stamped when an audience is also requested"
+        );
     }
 
     #[tokio::test]

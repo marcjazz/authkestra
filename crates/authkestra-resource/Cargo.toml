@@ -27,6 +27,7 @@ tokio = { version = "1.0", features = ["full"] }
 thiserror = "2.0.18"
 http = "1"
 base64 = "0.22.1"
+tracing = "0.1"
 
 [features]
 default = ["rustls-aws-lc-rs"]

@@ -1,7 +1,11 @@
+#[cfg(feature = "resource")]
+use actix_web::HttpMessage;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use actix_web::{dev::Payload, http::header, web, Error, FromRequest, HttpRequest};
 #[cfg(feature = "session")]
 pub use authkestra_engine::auth::{Session, SessionStore};
+#[cfg(feature = "resource")]
+use authkestra_engine::token::cert_binding::ClientCertificateDer;
 #[cfg(any(feature = "session", feature = "token"))]
 pub use authkestra_engine::Missing;
 #[cfg(feature = "session")]
@@ -309,7 +313,30 @@ where
                 tracing::error!("failed to build http request parts: {e}");
                 actix_web::error::ErrorInternalServerError("Failed to build request parts")
             })?;
-            let (parts, _) = http_req.into_parts();
+            let (mut parts, _) = http_req.into_parts();
+
+            // Carry over `ClientCertificateDer`, if a host-app
+            // middleware/acceptor stashed one in actix's own per-request
+            // extensions from real mTLS termination — RFC 8705
+            // certificate-bound tokens (`JwtStrategy::require_cert_binding`,
+            // issue #224) need it, and this hand-built `http::request::Parts`
+            // would otherwise silently drop it, since it is assembled from
+            // only the method/URI/headers above.
+            //
+            // NOTE: this carries `ClientCertificateDer` and nothing else. The
+            // underlying defect is general — every actix request extension is
+            // dropped here — and remains open for other types. It bites any
+            // downstream `AuthenticationStrategy` impl that reads a different
+            // extension (tenant id, session context, a `DeviceIdentity` set by
+            // other middleware): those still silently see `None` under actix,
+            // though not under axum, whose `FromRequestParts` gets native
+            // `Parts`. Only `ClientCertificateDer` is consumed this way in-tree
+            // today, so there is no live regression here — but a general fix
+            // (and a regression test; this crate currently has no tests at all)
+            // belongs in its own change.
+            if let Some(cert) = req_clone.extensions().get::<ClientCertificateDer>() {
+                parts.extensions.insert(cert.clone());
+            }
 
             match guard.authenticate(&parts).await {
                 Ok(Some(identity)) => {
