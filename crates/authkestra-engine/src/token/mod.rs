@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod cert_binding;
+pub mod sd_jwt;
 
 /// The `aud` (audience) claim, per RFC 7519 §4.1.3: either a single
 /// case-sensitive string, or a JSON array of such strings.
