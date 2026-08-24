@@ -879,6 +879,33 @@ async fn handle_client_credentials(
         }
     }
 
+    // Determine the resource audience for the new token, mirroring the
+    // `client.allowed_audiences` check `default_handle_token_exchange`
+    // already performs (RFC 8707 resource indicators). When the caller
+    // doesn't request an audience, keep the pre-existing behavior of
+    // scoping the token to the client's own `client_id` rather than
+    // defaulting to `config.issuer` — unlike token-exchange, there is no
+    // established convention here and changing the no-audience default
+    // would be a silent behavioral break for existing integrators.
+    let aud = if let Some(requested_aud) = req.audience.clone() {
+        if !client.allowed_audiences.contains(&requested_aud) {
+            tracing::warn!(
+                client_id = %client_id,
+                audience = %requested_aud,
+                "Requested audience is not allowed for this client"
+            );
+            return Err(TokenErrorResponse {
+                error: "invalid_target".to_string(),
+                error_description: "Requested audience is not allowed".to_string(),
+            });
+        }
+        tracing::debug!(client_id = %client_id, audience = %requested_aud, "Issuing client_credentials token bound to requested audience");
+        requested_aud
+    } else {
+        tracing::debug!(client_id = %client_id, "No audience requested; defaulting client_credentials token audience to client_id");
+        client_id.clone()
+    };
+
     // RFC 8705 §3: stamp a certificate-bound `cnf.x5t#S256` confirmation
     // claim when the connection presented an mTLS client certificate, so
     // the token is proof-of-possession-bound rather than a plain replayable
@@ -901,7 +928,7 @@ async fn handle_client_credentials(
         &client_id,
         expires_in,
         requested_scope.clone(),
-        Some(client_id.clone()),
+        Some(aud),
         extra,
     ) {
         Ok(t) => t,
@@ -1924,9 +1951,27 @@ mod tests {
 
     /// Builds the same single-client store `test_client_credentials` above
     /// uses, factored out so the certificate-binding tests below don't
-    /// repeat it.
+    /// repeat it. `allowed_audiences` defaults empty; callers that need a
+    /// specific audience build their own store inline (see the audience
+    /// tests below).
     async fn client_credentials_store(
         client_id: &str,
+    ) -> crate::store::CompositeOpStore<
+        authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
+        authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
+        authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>,
+        authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
+    > {
+        client_credentials_store_with_audiences(client_id, vec![]).await
+    }
+
+    /// As [`client_credentials_store`], but lets the caller set
+    /// `allowed_audiences` — needed by the audience-enforcement tests and by
+    /// [`test_client_credentials_stamps_cnf_and_honors_audience_together`],
+    /// which exercises both #223 and #224 on the same request.
+    async fn client_credentials_store_with_audiences(
+        client_id: &str,
+        allowed_audiences: Vec<String>,
     ) -> crate::store::CompositeOpStore<
         authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
         authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
@@ -1946,7 +1991,7 @@ mod tests {
                     grant_types: vec![GrantType::ClientCredentials],
                     scopes: vec!["custom".to_string()],
                     require_pkce: false,
-                    allowed_audiences: vec![],
+                    allowed_audiences,
                     token_endpoint_auth_method: None,
                     jwks: None,
                 },
@@ -1964,6 +2009,15 @@ mod tests {
     }
 
     fn client_credentials_request(client_id: &str) -> TokenRequest {
+        client_credentials_request_with_audience(client_id, None)
+    }
+
+    /// As [`client_credentials_request`], but lets the caller set the
+    /// requested `audience`.
+    fn client_credentials_request_with_audience(
+        client_id: &str,
+        audience: Option<&str>,
+    ) -> TokenRequest {
         TokenRequest {
             grant_type: "client_credentials".to_string(),
             code: None,
@@ -1979,7 +2033,7 @@ mod tests {
             actor_token: None,
             actor_token_type: None,
             requested_token_type: None,
-            audience: None,
+            audience: audience.map(|a| a.to_string()),
             client_assertion: None,
             client_assertion_type: None,
         }
@@ -2080,6 +2134,100 @@ mod tests {
             .validate_token(&resp.access_token, Some("client1"))
             .unwrap();
         assert!(!claims.extra.contains_key("cnf"));
+    }
+
+    /// Regression test for #223: `client_credentials` must reject a
+    /// requested `audience` that isn't in `client.allowed_audiences`, using
+    /// the same `invalid_target` error shape as
+    /// `default_handle_token_exchange`'s equivalent check.
+    #[tokio::test]
+    async fn test_client_credentials_rejects_disallowed_audience() {
+        let store =
+            client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
+
+        let res = handle_token(
+            client_credentials_request_with_audience("client1", Some("serviceB")),
+            None,
+            &test_config(false),
+            &store,
+            &test_tokens(),
+        )
+        .await;
+        let err = res.unwrap_err();
+        assert_eq!(err.error, "invalid_target");
+    }
+
+    /// Regression test for #223: an audience that IS in
+    /// `client.allowed_audiences` must be honored and land in the issued
+    /// token's `aud` claim, instead of always being overwritten with the
+    /// caller's own `client_id`.
+    #[tokio::test]
+    async fn test_client_credentials_allowed_audience_lands_in_aud() {
+        let store =
+            client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
+
+        let tokens = test_tokens();
+        let res = handle_token(
+            client_credentials_request_with_audience("client1", Some("serviceA")),
+            None,
+            &test_config(false),
+            &store,
+            &tokens,
+        )
+        .await;
+        let resp = res.unwrap();
+        let claims = tokens.validate_token(&resp.access_token, None).unwrap();
+        assert!(claims
+            .aud
+            .as_ref()
+            .is_some_and(|aud| aud.contains("serviceA")));
+    }
+
+    /// #223 and #224 land in the same statement in `handle_client_credentials`
+    /// and were merged by hand rather than by git's automatic resolution —
+    /// this test is the reason: a request carrying BOTH a requested
+    /// `audience` and a presented client certificate must get a token with
+    /// the requested `aud` AND a `cnf.x5t#S256` claim. Before the merge was
+    /// fixed, whichever side's PR happened to win the conflict would compile
+    /// fine while silently dropping the other feature.
+    #[tokio::test]
+    async fn test_client_credentials_stamps_cnf_and_honors_audience_together() {
+        let store =
+            client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
+
+        let cert_der = b"a fake DER-encoded mTLS client certificate for testing";
+        let expected_thumbprint =
+            authkestra_engine::token::cert_binding::x5t_s256_thumbprint(cert_der);
+
+        let tokens = test_tokens();
+        let resp = handle_token_with_client_cert(
+            client_credentials_request_with_audience("client1", Some("serviceA")),
+            None,
+            &test_config(false),
+            &store,
+            &tokens,
+            Some(cert_der),
+        )
+        .await
+        .expect("a request with both an allowed audience and a certificate should succeed");
+
+        let claims = tokens.validate_token(&resp.access_token, None).unwrap();
+        assert!(
+            claims
+                .aud
+                .as_ref()
+                .is_some_and(|aud| aud.contains("serviceA")),
+            "the requested audience must still land in aud when a certificate is also presented"
+        );
+        let cnf = claims
+            .extra
+            .get("cnf")
+            .expect("a certificate was presented; the token must still carry a cnf claim");
+        assert_eq!(
+            cnf.get("x5t#S256").and_then(|v| v.as_str()),
+            Some(expected_thumbprint.as_str()),
+            "cnf.x5t#S256 must still be stamped when an audience is also requested"
+        );
     }
 
     #[tokio::test]

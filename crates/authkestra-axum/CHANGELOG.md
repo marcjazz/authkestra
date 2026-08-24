@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.5.2...authkestra-axum-v0.5.3) - 2026-08-24
+
+### Other
+
+- *(axum,actix)* add E2E integration tests for engine adapters ([#232](https://github.com/marcjazz/authkestra/pull/232))
+
+## [0.5.2](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.5.1...authkestra-axum-v0.5.2) - 2026-08-24
+
+### Fixed
+
+- *(ci)* unblock lint and deny after Rust 1.98 and RUSTSEC-2026-0258 drift ([#227](https://github.com/marcjazz/authkestra/pull/227))
+
 ## [0.3.4](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.3.3...authkestra-axum-v0.3.4) - 2026-08-05
 
 ### Other

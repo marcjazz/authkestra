@@ -7,6 +7,7 @@ compile_error!(
 );
 
 pub mod auth;
+pub mod client_assertion;
 pub mod engine;
 pub mod flow;
 pub mod protocol;

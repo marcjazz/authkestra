@@ -42,8 +42,15 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// The only `client_assertion_type` this OP accepts (RFC 7523 §2.2).
-pub const CLIENT_ASSERTION_TYPE_JWT_BEARER: &str =
-    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+///
+/// Re-exported from `authkestra_engine::client_assertion` rather than
+/// defined here: that crate mints `private_key_jwt` assertions for the
+/// *client* side (`ClientCredentialsFlow::new_private_key_jwt`, added for
+/// issue #222), this module verifies them for the *OP* side, and
+/// `authkestra-op` already depends on `authkestra-engine` — so a single
+/// definition, re-exported, is what keeps the assertion-type URN this OP
+/// accepts and the one a client mints from ever drifting apart.
+pub use authkestra_engine::client_assertion::CLIENT_ASSERTION_TYPE_JWT_BEARER;
 
 /// Upper bound on how far in the future a client assertion's `exp` may sit.
 ///
@@ -55,7 +62,12 @@ pub const CLIENT_ASSERTION_TYPE_JWT_BEARER: &str =
 /// than an `OpConfig` field on purpose: `OpConfig`'s fields are all public and
 /// it is constructed with struct literals throughout this workspace, so
 /// growing it is a breaking change that this feature does not need to make.
-pub const MAX_CLIENT_ASSERTION_LIFETIME_SECS: i64 = 300;
+///
+/// Same re-export rationale as [`CLIENT_ASSERTION_TYPE_JWT_BEARER`] above:
+/// defined once in `authkestra_engine::client_assertion`, so the client-side
+/// minting logic and this OP's verification can never disagree on the
+/// ceiling.
+pub use authkestra_engine::client_assertion::MAX_CLIENT_ASSERTION_LIFETIME_SECS;
 
 /// What a caller learns from a successfully verified client assertion.
 ///

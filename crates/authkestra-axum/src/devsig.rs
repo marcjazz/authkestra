@@ -182,14 +182,14 @@ where
         Box::pin(async move {
             match authenticate(&shared, req).await {
                 Ok(authenticated_req) => inner.call(authenticated_req).await,
-                Err(rejection) => Ok(rejection),
+                Err(rejection) => Ok(*rejection),
             }
         })
     }
 }
 
 #[tracing::instrument(skip_all, fields(method = %req.method(), path = %req.uri().path()))]
-async fn authenticate(shared: &Shared, req: Request<Body>) -> Result<Request<Body>, Response> {
+async fn authenticate(shared: &Shared, req: Request<Body>) -> Result<Request<Body>, Box<Response>> {
     let (mut parts, body) = req.into_parts();
 
     // Buffer the body under an enforced cap -- `Limited` errors instead of allocating past the
@@ -252,12 +252,14 @@ fn header_str(parts: &Parts, name: &HeaderName) -> Option<String> {
         .map(str::to_string)
 }
 
-fn reject(err: VerifyError) -> Response {
+// Boxed: `Response` is large enough that returning it bare in an `Err` variant trips
+// `clippy::result_large_err`, which inflates every `Ok` on this path to the error's size.
+fn reject(err: VerifyError) -> Box<Response> {
     let status = match err {
         VerifyError::BodyTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
         _ => StatusCode::UNAUTHORIZED,
     };
-    (status, err.code().to_string()).into_response()
+    Box::new((status, err.code().to_string()).into_response())
 }
 
 /// The extractor for a request verified by [`DeviceSignatureLayer`].

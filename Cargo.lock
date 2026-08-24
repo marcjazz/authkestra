@@ -44,9 +44,9 @@ dependencies = [
 
 [[package]]
 name = "actix-http"
-version = "3.13.1"
+version = "3.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48e2faa3e7418ed780cca54829d32782a4008a077230f67457caa063415e99c2"
+checksum = "11004b0e9b44b4eb3d15e0c3132b96fb178c7e50a74758b2f17bb9cc9a7fb4f6"
 dependencies = [
  "actix-codec",
  "actix-rt",
@@ -430,7 +430,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "authkestra"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "actix-files",
  "actix-web",
@@ -473,10 +473,11 @@ dependencies = [
 
 [[package]]
 name = "authkestra-actix"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "actix-utils",
  "actix-web",
+ "async-trait",
  "authkestra-devsig",
  "authkestra-engine",
  "authkestra-macros",
@@ -496,8 +497,9 @@ dependencies = [
 
 [[package]]
 name = "authkestra-axum"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
+ "async-trait",
  "authkestra-devsig",
  "authkestra-engine",
  "authkestra-macros",
@@ -511,6 +513,8 @@ dependencies = [
  "jsonwebtoken",
  "serde",
  "serde_json",
+ "tokio",
+ "tower",
  "tower-cookies",
  "tower-layer",
  "tower-service",
@@ -520,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-devsig"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -539,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-engine"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "actix-files",
  "aes-gcm",
@@ -573,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-macros"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -583,13 +587,16 @@ dependencies = [
 
 [[package]]
 name = "authkestra-oidc"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "async-trait",
  "authkestra-engine",
  "authkestra-resource",
+ "base64 0.22.1",
  "jsonwebtoken",
+ "rand 0.8.7",
  "reqwest",
+ "rsa",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -601,7 +608,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-op"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "argon2",
  "async-trait",
@@ -629,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-providers"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "async-trait",
  "authkestra-engine",
@@ -644,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "authkestra-resource"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "async-trait",
  "authkestra-engine",
@@ -1531,7 +1538,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1870,9 +1877,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.15"
+version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
+checksum = "839c0e8a181239723652be9062bb56ca5bf5f64011f73b623f6f4fc59086a228"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2062,7 +2069,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "h2 0.4.15",
+ "h2 0.4.18",
  "http 1.5.0",
  "http-body",
  "httparse",
@@ -2133,7 +2140,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3098,7 +3105,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -3137,9 +3144,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3357,7 +3364,7 @@ dependencies = [
  "bytes",
  "encoding_rs",
  "futures-core",
- "h2 0.4.15",
+ "h2 0.4.18",
  "http 1.5.0",
  "http-body",
  "http-body-util",
@@ -3466,7 +3473,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3525,7 +3532,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4530,7 +4537,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "h2 0.4.15",
+ "h2 0.4.18",
  "http 1.5.0",
  "http-body",
  "http-body-util",
@@ -5136,7 +5143,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
