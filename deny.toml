@@ -71,6 +71,11 @@ feature-depth = 1
 # output a note when they are encountered.
 ignore = [
     "RUSTSEC-2023-0071", # rsa crate Marvin attack, no patch available yet
+    "RUSTSEC-2026-0258", # h2 unbounded empty DATA frames, low severity, via
+                         # actix-http 3.13.3 (latest) -> h2 0.3.27; no
+                         # semver-compatible fix exists upstream yet (fixed in
+                         # h2 0.4.16+, which actix-http doesn't pin). Remove
+                         # once actix-web/actix-http moves to h2 0.4.x.
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
