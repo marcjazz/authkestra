@@ -59,6 +59,7 @@ check with `cargo tree -i aws-lc-rs -e features`.
 - **Flexible Chaining**: Chain multiple authentication strategies (Token, Session, Basic, Custom) seamlessly.
 - **OpenID Connect Provider (OP)**: Build your own identity provider and authorization server using `authkestra-op`.
 - **Session Management**: Built-in support for in-memory, Redis, and SQL via `sqlx`.
+- **SD-JWT (Selective Disclosure)**: Issue a single JWT carrying selectively disclosable claims (`draft-ietf-oauth-selective-disclosure-jwt`); the holder decides, per presentation, which claims to reveal to each verifier.
 
 ## 📦 Workspace Crates
 
@@ -104,6 +105,7 @@ To see complete, runnable examples for various frameworks and flows, check out t
 - [Axum with SQL Store](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/sql_store.rs): `cargo run -p authkestra-axum --example sql_store`
 - [Client Credentials Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/client_credentials.rs): `cargo run -p authkestra-engine --example client_credentials`
 - [Device Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/device_flow.rs): `cargo run -p authkestra-engine --example device_flow`
+- [SD-JWT (Selective Disclosure)](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/sd_jwt.rs): `cargo run -p authkestra-engine --example sd_jwt`
 - [Axum Resource Server](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/resource_server.rs): `cargo run -p authkestra-axum --example resource_server`
 - [Axum OP Server](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/op_server.rs): `cargo run -p authkestra-axum --example op_server`
 - [Axum MFA Server (TOTP + WebAuthn)](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/mfa_server.rs): `cargo run -p authkestra-axum --example mfa_server`

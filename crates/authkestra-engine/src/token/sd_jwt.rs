@@ -108,6 +108,14 @@ pub struct DisclosableClaim {
 impl DisclosableClaim {
     /// Convenience constructor so callers don't have to name the struct
     /// fields at every call site.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use authkestra_engine::token::sd_jwt::DisclosableClaim;
+    /// let claim = DisclosableClaim::new("email", "user@example.com");
+    /// assert_eq!(claim.name, "email");
+    /// ```
     pub fn new(name: impl Into<String>, value: impl Into<Value>) -> Self {
         Self {
             name: name.into(),
@@ -345,6 +353,26 @@ impl TokenManager {
     /// accept whichever ones it's shown. Callers that need "exactly one
     /// value per name" are responsible for enforcing that themselves; nothing
     /// about the wire format requires it.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use authkestra_engine::token::sd_jwt::DisclosableClaim;
+    /// # use authkestra_engine::TokenManager;
+    /// # use std::collections::HashMap;
+    /// let manager = TokenManager::new(b"example-secret", Some("issuer".to_string()));
+    /// let issued = manager.issue_sd_jwt(
+    ///     "user-1".to_string(),
+    ///     3600,
+    ///     None,
+    ///     None,
+    ///     vec![DisclosableClaim::new("email", "user@example.com")],
+    ///     HashMap::new(),
+    /// )?;
+    /// assert_eq!(issued.disclosures.len(), 1);
+    /// assert!(issued.compact.starts_with(&issued.jwt));
+    /// # Ok::<(), authkestra_engine::AuthError>(())
+    /// ```
     #[tracing::instrument(skip(self, extra, disclosable_claims), fields(sub = %sub, disclosure_count = disclosable_claims.len()))]
     pub fn issue_sd_jwt(
         &self,
@@ -430,6 +458,35 @@ impl TokenManager {
     /// `_sd_alg`, or a disclosed claim name that shadows a registered or
     /// already-present claim. See the module docs for why each of these
     /// has to fail closed rather than degrading gracefully.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use authkestra_engine::token::sd_jwt::DisclosableClaim;
+    /// # use authkestra_engine::TokenManager;
+    /// # use std::collections::HashMap;
+    /// let manager = TokenManager::new(b"example-secret", Some("issuer".to_string()));
+    /// let issued = manager.issue_sd_jwt(
+    ///     "user-1".to_string(),
+    ///     3600,
+    ///     None,
+    ///     None,
+    ///     vec![DisclosableClaim::new("email", "user@example.com")],
+    ///     HashMap::new(),
+    /// )?;
+    ///
+    /// // A holder can present the full compact form...
+    /// let verified = manager.validate_sd_jwt(&issued.compact, None)?;
+    /// assert_eq!(
+    ///     verified.disclosed_claims.get("email"),
+    ///     Some(&serde_json::Value::String("user@example.com".to_string()))
+    /// );
+    ///
+    /// // ...or withhold the Disclosure entirely and present the bare JWT.
+    /// let bare = manager.validate_sd_jwt(&issued.jwt, None)?;
+    /// assert!(bare.disclosed_claims.is_empty());
+    /// # Ok::<(), authkestra_engine::AuthError>(())
+    /// ```
     #[tracing::instrument(skip(self, presented))]
     pub fn validate_sd_jwt(
         &self,
