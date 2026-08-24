@@ -185,6 +185,7 @@ async fn test_primary_method_requires_mfa() {
 }
 
 #[tokio::test]
+#[cfg(feature = "webauthn")]
 async fn test_mfa_equivalent_bypasses_mfa() {
     use crate::auth::AuthResult;
     use crate::Engine;
