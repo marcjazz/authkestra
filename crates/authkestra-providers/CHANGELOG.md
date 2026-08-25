@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.5.4...authkestra-providers-v0.5.5) - 2026-08-24
+
+### Other
+
+- *(engine)* add SD-JWT runnable example, doctests, and book/README docs ([#241](https://github.com/marcjazz/authkestra/pull/241))
+
 ## [0.3.4](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.3.3...authkestra-providers-v0.3.4) - 2026-08-05
 
 ### Other
