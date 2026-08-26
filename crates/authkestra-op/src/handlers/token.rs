@@ -198,7 +198,15 @@ pub async fn handle_token_with_client_cert(
 
     match req.grant_type.as_str() {
         "authorization_code" => {
-            handle_authorization_code(req, client_id, client, config, op_store, tokens).await
+            // Routed through the `OpStore` seam (mirrors `handle_refresh_token`
+            // and `handle_token_exchange`) so an integrator can stamp custom
+            // claims onto, or create session state for, tokens issued by the
+            // authorization-code flow, without forking this crate. The
+            // default implementation reproduces the built-in behavior below
+            // via `default_handle_authorization_code`.
+            op_store
+                .handle_authorization_code_grant(req, client_id, client, config, tokens)
+                .await
         }
         "client_credentials" => {
             handle_client_credentials(req, client_id, client, config, tokens, client_cert_der).await
@@ -628,13 +636,28 @@ async fn handle_device_code(
     }
 }
 
+/// The built-in `authorization_code` grant (RFC 6749 §4.1) handling.
+///
+/// This is the default body for
+/// [`crate::store::OpStore::handle_authorization_code_grant`] — split out
+/// as a free function so the trait's default method can call it without
+/// duplicating the logic, while `handle_token` reaches it exclusively
+/// through the trait method (so an override actually takes effect).
+///
+/// `pub` (not `pub(crate)`), mirroring `default_handle_token_exchange`, so
+/// an `OpStore::handle_authorization_code_grant` override outside this
+/// crate can delegate to it and post-process the result — e.g. stamping
+/// extra claims via `TokenManager::issue_user_token_with_extra`, or
+/// creating session state — instead of having to reimplement code
+/// consumption, PKCE verification, and redirect_uri/client_id validation
+/// from scratch.
 #[allow(clippy::too_many_arguments)]
-async fn handle_authorization_code(
+pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
     req: TokenRequest,
     client_id: String,
     client: ClientRegistration,
     config: &OpConfig,
-    op_store: &dyn OpStore,
+    op_store: &S,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     if !client.allows_grant_type(&GrantType::AuthorizationCode) {
@@ -1065,8 +1088,8 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
 
     // Per OIDC Core §12.2, an id_token MAY be re-minted on refresh; a client
     // that never requested `openid` gets none, mirroring how
-    // `handle_authorization_code` gates `issue_id_token` on the same scope
-    // check. Refresh tokens don't carry a `nonce` (only auth codes do,
+    // `default_handle_authorization_code` gates `issue_id_token` on the same
+    // scope check. Refresh tokens don't carry a `nonce` (only auth codes do,
     // reflecting the original `/authorize` request) — Core §12.2 lists
     // `nonce` as OPTIONAL on a refreshed id_token, so omitting it is
     // conformant, not a shortcut.
@@ -1288,7 +1311,7 @@ pub async fn default_handle_token_exchange(
 
     // Per OIDC Core §12.2 / RFC 8693 §2.1, an id_token accompanies the
     // access token when the `openid` scope is in the final granted scope —
-    // mirroring how `handle_authorization_code` and
+    // mirroring how `default_handle_authorization_code` and
     // `default_handle_refresh_token` gate `issue_id_token` on the same
     // check. `requested_token_type: id_token` is a client signal that it
     // wants one, but the crate's `TokenResponse` always carries an
@@ -1501,8 +1524,8 @@ mod tests {
         // `client1` is registered without `authorization_code` in its
         // `grant_types` — unlike `handle_device_code`,
         // `handle_client_credentials`, `default_handle_refresh_token`, and
-        // `default_handle_token_exchange`, `handle_authorization_code` must
-        // reject this the same way, before ever looking up a code.
+        // `default_handle_token_exchange`, `default_handle_authorization_code`
+        // must reject this the same way, before ever looking up a code.
         let req = TokenRequest {
             grant_type: "authorization_code".to_string(),
             code: Some("some-code".to_string()),
@@ -1651,6 +1674,259 @@ mod tests {
         )
         .await;
         assert!(res.is_ok());
+    }
+
+    // --- OpStore::handle_authorization_code_grant override seam (issue #237) ---
+
+    /// A minimal `OpStore` wrapper that delegates every method to an inner
+    /// `OpStore` except `handle_authorization_code_grant`, which it
+    /// overrides with a canned response. Proves the override actually
+    /// reaches the dispatch site in `handle_token`, not just that the trait
+    /// compiles. Mirrors `OverridingRefreshStore` above.
+    struct OverridingAuthorizationCodeStore<Inner> {
+        inner: Inner,
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> crate::client::ClientStore for OverridingAuthorizationCodeStore<Inner> {
+        async fn find_client(
+            &self,
+            client_id: &str,
+        ) -> Result<Option<ClientRegistration>, OpError> {
+            self.inner.find_client(client_id).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> crate::code::AuthorizationCodeStore
+        for OverridingAuthorizationCodeStore<Inner>
+    {
+        async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+            self.inner.store_code(code).await
+        }
+
+        async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
+            self.inner.consume_code(code).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> RefreshTokenStore for OverridingAuthorizationCodeStore<Inner> {
+        async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+            self.inner.store_token(token).await
+        }
+
+        async fn get_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+            self.inner.get_token(token).await
+        }
+
+        async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+            self.inner.revoke_token(token).await
+        }
+
+        async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+            self.inner.consume_token(token).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> crate::device::DeviceCodeStore for OverridingAuthorizationCodeStore<Inner> {
+        async fn store_device_code(
+            &self,
+            session: crate::device::DeviceCodeSession,
+        ) -> Result<(), OpError> {
+            self.inner.store_device_code(session).await
+        }
+
+        async fn get_device_code(
+            &self,
+            device_code: &str,
+        ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+            self.inner.get_device_code(device_code).await
+        }
+
+        async fn get_by_user_code(
+            &self,
+            user_code: &str,
+        ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+            self.inner.get_by_user_code(user_code).await
+        }
+
+        async fn update_device_code(
+            &self,
+            session: crate::device::DeviceCodeSession,
+        ) -> Result<(), OpError> {
+            self.inner.update_device_code(session).await
+        }
+
+        async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+            self.inner.delete_device_code(device_code).await
+        }
+
+        async fn consume_device_code(
+            &self,
+            device_code: &str,
+        ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+            self.inner.consume_device_code(device_code).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<Inner: OpStore> OpStore for OverridingAuthorizationCodeStore<Inner> {
+        async fn handle_authorization_code_grant(
+            &self,
+            _req: TokenRequest,
+            _client_id: String,
+            _client: ClientRegistration,
+            _config: &OpConfig,
+            _tokens: &TokenManager,
+        ) -> Result<TokenResponse, TokenErrorResponse> {
+            Ok(TokenResponse {
+                access_token: "overridden-ac-access-token".to_string(),
+                token_type: "Bearer".to_string(),
+                expires_in: 42,
+                id_token: Some("overridden-ac-id-token".to_string()),
+                refresh_token: Some("overridden-ac-refresh-token".to_string()),
+                scope: Some("overridden-ac-scope".to_string()),
+                issued_token_type: None,
+            })
+        }
+    }
+
+    fn auth_code_test_client() -> ClientRegistration {
+        ClientRegistration {
+            client_id: "client1".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://cb".to_string()],
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
+        }
+    }
+
+    fn auth_code_test_req(code: &str) -> TokenRequest {
+        TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(code.to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_is_overridable_by_op_store() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                auth_code_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let store =
+            OverridingAuthorizationCodeStore {
+                inner:
+                    crate::store::CompositeOpStore::new(
+                        clients,
+                        authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                        authkestra_engine::store::memory::MemoryStore::<RefreshToken>::new(),
+                        authkestra_engine::store::memory::MemoryStore::<
+                            crate::device::DeviceCodeSession,
+                        >::new(),
+                    ),
+            };
+
+        // Deliberately a code no store has ever issued: if dispatch fell
+        // through to the built-in handler instead of the override, this
+        // would fail closed with `invalid_grant`, not succeed.
+        let req = auth_code_test_req("no-such-code");
+
+        let res = handle_token(req, None, &test_config(false), &store, &test_tokens()).await;
+
+        let resp =
+            res.expect("the override should have been invoked instead of the built-in handler");
+        assert_eq!(resp.access_token, "overridden-ac-access-token");
+        assert_eq!(resp.id_token.as_deref(), Some("overridden-ac-id-token"));
+        assert_eq!(
+            resp.refresh_token.as_deref(),
+            Some("overridden-ac-refresh-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_default_behavior_is_unchanged_without_override() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    scopes: vec!["openid".to_string(), "offline_access".to_string()],
+                    ..auth_code_test_client()
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code-default".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "openid offline_access".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: None,
+                code_challenge_method: None,
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        // A store that does NOT override `handle_authorization_code_grant`
+        // — this is the compatibility guarantee: it must behave identically
+        // to before the trait method existed.
+        let res = handle_token(
+            auth_code_test_req("code-default"),
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+            &test_tokens(),
+        )
+        .await;
+
+        let resp = res.unwrap();
+        assert_eq!(resp.scope.as_deref(), Some("openid offline_access"));
+        assert!(resp.id_token.is_some());
+        assert!(resp.refresh_token.is_some());
+        // The code was consumed (single-use) by the exchange above.
+        assert!(codes.consume_code("code-default").await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -3767,7 +4043,7 @@ mod tests {
         assert!(
             resp.id_token.is_some(),
             "openid scope should get an id_token from the token-exchange grant, mirroring \
-             handle_authorization_code and default_handle_refresh_token"
+             default_handle_authorization_code and default_handle_refresh_token"
         );
     }
 
