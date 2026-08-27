@@ -282,10 +282,41 @@ pub fn parse_public_jwk(raw: &Value) -> Result<Jwk, OpError> {
     match &jwk.algorithm {
         AlgorithmParameters::EllipticCurve(_) | AlgorithmParameters::RSA(_) => Ok(jwk),
         AlgorithmParameters::OctetKeyPair(params) => {
-            if params.curve == jsonwebtoken::jwk::EllipticCurve::Ed25519 {
-                authkestra_crypto_util::parse_ed25519_verifying_key_strict(&params.x)
-                    .map_err(|e| OpError::BadJwk(e.to_string()))?;
+            // `crv` is checked first, and non-Ed25519 is a hard refusal rather
+            // than a pass-through (authkestra#256). `jsonwebtoken`'s
+            // `OctetKeyPairParameters::curve` is the *shared* `EllipticCurve`
+            // enum, so `{"kty":"OKP","crv":"P-256"}` deserialises happily into
+            // this variant — while `expected_algorithm` maps every
+            // `OctetKeyPair` to `Algorithm::EdDSA` and
+            // `DecodingKey::from_jwk` sends every `OctetKeyPair` to
+            // `from_ed_components`, both regardless of `crv`. So `x` is
+            // interpreted as Ed25519 bytes whatever `crv` claims, and a
+            // low-order check written as `if crv == Ed25519 { ... }` is
+            // simply skipped by setting `crv` to anything else. Refusing the
+            // key outright is what makes the check below unavoidable.
+            if params.curve != jsonwebtoken::jwk::EllipticCurve::Ed25519 {
+                tracing::warn!(
+                    curve = ?params.curve,
+                    "rejecting OKP jwk: Ed25519 is the only OKP curve this OP verifies, and every \
+                     OKP key is decoded as Ed25519 downstream — accepting another `crv` would let \
+                     a key skip the low-order check while still reaching the Ed25519 verifier \
+                     (authkestra#256)"
+                );
+                return Err(OpError::BadJwk(format!(
+                    "Ed25519 is the only supported OKP curve, got {:?}",
+                    params.curve
+                )));
             }
+
+            authkestra_crypto_util::parse_ed25519_verifying_key_strict(&params.x).map_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    "rejecting OKP jwk at ingest; a low-order point here would let the OP mint an \
+                     attestation for a key no private key exists for (authkestra#256)"
+                );
+                OpError::BadJwk(e.to_string())
+            })?;
+
             Ok(jwk)
         }
         AlgorithmParameters::OctetKey(_) => Err(OpError::BadJwk(
@@ -428,6 +459,26 @@ pub(crate) fn verify_challenge_signature(compact_jws: &str, jwk: &Jwk) -> Result
     }
 
     let algorithm = expected_algorithm(jwk)?;
+
+    // Strict EdDSA gate, ahead of `jsonwebtoken`'s non-strict backend
+    // (authkestra#256). A no-op for non-OKP keys. Runs before `decode` so a
+    // low-order key or a low-order `R` can never satisfy proof of possession;
+    // see `strict_jws`'s module doc for why this gates rather than replaces.
+    if let Err(rejection) = crate::strict_jws::ensure_strict_eddsa_signature(compact_jws, jwk) {
+        return Err(match rejection {
+            // A bad KEY is not a bad signature: surfacing this as
+            // `ChallengeSignatureInvalid` would hide that the key is the defect.
+            crate::strict_jws::StrictEdDsaRejection::Key(msg) => {
+                tracing::warn!(error = %msg, "enrolment challenge key refused before verification");
+                OpError::BadJwk(msg)
+            }
+            crate::strict_jws::StrictEdDsaRejection::Signature(msg) => {
+                tracing::warn!(error = %msg, "enrolment challenge signature failed strict EdDSA verification");
+                OpError::ChallengeSignatureInvalid
+            }
+        });
+    }
+
     let decoding_key = DecodingKey::from_jwk(jwk).map_err(|e| OpError::BadJwk(e.to_string()))?;
 
     let mut validation = Validation::new(algorithm);
