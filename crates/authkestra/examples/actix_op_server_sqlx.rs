@@ -2,10 +2,22 @@
 //!
 //! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Actix.
 //! It uses the batteries-included `SqlxOpStore` for a production-ready relational database schema.
+//!
+//! Unlike `actix_op_server.rs` (which composes four `KvStore`s), `SqlxOpStore`
+//! is a single normalised schema with foreign keys and `ON DELETE CASCADE` —
+//! prefer it for OP data; `SqlKvStore` is deprecated for this purpose.
+//!
+//! ```sh
+//! cargo run -p authkestra --example actix_op_server_sqlx --all-features
+//! ```
+//!
+//! Set `PORT` to bind somewhere other than 8080; `issuer` follows it, because
+//! relying parties resolve `/.well-known/openid-configuration` against the
+//! issuer URL and a mismatch breaks discovery.
 use actix_web::{App, HttpServer};
 use authkestra_actix::{ActixState, OpExt};
-use authkestra_engine::flow::Engine;
-use authkestra_engine::TokenManager;
+use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::{AkEngine, Engine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::config::OpConfig;
 use authkestra_op::sqlx_store::SqlxOpStore;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -14,7 +26,7 @@ use std::sync::Arc;
 #[derive(Clone, ActixState)]
 struct AppState {
     #[authkestra(engine)]
-    auth: authkestra_engine::AkEngine,
+    auth: AkEngine,
 
     #[authkestra(store)]
     op_store: Arc<dyn authkestra_op::OpStore>,
@@ -25,9 +37,22 @@ struct AppState {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // `RUST_LOG=authkestra=debug` surfaces the engine's own instrumentation.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
+    let port = port_from_env();
+    let issuer = format!("http://localhost:{port}");
+
+    // The token manager's `iss` claim must equal `OpConfig::issuer` below, or
+    // relying parties will reject every id_token this OP mints.
     let token_manager = Arc::new(TokenManager::new(
         b"my-super-secret-key-that-is-32bytes-long",
-        Some("issuer".to_string()),
+        Some(issuer.clone()),
     ));
 
     // Create a SQLite connection pool (in-memory for the example, but can be a file path)
@@ -43,7 +68,10 @@ async fn main() -> std::io::Result<()> {
     // Automatically run schema migrations to create the required tables
     sqlx_store.migrate().await.unwrap();
 
-    // Seed a dummy OAuth client directly using sqlx
+    // Seed a demo OAuth client. `ClientStore` is read-only by design —
+    // registration is the deployment's business — so the example writes the
+    // row directly. `redirect_uris` is the *relying party's* callback, not
+    // this server's.
     sqlx::query(
         "INSERT INTO authkestra_oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
          VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -51,7 +79,7 @@ async fn main() -> std::io::Result<()> {
     .bind("test-client")
     .bind(None::<String>)
     .bind(true)
-    .bind(sqlx::types::Json(vec!["http://localhost:3000/callback"]))
+    .bind(sqlx::types::Json(vec!["http://localhost:3000/auth/callback/github"]))
     .bind(sqlx::types::Json(vec!["authorization_code"]))
     .bind(sqlx::types::Json(vec!["openid", "profile"]))
     .bind(sqlx::types::Json(Vec::<String>::new()))
@@ -62,7 +90,7 @@ async fn main() -> std::io::Result<()> {
     let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(sqlx_store);
 
     let config = OpConfig {
-        issuer: "http://localhost:8080".to_string(),
+        issuer: issuer.clone(),
         scopes_supported: vec![
             "openid".to_string(),
             "profile".to_string(),
@@ -77,11 +105,13 @@ async fn main() -> std::io::Result<()> {
         token_exchange_enabled: true,
     };
 
+    // Only the OP data lives in SQL here; the end-user login session can use
+    // any `SessionStore`, so the example keeps that part dependency-free.
+    let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::new());
+
     let auth = Engine::builder()
-        .session_store(Arc::new(
-            authkestra_engine::store::memory::MemoryStore::new(),
-        ))
-        .session_config(authkestra_engine::SessionConfig {
+        .session_store(session_store)
+        .session_config(SessionConfig {
             cookie_name: "authkestra_sid".to_string(),
             ..Default::default()
         })
@@ -93,7 +123,10 @@ async fn main() -> std::io::Result<()> {
         op_store,
         config,
     };
-    println!("🚀 Actix OP Server running on http://localhost:8080");
+
+    tracing::info!(%issuer, "Actix OP server (SqlxOpStore) listening on {issuer}");
+    tracing::info!("discovery: {issuer}/.well-known/openid-configuration");
+
     HttpServer::new(move || {
         let state = app_state.clone();
         let config_state = state.clone();
@@ -102,7 +135,16 @@ async fn main() -> std::io::Result<()> {
             .configure(move |cfg| config_state.configure_authkestra(cfg))
             .service(state.op_actix_scope())
     })
-    .bind("0.0.0.0:8080")?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
+}
+
+/// Bind port, overridable via `PORT`. Defaults to 8080 so an OP and a relying
+/// party (which the other examples run on 3000) can be started side by side.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8080)
 }

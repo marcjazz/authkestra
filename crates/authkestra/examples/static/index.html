@@ -19,10 +19,30 @@
     </div>
 
     <script>
+        // The login route is `/auth/login/{provider}`, so the page asks the
+        // example which providers its engine actually has rather than
+        // hardcoding one. Examples that register none (e.g. *_basic_setup)
+        // legitimately have nothing to link to.
+        // Returns `null` when the endpoint is absent, as opposed to `[]` for an
+        // example that genuinely registers no providers. Several examples serve
+        // this page without mounting `/api/providers`; collapsing both cases to
+        // `[]` made the page assert "registers no OAuth providers", which it
+        // cannot actually know. Raised in review of #194.
+        async function fetchProviders() {
+            try {
+                const res = await fetch('/api/providers');
+                if (!res.ok) return null;
+                const body = await res.json();
+                return body.providers || [];
+            } catch (err) {
+                return null;
+            }
+        }
+
         async function checkStatus() {
+            const app = document.getElementById('app');
             try {
                 const res = await fetch('/api/user');
-                const app = document.getElementById('app');
                 if (res.ok) {
                     const user = await res.json();
                     app.innerHTML = `
@@ -32,17 +52,27 @@
                         <pre>${JSON.stringify(user, null, 2)}</pre>
                         <a href="/auth/logout" class="btn">Logout</a>
                     `;
-                } else {
-                    app.innerHTML = `
-                        <h2>Not Authenticated</h2>
-                        <p>Please log in to continue.</p>
-                        <div id="login-methods">
-                             <a href="/auth/login" class="btn">Login</a>
-                        </div>
-                    `;
+                    return;
                 }
+
+                const providers = await fetchProviders();
+                const buttons = (providers || [])
+                    .map(p => `<a href="/auth/login/${p}" class="btn">Login with ${p}</a>`)
+                    .join(' ');
+                const empty = providers === null
+                    ? '<p><em>This example does not expose <code>/api/providers</code>, so the ' +
+                      'available providers are unknown.</em></p>'
+                    : '<p><em>This example registers no OAuth providers.</em></p>';
+                app.innerHTML = `
+                    <h2>Not Authenticated</h2>
+                    <p>Please log in to continue.</p>
+                    <div id="login-methods">
+                        ${buttons || empty}
+                    </div>
+                `;
             } catch (err) {
                 console.error(err);
+                app.innerHTML = '<h2>Error</h2><p>Could not reach the example server.</p>';
             }
         }
         checkStatus();

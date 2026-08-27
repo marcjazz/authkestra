@@ -44,6 +44,7 @@ p256 = { version = "0.13", features = ["pem", "ecdsa", "jwk"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rand = "0.8"
 sha2 = "0.10"
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1.91"
 webauthn-rs = "0.5.0"

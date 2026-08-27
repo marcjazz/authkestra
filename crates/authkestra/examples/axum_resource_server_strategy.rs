@@ -1,7 +1,17 @@
-//! # Axum Resource Server Strategy Example
+//! # Axum resource server — `Guard` strategy (preferred)
 //!
-//! This example demonstrates how to use the Resource Server strategy with `Guard`
-//! and the `Auth` extractor to protect an API.
+//! Validates bearer tokens issued by *someone else* (any OIDC provider). This
+//! is the recommended shape: a [`Guard`] owns one or more strategies, and the
+//! `Auth<T>` extractor asks the guard rather than reaching for JWT internals.
+//!
+//! `axum_resource_server.rs` shows the lower-level alternative (wiring
+//! `JwksCache` and `jsonwebtoken::Validation` yourself); prefer this one unless
+//! you need that control.
+//!
+//! ```sh
+//! OIDC_ISSUER=https://accounts.google.com \
+//!   cargo run -p authkestra --example axum_resource_server_strategy --all-features
+//! ```
 
 use authkestra_axum::{Auth, AxumState};
 use authkestra_resource::{jwt::JwtStrategy, jwt::ValidationConfig, Guard};
@@ -31,6 +41,14 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `RUST_LOG=authkestra=debug` surfaces the engine's own instrumentation.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
     dotenvy::dotenv().ok();
 
     // 1. Configure the JWT Strategy
@@ -57,18 +75,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/protected", get(protected))
         .with_state(state);
 
-    let port = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(3000);
-
-    let addr = format!("0.0.0.0:{}", port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("📡 Resource Server Strategy listening on http://{addr}");
+    let port = port_from_env();
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
+    tracing::info!(%port, "Axum resource server (Guard strategy) listening on http://localhost:{port}");
 
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Bind port, overridable via `PORT` so several examples can run without
+/// colliding on 3000.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000)
 }
 
 async fn index() -> impl IntoResponse {
@@ -78,6 +100,7 @@ async fn index() -> impl IntoResponse {
 /// Protected endpoint using the `Auth` extractor.
 /// This extractor uses the `Guard` from the state to validate the request.
 async fn protected(Auth(user): Auth<UserIdentity>) -> impl IntoResponse {
+    tracing::debug!(sub = %user.sub, "bearer token accepted by guard");
     Json(json!({
         "message": "Access granted via Resource Server Strategy!",
         "user": user,

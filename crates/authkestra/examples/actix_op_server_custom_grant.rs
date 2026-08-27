@@ -193,9 +193,22 @@ impl<
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // `RUST_LOG=authkestra=debug` surfaces the engine's own instrumentation.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
+    let port = port_from_env();
+    let issuer = format!("http://localhost:{port}");
+
+    // The token manager's `iss` claim must equal `OpConfig::issuer` below, or
+    // relying parties will reject every id_token this OP mints.
     let token_manager = Arc::new(TokenManager::new(
         b"my-super-secret-key-that-is-32bytes-long",
-        Some("issuer".to_string()),
+        Some(issuer.clone()),
     ));
 
     let clients = MemoryStore::new();
@@ -205,7 +218,7 @@ async fn main() -> std::io::Result<()> {
             ClientRegistration {
                 client_id: "test-client".to_string(),
                 client_secret_hash: None,
-                redirect_uris: vec!["http://localhost:3000/callback".to_string()],
+                redirect_uris: vec!["http://localhost:3000/auth/callback/github".to_string()],
                 require_pkce: true,
                 scopes: vec!["openid".to_string(), "profile".to_string()],
                 grant_types: vec![
@@ -235,7 +248,7 @@ async fn main() -> std::io::Result<()> {
     });
 
     let config = OpConfig {
-        issuer: "http://localhost:8080".to_string(),
+        issuer: issuer.clone(),
         scopes_supported: vec![
             "openid".to_string(),
             "profile".to_string(),
@@ -269,7 +282,8 @@ async fn main() -> std::io::Result<()> {
         op_store,
         config,
     };
-    println!("🚀 Actix OP Server running on http://localhost:8080");
+    tracing::info!(%issuer, "Actix OP server (custom grant) listening on {issuer}");
+    tracing::info!("custom grant_type: urn:example:custom");
     HttpServer::new(move || {
         let state = app_state.clone();
         let config_state = state.clone();
@@ -278,7 +292,16 @@ async fn main() -> std::io::Result<()> {
             .configure(move |cfg| config_state.configure_authkestra(cfg))
             .service(state.op_actix_scope())
     })
-    .bind("0.0.0.0:8080")?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
+}
+
+/// Bind port, overridable via `PORT`. Defaults to 8080 so an OP and a relying
+/// party (which the other examples run on 3000) can be started side by side.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8080)
 }
