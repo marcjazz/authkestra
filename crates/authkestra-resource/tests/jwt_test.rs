@@ -2,6 +2,7 @@
 //! - multi-value audience support on `ValidationConfig` / `ValidationConfigBuilder`
 //! - backward compatibility of the single-value `.audience(...)` builder method
 //! - opt-in strict `kid` enforcement on `JwksCache`
+//! - per-issuer JWKS resolution for a multi-issuer resource server (issue #243)
 //!
 //! JWKS is served via a local `wiremock` server and tokens are signed with
 //! freshly generated RSA keys so the full offline-validation path (JWKS fetch,
@@ -11,15 +12,17 @@ use authkestra_engine::strategy::AuthenticationStrategy;
 use authkestra_engine::token::cert_binding::{x5t_s256_thumbprint, ClientCertificateDer};
 use authkestra_engine::token::jwk::Jwk;
 use authkestra_resource::jwt::{
-    validate_jwt_generic, JwksCache, JwtStrategy, ValidationConfig, ValidationError,
+    validate_jwt_generic, validate_jwt_with_resolver, IssuerTrustMap, JwksCache, JwtStrategy,
+    ValidationConfig, ValidationError,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use http::{header::AUTHORIZATION, Request};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header, Validation};
+use jsonwebtoken::{encode, errors::ErrorKind, Algorithm, EncodingKey, Header, Validation};
 use rsa::pkcs8::{EncodePrivateKey, LineEnding};
 use rsa::traits::PublicKeyParts;
 use rsa::RsaPrivateKey;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -482,4 +485,352 @@ async fn cert_binding_is_not_enforced_when_require_cert_binding_is_false() {
             "without require_cert_binding, a certificate-bound token is still a valid bearer token",
         );
     assert_eq!(result.sub, "service-a");
+}
+
+// --- Multi-issuer JWKS resolution (issue #243) ---------------------------
+//
+// A single resource verifier trusting several issuers at once. The security
+// property under test is that the token's `iss` selects *which* JWKS verifies
+// it, with no default arm: an `iss` outside the trust map is rejected rather
+// than falling through to some other issuer's keys.
+
+const ISS_A: &str = "https://issuer-a.example";
+const ISS_B: &str = "https://issuer-b.example";
+const ISS_UNTRUSTED: &str = "https://issuer-c.example";
+
+/// Claims carrying an `iss`, kept separate from `TestClaims` so the
+/// single-issuer tests above stay exactly as they were.
+#[derive(Debug, Serialize, Deserialize)]
+struct IssuedClaims {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    iss: Option<String>,
+    sub: String,
+    exp: usize,
+}
+
+fn issued_claims(iss: Option<&str>, sub: &str) -> IssuedClaims {
+    IssuedClaims {
+        iss: iss.map(|s| s.to_string()),
+        sub: sub.to_string(),
+        exp: future_exp(),
+    }
+}
+
+fn cache_for(server: &MockServer) -> Arc<JwksCache> {
+    Arc::new(JwksCache::new(jwks_url(server), Duration::from_secs(3600)))
+}
+
+/// A `Validation` matching what `JwtStrategy` derives for a trust map, for the
+/// tests that exercise `validate_jwt_with_resolver` directly.
+fn multi_issuer_validation(accepted: &[&str]) -> Validation {
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(accepted);
+    validation.required_spec_claims.insert("iss".to_string());
+    validation.validate_aud = false;
+    validation
+}
+
+#[tokio::test]
+async fn multi_issuer_verifies_each_token_against_its_own_issuers_jwks() {
+    let key_a = generate_rsa_key(Some("a-key"));
+    let key_b = generate_rsa_key(Some("b-key"));
+    let server_a = start_jwks_server(vec![key_a.jwk.clone()]).await;
+    let server_b = start_jwks_server(vec![key_b.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .trusted_issuer(ISS_A, jwks_url(&server_a))
+        .trusted_issuer(ISS_B, jwks_url(&server_b))
+        .build();
+    assert_eq!(config.trusted_issuers.len(), 2);
+    let strategy: JwtStrategy<IssuedClaims> = JwtStrategy::new(config);
+
+    for (iss, key, kid) in [
+        (ISS_A, &key_a, "a-key"),
+        // The point of the test: issuer B's token is verified with keys fetched
+        // from B's endpoint, which A's JWKS does not contain.
+        (ISS_B, &key_b, "b-key"),
+    ] {
+        let token = sign_token(
+            &key.encoding_key,
+            Some(kid),
+            &issued_claims(Some(iss), "user-1"),
+        );
+        let identity = strategy
+            .authenticate(&bearer_request_parts(&token, None))
+            .await
+            .unwrap_or_else(|e| panic!("authenticate should not error for {iss}: {e}"))
+            .unwrap_or_else(|| panic!("a valid token from trusted issuer {iss} must be accepted"));
+        assert_eq!(identity.iss.as_deref(), Some(iss));
+    }
+}
+
+#[tokio::test]
+async fn multi_issuer_rejects_a_token_whose_issuer_is_not_in_the_trust_map() {
+    let key_a = generate_rsa_key(Some("a-key"));
+    let key_b = generate_rsa_key(Some("b-key"));
+    let server_a = start_jwks_server(vec![key_a.jwk.clone()]).await;
+    let server_b = start_jwks_server(vec![key_b.jwk.clone()]).await;
+
+    // Signed by a key that IS published on a trusted endpoint, so the only
+    // reason to reject is the issuer name itself.
+    let token = sign_token(
+        &key_a.encoding_key,
+        Some("a-key"),
+        &issued_claims(Some(ISS_UNTRUSTED), "user-1"),
+    );
+
+    let trust_map = IssuerTrustMap::new()
+        .with_issuer(ISS_A, cache_for(&server_a))
+        .with_issuer(ISS_B, cache_for(&server_b));
+
+    // Rejected *for being untrusted*, not incidentally by signature or audience.
+    let err = validate_jwt_with_resolver::<IssuedClaims>(
+        &token,
+        &trust_map,
+        &multi_issuer_validation(&[ISS_A, ISS_B]),
+    )
+    .await
+    .expect_err("a token from an issuer outside the trust map must be rejected");
+    assert!(
+        matches!(&err, ValidationError::UntrustedIssuer(iss) if iss == ISS_UNTRUSTED),
+        "expected UntrustedIssuer({ISS_UNTRUSTED}), got {err:?}"
+    );
+
+    // And the same through the strategy, which must not silently accept it.
+    let config = ValidationConfig::builder()
+        .trusted_issuer(ISS_A, jwks_url(&server_a))
+        .trusted_issuer(ISS_B, jwks_url(&server_b))
+        .build();
+    let strategy: JwtStrategy<IssuedClaims> = JwtStrategy::new(config);
+    let err = strategy
+        .authenticate(&bearer_request_parts(&token, None))
+        .await
+        .expect_err("an untrusted issuer must surface as an error, not as an identity");
+    assert!(
+        err.to_string()
+            .contains("is not in the configured trust map"),
+        "rejection must name the untrusted issuer as the reason, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn multi_issuer_never_falls_back_to_the_single_issuer_jwks_url() {
+    // `jwks_url` is set but no `issuer` names it, so it cannot be folded into
+    // the trust map. It must NOT become a default arm for unknown issuers.
+    let key_a = generate_rsa_key(Some("a-key"));
+    let key_b = generate_rsa_key(Some("b-key"));
+    let server_a = start_jwks_server(vec![key_a.jwk.clone()]).await;
+    let server_b = start_jwks_server(vec![key_b.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server_a))
+        .trusted_issuer(ISS_B, jwks_url(&server_b))
+        .build();
+    let strategy: JwtStrategy<IssuedClaims> = JwtStrategy::new(config);
+
+    // Signed by the key published at the dangling `jwks_url`, claiming an
+    // issuer nobody trusts. If `jwks_url` were used as a fallback this would
+    // verify — that is precisely the issuer-confusion vulnerability.
+    let token = sign_token(
+        &key_a.encoding_key,
+        Some("a-key"),
+        &issued_claims(Some(ISS_UNTRUSTED), "user-1"),
+    );
+    let err = strategy
+        .authenticate(&bearer_request_parts(&token, None))
+        .await
+        .expect_err("an unnamed jwks_url must never verify a token from an untrusted issuer");
+    assert!(
+        err.to_string()
+            .contains("is not in the configured trust map"),
+        "expected an untrusted-issuer rejection, got: {err}"
+    );
+
+    // The trust map itself still works.
+    let token = sign_token(
+        &key_b.encoding_key,
+        Some("b-key"),
+        &issued_claims(Some(ISS_B), "user-1"),
+    );
+    assert!(strategy
+        .authenticate(&bearer_request_parts(&token, None))
+        .await
+        .expect("authenticate should not error")
+        .is_some());
+}
+
+#[tokio::test]
+async fn multi_issuer_rejects_a_token_claiming_issuer_a_but_signed_with_issuer_bs_key() {
+    // Both issuers publish a key under the SAME `kid`, so `kid` lookup cannot be
+    // what saves us: the resolver has to pick A's JWKS from `iss`, and the
+    // signature then has to fail against A's key.
+    let key_a = generate_rsa_key(Some("shared-kid"));
+    let key_b = generate_rsa_key(Some("shared-kid"));
+    let server_a = start_jwks_server(vec![key_a.jwk.clone()]).await;
+    let server_b = start_jwks_server(vec![key_b.jwk.clone()]).await;
+
+    let token = sign_token(
+        &key_b.encoding_key,
+        Some("shared-kid"),
+        &issued_claims(Some(ISS_A), "attacker"),
+    );
+
+    let trust_map = IssuerTrustMap::new()
+        .with_issuer(ISS_A, cache_for(&server_a))
+        .with_issuer(ISS_B, cache_for(&server_b));
+
+    let err = validate_jwt_with_resolver::<IssuedClaims>(
+        &token,
+        &trust_map,
+        &multi_issuer_validation(&[ISS_A, ISS_B]),
+    )
+    .await
+    .expect_err("a token claiming issuer A but signed with B's key must be rejected");
+    match err {
+        ValidationError::Jwt(e) => assert!(
+            matches!(e.kind(), ErrorKind::InvalidSignature),
+            "expected an invalid-signature rejection, got {:?}",
+            e.kind()
+        ),
+        other => panic!("expected a signature failure against issuer A's key, got {other:?}"),
+    }
+
+    // Same token, same trust map, through the strategy: no identity.
+    let config = ValidationConfig::builder()
+        .trusted_issuer(ISS_A, jwks_url(&server_a))
+        .trusted_issuer(ISS_B, jwks_url(&server_b))
+        .build();
+    let strategy: JwtStrategy<IssuedClaims> = JwtStrategy::new(config);
+    assert!(
+        strategy
+            .authenticate(&bearer_request_parts(&token, None))
+            .await
+            .expect("authenticate should not error")
+            .is_none(),
+        "cross-issuer key confusion must never yield an identity"
+    );
+}
+
+#[tokio::test]
+async fn multi_issuer_rejects_a_token_with_no_issuer_claim() {
+    let key_a = generate_rsa_key(Some("a-key"));
+    let server_a = start_jwks_server(vec![key_a.jwk.clone()]).await;
+
+    // No `iss` at all: nothing names a key, and there is no default.
+    let token = sign_token(
+        &key_a.encoding_key,
+        Some("a-key"),
+        &issued_claims(None, "user-1"),
+    );
+
+    let trust_map = IssuerTrustMap::new().with_issuer(ISS_A, cache_for(&server_a));
+    let err = validate_jwt_with_resolver::<IssuedClaims>(
+        &token,
+        &trust_map,
+        &multi_issuer_validation(&[ISS_A]),
+    )
+    .await
+    .expect_err("a token with no iss must be rejected in multi-issuer mode");
+    assert!(
+        matches!(err, ValidationError::MissingIssuer),
+        "expected MissingIssuer, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_single_issuer_pair_is_folded_into_the_trust_map_as_one_more_entry() {
+    let key_a = generate_rsa_key(Some("a-key"));
+    let key_b = generate_rsa_key(Some("b-key"));
+    let server_a = start_jwks_server(vec![key_a.jwk.clone()]).await;
+    let server_b = start_jwks_server(vec![key_b.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .issuer(ISS_A)
+        .jwks_url(jwks_url(&server_a))
+        .trusted_issuer(ISS_B, jwks_url(&server_b))
+        .build();
+    let strategy: JwtStrategy<IssuedClaims> = JwtStrategy::new(config);
+
+    for (iss, key, kid) in [(ISS_A, &key_a, "a-key"), (ISS_B, &key_b, "b-key")] {
+        let token = sign_token(
+            &key.encoding_key,
+            Some(kid),
+            &issued_claims(Some(iss), "user-1"),
+        );
+        assert!(
+            strategy
+                .authenticate(&bearer_request_parts(&token, None))
+                .await
+                .unwrap_or_else(|e| panic!("authenticate should not error for {iss}: {e}"))
+                .is_some(),
+            "the issuer/jwks_url pair must keep working alongside a trust map"
+        );
+    }
+}
+
+#[tokio::test]
+async fn single_issuer_configuration_is_unchanged_by_multi_issuer_support() {
+    // Regression guard: with no trust map this is exactly the pre-#243
+    // verifier — one JWKS, one accepted issuer.
+    let key_a = generate_rsa_key(Some("a-key"));
+    let server_a = start_jwks_server(vec![key_a.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .issuer(ISS_A)
+        .jwks_url(jwks_url(&server_a))
+        .build();
+    assert!(
+        config.trusted_issuers.is_empty(),
+        "no trust map may be configured unless the caller asked for one"
+    );
+    let strategy: JwtStrategy<IssuedClaims> = JwtStrategy::new(config);
+
+    let token = sign_token(
+        &key_a.encoding_key,
+        Some("a-key"),
+        &issued_claims(Some(ISS_A), "user-1"),
+    );
+    let identity = strategy
+        .authenticate(&bearer_request_parts(&token, None))
+        .await
+        .expect("authenticate should not error")
+        .expect("a token from the configured issuer must still be accepted");
+    assert_eq!(identity.sub, "user-1");
+
+    // A different `iss`, signed by the very key this config trusts, is still
+    // rejected by `Validation` — and still as `Ok(None)`, not an error, exactly
+    // as before.
+    let token = sign_token(
+        &key_a.encoding_key,
+        Some("a-key"),
+        &issued_claims(Some(ISS_UNTRUSTED), "user-1"),
+    );
+    assert!(
+        strategy
+            .authenticate(&bearer_request_parts(&token, None))
+            .await
+            .expect("authenticate should not error")
+            .is_none(),
+        "a mismatched iss must still be rejected in single-issuer mode"
+    );
+
+    // Pre-existing `jsonwebtoken` semantics, unchanged here and pinned so that
+    // changing it later is a deliberate act: `iss` is only checked when the
+    // claim is present, so a token omitting it entirely is still accepted in
+    // single-issuer mode. Multi-issuer mode does NOT inherit this (see
+    // `multi_issuer_rejects_a_token_with_no_issuer_claim`), because there `iss`
+    // is added to `required_spec_claims`.
+    let token = sign_token(
+        &key_a.encoding_key,
+        Some("a-key"),
+        &issued_claims(None, "user-1"),
+    );
+    assert!(
+        strategy
+            .authenticate(&bearer_request_parts(&token, None))
+            .await
+            .expect("authenticate should not error")
+            .is_some(),
+        "single-issuer behaviour must be unchanged, including this pre-existing laxity"
+    );
 }

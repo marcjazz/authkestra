@@ -7,9 +7,12 @@ use authkestra_engine::{
         Claims,
     },
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use http::request::Parts;
 use jsonwebtoken::{decode, decode_header, Algorithm, Validation};
 use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -31,6 +34,12 @@ pub enum ValidationError {
         "Token is missing a 'kid' header, which is required by this JWKS cache's strict validation policy"
     )]
     MissingKid,
+    #[error("Token issuer {0:?} is not in the configured trust map; no JWKS is trusted for it")]
+    UntrustedIssuer(String),
+    #[error(
+        "Token carries no string 'iss' claim, which is required to resolve a signing key when more than one issuer is trusted"
+    )]
+    MissingIssuer,
     #[error("PASETO error: {0}")]
     Paseto(String),
     #[error("Discovery error: {0}")]
@@ -125,6 +134,126 @@ impl JwksCache {
     }
 }
 
+/// Resolves *which* JWKS a token must be verified against, from the token's own
+/// `iss` claim.
+///
+/// This is the seam that lets one resource server trust several issuers (issue
+/// #243). `JwtStrategy` uses a built-in implementation for the two configured
+/// shapes — [`SingleJwksResolver`] for the classic one-issuer/one-JWKS setup and
+/// [`IssuerTrustMap`] for a fixed set of issuers — and
+/// [`JwtStrategy::with_resolver`] accepts any other implementation, which is
+/// what issuers discovered at runtime (per-tenant, from a registry) need.
+///
+/// # Security contract for implementors
+///
+/// An implementation MUST return an error for an issuer it does not recognise.
+/// It must **never** fall back to some default JWKS for an unknown `iss`: that
+/// turns multi-issuer support into issuer confusion, because any issuer whose
+/// keys the fallback endpoint publishes could then mint tokens claiming to come
+/// from any other issuer.
+///
+/// Returning `Arc<JwksCache>` rather than a borrow is deliberate: a dynamic
+/// resolver needs to hand out caches it created and stored behind its own lock,
+/// which it cannot do by reference.
+#[async_trait]
+pub trait JwksResolver: Send + Sync {
+    /// Resolve the JWKS cache for `issuer`, the token's *not yet verified* `iss`
+    /// claim (`None` when the token carries no usable string `iss`).
+    async fn resolve(&self, issuer: Option<&str>) -> Result<Arc<JwksCache>, ValidationError>;
+}
+
+/// A [`JwksResolver`] that always resolves to a single JWKS, whatever the token
+/// claims as its `iss`.
+///
+/// This is the pre-#243 behaviour and what `JwtStrategy::new` uses when no trust
+/// map is configured: enforcing `iss` (if configured at all) is left entirely to
+/// `Validation::set_issuer`, exactly as before. It is only safe *because* there
+/// is one endpoint and therefore nothing to confuse — do not reuse it as the
+/// default arm of a multi-issuer resolver.
+pub struct SingleJwksResolver {
+    cache: Arc<JwksCache>,
+}
+
+impl SingleJwksResolver {
+    /// Wrap an existing cache as a resolver.
+    pub fn new(cache: Arc<JwksCache>) -> Self {
+        Self { cache }
+    }
+}
+
+#[async_trait]
+impl JwksResolver for SingleJwksResolver {
+    async fn resolve(&self, _issuer: Option<&str>) -> Result<Arc<JwksCache>, ValidationError> {
+        Ok(self.cache.clone())
+    }
+}
+
+/// A fixed trust map of `iss` -> [`JwksCache`], for a resource server that
+/// accepts tokens from a known set of issuers.
+///
+/// Lookup is exact-match on the `iss` string and has **no default arm**: an
+/// unknown issuer yields [`ValidationError::UntrustedIssuer`] and a token with
+/// no `iss` yields [`ValidationError::MissingIssuer`]. Each issuer keeps its own
+/// cache, so JWKS fetching, TTL and rotation-triggered refresh stay per-endpoint
+/// while remaining managed by this crate rather than duplicated by the caller.
+///
+/// A `BTreeMap` (rather than a `HashMap`) is used so the derived accepted-issuer
+/// list handed to `Validation::set_issuer` — and anything logged from it — has a
+/// stable order, which keeps failures reproducible.
+#[derive(Default)]
+pub struct IssuerTrustMap {
+    caches: BTreeMap<String, Arc<JwksCache>>,
+}
+
+impl IssuerTrustMap {
+    /// Create an empty trust map. An empty map trusts nobody and rejects every
+    /// token.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Trust `issuer`, verifying its tokens against `cache`.
+    pub fn with_issuer(mut self, issuer: impl Into<String>, cache: Arc<JwksCache>) -> Self {
+        self.caches.insert(issuer.into(), cache);
+        self
+    }
+
+    /// The issuers this map trusts, in sorted order.
+    pub fn issuers(&self) -> impl Iterator<Item = &str> {
+        self.caches.keys().map(String::as_str)
+    }
+}
+
+impl FromIterator<(String, Arc<JwksCache>)> for IssuerTrustMap {
+    fn from_iter<T: IntoIterator<Item = (String, Arc<JwksCache>)>>(iter: T) -> Self {
+        Self {
+            caches: iter.into_iter().collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl JwksResolver for IssuerTrustMap {
+    async fn resolve(&self, issuer: Option<&str>) -> Result<Arc<JwksCache>, ValidationError> {
+        let Some(issuer) = issuer else {
+            tracing::warn!("rejecting token with no 'iss' claim: cannot select a signing key");
+            return Err(ValidationError::MissingIssuer);
+        };
+
+        match self.caches.get(issuer) {
+            Some(cache) => {
+                tracing::debug!(issuer, "resolved JWKS for token issuer");
+                Ok(cache.clone())
+            }
+            None => {
+                // Deliberately no fallback: see the `JwksResolver` security contract.
+                tracing::warn!(issuer, "rejecting token from an issuer that is not trusted");
+                Err(ValidationError::UntrustedIssuer(issuer.to_string()))
+            }
+        }
+    }
+}
+
 /// A builder for configuring offline JWT validation.
 /// Configuration for JWT validation.
 pub struct ValidationConfig {
@@ -143,6 +272,12 @@ pub struct ValidationConfig {
     /// bearer token, same as before this option existed. See
     /// [`JwtStrategy`] and issue #224.
     pub require_cert_binding: bool,
+    /// Trust map of `iss` -> JWKS endpoint, for a resource server that accepts
+    /// tokens from several issuers. Empty by default, which keeps the
+    /// single-issuer `jwks_url` path unchanged. When non-empty, an `iss` absent
+    /// from this map is rejected outright and never falls back to `jwks_url`.
+    /// See [`IssuerTrustMap`] and issue #243.
+    pub trusted_issuers: BTreeMap<String, String>,
 }
 
 impl ValidationConfig {
@@ -162,10 +297,15 @@ pub struct ValidationConfigBuilder {
     algorithms: Vec<Algorithm>,
     require_kid: bool,
     require_cert_binding: bool,
+    trusted_issuers: BTreeMap<String, String>,
 }
 
 impl ValidationConfigBuilder {
     /// Set the JWKS URL.
+    ///
+    /// Required unless at least one [`trusted_issuer`](Self::trusted_issuer) is
+    /// configured, in which case each issuer brings its own endpoint and this
+    /// one applies only to the issuer named by [`issuer`](Self::issuer).
     pub fn jwks_url(mut self, jwks_url: impl Into<String>) -> Self {
         self.jwks_url = Some(jwks_url.into());
         self
@@ -177,9 +317,46 @@ impl ValidationConfigBuilder {
         self
     }
 
-    /// Set the expected issuer.
+    /// Set the expected issuer for the single JWKS set with
+    /// [`jwks_url`](Self::jwks_url).
+    ///
+    /// This is the one-issuer form and is unchanged. Combined with
+    /// [`trusted_issuer`](Self::trusted_issuer) entries it simply becomes one
+    /// more entry of the trust map (`issuer` -> `jwks_url`).
     pub fn issuer(mut self, issuer: impl Into<String>) -> Self {
         self.issuer = Some(issuer.into());
+        self
+    }
+
+    /// Trust `issuer` and verify its tokens against the JWKS published at
+    /// `jwks_url`. May be called several times to trust several issuers; a
+    /// repeated issuer replaces its previous endpoint.
+    ///
+    /// Once any entry is present the verifier is in multi-issuer mode: the
+    /// token's `iss` claim selects the JWKS, an `iss` outside this map is
+    /// rejected with [`ValidationError::UntrustedIssuer`], and a token with no
+    /// `iss` at all is rejected with [`ValidationError::MissingIssuer`]. There
+    /// is deliberately no fallback endpoint — see [`JwksResolver`].
+    pub fn trusted_issuer(
+        mut self,
+        issuer: impl Into<String>,
+        jwks_url: impl Into<String>,
+    ) -> Self {
+        self.trusted_issuers.insert(issuer.into(), jwks_url.into());
+        self
+    }
+
+    /// Trust several `(issuer, jwks_url)` pairs at once. Equivalent to calling
+    /// [`trusted_issuer`](Self::trusted_issuer) for each pair.
+    pub fn trusted_issuers(
+        mut self,
+        entries: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.trusted_issuers.extend(
+            entries
+                .into_iter()
+                .map(|(issuer, url)| (issuer.into(), url.into())),
+        );
         self
     }
 
@@ -221,11 +398,28 @@ impl ValidationConfigBuilder {
     }
 
     /// Build a `ValidationConfig`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if neither a [`jwks_url`](Self::jwks_url) nor any
+    /// [`trusted_issuer`](Self::trusted_issuer) was set, since there would then
+    /// be no key material at all. A trust-map-only config leaves `jwks_url`
+    /// empty; an empty `jwks_url` is never fetched from, it just means "no
+    /// single-issuer endpoint".
     pub fn build(self) -> ValidationConfig {
+        let jwks_url = match self.jwks_url {
+            Some(jwks_url) => jwks_url,
+            None => {
+                assert!(
+                    !self.trusted_issuers.is_empty(),
+                    "JWKS URL must be set for ValidationConfig (or at least one trusted_issuer)"
+                );
+                String::new()
+            }
+        };
+
         ValidationConfig {
-            jwks_url: self
-                .jwks_url
-                .expect("JWKS URL must be set for ValidationConfig"),
+            jwks_url,
             refresh_interval: self
                 .refresh_interval
                 .unwrap_or_else(|| Duration::from_secs(3600)),
@@ -238,13 +432,14 @@ impl ValidationConfigBuilder {
             },
             require_kid: self.require_kid,
             require_cert_binding: self.require_cert_binding,
+            trusted_issuers: self.trusted_issuers,
         }
     }
 }
 
 /// A JWT authentication strategy that performs offline JWT validation using JWKS.
 pub struct JwtStrategy<I> {
-    cache: JwksCache,
+    resolver: Box<dyn JwksResolver>,
     validation: Validation,
     require_cert_binding: bool,
     _marker: std::marker::PhantomData<I>,
@@ -252,27 +447,124 @@ pub struct JwtStrategy<I> {
 
 impl<I> JwtStrategy<I> {
     /// Create a new `JwtStrategy` with the given `ValidationConfig`.
+    ///
+    /// With an empty [`ValidationConfig::trusted_issuers`] this is the classic
+    /// single-issuer verifier and behaves exactly as it did before #243: one
+    /// JWKS at `jwks_url`, and `iss` checked only if `issuer` was set.
+    ///
+    /// With a non-empty trust map it becomes a multi-issuer verifier — see
+    /// [`ValidationConfigBuilder::trusted_issuer`].
     pub fn new(config: ValidationConfig) -> Self {
-        let cache = JwksCache::new(config.jwks_url, config.refresh_interval)
-            .require_kid(config.require_kid);
-        let mut validation = Validation::new(config.algorithms[0]);
-        validation.algorithms = config.algorithms;
-
-        if let Some(iss) = config.issuer {
-            validation.set_issuer(&[iss]);
-        }
-
-        if !config.audience.is_empty() {
-            validation.set_audience(&config.audience);
-        }
-
+        let resolver = build_resolver(&config);
         Self {
-            cache,
-            validation,
+            resolver,
+            validation: build_validation(&config),
             require_cert_binding: config.require_cert_binding,
             _marker: std::marker::PhantomData,
         }
     }
+
+    /// Create a `JwtStrategy` that resolves signing keys through a
+    /// caller-supplied [`JwksResolver`], for issuers that are not known up front
+    /// (per-tenant, fetched from a registry, ...).
+    ///
+    /// `config`'s `jwks_url` and `trusted_issuers` are ignored — the resolver
+    /// owns key resolution entirely — but the rest of the config still applies,
+    /// including the accepted-`iss` set fed to `Validation`. Note that if
+    /// `config` names no issuers at all, `iss` is not checked by `Validation`
+    /// and the resolver alone is the trust decision, so it must reject unknown
+    /// issuers rather than defaulting.
+    pub fn with_resolver(config: ValidationConfig, resolver: Box<dyn JwksResolver>) -> Self {
+        Self {
+            resolver,
+            validation: build_validation(&config),
+            require_cert_binding: config.require_cert_binding,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+/// Builds the key-resolution half of a [`JwtStrategy`] from a config.
+///
+/// The two shapes are kept apart on purpose: with no trust map the resolver is
+/// the identity-like [`SingleJwksResolver`], so the pre-#243 path keeps byte-for-byte
+/// the same behaviour (including "no `iss` configured" meaning "`iss` not checked").
+fn build_resolver(config: &ValidationConfig) -> Box<dyn JwksResolver> {
+    let cache_for = |jwks_url: &str| {
+        Arc::new(
+            JwksCache::new(jwks_url.to_string(), config.refresh_interval)
+                .require_kid(config.require_kid),
+        )
+    };
+
+    if config.trusted_issuers.is_empty() {
+        return Box::new(SingleJwksResolver::new(cache_for(&config.jwks_url)));
+    }
+
+    let mut caches: BTreeMap<String, Arc<JwksCache>> = config
+        .trusted_issuers
+        .iter()
+        .map(|(issuer, jwks_url)| (issuer.clone(), cache_for(jwks_url)))
+        .collect();
+
+    // The single-issuer pair is folded in as one more trust-map entry, which is
+    // what makes `issuer` + `jwks_url` "the one-entry case" rather than a second,
+    // parallel mechanism. Without an `issuer` to name it, a `jwks_url` cannot be
+    // folded in at all: using it as a default arm is exactly the issuer confusion
+    // the trust map exists to prevent, so it is dropped loudly instead.
+    match &config.issuer {
+        Some(issuer) if !config.jwks_url.is_empty() => {
+            caches
+                .entry(issuer.clone())
+                .or_insert_with(|| cache_for(&config.jwks_url));
+        }
+        None if !config.jwks_url.is_empty() => {
+            tracing::warn!(
+                jwks_url = %config.jwks_url,
+                "ignoring jwks_url: with a trusted_issuers map configured and no issuer naming it, \
+                 it could only act as a fallback for untrusted issuers, which is never allowed"
+            );
+        }
+        _ => {}
+    }
+
+    Box::new(caches.into_iter().collect::<IssuerTrustMap>())
+}
+
+/// Builds the claim-validation half of a [`JwtStrategy`] from a config.
+fn build_validation(config: &ValidationConfig) -> Validation {
+    let mut validation = Validation::new(config.algorithms[0]);
+    validation.algorithms = config.algorithms.clone();
+
+    // `set_issuer` has always taken a slice; the pre-#243 config simply had no
+    // way to express more than one name. Every trusted issuer goes in, so a
+    // token verified with issuer B's key still has to *say* it came from B.
+    let mut accepted_issuers: Vec<&String> = config.trusted_issuers.keys().collect();
+    if let Some(issuer) = config
+        .issuer
+        .as_ref()
+        .filter(|issuer| !config.trusted_issuers.contains_key(*issuer))
+    {
+        accepted_issuers.push(issuer);
+    }
+
+    if !accepted_issuers.is_empty() {
+        validation.set_issuer(&accepted_issuers);
+    }
+
+    if !config.trusted_issuers.is_empty() {
+        // In multi-issuer mode `iss` selects the key, so a token without one must
+        // never reach the decode step. The resolver already refuses it; requiring
+        // the claim here means a custom resolver that is laxer than it should be
+        // still cannot let an `iss`-less token through.
+        validation.required_spec_claims.insert("iss".to_string());
+    }
+
+    if !config.audience.is_empty() {
+        validation.set_audience(&config.audience);
+    }
+
+    validation
 }
 
 #[async_trait]
@@ -282,7 +574,22 @@ where
 {
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
         if let Some(token) = utils::extract_bearer_token(&parts.headers) {
-            match validate_jwt_generic::<I>(token, &self.cache, &self.validation).await {
+            // Resolve once and reuse the same cache below: which JWKS applies is
+            // a property of the token, so re-resolving for the `cnf` re-decode
+            // could only introduce a discrepancy.
+            let cache = match resolve_cache(token, self.resolver.as_ref()).await {
+                Ok(cache) => cache,
+                Err(e @ (ValidationError::InvalidToken(_) | ValidationError::Jwt(_))) => {
+                    tracing::debug!(error = %e, "could not read the token's issuer; no identity");
+                    return Ok(None);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not resolve a JWKS for the token's issuer; rejecting token");
+                    return Err(AuthError::Token(e.to_string()));
+                }
+            };
+
+            match validate_jwt_generic::<I>(token, &cache, &self.validation).await {
                 Ok(claims) => {
                     if self.require_cert_binding {
                         // Re-decode as `CnfClaim` to read `cnf.x5t#S256`
@@ -297,7 +604,7 @@ where
                         // other verification failure: reject.
                         let cnf_claim = match validate_jwt_generic::<CnfClaim>(
                             token,
-                            &self.cache,
+                            &cache,
                             &self.validation,
                         )
                         .await
@@ -374,6 +681,73 @@ pub fn verify_cert_binding(
         )),
         (_, None) => Ok(()),
     }
+}
+
+/// Reads the `iss` claim out of a JWT payload **without verifying the
+/// signature**, returning `None` if there is no `iss` or it is not a string.
+///
+/// Only ever used to *select* which key to verify with, never to make a trust
+/// decision on its own. That is safe because the value is re-checked after
+/// verification: the payload this reads is the same signature-covered payload
+/// `decode` parses, and `Validation`'s accepted-issuer set (populated from the
+/// trust map by [`build_validation`]) rejects the token if its `iss` is not one
+/// of the trusted names. So an attacker choosing `iss` only chooses which
+/// issuer's key their signature must satisfy.
+///
+/// The payload is decoded by hand rather than via `jsonwebtoken`'s
+/// signature-disabled decode path, which would need a dummy key and a second
+/// `Validation` whose knobs could drift from the real one.
+fn unverified_issuer(token: &str) -> Result<Option<String>, ValidationError> {
+    let mut segments = token.split('.');
+    let payload = match (segments.next(), segments.next(), segments.next()) {
+        (Some(_), Some(payload), Some(_)) => payload,
+        _ => {
+            return Err(ValidationError::InvalidToken(
+                "token is not a well-formed JWS compact serialization".to_string(),
+            ))
+        }
+    };
+
+    let payload = URL_SAFE_NO_PAD.decode(payload).map_err(|e| {
+        ValidationError::InvalidToken(format!("token payload is not valid base64url: {e}"))
+    })?;
+    let claims: serde_json::Value = serde_json::from_slice(&payload).map_err(|e| {
+        ValidationError::InvalidToken(format!("token payload is not a JSON object: {e}"))
+    })?;
+
+    Ok(claims
+        .get("iss")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string))
+}
+
+/// Resolves the JWKS cache a token must be verified against, from its own `iss`.
+async fn resolve_cache(
+    token: &str,
+    resolver: &dyn JwksResolver,
+) -> Result<Arc<JwksCache>, ValidationError> {
+    let issuer = unverified_issuer(token)?;
+    resolver.resolve(issuer.as_deref()).await
+}
+
+/// Validates a JWT, resolving the JWKS to verify it against from the token's
+/// `iss` claim via `resolver`.
+///
+/// This is the multi-issuer counterpart of [`validate_jwt_generic`], for callers
+/// that verify tokens outside a [`JwtStrategy`]. `validation` must still carry
+/// the accepted-issuer set (see [`ValidationConfigBuilder::trusted_issuer`]):
+/// the resolver decides *which key*, `validation` decides *which names are
+/// acceptable*, and both must agree for a token to be accepted.
+pub async fn validate_jwt_with_resolver<T>(
+    token: &str,
+    resolver: &dyn JwksResolver,
+    validation: &Validation,
+) -> Result<T, ValidationError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let cache = resolve_cache(token, resolver).await?;
+    validate_jwt_generic::<T>(token, &cache, validation).await
 }
 
 /// Validates a JWT against the cached JWKS.
@@ -478,5 +852,70 @@ mod tests {
         let cnf = serde_json::json!({ "jkt": "some-other-thumbprint" });
         assert!(verify_cert_binding(None, Some(&cnf)).is_ok());
         assert!(verify_cert_binding(Some(b"cert"), Some(&cnf)).is_ok());
+    }
+
+    /// Builds a JWS-shaped string with an arbitrary (unsigned) payload — enough
+    /// for the pre-verification `iss` read, which never looks at the signature.
+    fn token_with_payload(payload: serde_json::Value) -> String {
+        format!(
+            "{}.{}.{}",
+            URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#),
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap()),
+            URL_SAFE_NO_PAD.encode(b"not-a-real-signature"),
+        )
+    }
+
+    #[test]
+    fn reads_the_issuer_out_of_an_unverified_payload() {
+        let token =
+            token_with_payload(serde_json::json!({ "iss": "https://a.example", "sub": "u" }));
+        assert_eq!(
+            unverified_issuer(&token).unwrap().as_deref(),
+            Some("https://a.example")
+        );
+    }
+
+    #[test]
+    fn reports_no_issuer_when_the_claim_is_absent_or_not_a_string() {
+        let no_iss = token_with_payload(serde_json::json!({ "sub": "u" }));
+        assert_eq!(unverified_issuer(&no_iss).unwrap(), None);
+
+        // RFC 7519 `iss` is a StringOrURI. `jsonwebtoken` tolerates an array
+        // here, but an array names no single key to verify with, so it is
+        // treated as "no issuer" and rejected by the resolver rather than
+        // silently resolving to one of its members.
+        let array_iss = token_with_payload(serde_json::json!({ "iss": ["a", "b"] }));
+        assert_eq!(unverified_issuer(&array_iss).unwrap(), None);
+    }
+
+    #[test]
+    fn rejects_a_token_that_is_not_a_well_formed_jws() {
+        assert!(matches!(
+            unverified_issuer("not.a-jwt"),
+            Err(ValidationError::InvalidToken(_))
+        ));
+        assert!(matches!(
+            unverified_issuer("aaa.!!!not-base64!!!.ccc"),
+            Err(ValidationError::InvalidToken(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn trust_map_rejects_unknown_and_missing_issuers_without_falling_back() {
+        let known = Arc::new(JwksCache::new(
+            "https://a.example/jwks.json".to_string(),
+            Duration::from_secs(60),
+        ));
+        let map = IssuerTrustMap::new().with_issuer("https://a.example", known);
+
+        assert!(map.resolve(Some("https://a.example")).await.is_ok());
+        assert!(matches!(
+            map.resolve(Some("https://evil.example")).await,
+            Err(ValidationError::UntrustedIssuer(iss)) if iss == "https://evil.example"
+        ));
+        assert!(matches!(
+            map.resolve(None).await,
+            Err(ValidationError::MissingIssuer)
+        ));
     }
 }
