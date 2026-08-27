@@ -130,6 +130,24 @@ async fn run_oauth_example(package: &str, example_bin: &str, provider: &str, log
         location
     );
 
+    // Pin the callback path the example advertises to the provider.
+    //
+    // Four examples used to send `redirect_uri=.../auth/{provider}/callback`
+    // while both adapters wire `/auth/callback/{provider}`
+    // (authkestra-axum/src/lib.rs:245, authkestra-actix/src/lib.rs:56+63), so
+    // anyone copying them got a 404 on the way back. Fixing that is the point
+    // of this change — but the assertion above only checks the redirect's
+    // *prefix*, so reverting the fix left this suite green. Raised in review;
+    // the authorization URL already carries the answer, so pinning it is
+    // nearly free.
+    assert!(
+        location.contains("redirect_uri=") && location.contains("%2Fauth%2Fcallback%2F"),
+        "{} must advertise the adapter's real callback path \
+         (/auth/callback/{{provider}}, url-encoded), got: {}",
+        example_bin,
+        location
+    );
+
     // `_guard` kills the example here (and on any panic above).
 }
 
