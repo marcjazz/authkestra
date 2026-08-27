@@ -79,6 +79,42 @@ async fn external_api(Jwt(claims): Jwt<MyClaims>) -> HttpResponse {
 }
 ```
 
+#### `Auth<I>` and request extensions
+
+`Auth<I>` runs the `Guard<I>` from `app_data` over the request. actix has no
+`http::request::Parts` of its own (actix-http 3.x is still built on `http` 0.2),
+so the adapter synthesises one from the request's method, URI and headers — and
+that synthetic value starts with an **empty extension map**.
+
+If your `AuthenticationStrategy` reads a request extension put there by another
+middleware, register its type with `CarriedExtensions`:
+
+```rust
+use actix_web::{dev::Service as _, web, App, HttpMessage};
+use authkestra_actix::CarriedExtensions;
+
+#[derive(Clone)]
+struct TenantId(String);
+
+let app = App::new()
+    .wrap_fn(|req, srv| {
+        req.extensions_mut().insert(TenantId("acme".to_string()));
+        srv.call(req)
+    })
+    .app_data(web::Data::new(
+        CarriedExtensions::new().carry::<TenantId>(),
+    ));
+```
+
+The strategy then reads `parts.extensions.get::<TenantId>()`.
+
+Registration is required because `actix_http::Extensions` exposes no way to
+enumerate its contents and stores `Box<dyn Any>`, while `http::Extensions`
+accepts only `T: Clone + Send + Sync`; copying the whole map generically is not
+expressible. See the `extensions` module docs for the full rationale.
+`ClientCertificateDer` is carried unconditionally and needs no registration, so
+RFC 8705 certificate-bound token checks keep working out of the box.
+
 ### OAuth2 Helpers
 
 The crate provides helpers to manage the OAuth2 flow lifecycle.

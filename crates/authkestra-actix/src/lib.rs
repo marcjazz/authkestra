@@ -20,7 +20,12 @@ use futures::future::LocalBoxFuture;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use std::sync::Arc;
 
+#[cfg(feature = "resource")]
+pub mod extensions;
 pub mod helpers;
+
+#[cfg(feature = "resource")]
+pub use extensions::CarriedExtensions;
 
 #[cfg(feature = "op")]
 pub mod op;
@@ -272,6 +277,15 @@ where
 /// A unified extractor for authentication.
 ///
 /// It uses the `Guard` from the application state to validate the request.
+///
+/// # Request extensions
+///
+/// Unlike axum, actix has no `http::request::Parts` of its own, so this
+/// extractor synthesises one from the request's method, URI and headers. Actix
+/// request extensions therefore do not come along automatically. Register the
+/// types that must survive with [`CarriedExtensions`] in `app_data`; see that
+/// type's docs (and `extensions`' module docs) for why carrying the whole map
+/// generically is not possible on actix-http 3.x / `http` 1.x. Issue #246.
 #[cfg(feature = "resource")]
 pub struct Auth<I>(pub I);
 
@@ -315,27 +329,51 @@ where
             })?;
             let (mut parts, _) = http_req.into_parts();
 
-            // Carry over `ClientCertificateDer`, if a host-app
-            // middleware/acceptor stashed one in actix's own per-request
-            // extensions from real mTLS termination — RFC 8705
-            // certificate-bound tokens (`JwtStrategy::require_cert_binding`,
-            // issue #224) need it, and this hand-built `http::request::Parts`
-            // would otherwise silently drop it, since it is assembled from
-            // only the method/URI/headers above.
-            //
-            // NOTE: this carries `ClientCertificateDer` and nothing else. The
-            // underlying defect is general — every actix request extension is
-            // dropped here — and remains open for other types. It bites any
-            // downstream `AuthenticationStrategy` impl that reads a different
-            // extension (tenant id, session context, a `DeviceIdentity` set by
-            // other middleware): those still silently see `None` under actix,
-            // though not under axum, whose `FromRequestParts` gets native
-            // `Parts`. Only `ClientCertificateDer` is consumed this way in-tree
-            // today, so there is no live regression here — but a general fix
-            // (and a regression test; this crate currently has no tests at all)
-            // belongs in its own change.
-            if let Some(cert) = req_clone.extensions().get::<ClientCertificateDer>() {
-                parts.extensions.insert(cert.clone());
+            // The `Parts` above are synthesised from method/URI/headers only,
+            // so actix's per-request extension map is not represented in them
+            // at all. Copy across the types the host asked for (issue #246);
+            // `extensions`' module docs record why an automatic
+            // carry-everything is not expressible on actix-http 3.x + `http`
+            // 1.x. This must happen before `authenticate`, and the borrow of
+            // actix's `RefCell`-backed extensions is scoped so it is released
+            // before the `.await` below.
+            {
+                let src = req_clone.extensions();
+
+                // Always carried, no registration required: a host-app
+                // middleware/acceptor stashes this from real mTLS termination
+                // and RFC 8705 certificate-bound tokens
+                // (`JwtStrategy::require_cert_binding`, issue #224) fail
+                // closed without it. Keeping it implicit means the #224 fix
+                // cannot be silently undone by a host forgetting to register
+                // it.
+                extensions::carry_one::<ClientCertificateDer>(&src, &mut parts.extensions);
+
+                // Accept both `.app_data(web::Data::new(registry))` and the
+                // bare `.app_data(registry)` form. Matching only one would
+                // turn the other into a silent no-op, which is precisely the
+                // failure mode issue #246 is about.
+                let registry = req_clone
+                    .app_data::<web::Data<extensions::CarriedExtensions>>()
+                    .map(web::Data::get_ref)
+                    .or_else(|| req_clone.app_data::<extensions::CarriedExtensions>());
+
+                match registry {
+                    Some(registry) => {
+                        let carried = registry.apply(&src, &mut parts.extensions);
+                        tracing::debug!(
+                            registered = registry.len(),
+                            carried,
+                            "carried registered actix request extensions into request parts"
+                        );
+                    }
+                    None => {
+                        tracing::debug!(
+                            "no CarriedExtensions registry in actix app data; only \
+                             ClientCertificateDer is carried into request parts"
+                        );
+                    }
+                }
             }
 
             match guard.authenticate(&parts).await {

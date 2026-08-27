@@ -68,3 +68,7 @@ required-features = ["macros", "session"]
 [[test]]
 name = "engine_token_integration"
 required-features = ["macros", "token"]
+
+[[test]]
+name = "auth_extensions_integration"
+required-features = ["resource"]
