@@ -1,5 +1,6 @@
 [package]
 name = "authkestra-crypto-util"
+description = "Internal cryptographic utilities for the authkestra framework, specifically for strict signature and key verification"
 exclude.workspace = true
 version.workspace = true
 edition.workspace = true
