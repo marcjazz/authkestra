@@ -14,7 +14,8 @@
 
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::store::redis::RedisStore;
-use authkestra_engine::{AkWebAppEngine, Engine, SessionConfig, SessionStore};
+use authkestra::Authkestra;
+use authkestra_engine::{AkWebAppEngine, SessionConfig, SessionStore};
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
@@ -53,7 +54,7 @@ async fn main() {
             .expect("failed to connect to Redis"),
     );
 
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false, // plain HTTP for local development

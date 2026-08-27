@@ -17,7 +17,8 @@
 use actix_web::{App, HttpServer};
 use authkestra_actix::{ActixState, OpExt};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::{AkEngine, Engine, SessionConfig, SessionStore, TokenManager};
+use authkestra::Authkestra;
+use authkestra_engine::{AkEngine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::config::OpConfig;
 use authkestra_op::sqlx_store::SqlxOpStore;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -109,7 +110,7 @@ async fn main() -> std::io::Result<()> {
     // any `SessionStore`, so the example keeps that part dependency-free.
     let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::new());
 
-    let auth = Engine::builder()
+    let auth = Authkestra::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             cookie_name: "authkestra_sid".to_string(),

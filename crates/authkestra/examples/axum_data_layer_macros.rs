@@ -21,7 +21,8 @@
 
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::store::sql::SqlKvStore;
-use authkestra_engine::{AkWebAppEngine, Engine, SessionConfig, SessionStore};
+use authkestra::Authkestra;
+use authkestra_engine::{AkWebAppEngine, SessionConfig, SessionStore};
 use authkestra_macros::KvStore;
 use axum::{
     http::StatusCode,
@@ -95,7 +96,7 @@ async fn main() {
     ));
     let session_store: Arc<dyn SessionStore> = Arc::new(session_store);
 
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false, // plain HTTP for local development

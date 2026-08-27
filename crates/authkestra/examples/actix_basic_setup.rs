@@ -15,7 +15,8 @@ use actix_files::Files;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra_actix::{ActixExt, ActixState, AuthSession};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::{AkWebAppEngine, Engine, SessionConfig, SessionStore};
+use authkestra::Authkestra;
+use authkestra_engine::{AkWebAppEngine, SessionConfig, SessionStore};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -44,7 +45,7 @@ async fn main() -> std::io::Result<()> {
 
     // 2. Build the engine. The typestate builder only exposes session APIs
     //    once `session_store` has been supplied.
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false, // plain HTTP for local development

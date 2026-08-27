@@ -18,8 +18,9 @@
 use actix_web::{App, HttpServer};
 use authkestra_actix::{ActixState, OpExt};
 use authkestra_engine::store::redis::RedisStore;
+use authkestra::Authkestra;
 use authkestra_engine::store::KvStore;
-use authkestra_engine::{AkEngine, Engine, SessionConfig, SessionStore, TokenManager};
+use authkestra_engine::{AkEngine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::{client::ClientRegistration, config::OpConfig};
 use std::sync::Arc;
 
@@ -110,7 +111,7 @@ async fn main() -> std::io::Result<()> {
         ..Default::default()
     };
 
-    let auth = Engine::builder()
+    let auth = Authkestra::builder()
         .session_store(session_store)
         .session_config(session_config)
         .token_manager(token_manager)

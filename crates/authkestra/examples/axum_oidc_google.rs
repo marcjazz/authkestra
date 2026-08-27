@@ -16,7 +16,8 @@
 
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::{AkWebAppEngine, Engine, OAuth2Flow, SessionConfig, SessionStore};
+use authkestra::Authkestra;
+use authkestra_engine::{AkWebAppEngine, OAuth2Flow, SessionConfig, SessionStore};
 use authkestra_providers::google::GoogleProvider;
 use axum::{
     extract::State,
@@ -63,7 +64,7 @@ async fn main() {
     // `SqlKvStore` without touching anything below this line.
     let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .provider(OAuth2Flow::new(google_provider))
         .session_store(session_store)
         .session_config(SessionConfig {

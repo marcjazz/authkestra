@@ -1,7 +1,7 @@
 //! # Axum Basic Setup — the smallest useful `Engine`
 //!
 //! The "golden path" starting point (RFC-001): build an [`Engine`] with
-//! [`Engine::builder()`], hand it a [`SessionStore`], and let
+//! [`Authkestra::builder()`], hand it a [`SessionStore`], and let
 //! [`AxumExt::axum_router`] wire the `/auth/*` routes for you.
 //!
 //! No OAuth provider is registered here on purpose — this example is about the
@@ -16,7 +16,8 @@
 
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::{AkWebAppEngine, Engine, SessionConfig, SessionStore};
+use authkestra::Authkestra;
+use authkestra_engine::{AkWebAppEngine, SessionConfig, SessionStore};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -55,7 +56,7 @@ async fn main() {
 
     // 2. Build the engine. The typestate builder only exposes session APIs
     //    once `session_store` has been supplied.
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .session_store(session_store)
         .session_config(SessionConfig {
             secure: false, // plain HTTP for local development

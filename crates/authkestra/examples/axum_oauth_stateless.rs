@@ -19,7 +19,8 @@
 //! 3. Call `/api/user` with `Authorization: Bearer <token>`.
 
 use authkestra_axum::{AuthToken, AxumError, AxumState, AxumStatelessExt};
-use authkestra_engine::{AkApiEngine, Engine, OAuth2Flow};
+use authkestra_engine::{AkApiEngine, OAuth2Flow};
+use authkestra::Authkestra;
 use authkestra_providers::github::GithubProvider;
 use axum::{
     http::StatusCode,
@@ -63,7 +64,7 @@ async fn main() {
     // Stateless mode: `jwt_secret` configures the token manager and leaves the
     // session-store slot `Missing`. Load a real secret from your secret
     // manager — this literal is only acceptable in an example.
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .provider(OAuth2Flow::new(github_provider))
         .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
         .build();
