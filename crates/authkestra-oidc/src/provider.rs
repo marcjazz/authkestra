@@ -5,6 +5,7 @@ use authkestra_engine::{
     discovery::ProviderMetadata,
     error::AuthError,
     state::{Identity, OAuthToken},
+    token::Audience,
     OAuthProvider,
 };
 use authkestra_resource::jwt::{validate_jwt_generic, JwksCache};
@@ -32,8 +33,25 @@ pub struct OidcProvider {
 pub struct Claims {
     pub sub: String,
     pub iss: String,
-    pub aud: String,
+    /// The `aud` claim, which RFC 7519 §4.1.3 permits to be either a single
+    /// string or an array of strings.
+    ///
+    /// This is [`authkestra_engine::token::Audience`] rather than a type
+    /// local to this crate, deliberately: the engine already models exactly
+    /// this shape for its own tokens, and a parallel definition here would
+    /// be a second thing to keep in sync with RFC 7519.
+    ///
+    /// It cannot be a plain `String`: `jsonwebtoken::decode` deserializes
+    /// into this struct *before* it runs its own `Validation` checks, so an
+    /// array-valued `aud` — routinely issued by Keycloak and Auth0 — used to
+    /// fail here with a serde type error, before `iss`/`aud` semantics were
+    /// ever evaluated. See #244.
+    pub aud: Audience,
     pub exp: u64,
+    /// The `azp` (authorized party) claim. Verified against `client_id` when
+    /// `aud` carries multiple values, per OIDC Core §3.1.3.7; see
+    /// [`verify_authorized_party`].
+    pub azp: Option<String>,
     pub email: Option<String>,
     pub name: Option<String>,
     pub picture: Option<String>,
@@ -222,6 +240,60 @@ fn default_validation(metadata: &ProviderMetadata, client_id: &str) -> Validatio
     validation
 }
 
+/// Enforces the OIDC Core §3.1.3.7 step-4/5 `azp` rules on an ID token whose
+/// signature, `iss` and `aud` have *already* been verified by
+/// `jsonwebtoken`.
+///
+/// When `aud` carries more than one value, `azp` must be present and must be
+/// this client's `client_id`: `aud` alone then only proves the token was
+/// issued for a set of audiences that includes us, not that *we* are the
+/// party it was authorized for.
+///
+/// # Why a single-valued `aud` is not checked against `azp`
+///
+/// §3.1.3.7 step 5 is a SHOULD, not a MUST, and enforcing it here would
+/// reject legitimate deployments: providers such as Google issue ID tokens
+/// where `aud` is a backend's client ID while `azp` names the front-end
+/// client that actually requested it. Rejecting those would reintroduce
+/// exactly the fail-closed compatibility gap #244 exists to remove. The
+/// multi-audience case has no such ambiguity, so it is enforced.
+fn verify_authorized_party(
+    aud: &Audience,
+    azp: Option<&str>,
+    client_id: &str,
+) -> Result<(), AuthError> {
+    let audiences = match aud {
+        Audience::Multiple(values) if values.len() > 1 => values,
+        // A single audience — whether it arrived as a bare string or as a
+        // one-element array — is not "multiple audiences" for §3.1.3.7.
+        _ => return Ok(()),
+    };
+
+    tracing::debug!(
+        audiences = ?audiences,
+        "ID token carries multiple audiences, azp is required"
+    );
+
+    match azp {
+        Some(azp) if azp == client_id => Ok(()),
+        Some(azp) => {
+            tracing::error!(
+                azp = %azp,
+                "ID token azp does not match the configured client_id"
+            );
+            Err(AuthError::Token(
+                "azp claim does not match client_id".to_string(),
+            ))
+        }
+        None => {
+            tracing::error!("ID token has multiple audiences but no azp claim");
+            Err(AuthError::Token(
+                "ID token has multiple audiences but no azp claim".to_string(),
+            ))
+        }
+    }
+}
+
 #[async_trait]
 impl Provider for OidcProvider {
     async fn config(&self) -> ProviderConfig {
@@ -340,7 +412,12 @@ impl OAuthProvider for OidcProvider {
                 AuthError::from(OidcError::from(e))
             })?;
 
-        // 3. Validate Nonce
+        // 3. Validate the authorized party (OIDC Core 3.1.3.7 steps 4-5).
+        // `jsonwebtoken` has already checked that `aud` contains `client_id`;
+        // this covers the multi-audience case it does not model.
+        verify_authorized_party(&claims.aud, claims.azp.as_deref(), &self.client_id)?;
+
+        // 4. Validate Nonce
         if let Some(expected_nonce) = nonce {
             if claims.nonce.as_deref() != Some(expected_nonce) {
                 tracing::error!("nonce mismatch in OIDC ID Token");
@@ -348,7 +425,7 @@ impl OAuthProvider for OidcProvider {
             }
         }
 
-        // 4. Construct Identity
+        // 5. Construct Identity
         let mut attributes = HashMap::new();
         if let Some(picture) = claims.picture {
             attributes.insert("picture".to_string(), picture);
