@@ -14,12 +14,12 @@
 
 use actix_web::{web, App, HttpServer};
 use async_trait::async_trait;
+use authkestra::Authkestra;
 use authkestra_actix::op::{
     actix_complete_challenge_handler, actix_enrol_start_handler, actix_reissue_start_handler,
     OpActixExt,
 };
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::Engine;
 use authkestra_op::attestation::{
     AttestationConfig, EnrolmentChallenge, PrincipalType, SecondFactorProof, SecondFactorVerifier,
 };
@@ -66,7 +66,7 @@ impl SecondFactorVerifier for DemoOtpVerifier {
 async fn main() -> std::io::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .session_store(Arc::new(MemoryStore::<
             authkestra_engine::auth::session::Session,
         >::new()))
@@ -103,7 +103,8 @@ async fn main() -> std::io::Result<()> {
     // does not hand back an ephemeral port trivially before `run()`, and
     // this example does not need one — pick a port distinct from the other
     // OP examples (`op_server.rs` uses 8080) so both can run side by side.
-    let addr: SocketAddr = "127.0.0.1:8092".parse().unwrap();
+    let port = port_from_env();
+    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
 
     let server = HttpServer::new(move || {
         let op = op.clone();
@@ -125,7 +126,7 @@ async fn main() -> std::io::Result<()> {
     .bind(addr)?
     .run();
 
-    println!("Actix attestation-issuance OP running on http://{addr}");
+    tracing::info!("Actix attestation-issuance OP running on http://{addr}");
     tokio::spawn(server);
 
     run_client_demo(addr).await;
@@ -141,7 +142,7 @@ async fn run_client_demo(addr: SocketAddr) {
     let (device_key_der, device_jwk) = generate_device_key();
 
     // --- Step 1: enrol a brand-new device key (spec §5.6 steps 1-3) -----
-    println!("\n== enrolling a new device ==");
+    tracing::info!("\n== enrolling a new device ==");
     let enrol_body = serde_json::json!({
         "subject": "user-42",
         "principal_id": "device-abc123",
@@ -165,14 +166,14 @@ async fn run_client_demo(addr: SocketAddr) {
         .as_str()
         .expect("challenge response missing `challenge`")
         .to_string();
-    println!("received single-use challenge: {challenge_value}");
+    tracing::info!("received single-use challenge: {challenge_value}");
 
     let signature = sign_challenge(&device_key_der, &challenge_value);
     let attestation = complete_challenge(&client, &base, &challenge_value, &signature).await;
     print_attestation("initial enrolment", &attestation);
 
     // --- Step 2: silently re-issue before expiry (ADR 0014 point 6) ----
-    println!("\n== re-issuing the attestation with the same key ==");
+    tracing::info!("\n== re-issuing the attestation with the same key ==");
     let reissue_body = serde_json::json!({
         "attestation": attestation["attestation"],
         "public_jwk": device_jwk,
@@ -253,9 +254,10 @@ fn sign_challenge(pkcs8_der: &[u8], challenge: &str) -> String {
 /// Prints the issued attestation's lifetime and decodes its (unverified)
 /// payload purely for display.
 fn print_attestation(step: &str, resp: &serde_json::Value) {
-    println!(
+    tracing::info!(
         "[{step}] expires_in={}s reissue_after={}",
-        resp["expires_in"], resp["reissue_after"]
+        resp["expires_in"],
+        resp["reissue_after"]
     );
     let attestation = resp["attestation"]
         .as_str()
@@ -269,8 +271,16 @@ fn print_attestation(step: &str, resp: &serde_json::Value) {
         .expect("JWS payload is always valid base64url");
     let claims: serde_json::Value =
         serde_json::from_slice(&payload_bytes).expect("attestation payload is always JSON");
-    println!(
+    tracing::info!(
         "[{step}] claims: {}",
         serde_json::to_string_pretty(&claims).expect("claims always serialize")
     );
+}
+
+/// Bind port, overridable via `PORT` so examples can run without colliding.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8092)
 }

@@ -136,34 +136,25 @@ fn ed25519_verifying_key(jwk: &Jwk) -> Result<VerifyingKey, VerifyFailure> {
         )));
     }
 
-    let x = URL_SAFE_NO_PAD
-        .decode(&params.x)
-        .map_err(|e| VerifyFailure::Key(format!("OKP \"x\" is not valid base64url: {e}")))?;
-    let x: [u8; 32] = x.as_slice().try_into().map_err(|_| {
-        VerifyFailure::Key(format!(
-            "an Ed25519 public key must be exactly 32 bytes, got {}",
-            x.len()
-        ))
-    })?;
-
-    let key = VerifyingKey::from_bytes(&x)
-        .map_err(|_| VerifyFailure::Key("OKP \"x\" is not a valid Ed25519 point".to_string()))?;
-
-    if key.is_weak() {
-        tracing::warn!(
-            target: "authkestra_devsig",
-            "rejecting Ed25519 key: it is a low-order (weak) point, for which no private key \
-             exists — a signature under it would prove possession of nothing, so it is refused \
-             before verification is even attempted (authkestra#242)"
-        );
-        return Err(VerifyFailure::Key(
-            "Ed25519 public key is a low-order point; no private key exists for it, so a \
-             signature under it proves nothing"
-                .to_string(),
-        ));
+    match authkestra_crypto_util::parse_ed25519_verifying_key_strict(&params.x) {
+        Ok(key) => Ok(key),
+        Err(e) => {
+            if let authkestra_crypto_util::EdDsaKeyError::LowOrderPoint = e {
+                tracing::warn!(
+                    target: "authkestra_devsig",
+                    "rejecting Ed25519 key: it is a low-order (weak) point, for which no private key \
+                     exists — a signature under it would prove possession of nothing, so it is refused \
+                     before verification is even attempted (authkestra#242)"
+                );
+                return Err(VerifyFailure::Key(
+                    "Ed25519 public key is a low-order point; no private key exists for it, so a \
+                     signature under it proves nothing"
+                        .to_string(),
+                ));
+            }
+            Err(VerifyFailure::Key(e.to_string()))
+        }
     }
-
-    Ok(key)
 }
 
 #[cfg(test)]

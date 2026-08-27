@@ -39,7 +39,6 @@ use serde_json::json;
 
 use signing::Demo;
 
-const ADDR: &str = "127.0.0.1:8089";
 const TRANSFER_BODY: &str = r#"{"amount_cents":1000,"to":"acct_demo"}"#;
 
 #[tokio::main]
@@ -63,28 +62,30 @@ async fn main() {
         .route("/v1/transfer", post(transfer_handler))
         .layer(layer);
 
-    let listener = tokio::net::TcpListener::bind(ADDR)
+    let port = port_from_env();
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("bind example listener");
 
-    println!("authkestra-axum devsig example listening on http://{ADDR}");
-    println!();
-    println!("Valid request (expect 200 OK):");
-    println!(
-        "curl -i -X POST http://{ADDR}/v1/transfer \\\n  \
+    tracing::info!("authkestra-axum devsig example listening on http://{addr}");
+    tracing::info!("");
+    tracing::info!("Valid request (expect 200 OK):");
+    tracing::info!(
+        "curl -i -X POST http://{addr}/v1/transfer \\\n  \
          -H 'Content-Type: application/json' \\\n  \
          -H 'X-Signature: {valid_signature}' \\\n  \
          -H 'X-Attestation: {attestation}' \\\n  \
          -d '{TRANSFER_BODY}'"
     );
-    println!();
-    println!("Unauthenticated request (expect 401 Unauthorized):");
-    println!(
-        "curl -i -X POST http://{ADDR}/v1/transfer \\\n  \
+    tracing::info!("");
+    tracing::info!("Unauthenticated request (expect 401 Unauthorized):");
+    tracing::info!(
+        "curl -i -X POST http://{addr}/v1/transfer \\\n  \
          -H 'Content-Type: application/json' \\\n  \
          -d '{TRANSFER_BODY}'"
     );
-    println!();
+    tracing::info!("");
 
     axum::serve(listener, app).await.expect("serve example app");
 }
@@ -95,4 +96,12 @@ async fn transfer_handler(AuthDeviceSignature(identity): AuthDeviceSignature) ->
         "subject": identity.subject,
         "device": identity.device,
     }))
+}
+
+/// Bind port, overridable via `PORT` so examples can run without colliding.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8089)
 }

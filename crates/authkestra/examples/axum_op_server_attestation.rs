@@ -25,9 +25,9 @@
 //! both routers onto the same state (see that method's doc comment).
 
 use async_trait::async_trait;
+use authkestra::Authkestra;
 use authkestra_axum::op::OpExt;
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::Engine;
 use authkestra_op::attestation::{
     AttestationConfig, EnrolmentChallenge, PrincipalType, SecondFactorProof, SecondFactorVerifier,
 };
@@ -74,7 +74,7 @@ impl SecondFactorVerifier for DemoOtpVerifier {
 async fn main() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .session_store(Arc::new(MemoryStore::<
             authkestra_engine::auth::session::Session,
         >::new()))
@@ -111,11 +111,12 @@ async fn main() {
         .op_axum_attestation_router()
         .with_state(authkestra_axum::op::OpState(state));
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    let port = port_from_env();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .expect("failed to bind example server");
     let addr = listener.local_addr().expect("bound listener has no addr");
-    println!("Axum attestation-issuance OP running on http://{addr}");
+    tracing::info!("Axum attestation-issuance OP running on http://{addr}");
 
     tokio::spawn(async move {
         axum::serve(listener, app)
@@ -136,7 +137,7 @@ async fn run_client_demo(addr: SocketAddr) {
     let (device_key_der, device_jwk) = generate_device_key();
 
     // --- Step 1: enrol a brand-new device key (spec §5.6 steps 1-3) -----
-    println!("\n== enrolling a new device ==");
+    tracing::info!("\n== enrolling a new device ==");
     let enrol_body = serde_json::json!({
         "subject": "user-42",
         "principal_id": "device-abc123",
@@ -160,14 +161,14 @@ async fn run_client_demo(addr: SocketAddr) {
         .as_str()
         .expect("challenge response missing `challenge`")
         .to_string();
-    println!("received single-use challenge: {challenge_value}");
+    tracing::info!("received single-use challenge: {challenge_value}");
 
     let signature = sign_challenge(&device_key_der, &challenge_value);
     let attestation = complete_challenge(&client, &base, &challenge_value, &signature).await;
     print_attestation("initial enrolment", &attestation);
 
     // --- Step 2: silently re-issue before expiry (ADR 0014 point 6) ----
-    println!("\n== re-issuing the attestation with the same key ==");
+    tracing::info!("\n== re-issuing the attestation with the same key ==");
     let reissue_body = serde_json::json!({
         "attestation": attestation["attestation"],
         "public_jwk": device_jwk,
@@ -255,9 +256,10 @@ fn sign_challenge(pkcs8_der: &[u8], challenge: &str) -> String {
 /// not need to demonstrate since it is exercising issuance, not
 /// verification.
 fn print_attestation(step: &str, resp: &serde_json::Value) {
-    println!(
+    tracing::info!(
         "[{step}] expires_in={}s reissue_after={}",
-        resp["expires_in"], resp["reissue_after"]
+        resp["expires_in"],
+        resp["reissue_after"]
     );
     let attestation = resp["attestation"]
         .as_str()
@@ -271,8 +273,16 @@ fn print_attestation(step: &str, resp: &serde_json::Value) {
         .expect("JWS payload is always valid base64url");
     let claims: serde_json::Value =
         serde_json::from_slice(&payload_bytes).expect("attestation payload is always JSON");
-    println!(
+    tracing::info!(
         "[{step}] claims: {}",
         serde_json::to_string_pretty(&claims).expect("claims always serialize")
     );
+}
+
+/// Bind port, overridable via `PORT` so examples can run without colliding.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8092)
 }
