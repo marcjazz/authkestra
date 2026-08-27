@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 /// The JSON Web Key Set (JWKS) response format.
 /// Served at `/jwks.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct JwksResponse {
     /// The array of JWKs.
     pub keys: Vec<Jwk>,

@@ -9,6 +9,7 @@ use std::time::Duration;
 /// Represents the response from the device authorization endpoint.
 /// Defined in RFC 8628 Section 3.2.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeviceAuthorizationResponse {
     /// The device verification code.
     pub device_code: String,
@@ -27,6 +28,7 @@ pub struct DeviceAuthorizationResponse {
 }
 
 /// Orchestrates the Device Authorization Flow (RFC 8628).
+#[non_exhaustive]
 pub struct DeviceFlow {
     client_id: String,
     device_authorization_url: String,

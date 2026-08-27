@@ -10,12 +10,14 @@ use std::sync::Arc;
 use super::cookie::create_actix_cookie;
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub struct OAuthCallbackParams {
     pub code: String,
     pub state: String,
 }
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub struct OAuthLoginParams {
     pub scope: Option<String>,
     pub success_url: Option<String>,

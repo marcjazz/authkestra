@@ -16,6 +16,7 @@ use std::collections::HashMap;
 
 /// Request payload for the token endpoint.
 #[derive(Debug, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct TokenRequest {
     /// OAuth2 grant type.
     pub grant_type: String,
@@ -62,6 +63,7 @@ pub struct TokenRequest {
 
 /// Success response for the token endpoint.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct TokenResponse {
     /// The access token issued by the authorization server.
     pub access_token: String,
@@ -91,6 +93,7 @@ pub struct TokenResponse {
 
 /// Error response for the token endpoint.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct TokenErrorResponse {
     /// The OAuth2 error code.
     pub error: String,

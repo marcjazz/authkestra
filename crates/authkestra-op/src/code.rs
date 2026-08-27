@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 /// enforcing single-use atomically; this struct is deliberately a plain
 /// data holder with no enforcement logic of its own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AuthorizationCode {
     /// The opaque code value handed to the client.
     pub code: String,

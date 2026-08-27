@@ -12,6 +12,7 @@ pub enum CaptchaProvider {
 }
 
 /// Verification service for CAPTCHA/bot-protection tokens.
+#[non_exhaustive]
 pub struct CaptchaVerifier {
     provider: CaptchaProvider,
     secret_key: String,

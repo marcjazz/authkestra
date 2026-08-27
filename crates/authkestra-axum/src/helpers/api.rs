@@ -24,12 +24,14 @@ use tower_cookies::{Cookie, Cookies};
 use super::cookie::create_axum_cookie;
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub struct OAuthCallbackParams {
     pub code: String,
     pub state: String,
 }
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub struct OAuthLoginParams {
     pub scope: Option<String>,
     pub success_url: Option<String>,

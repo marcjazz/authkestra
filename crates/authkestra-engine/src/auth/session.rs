@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for session cookies.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct SessionConfig {
     /// The name of the session cookie.
     pub cookie_name: String,
@@ -46,6 +47,7 @@ impl Default for SessionConfig {
 
 /// Represents an active user session.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Session {
     /// Unique session identifier.
     pub id: String,

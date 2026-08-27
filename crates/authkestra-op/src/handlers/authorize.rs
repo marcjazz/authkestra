@@ -10,6 +10,7 @@ use rand::RngCore;
 
 /// Represents an incoming OAuth2/OIDC authorization request.
 #[derive(Debug, serde::Deserialize)]
+#[non_exhaustive]
 pub struct AuthorizeRequest {
     /// Client ID requesting authorization.
     pub client_id: String,

@@ -46,6 +46,7 @@ use tokio::sync::RwLock;
 /// network call. It performs no network I/O itself; callers populate it via
 /// [`IssuerJwks::insert`], however they choose to fetch and refresh keys.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct IssuerJwks {
     keys: RwLock<HashMap<(String, String), Jwk>>,
 }

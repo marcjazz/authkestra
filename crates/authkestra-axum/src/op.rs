@@ -540,6 +540,7 @@ pub type CompleteOp = authkestra_op::Op<
 
 /// A newtype wrapper around `CompleteOp` to implement `axum::extract::FromRef` and bypass orphan rules.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct OpState(pub CompleteOp);
 
 impl FromRef<OpState> for Result<Arc<dyn authkestra_op::OpStore>, AxumError> {

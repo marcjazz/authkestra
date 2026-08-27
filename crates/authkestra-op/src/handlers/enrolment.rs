@@ -24,6 +24,7 @@ const ATTESTATION_TYP: &str = "webank-attest+jws";
 /// identity claim, and a second factor; the OP responds with a
 /// server-generated single-use challenge.
 #[derive(Debug, Deserialize)]
+#[non_exhaustive]
 pub struct EnrolStartRequest {
     /// The identity this key will be bound to at completion.
     pub subject: String,
@@ -65,6 +66,7 @@ pub struct EnrolStartRequest {
 /// and this ceremony's job is to prove *continuity*, not re-establish
 /// identity from scratch.
 #[derive(Debug, Deserialize)]
+#[non_exhaustive]
 pub struct ReissueStartRequest {
     /// The current, still cryptographically valid attestation being
     /// renewed.
@@ -78,6 +80,7 @@ pub struct ReissueStartRequest {
 
 /// A server-generated, single-use, short-TTL proof-of-possession challenge.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ChallengeResponse {
     /// The challenge value to sign with the new private key.
     pub challenge: String,
@@ -88,6 +91,7 @@ pub struct ChallengeResponse {
 
 /// Request to complete an enrolment or re-issuance ceremony.
 #[derive(Debug, Deserialize)]
+#[non_exhaustive]
 pub struct CompleteChallengeRequest {
     /// The challenge value previously issued.
     pub challenge: String,
@@ -103,6 +107,7 @@ pub struct CompleteChallengeRequest {
 /// The issued attestation, its lifetime, and a server-recommended
 /// re-issuance checkpoint.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct AttestationResponse {
     /// Compact JWS attestation (spec §3.3), `typ: "webank-attest+jws"`.
     pub attestation: String,

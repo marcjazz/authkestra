@@ -18,6 +18,7 @@ pub enum DeviceCodeStatus {
 
 /// Represents a device authorization session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeviceCodeSession {
     /// The device verification code.
     pub device_code: String,

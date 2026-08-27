@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use totp_rs::{Algorithm, TOTP};
 
 /// TOTP authentication method.
+#[non_exhaustive]
 pub struct TotpAuthMethod<S: CredentialStore> {
     store: S,
 }

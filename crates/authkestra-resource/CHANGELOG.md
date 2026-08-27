@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.4](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.5.3...authkestra-resource-v0.5.4) - 2026-08-24
 
+> **⚠️ Note on Semantic Versioning Break**
+> This release introduced a breaking change by adding `require_cert_binding` to `ValidationConfig`, which was an exhaustive struct at the time. Downstream users employing struct-literal construction (`ValidationConfig { ... }`) will face compilation failures ("missing field"). This is permanently corrected in `0.6.0` by making the struct `#[non_exhaustive]`.
+
 ### Added
 
 - *(op)* RFC 8705 certificate-bound access tokens for client_credentials ([#231](https://github.com/marcjazz/authkestra/pull/231))

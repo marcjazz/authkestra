@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// it describes what the *provider* supports, not what one client is
 /// permitted to use (that's `ClientRegistration::scopes`/`grant_types`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct OpConfig {
     /// The issuer URL, used as the `iss` claim on issued tokens and as the
     /// base for discovery/JWKS endpoint URLs. No trailing slash.

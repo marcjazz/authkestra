@@ -29,6 +29,7 @@ struct RawAttestationClaims {
 
 /// The attestation, once trust has been fully established.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AttestationClaims {
     pub sub: String,
     /// `cnf.jkt` — threaded into the binding check as the value the signature's embedded `jwk`
@@ -40,6 +41,7 @@ pub struct AttestationClaims {
 
 /// Result of the cheap, parse-only step: split the compact JWS and validate `alg`. No trust
 /// decisions are made here — that's [`verify_trust`].
+#[non_exhaustive]
 pub struct ParsedAttestation<'a> {
     raw: RawJws<'a>,
     alg: Algorithm,

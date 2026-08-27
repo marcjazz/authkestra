@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 /// OpenID Connect Discovery metadata document.
 /// Served at `/.well-known/openid-configuration`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct OidcDiscovery {
     /// The OP's Issuer identifier.
     pub issuer: String,

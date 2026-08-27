@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Represents a stored refresh token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RefreshToken {
     /// The actual token string (usually a cryptographically secure random string).
     pub token: String,

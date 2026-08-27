@@ -89,6 +89,7 @@ struct Shared {
 /// On rejection, short-circuits with a `401 Unauthorized` (or `413 Payload Too Large` if the
 /// body exceeds [`DeviceSignatureLayer::max_body_size`]) and never calls the inner service.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct DeviceSignatureLayer {
     shared: Arc<Shared>,
 }
@@ -154,6 +155,7 @@ impl<S> Layer<S> for DeviceSignatureLayer {
 
 /// The `tower::Service` produced by [`DeviceSignatureLayer`]. Not constructed directly.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct DeviceSignatureService<S> {
     inner: S,
     shared: Arc<Shared>,
@@ -269,12 +271,14 @@ fn reject(err: VerifyError) -> Box<Response> {
 /// (`DeviceIdentity`, from `authkestra-devsig`) being implemented against, and this crate owns
 /// neither of those directly -- it owns this wrapper instead.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AuthDeviceSignature(pub DeviceIdentity);
 
 /// Rejection returned by the [`AuthDeviceSignature`] extractor when the [`DeviceSignatureLayer`]
 /// was never run (or rejected the request but the handler was reached anyway, which should not
 /// normally happen).
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct MissingDeviceIdentity;
 
 impl IntoResponse for MissingDeviceIdentity {

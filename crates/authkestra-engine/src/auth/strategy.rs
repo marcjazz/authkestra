@@ -32,6 +32,7 @@ pub trait BasicAuthenticator: Send + Sync {
 }
 
 /// Strategy for Basic authentication.
+#[non_exhaustive]
 pub struct BasicStrategy<P, I> {
     authenticator: P,
     _marker: PhantomData<I>,
@@ -72,6 +73,7 @@ pub trait TokenValidator: Send + Sync {
 }
 
 /// Strategy for Token (Bearer) authentication.
+#[non_exhaustive]
 pub struct TokenStrategy<V, I> {
     validator: V,
     _marker: PhantomData<I>,
@@ -103,6 +105,7 @@ where
 }
 
 /// Strategy for custom header authentication.
+#[non_exhaustive]
 pub struct HeaderStrategy<F, I> {
     header_name: http::header::HeaderName,
     validator: F,
@@ -147,6 +150,7 @@ pub trait SessionProvider: Send + Sync {
 }
 
 /// Strategy for Session authentication.
+#[non_exhaustive]
 pub struct SessionStrategy<P, I> {
     provider: P,
     cookie_name: String,
