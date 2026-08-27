@@ -80,17 +80,49 @@ impl Jwk {
                     }
                 }
 
-                let x = self
+                let x_str = self
                     .x
                     .as_ref()
                     .ok_or_else(|| AuthError::Token("Missing 'x' component in JWK".to_string()))?;
 
-                DecodingKey::from_ed_components(x).map_err(|e| AuthError::Token(e.to_string()))
+                authkestra_crypto_util::parse_ed25519_verifying_key_strict(x_str)
+                    .map_err(|e| AuthError::Token(e.to_string()))?;
+
+                DecodingKey::from_ed_components(x_str).map_err(|e| AuthError::Token(e.to_string()))
             }
             other => Err(AuthError::Token(format!(
                 "Unsupported JWK 'kty' '{}' — only RSA and OKP are supported",
                 other
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_low_order_ed25519_key() {
+        // The identity point: the canonical universal low-order vector.
+        let identity_b64 = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let jwk = Jwk {
+            kid: None,
+            kty: "OKP".to_string(),
+            alg: None,
+            n: None,
+            e: None,
+            crv: Some("Ed25519".to_string()),
+            x: Some(identity_b64.to_string()),
+        };
+
+        let err = jwk
+            .to_decoding_key()
+            .expect_err("should reject low order point");
+        assert!(
+            err.to_string().contains("low-order"),
+            "expected low-order point rejection, got: {}",
+            err
+        );
     }
 }

@@ -28,6 +28,7 @@ url = { workspace = true }
 sha2 = { workspace = true }
 argon2 = "0.5.3"
 sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "json", "chrono"] }
+authkestra-crypto-util.workspace = true
 
 [features]
 redis = ["dep:redis"]
