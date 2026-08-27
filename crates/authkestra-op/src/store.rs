@@ -56,6 +56,41 @@ pub trait OpStore:
         })
     }
 
+    /// Handle an `authorization_code` grant (RFC 6749 §4.1) request during
+    /// token exchange.
+    ///
+    /// A defaulted method, same reasoning as `handle_refresh_token` and
+    /// `handle_token_exchange` below: the built-in dispatch in
+    /// `handlers::token::handle_token` used to match the literal string
+    /// `"authorization_code"` and call straight into the built-in handler,
+    /// with no seam an `OpStore` implementor could intercept. That made it
+    /// impossible to stamp custom claims onto, or create session state for,
+    /// tokens issued by the authorization-code flow — e.g.
+    /// `TokenManager::issue_user_token_with_extra` exists precisely for
+    /// this, but the built-in handler had no way to reach it — without
+    /// forking the crate.
+    ///
+    /// The default (see `default_handle_authorization_code`) reproduces the
+    /// existing authorization-code exchange logic (code consumption, PKCE
+    /// verification, redirect_uri/client_id validation, and token
+    /// issuance). Any `OpStore` that does not override this method gets
+    /// that behavior automatically; nothing about the trait or dispatch
+    /// changes for it.
+    async fn handle_authorization_code_grant(
+        &self,
+        req: crate::handlers::token::TokenRequest,
+        client_id: String,
+        client: crate::client::ClientRegistration,
+        config: &crate::config::OpConfig,
+        tokens: &authkestra_engine::token::TokenManager,
+    ) -> Result<crate::handlers::token::TokenResponse, crate::handlers::token::TokenErrorResponse>
+    {
+        crate::handlers::token::default_handle_authorization_code(
+            req, client_id, client, config, self, tokens,
+        )
+        .await
+    }
+
     /// Handle a `refresh_token` grant request during token exchange.
     ///
     /// A defaulted method, same reasoning as `handle_custom_grant`: the
@@ -68,9 +103,10 @@ pub trait OpStore:
     ///
     /// The default (see `default_handle_refresh_token`) consumes and
     /// rotates the refresh token, re-mints an access token, and — mirroring
-    /// `handle_authorization_code` — re-mints an `id_token` too when the
-    /// stored scope includes `openid` (OIDC Core §12.2 makes this optional;
-    /// this crate now exercises that option instead of always omitting it).
+    /// `default_handle_authorization_code` — re-mints an `id_token` too when
+    /// the stored scope includes `openid` (OIDC Core §12.2 makes this
+    /// optional; this crate now exercises that option instead of always
+    /// omitting it).
     /// Any `OpStore` that does not override this method gets that behavior
     /// automatically; nothing about the trait or dispatch changes for it.
     async fn handle_refresh_token(
