@@ -34,33 +34,31 @@ fn test_identity() -> Identity {
 }
 
 fn test_config() -> OpConfig {
-    serde_json::from_value(serde_json::json!({
-        "issuer": "https://issuer.example.com",
-        "scopes_supported": ["profile"],
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["urn:ietf:params:oauth:grant-type:token-exchange"],
-        "id_token_signing_alg": "RS256",
-        "authorization_code_ttl_secs": 60,
-        "access_token_ttl_secs": 3600,
-        "device_code_ttl_secs": 1800,
-        "token_exchange_enabled": true
-    }))
-    .unwrap()
+    OpConfig {
+        issuer: "https://issuer.example.com".to_string(),
+        scopes_supported: vec!["profile".to_string()],
+        response_types_supported: vec!["code".to_string()],
+        grant_types_supported: vec!["urn:ietf:params:oauth:grant-type:token-exchange".to_string()],
+        id_token_signing_alg: "RS256".to_string(),
+        authorization_code_ttl_secs: 60,
+        access_token_ttl_secs: 3600,
+        device_code_ttl_secs: 1800,
+        token_exchange_enabled: true,
+    }
 }
 
 fn test_client() -> ClientRegistration {
-    serde_json::from_value(serde_json::json!({
-        "client_id": "client1",
-        "client_secret_hash": null,
-        "redirect_uris": [],
-        "grant_types": ["urn:ietf:params:oauth:grant-type:token-exchange"],
-        "scopes": ["profile"],
-        "require_pkce": false,
-        "allowed_audiences": [],
-        "token_endpoint_auth_method": null,
-        "jwks": null
-    }))
-    .unwrap()
+    ClientRegistration {
+        client_id: "client1".to_string(),
+        client_secret_hash: None,
+        redirect_uris: vec![],
+        grant_types: vec![GrantType::TokenExchange],
+        scopes: vec!["profile".to_string()],
+        require_pkce: false,
+        allowed_audiences: vec![],
+        token_endpoint_auth_method: None,
+        jwks: None,
+    }
 }
 
 fn exchange_request(subject_token: &str) -> TokenRequest {
@@ -69,8 +67,7 @@ fn exchange_request(subject_token: &str) -> TokenRequest {
         "client_id": "client1",
         "subject_token": subject_token,
         "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
-    }))
-    .unwrap()
+    })).unwrap()
 }
 
 #[tokio::test]

@@ -93,10 +93,12 @@ ignore = [
 allow = [
     "MIT",
     "Apache-2.0",
+    "MPL-2.0",
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "BSD-3-Clause",
     "BSD-2-Clause",
+    "MPL-2.0",
     "ISC",
     "Zlib",
     "BSL-1.0",
