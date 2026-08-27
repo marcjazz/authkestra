@@ -125,8 +125,18 @@ impl JwksCache {
     }
 }
 
-/// A builder for configuring offline JWT validation.
 /// Configuration for JWT validation.
+///
+/// Construct this via [`ValidationConfig::builder`]. The type is
+/// `#[non_exhaustive]` so that adding a validation knob is a non-breaking
+/// change: `jwks_url` has no meaningful default (the builder panics if it is
+/// unset), so there is deliberately no `Default` impl to spread from, which
+/// left struct-literal construction as the only alternative to the builder —
+/// and that made every new field a downstream compile error. `require_kid`
+/// (PR #110) and `require_cert_binding` (PR #231, issue #224) were both added
+/// that way already; see issue #247. Fields stay `pub` for reading and for
+/// post-build mutation.
+#[non_exhaustive]
 pub struct ValidationConfig {
     pub jwks_url: String,
     pub refresh_interval: Duration,
