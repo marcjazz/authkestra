@@ -15,9 +15,9 @@
 //! relying parties resolve `/.well-known/openid-configuration` against the
 //! issuer URL and a mismatch breaks discovery.
 use actix_web::{App, HttpServer};
+use authkestra::Authkestra;
 use authkestra_actix::{ActixState, OpExt};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra::Authkestra;
 use authkestra_engine::{AkEngine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::config::OpConfig;
 use authkestra_op::sqlx_store::SqlxOpStore;

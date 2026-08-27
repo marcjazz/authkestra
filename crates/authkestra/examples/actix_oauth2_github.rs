@@ -15,9 +15,9 @@
 
 use actix_files::Files;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use authkestra::Authkestra;
 use authkestra_actix::{ActixExt, ActixState, AuthSession};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra::Authkestra;
 use authkestra_engine::{AkWebAppEngine, OAuth2Flow, SessionConfig, SessionStore};
 use authkestra_providers::github::GithubProvider;
 use serde_json::json;

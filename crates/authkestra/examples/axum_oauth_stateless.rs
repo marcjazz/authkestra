@@ -18,9 +18,9 @@
 //! 2. The callback (`/auth/callback/github`) responds with a JWT.
 //! 3. Call `/api/user` with `Authorization: Bearer <token>`.
 
+use authkestra::Authkestra;
 use authkestra_axum::{AuthToken, AxumError, AxumState, AxumStatelessExt};
 use authkestra_engine::{AkApiEngine, OAuth2Flow};
-use authkestra::Authkestra;
 use authkestra_providers::github::GithubProvider;
 use axum::{
     http::StatusCode,

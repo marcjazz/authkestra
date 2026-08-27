@@ -13,9 +13,9 @@
 //! on GitHub — that is the path [`AxumExt::axum_router`] actually wires. Set
 //! `PORT` to bind elsewhere; the default redirect URI follows it.
 
+use authkestra::Authkestra;
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra::Authkestra;
 use authkestra_engine::{AkWebAppEngine, OAuth2Flow, SessionConfig, SessionStore};
 use authkestra_providers::github::GithubProvider;
 use axum::{

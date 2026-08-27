@@ -19,9 +19,9 @@
 //! 3. Call `/api/user` with `Authorization: Bearer <token>`.
 
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use authkestra::Authkestra;
 use authkestra_actix::{ActixState, ActixStatelessExt, AuthToken};
 use authkestra_engine::{AkApiEngine, OAuth2Flow};
-use authkestra::Authkestra;
 use authkestra_providers::github::GithubProvider;
 use serde_json::json;
 

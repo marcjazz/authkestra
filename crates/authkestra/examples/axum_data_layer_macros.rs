@@ -19,9 +19,9 @@
 //!
 //! Set `PORT` to bind somewhere other than 3000.
 
+use authkestra::Authkestra;
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
 use authkestra_engine::store::sql::SqlKvStore;
-use authkestra::Authkestra;
 use authkestra_engine::{AkWebAppEngine, SessionConfig, SessionStore};
 use authkestra_macros::KvStore;
 use axum::{

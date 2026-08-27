@@ -19,8 +19,8 @@
 //!
 //! Set `PORT` to bind somewhere other than 3000.
 
-use authkestra_engine::auth::{AuthError, AuthInput, AuthResult, CredentialStore};
 use authkestra::Authkestra;
+use authkestra_engine::auth::{AuthError, AuthInput, AuthResult, CredentialStore};
 use axum::{extract::State, routing::post, Json, Router};
 use std::sync::Arc;
 use url::Url;
