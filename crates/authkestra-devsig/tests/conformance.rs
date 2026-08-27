@@ -8,8 +8,12 @@
 
 mod support;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use jsonwebtoken::{crypto, Algorithm, DecodingKey};
+
 use authkestra_devsig::{InMemoryReplayStore, SignedRequest, UnavailableReplayStore, VerifyError};
-use support::TestSetup;
+use support::{KeyPair, TestSetup, LOW_ORDER_ED25519_POINT};
 
 /// Case 1: valid signature + valid attestation, bound, fresh -> Accept.
 #[tokio::test]
@@ -714,4 +718,237 @@ async fn expired_but_within_skew_does_not_panic_on_replay_ttl() {
     // Whether this accepts or rejects on freshness grounds depends on exact skew math; the
     // only hard requirement here is that it doesn't panic while computing the replay TTL.
     let _ = authkestra_devsig::verify(&request, &setup.config, &setup.jwks, &store).await;
+}
+
+// ---------------------------------------------------------------------------------------
+// authkestra#242 -- EdDSA must be verified *strictly*.
+//
+// `jsonwebtoken` 11.0.0's `rust_crypto` backend verifies EdDSA through
+// `ed25519_dalek::Verifier::verify`, the **non-strict** verifier
+// (`jsonwebtoken-11.0.0/src/crypto/rust_crypto/eddsa.rs`). Non-strict verification does not
+// check whether the public key -- or the signature's `R` -- is a low-order point, so the pair
+// `(A = identity, R = identity, S = 0)` satisfies the verification equation for **every**
+// message. Nobody holds a private key for that public key; there isn't one.
+//
+// For `authkestra-devsig` that is not academic. The verifying key travels inside the request,
+// in the `X-Signature` protected header's embedded `jwk`. The binding check ties that `jwk` to
+// the attestation's `cnf.jkt` -- but a low-order key thumbprints just like any other, so an
+// attacker who enrols one passes the binding check honestly and then needs no secret at all to
+// sign. See `authkestra_devsig`'s `eddsa` module for the fix.
+// ---------------------------------------------------------------------------------------
+
+/// **The vulnerability.** A device key that is a low-order Ed25519 point, genuinely attested by
+/// the trusted issuer (nothing in an enrolment flow makes such a key look unusual — it is a
+/// well-formed 32-byte OKP `x`), paired with a signature nobody needed a private key to produce.
+///
+/// Every other check in the algorithm passes honestly here: the attestation really is the
+/// issuer's, the embedded `jwk` really does thumbprint-match `cnf.jkt`, the claims really do
+/// bind this method/path/audience, the signature is fresh and unreplayed. The *only* thing
+/// standing between this request and a full impersonation is whether the EdDSA signature check
+/// is strict. Under non-strict verification it is accepted.
+#[tokio::test]
+async fn low_order_ed25519_device_key_cannot_forge_a_signature() {
+    let setup = TestSetup::new().await;
+    let low_order = KeyPair::low_order_ed25519();
+
+    let attestation = setup.attestation_binding(&low_order);
+    let signature = setup.valid_signature(&low_order, "POST", "/v1/payments/transfer", None, None);
+
+    let request = SignedRequest {
+        signature: Some(&signature),
+        attestation: Some(&attestation),
+        method: "POST",
+        path: "/v1/payments/transfer",
+        query: None,
+        body: None,
+    };
+
+    let store = InMemoryReplayStore::new();
+    let result = authkestra_devsig::verify(&request, &setup.config, &setup.jwks, &store).await;
+
+    let err = result.expect_err(
+        "a low-order Ed25519 public key has no private key behind it -- accepting a signature \
+         under it means anyone can sign as this identity, which defeats the per-request \
+         proof-of-possession this crate exists to provide (authkestra#242)",
+    );
+    assert_eq!(
+        err.code(),
+        "bad_jwk",
+        "the low-order key must be rejected as an unusable key, not merely as a bad signature: \
+         the key itself is the defect, so rejecting it before any verification attempt is what \
+         makes the rejection independent of which signature bytes were supplied -- got {err}"
+    );
+}
+
+/// The same low-order key, but with the canned forgery replaced by *arbitrary* signature bytes.
+/// Guards against a fix that only recognises one hard-coded forgery vector: the key is rejected
+/// on its own merits, whatever accompanies it.
+#[tokio::test]
+async fn low_order_ed25519_device_key_is_rejected_regardless_of_signature_bytes() {
+    let setup = TestSetup::new().await;
+    let low_order = KeyPair::low_order_ed25519_with_signature([0x42u8; 64]);
+
+    let attestation = setup.attestation_binding(&low_order);
+    let signature = setup.valid_signature(&low_order, "GET", "/v1/accounts", None, None);
+
+    let request = SignedRequest {
+        signature: Some(&signature),
+        attestation: Some(&attestation),
+        method: "GET",
+        path: "/v1/accounts",
+        query: None,
+        body: None,
+    };
+
+    let store = InMemoryReplayStore::new();
+    let err = authkestra_devsig::verify(&request, &setup.config, &setup.jwks, &store)
+        .await
+        .expect_err("a low-order Ed25519 key must be rejected on the strength of the key alone");
+    assert_eq!(err.code(), "bad_jwk", "got {err}");
+}
+
+/// **The positive control.** A fix that rejects every Ed25519 key is not a fix. A real,
+/// honestly-generated Ed25519 device key must still verify end to end, including the body hash.
+#[tokio::test]
+async fn genuine_ed25519_device_key_is_still_accepted() {
+    let setup = TestSetup::new().await;
+    let device = KeyPair::generate_ed25519();
+
+    let attestation = setup.attestation_binding(&device);
+    let body = br#"{"amount":"12.50","currency":"EUR"}"#;
+    let signature = setup.valid_signature_with_body(&device, "POST", "/v1/payments/transfer", body);
+
+    let request = SignedRequest {
+        signature: Some(&signature),
+        attestation: Some(&attestation),
+        method: "POST",
+        path: "/v1/payments/transfer",
+        query: None,
+        body: Some(body),
+    };
+
+    let store = InMemoryReplayStore::new();
+    let identity = authkestra_devsig::verify(&request, &setup.config, &setup.jwks, &store)
+        .await
+        .expect("a genuine Ed25519 device key must keep verifying after the strict-EdDSA change");
+
+    assert_eq!(identity.subject, support::SUBJECT);
+    assert_eq!(identity.key_thumbprint, device.thumbprint);
+}
+
+/// A genuine Ed25519 device key whose signature has been tampered with must still be rejected —
+/// i.e. the strict path actually verifies, rather than waving EdDSA through once the key looks
+/// healthy.
+#[tokio::test]
+async fn genuine_ed25519_device_key_with_a_tampered_body_is_rejected() {
+    let setup = TestSetup::new().await;
+    let device = KeyPair::generate_ed25519();
+
+    let attestation = setup.attestation_binding(&device);
+    let signature =
+        setup.valid_signature_with_body(&device, "POST", "/v1/payments/transfer", b"amount=10");
+
+    let request = SignedRequest {
+        signature: Some(&signature),
+        attestation: Some(&attestation),
+        method: "POST",
+        path: "/v1/payments/transfer",
+        query: None,
+        body: Some(b"amount=100000"),
+    };
+
+    let store = InMemoryReplayStore::new();
+    let err = authkestra_devsig::verify(&request, &setup.config, &setup.jwks, &store)
+        .await
+        .expect_err("a tampered body must not verify under a genuine Ed25519 key either");
+    assert_eq!(err.code(), "body_mismatch", "got {err}");
+}
+
+/// An Ed25519 signature that simply does not verify (right key, wrong signature bytes) must be
+/// reported as `bad_signature`, not silently reshaped into some other rejection by the strict
+/// path.
+#[tokio::test]
+async fn genuine_ed25519_device_key_with_a_wrong_signature_is_bad_signature() {
+    let setup = TestSetup::new().await;
+    let device = KeyPair::generate_ed25519();
+
+    let attestation = setup.attestation_binding(&device);
+    let signature = setup.signature_with_forged_bytes(&device, "GET", "/v1/accounts", [0x11u8; 64]);
+
+    let request = SignedRequest {
+        signature: Some(&signature),
+        attestation: Some(&attestation),
+        method: "GET",
+        path: "/v1/accounts",
+        query: None,
+        body: None,
+    };
+
+    let store = InMemoryReplayStore::new();
+    let err = authkestra_devsig::verify(&request, &setup.config, &setup.jwks, &store)
+        .await
+        .expect_err("garbage Ed25519 signature bytes must not verify");
+    assert_eq!(err.code(), "bad_signature", "got {err}");
+}
+
+/// Defence in depth on the *issuer* side. `authkestra-devsig`'s attestation path resolves its
+/// verifying key from the cached Issuer JWKS, which is a good deal more trustworthy than a key
+/// arriving in the request — but "more trustworthy" is not "unforgeable". A low-order Ed25519 key
+/// reaching a verifier's JWKS (compromised issuer, hostile mirror, buggy key-rotation tooling)
+/// would otherwise let anybody mint attestations for any subject, bound to a key they *do*
+/// control, and that is a complete authentication bypass without any device compromise at all.
+#[tokio::test]
+async fn low_order_ed25519_issuer_key_cannot_forge_an_attestation() {
+    let setup = TestSetup::new().await;
+
+    // The attestation is forged under a weak "issuer key" but binds the attacker's own,
+    // genuinely-held device key -- so the binding check and the request signature both pass.
+    let attestation = setup
+        .attestation_forged_under_low_order_issuer_key(&setup.attacker)
+        .await;
+    let signature =
+        setup.valid_signature(&setup.attacker, "POST", "/v1/payments/transfer", None, None);
+
+    let request = SignedRequest {
+        signature: Some(&signature),
+        attestation: Some(&attestation),
+        method: "POST",
+        path: "/v1/payments/transfer",
+        query: None,
+        body: None,
+    };
+
+    let store = InMemoryReplayStore::new();
+    let err = authkestra_devsig::verify(&request, &setup.config, &setup.jwks, &store)
+        .await
+        .expect_err(
+            "an attestation 'signed' by a low-order Ed25519 issuer key must be rejected -- \
+             accepting it lets anyone who can influence the JWKS mint attestations for any subject",
+        );
+    assert_eq!(err.code(), "bad_attestation", "got {err}");
+}
+
+/// A canary, not a requirement: it asserts the *upstream* behaviour this crate is working around.
+///
+/// If this test ever fails, `jsonwebtoken` has switched its EdDSA verifier to `verify_strict`
+/// (or otherwise started rejecting low-order keys), and the local strict path in
+/// `authkestra-devsig` can be reconsidered — deliberately fail loudly at that point rather than
+/// carry a workaround nobody remembers the reason for.
+#[test]
+fn canary_upstream_jsonwebtoken_still_verifies_eddsa_non_strictly() {
+    let mut forged_signature = [0u8; 64];
+    forged_signature[..32].copy_from_slice(&LOW_ORDER_ED25519_POINT);
+
+    let decoding_key = DecodingKey::from_ed_der(&LOW_ORDER_ED25519_POINT);
+    let signature_b64 = URL_SAFE_NO_PAD.encode(forged_signature);
+
+    for message in [b"any message at all".as_slice(), b"and this one too", b""] {
+        let accepted = crypto::verify(&signature_b64, message, &decoding_key, Algorithm::EdDSA)
+            .expect("jsonwebtoken should not error on a well-formed EdDSA key/signature pair");
+        assert!(
+            accepted,
+            "canary: jsonwebtoken no longer accepts the low-order EdDSA forgery -- upstream may \
+             have adopted verify_strict, so authkestra#242's local workaround can be revisited"
+        );
+    }
 }

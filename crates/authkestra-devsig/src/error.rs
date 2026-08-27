@@ -45,8 +45,13 @@ pub enum VerifyError {
     DeviceNotActive,
 
     /// The embedded `jwk` (from the request signature's protected header) is missing, is not a
-    /// public key of an allowed type, or carries a private component (`d`, `p`, `q`, `dp`, `dq`,
-    /// `qi`, `k`).
+    /// public key of an allowed type, carries a private component (`d`, `p`, `q`, `dp`, `dq`,
+    /// `qi`, `k`), or is a key no signature under it could ever prove anything about.
+    ///
+    /// That last case is a **low-order ("weak") Ed25519 public key**: no private key exists for
+    /// one, so it is rejected on its own merits, before verification is attempted, rather than
+    /// as a `bad_signature` — the key is the defect, not the signature. See `crate::eddsa` and
+    /// [authkestra#242](https://github.com/marcjazz/authkestra/issues/242).
     #[error("bad_jwk: {0}")]
     BadJwk(String),
 

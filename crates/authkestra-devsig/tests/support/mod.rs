@@ -21,11 +21,41 @@ pub const DEVICE_ID: &str = "dev-8821bc04";
 pub const ISSUER: &str = "https://id.example.com";
 pub const AUD: &str = "api.example.com";
 
+/// The compressed Edwards encoding of the **identity element** of the Ed25519 group (`y = 1`) —
+/// a low-order ("weak") public key.
+///
+/// Under *non-strict* Ed25519 verification the pair `(A = identity, R = identity, S = 0)`
+/// satisfies the verification equation `[S]B - [k]A == R` for **every** message, because both
+/// sides collapse to the identity regardless of the challenge scalar `k`. Nobody holds — or needs
+/// — a private key for it. `verify_strict` rejects it outright via `is_small_order()`.
+///
+/// (The all-zero encoding the issue mentions is also low-order, but its order-4 point only
+/// satisfies the equation for roughly one message in four, so it is not usable as a
+/// deterministic test vector. The identity encoding is the universal one.)
+pub const LOW_ORDER_ED25519_POINT: [u8; 32] = {
+    let mut bytes = [0u8; 32];
+    bytes[0] = 1;
+    bytes
+};
+
+/// How a test [`KeyPair`] or [`Issuer`] produces the signature segment of a JWS.
+#[derive(Clone)]
+pub enum Signer {
+    /// A genuinely-held private key: really sign the real signing input.
+    PrivateKey(EncodingKey),
+    /// **No private key is held at all** — emit this canned, message-independent signature.
+    ///
+    /// This is what makes the low-order-key cases meaningful: the forger possesses nothing but a
+    /// public key, so if the verifier accepts, the per-request proof-of-possession this crate
+    /// exists to provide has collapsed completely.
+    Forged(String),
+}
+
 /// An asymmetric keypair plus its public `jsonwebtoken::jwk::Jwk` (both typed and as raw JSON,
 /// ready to splice into a JOSE header).
 #[derive(Clone)]
 pub struct KeyPair {
-    pub encoding_key: EncodingKey,
+    pub signer: Signer,
     pub alg: Algorithm,
     pub jwk_json: Value,
     pub thumbprint: String,
@@ -44,31 +74,73 @@ impl KeyPair {
             EncodingKey::from_ec_pem(pem.as_bytes()).expect("EncodingKey::from_ec_pem");
         let jwk = Jwk::from_encoding_key(&encoding_key, Algorithm::ES256)
             .expect("derive public jwk from EC encoding key");
-        let thumbprint = jwk
-            .thumbprint(jsonwebtoken::jwk::ThumbprintHash::SHA256)
-            .expect("compute thumbprint");
-        let jwk_json = serde_json::to_value(&jwk).expect("serialize device jwk");
+        Self::from_encoding_key(encoding_key, jwk, Algorithm::ES256)
+    }
+
+    /// A real, honestly-generated Ed25519 device key. The positive control for the strict-EdDSA
+    /// change: legitimate devices must keep working.
+    pub fn generate_ed25519() -> Self {
+        use ed25519_dalek::pkcs8::EncodePrivateKey;
+        use rand::RngCore;
+
+        let mut seed = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let der = signing_key
+            .to_pkcs8_der()
+            .expect("encode Ed25519 key to PKCS#8 DER");
+        let encoding_key = EncodingKey::from_ed_der(der.as_bytes());
+        let jwk = ed25519_public_jwk(signing_key.verifying_key().as_bytes());
+        Self::from_encoding_key(encoding_key, jwk, Algorithm::EdDSA)
+    }
+
+    /// The attack key: a low-order Ed25519 public key with **no private key behind it**, paired
+    /// with the canned `(R = identity, S = 0)` signature that non-strict verification accepts for
+    /// any message. See [`LOW_ORDER_ED25519_POINT`].
+    pub fn low_order_ed25519() -> Self {
+        let mut forged = [0u8; 64];
+        forged[..32].copy_from_slice(&LOW_ORDER_ED25519_POINT);
+        Self::low_order_ed25519_with_signature(forged)
+    }
+
+    /// The same low-order public key, but carrying caller-chosen signature bytes — for asserting
+    /// that the key is rejected on its own merits rather than by recognising one canned vector.
+    pub fn low_order_ed25519_with_signature(signature: [u8; 64]) -> Self {
+        let jwk = ed25519_public_jwk(&LOW_ORDER_ED25519_POINT);
         Self {
-            encoding_key,
-            alg: Algorithm::ES256,
-            jwk_json,
-            thumbprint,
+            signer: Signer::Forged(b64url(&signature)),
+            alg: Algorithm::EdDSA,
+            thumbprint: thumbprint_of(&jwk),
+            jwk_json: serde_json::to_value(&jwk).expect("serialize low-order jwk"),
         }
+    }
+
+    fn from_encoding_key(encoding_key: EncodingKey, jwk: Jwk, alg: Algorithm) -> Self {
+        Self {
+            signer: Signer::PrivateKey(encoding_key),
+            alg,
+            thumbprint: thumbprint_of(&jwk),
+            jwk_json: serde_json::to_value(&jwk).expect("serialize device jwk"),
+        }
+    }
+
+    fn sign(&self, msg: &[u8]) -> String {
+        sign_with(&self.signer, self.alg, msg)
     }
 
     fn alg_name(&self) -> &'static str {
-        match self.alg {
-            Algorithm::ES256 => "ES256",
-            other => panic!("unexpected test keypair alg {other:?}"),
-        }
+        alg_name(self.alg)
     }
 }
 
-/// The test "Issuer": an RSA keypair playing the role of `authkestra-op`.
+/// The test "Issuer" playing the role of `authkestra-op`. Normally an RSA keypair; the
+/// JWKS-ingest case swaps in a low-order Ed25519 key to prove the issuer side is hardened too.
 #[derive(Clone)]
 pub struct Issuer {
     pub kid: String,
-    pub encoding_key: EncodingKey,
+    pub alg: Algorithm,
+    pub signer: Signer,
+    jwk: Jwk,
 }
 
 impl Issuer {
@@ -84,18 +156,71 @@ impl Issuer {
         };
         let encoding_key =
             EncodingKey::from_rsa_pem(pem.as_bytes()).expect("EncodingKey::from_rsa_pem");
+        let kid = "issuer-key-1".to_string();
+        let mut jwk = Jwk::from_encoding_key(&encoding_key, Algorithm::RS256)
+            .expect("derive public jwk from RSA encoding key");
+        jwk.common.key_id = Some(kid.clone());
         Self {
-            kid: "issuer-key-1".to_string(),
-            encoding_key,
+            kid,
+            alg: Algorithm::RS256,
+            signer: Signer::PrivateKey(encoding_key),
+            jwk,
+        }
+    }
+
+    /// An "issuer key" that is really a low-order Ed25519 point, as it might reach a verifier
+    /// through a compromised, buggy, or hostile JWKS document. Nobody holds a private key for it;
+    /// the canned signature is the same universal forgery as [`KeyPair::low_order_ed25519`].
+    fn low_order_ed25519(kid: &str) -> Self {
+        let mut jwk = ed25519_public_jwk(&LOW_ORDER_ED25519_POINT);
+        jwk.common.key_id = Some(kid.to_string());
+        let mut forged = [0u8; 64];
+        forged[..32].copy_from_slice(&LOW_ORDER_ED25519_POINT);
+        Self {
+            kid: kid.to_string(),
+            alg: Algorithm::EdDSA,
+            signer: Signer::Forged(b64url(&forged)),
+            jwk,
         }
     }
 
     fn public_jwk(&self) -> Jwk {
-        let mut jwk = Jwk::from_encoding_key(&self.encoding_key, Algorithm::RS256)
-            .expect("derive public jwk from RSA encoding key");
-        jwk.common.key_id = Some(self.kid.clone());
-        jwk
+        self.jwk.clone()
     }
+
+    fn sign(&self, msg: &[u8]) -> String {
+        sign_with(&self.signer, self.alg, msg)
+    }
+}
+
+fn sign_with(signer: &Signer, alg: Algorithm, msg: &[u8]) -> String {
+    match signer {
+        Signer::PrivateKey(key) => crypto::sign(msg, key, alg).expect("sign test JWS"),
+        Signer::Forged(signature_b64) => signature_b64.clone(),
+    }
+}
+
+fn alg_name(alg: Algorithm) -> &'static str {
+    match alg {
+        Algorithm::ES256 => "ES256",
+        Algorithm::RS256 => "RS256",
+        Algorithm::EdDSA => "EdDSA",
+        other => panic!("unexpected test keypair alg {other:?}"),
+    }
+}
+
+fn ed25519_public_jwk(public_key: &[u8; 32]) -> Jwk {
+    serde_json::from_value(json!({
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": b64url(public_key),
+    }))
+    .expect("build OKP jwk")
+}
+
+fn thumbprint_of(jwk: &Jwk) -> String {
+    jwk.thumbprint(jsonwebtoken::jwk::ThumbprintHash::SHA256)
+        .expect("compute thumbprint")
 }
 
 /// RSA-2048 keygen in a pure-Rust bignum implementation is not fast; the issuer identity is the
@@ -131,7 +256,7 @@ impl TestSetup {
 
         let config = VerifierConfig::new(
             [ISSUER],
-            [Algorithm::ES256, Algorithm::RS256],
+            [Algorithm::ES256, Algorithm::RS256, Algorithm::EdDSA],
             Duration::from_secs(30),
             Duration::from_secs(120),
             AUD,
@@ -156,11 +281,41 @@ impl TestSetup {
     // ---- Attestations ----
 
     pub fn valid_attestation(&self) -> String {
+        self.attestation_binding(&self.device)
+    }
+
+    /// A genuine attestation from the trusted issuer, binding `key`'s thumbprint rather than the
+    /// default device's. Lets a case choose which key the identity is attested to — including a
+    /// key nobody actually holds the private half of.
+    pub fn attestation_binding(&self, key: &KeyPair) -> String {
         self.attestation_full(
+            &self.issuer,
             ISSUER,
             &self.issuer.kid,
             SUBJECT,
-            &self.device.thumbprint,
+            &key.thumbprint,
+            DEVICE_ID,
+            "active",
+            0,
+            30 * 24 * 3600,
+        )
+    }
+
+    /// Registers a **low-order Ed25519 "issuer key"** in the cached JWKS under its own `kid`, and
+    /// returns an attestation forged under it binding `key`. No issuer private key is involved:
+    /// if this attestation is trusted, anyone who can get such a key into a verifier's JWKS can
+    /// mint attestations for any subject.
+    pub async fn attestation_forged_under_low_order_issuer_key(&self, key: &KeyPair) -> String {
+        let weak_issuer = Issuer::low_order_ed25519("issuer-key-weak-ed25519");
+        self.jwks
+            .insert(ISSUER, weak_issuer.kid.clone(), weak_issuer.public_jwk())
+            .await;
+        self.attestation_full(
+            &weak_issuer,
+            ISSUER,
+            &weak_issuer.kid,
+            SUBJECT,
+            &key.thumbprint,
             DEVICE_ID,
             "active",
             0,
@@ -170,6 +325,7 @@ impl TestSetup {
 
     pub fn attestation_with_issuer(&self, iss: &str) -> String {
         self.attestation_full(
+            &self.issuer,
             iss,
             &self.issuer.kid,
             SUBJECT,
@@ -183,6 +339,7 @@ impl TestSetup {
 
     pub fn attestation_with_kid(&self, kid: &str) -> String {
         self.attestation_full(
+            &self.issuer,
             ISSUER,
             kid,
             SUBJECT,
@@ -196,6 +353,7 @@ impl TestSetup {
 
     pub fn attestation_with_status(&self, status: &str) -> String {
         self.attestation_full(
+            &self.issuer,
             ISSUER,
             &self.issuer.kid,
             SUBJECT,
@@ -228,6 +386,7 @@ impl TestSetup {
     #[allow(clippy::too_many_arguments)]
     fn attestation_full(
         &self,
+        issuer: &Issuer,
         iss: &str,
         kid: &str,
         sub: &str,
@@ -238,7 +397,7 @@ impl TestSetup {
         exp_offset: i64,
     ) -> String {
         let now = now_unix();
-        let header = json!({ "alg": "RS256", "kid": kid, "typ": "webank-attest+jws" });
+        let header = json!({ "alg": alg_name(issuer.alg), "kid": kid, "typ": "webank-attest+jws" });
         let claims = attestation_claims(
             iss,
             sub,
@@ -248,10 +407,7 @@ impl TestSetup {
             now + exp_offset,
             status,
         );
-        let encoding_key = self.issuer.encoding_key.clone();
-        build_raw_compact_jws(&header, &claims, |msg| {
-            crypto::sign(msg, &encoding_key, Algorithm::RS256).expect("sign test attestation")
-        })
+        build_raw_compact_jws(&header, &claims, |msg| issuer.sign(msg))
     }
 
     // ---- Request signatures ----
@@ -369,11 +525,31 @@ impl TestSetup {
             None,
             None,
         );
-        let encoding_key = key.encoding_key.clone();
-        let alg = key.alg;
-        build_raw_compact_jws(&header, &claims, |msg| {
-            crypto::sign(msg, &encoding_key, alg).expect("sign test request")
-        })
+        build_raw_compact_jws(&header, &claims, |msg| key.sign(msg))
+    }
+
+    /// A well-formed request signature for `key`, except that the signature segment is replaced
+    /// with `signature` rather than being produced by `key`'s private half.
+    pub fn signature_with_forged_bytes(
+        &self,
+        key: &KeyPair,
+        mth: &str,
+        pth: &str,
+        signature: [u8; 64],
+    ) -> String {
+        let header =
+            json!({ "alg": key.alg_name(), "typ": "webank-devsig+jws", "jwk": key.jwk_json });
+        let claims = signature_claims(
+            mth,
+            pth,
+            &self.next_jti(),
+            now_unix(),
+            now_unix() + 90,
+            AUD,
+            None,
+            None,
+        );
+        build_raw_compact_jws(&header, &claims, |_msg| b64url(&signature))
     }
 
     /// A request signature whose embedded `jwk` claims `"kty":"EC","crv":"Ed25519"` — a
@@ -450,11 +626,7 @@ impl TestSetup {
             query,
             body,
         );
-        let encoding_key = key.encoding_key.clone();
-        let alg = key.alg;
-        build_raw_compact_jws(&header, &claims, |msg| {
-            crypto::sign(msg, &encoding_key, alg).expect("sign test request")
-        })
+        build_raw_compact_jws(&header, &claims, |msg| key.sign(msg))
     }
 }
 

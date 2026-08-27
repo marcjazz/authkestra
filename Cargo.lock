@@ -528,6 +528,7 @@ version = "0.5.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "ed25519-dalek",
  "jsonwebtoken",
  "p256",
  "rand 0.8.7",

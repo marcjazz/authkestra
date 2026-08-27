@@ -22,12 +22,13 @@
 //! what was actually signed.
 
 use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk, ThumbprintHash};
-use jsonwebtoken::{crypto, Algorithm, AlgorithmFamily, DecodingKey};
+use jsonwebtoken::{Algorithm, AlgorithmFamily, DecodingKey};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::config::VerifierConfig;
+use crate::eddsa::{verify_jws_signature, VerifyFailure};
 use crate::error::VerifyError;
 use crate::jws_util::{
     constant_time_eq, decode_json_segment, parse_and_check_alg, reject_private_jwk_members,
@@ -163,14 +164,25 @@ pub fn verify_bound_and_signed(
         VerifyError::BadJwk(format!("embedded jwk unusable as a decoding key: {e}"))
     })?;
 
+    // EdDSA goes through this crate's own *strict* verifier rather than `jsonwebtoken`'s
+    // non-strict one — see `crate::eddsa` for why that distinction is load-bearing precisely
+    // here, where `jwk` is attacker-supplied (authkestra#242).
     let signing_input = format!("{}.{}", parsed.raw.header_b64, parsed.raw.payload_b64);
-    let sig_ok = crypto::verify(
+    let sig_ok = verify_jws_signature(
+        parsed.alg,
+        &jwk,
+        &decoding_key,
         parsed.raw.signature_b64,
         signing_input.as_bytes(),
-        &decoding_key,
-        parsed.alg,
     )
-    .map_err(|e| VerifyError::BadSignature(format!("verification error: {e}")))?;
+    .map_err(|failure| match failure {
+        // A key that cannot be used, or must not be used, is a `bad_jwk` — reporting it as
+        // `bad_signature` would blame the signature for a defect that is in the key.
+        VerifyFailure::Key(reason) => VerifyError::BadJwk(reason),
+        VerifyFailure::Backend(reason) => {
+            VerifyError::BadSignature(format!("verification error: {reason}"))
+        }
+    })?;
     if !sig_ok {
         return Err(VerifyError::BadSignature(
             "signature does not verify".to_string(),

@@ -12,6 +12,11 @@ readme = "README.md"
 
 [dependencies]
 async-trait = "0.1"
+# Direct, not transitive-by-accident: `crate::eddsa` calls `VerifyingKey::verify_strict` itself
+# because `jsonwebtoken`'s EdDSA backend uses the non-strict verifier (authkestra#242). This adds
+# no new code to the dependency graph — `jsonwebtoken`'s `rust_crypto` backend, already enabled
+# above, resolves the same `ed25519-dalek` 2.x.
+ed25519-dalek = "2"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -27,6 +32,10 @@ tokio = { version = "1", features = ["full"] }
 rsa = "0.9"
 p256 = { version = "0.13", features = ["pem", "ecdsa"] }
 rand = "0.8"
+# `pkcs8` only, and only for tests: the conformance suite needs to mint a *real* Ed25519 device
+# key in the PKCS#8 DER shape `jsonwebtoken::EncodingKey::from_ed_der` expects, so that the
+# positive EdDSA case exercises the same signing path a real device would.
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
 
 [features]
 default = []

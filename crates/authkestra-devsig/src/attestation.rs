@@ -1,11 +1,12 @@
 //! Parsing and trust verification of `X-Attestation`.
 
 use jsonwebtoken::jwk::Jwk;
-use jsonwebtoken::{crypto, Algorithm, DecodingKey};
+use jsonwebtoken::{Algorithm, DecodingKey};
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::config::VerifierConfig;
+use crate::eddsa::{verify_jws_signature, VerifyFailure};
 use crate::error::VerifyError;
 use crate::jwks::IssuerJwks;
 use crate::jws_util::{decode_json_segment, parse_and_check_alg, split_compact, RawJws};
@@ -96,14 +97,32 @@ pub async fn verify_trust(
     let decoding_key = DecodingKey::from_jwk(&jwk)
         .map_err(|e| VerifyError::BadAttestation(format!("issuer key unusable: {e}")))?;
 
+    // Strict EdDSA here too. The issuer key comes from the cached JWKS rather than from the
+    // request, so this is defence in depth rather than a live exposure — but a low-order key that
+    // reached the JWKS would let anyone mint attestations for any subject, and the check is free
+    // now that `crate::eddsa` exists. See that module's docs (authkestra#242).
     let signing_input = format!("{}.{}", parsed.raw.header_b64, parsed.raw.payload_b64);
-    let ok = crypto::verify(
+    let ok = verify_jws_signature(
+        parsed.alg,
+        &jwk,
+        &decoding_key,
         parsed.raw.signature_b64,
         signing_input.as_bytes(),
-        &decoding_key,
-        parsed.alg,
     )
-    .map_err(|e| VerifyError::BadAttestation(format!("signature verification error: {e}")))?;
+    .map_err(|failure| match failure {
+        VerifyFailure::Key(reason) => {
+            tracing::warn!(
+                target: "authkestra_devsig",
+                iss = %raw_claims.iss,
+                kid,
+                "attestation rejected: the issuer key resolved from the JWKS is unusable or unsafe"
+            );
+            VerifyError::BadAttestation(format!("issuer key unusable: {reason}"))
+        }
+        VerifyFailure::Backend(reason) => {
+            VerifyError::BadAttestation(format!("signature verification error: {reason}"))
+        }
+    })?;
     if !ok {
         return Err(VerifyError::BadAttestation(
             "signature does not verify".to_string(),
