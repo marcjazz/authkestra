@@ -1,6 +1,6 @@
 use authkestra_engine::token::jwk::Jwk;
 use authkestra_engine::OAuthProvider;
-use authkestra_oidc::provider::{Claims, OidcProvider};
+use authkestra_oidc::provider::OidcProvider;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use rsa::pkcs8::{EncodePrivateKey, LineEnding};
@@ -10,6 +10,20 @@ use serde_json::json;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[derive(serde::Serialize)]
+struct TestClaims {
+    sub: String,
+    iss: String,
+    aud: authkestra_engine::token::Audience,
+    exp: u64,
+    azp: Option<String>,
+    email: Option<String>,
+    name: Option<String>,
+    picture: Option<String>,
+    nonce: Option<String>,
+}
+
 
 #[tokio::test]
 async fn test_oidc_discover_and_auth_url() {
@@ -145,7 +159,7 @@ fn generate_rsa_key(kid: &str) -> TestKey {
     TestKey { encoding_key, jwk }
 }
 
-fn sign_claims(key: &EncodingKey, kid: &str, claims: &Claims) -> String {
+fn sign_claims(key: &EncodingKey, kid: &str, claims: &TestClaims) -> String {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(kid.to_string());
     encode(&header, claims, key).expect("failed to sign RS256 ID token")
@@ -245,7 +259,7 @@ async fn rs256_id_token_with_correct_iss_and_aud_verifies() {
     let mock_server = MockServer::start().await;
     let (provider, key) = setup_provider(&mock_server, "test_client").await;
 
-    let claims = Claims {
+    let claims = TestClaims {
         sub: "user-123".to_string(),
         iss: mock_server.uri(),    // matches the discovered issuer
         aud: "test_client".into(), // matches client_id
@@ -280,7 +294,7 @@ async fn rs256_id_token_with_wrong_issuer_is_rejected() {
     let mock_server = MockServer::start().await;
     let (provider, key) = setup_provider(&mock_server, "test_client").await;
 
-    let claims = Claims {
+    let claims = TestClaims {
         sub: "user-123".to_string(),
         iss: "https://attacker.example".to_string(), // does NOT match discovered issuer
         aud: "test_client".into(),
@@ -313,7 +327,7 @@ async fn rs256_id_token_with_wrong_audience_is_rejected() {
     let mock_server = MockServer::start().await;
     let (provider, key) = setup_provider(&mock_server, "test_client").await;
 
-    let claims = Claims {
+    let claims = TestClaims {
         sub: "user-123".to_string(),
         iss: mock_server.uri(),
         aud: "some_other_client".into(), // does NOT match client_id
@@ -356,7 +370,7 @@ async fn algorithms_come_from_discovery_not_the_rs256_fallback() {
     let (provider, key) =
         setup_provider_advertising(&mock_server, "test_client", Some(json!(["ES256"]))).await;
 
-    let claims = Claims {
+    let claims = TestClaims {
         sub: "user-123".to_string(),
         iss: mock_server.uri(),
         aud: "test_client".into(),
@@ -389,7 +403,7 @@ async fn omitted_signing_algs_fall_back_to_rs256() {
     let mock_server = MockServer::start().await;
     let (provider, key) = setup_provider_advertising(&mock_server, "test_client", None).await;
 
-    let claims = Claims {
+    let claims = TestClaims {
         sub: "user-123".to_string(),
         iss: mock_server.uri(),
         aud: "test_client".into(),
@@ -427,7 +441,7 @@ async fn with_validation_overrides_the_derived_policy() {
     validation.set_audience(&["test_client"]);
     let provider = provider.with_validation(validation);
 
-    let claims = Claims {
+    let claims = TestClaims {
         sub: "user-123".to_string(),
         iss: mock_server.uri(),
         aud: "test_client".into(),
@@ -784,7 +798,7 @@ async fn distinct_multi_aud_still_requires_azp_after_dedup() {
 /// one-element array.
 #[test]
 fn single_audience_claims_still_serialize_aud_as_a_bare_string() {
-    let claims = Claims {
+    let claims = TestClaims {
         sub: "user-123".to_string(),
         iss: "https://issuer.example".to_string(),
         aud: "test_client".into(),
