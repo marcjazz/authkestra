@@ -34,53 +34,40 @@ fn test_identity() -> Identity {
 }
 
 fn test_config() -> OpConfig {
-    OpConfig {
-        issuer: "https://issuer.example.com".to_string(),
-        scopes_supported: vec!["profile".to_string()],
-        response_types_supported: vec!["code".to_string()],
-        grant_types_supported: vec!["urn:ietf:params:oauth:grant-type:token-exchange".to_string()],
-        id_token_signing_alg: "RS256".to_string(),
-        authorization_code_ttl_secs: 60,
-        access_token_ttl_secs: 3600,
-        device_code_ttl_secs: 1800,
-        token_exchange_enabled: true,
-    }
+    serde_json::from_value(serde_json::json!({
+        "issuer": "https://issuer.example.com",
+        "scopes_supported": ["profile"],
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["urn:ietf:params:oauth:grant-type:token-exchange"],
+        "id_token_signing_alg": "RS256",
+        "authorization_code_ttl_secs": 60,
+        "access_token_ttl_secs": 3600,
+        "device_code_ttl_secs": 1800,
+        "token_exchange_enabled": true
+    })).unwrap()
 }
 
 fn test_client() -> ClientRegistration {
-    ClientRegistration {
-        client_id: "client1".to_string(),
-        client_secret_hash: None,
-        redirect_uris: vec![],
-        grant_types: vec![GrantType::TokenExchange],
-        scopes: vec!["profile".to_string()],
-        require_pkce: false,
-        allowed_audiences: vec![],
-        token_endpoint_auth_method: None,
-        jwks: None,
-    }
+    serde_json::from_value(serde_json::json!({
+        "client_id": "client1",
+        "client_secret_hash": null,
+        "redirect_uris": [],
+        "grant_types": ["urn:ietf:params:oauth:grant-type:token-exchange"],
+        "scopes": ["profile"],
+        "require_pkce": false,
+        "allowed_audiences": [],
+        "token_endpoint_auth_method": null,
+        "jwks": null
+    })).unwrap()
 }
 
 fn exchange_request(subject_token: &str) -> TokenRequest {
-    TokenRequest {
-        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
-        code: None,
-        redirect_uri: None,
-        client_id: Some("client1".to_string()),
-        client_secret: None,
-        code_verifier: None,
-        scope: None,
-        refresh_token: None,
-        device_code: None,
-        subject_token: Some(subject_token.to_string()),
-        subject_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
-        actor_token: None,
-        actor_token_type: None,
-        requested_token_type: None,
-        audience: None,
-        client_assertion: None,
-        client_assertion_type: None,
-    }
+    serde_json::from_value(serde_json::json!({
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "client_id": "client1",
+        "subject_token": subject_token,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+    })).unwrap()
 }
 
 #[tokio::test]

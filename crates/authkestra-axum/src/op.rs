@@ -229,18 +229,15 @@ where
             return (
                 StatusCode::UNAUTHORIZED,
                 [("WWW-Authenticate", "Bearer")],
-                Json(UserInfoErrorResponse {
-                    error: "invalid_request".to_string(),
-                    error_description: "Missing or invalid Authorization header".to_string(),
-                }),
+                Json(UserInfoErrorResponse::new("invalid_request".to_string(), "Missing or invalid Authorization header".to_string(),
+                )),
             )
                 .into_response();
         }
     };
 
-    let req = UserInfoRequest {
-        access_token: auth_header[7..].to_string(),
-    };
+    let req = UserInfoRequest::new(auth_header[7..].to_string(),
+    );
 
     let config = OpConfig::from_ref(&state);
 

@@ -129,11 +129,8 @@ pub async fn handle_oauth_callback_erased(
     }
 
     let session_duration = config.max_age.unwrap_or(chrono::Duration::hours(24));
-    let session = Session {
-        id: uuid::Uuid::new_v4().to_string(),
-        identity,
-        expires_at: chrono::Utc::now() + session_duration,
-    };
+    let session = Session::new(uuid::Uuid::new_v4().to_string(), identity, chrono::Utc::now() + session_duration,
+    );
 
     store.save_session(&session).await.map_err(|e| {
         actix_web::error::ErrorInternalServerError(format!("Failed to save session: {e}"))

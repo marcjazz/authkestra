@@ -211,3 +211,15 @@ mod tests {
         assert_eq!(result.name.as_deref(), Some("Test User"));
     }
 }
+
+impl UserInfoRequest {
+    pub fn new(access_token: String) -> Self {
+        Self { access_token }
+    }
+}
+
+impl UserInfoErrorResponse {
+    pub fn new(error: String, error_description: String) -> Self {
+        Self { error, error_description }
+    }
+}

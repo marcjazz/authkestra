@@ -98,7 +98,6 @@ where
 
 /// The extractor for a validated session.
 #[cfg(feature = "session")]
-#[non_exhaustive]
 pub struct AuthSession(pub Session);
 
 #[cfg(feature = "session")]
@@ -159,7 +158,6 @@ impl FromRequest for AuthSession {
 ///
 /// Expects an `Authorization: Bearer <token>` header.
 #[cfg(feature = "token")]
-#[non_exhaustive]
 pub struct AuthToken(pub authkestra_engine::Claims);
 
 #[cfg(feature = "token")]
@@ -290,7 +288,6 @@ where
 /// type's docs (and `extensions`' module docs) for why carrying the whole map
 /// generically is not possible on actix-http 3.x / `http` 1.x. Issue #246.
 #[cfg(feature = "resource")]
-#[non_exhaustive]
 pub struct Auth<I>(pub I);
 
 #[cfg(feature = "resource")]

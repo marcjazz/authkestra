@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for session cookies.
 #[derive(Clone, Debug)]
-#[non_exhaustive]
 pub struct SessionConfig {
     /// The name of the session cookie.
     pub cookie_name: String,
@@ -88,5 +87,11 @@ impl<S: crate::store::KvStore<Session>> SessionStore for S {
         self.delete(id)
             .await
             .map_err(|e| AuthError::Session(e.to_string()))
+    }
+}
+
+impl Session {
+    pub fn new(id: String, identity: Identity, expires_at: chrono::DateTime<chrono::Utc>) -> Self {
+        Self { id, identity, expires_at }
     }
 }

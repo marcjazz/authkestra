@@ -50,7 +50,6 @@ impl<S, T> From<Engine<S, T>> for AxumState<S, T> {
 
 /// The extractor for a validated session.
 #[cfg(feature = "session")]
-#[non_exhaustive]
 pub struct AuthSession(pub Session);
 
 #[cfg(feature = "session")]
@@ -94,7 +93,6 @@ where
 ///
 /// Expects an `Authorization: Bearer <token>` header.
 #[cfg(feature = "token")]
-#[non_exhaustive]
 pub struct AuthToken(pub authkestra_engine::Claims);
 
 #[cfg(feature = "token")]
@@ -173,7 +171,6 @@ where
 ///
 /// It uses the `Guard` from the application state to validate the request.
 #[cfg(feature = "resource")]
-#[non_exhaustive]
 pub struct Auth<I>(pub I);
 
 #[cfg(feature = "resource")]
