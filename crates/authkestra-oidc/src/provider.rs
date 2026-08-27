@@ -30,6 +30,7 @@ pub struct OidcProvider {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Claims {
     pub sub: String,
     pub iss: String,
