@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use authkestra_engine::auth::state::Identity;
 use authkestra_engine::token::TokenManager;
-use authkestra_op::client::ClientRegistration;
+use authkestra_op::client::{ClientRegistration, GrantType};
 use authkestra_op::config::OpConfig;
 use authkestra_op::handlers::token::TokenRequest;
 
