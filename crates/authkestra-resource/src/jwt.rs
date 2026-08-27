@@ -254,8 +254,18 @@ impl JwksResolver for IssuerTrustMap {
     }
 }
 
-/// A builder for configuring offline JWT validation.
 /// Configuration for JWT validation.
+///
+/// Construct this via [`ValidationConfig::builder`]. The type is
+/// `#[non_exhaustive]` so that adding a validation knob is a non-breaking
+/// change: `jwks_url` has no meaningful default (the builder panics if it is
+/// unset), so there is deliberately no `Default` impl to spread from, which
+/// left struct-literal construction as the only alternative to the builder —
+/// and that made every new field a downstream compile error. `require_kid`
+/// (PR #110) and `require_cert_binding` (PR #231, issue #224) were both added
+/// that way already; see issue #247. Fields stay `pub` for reading and for
+/// post-build mutation.
+#[non_exhaustive]
 pub struct ValidationConfig {
     pub jwks_url: String,
     pub refresh_interval: Duration,
@@ -542,10 +552,19 @@ fn build_validation(config: &ValidationConfig, multi_issuer: bool) -> Validation
     // way to express more than one name. Every trusted issuer goes in, so a
     // token verified with issuer B's key still has to *say* it came from B.
     let mut accepted_issuers: Vec<&String> = config.trusted_issuers.keys().collect();
+    // The `!jwks_url.is_empty()` condition mirrors `build_resolver` exactly. Both
+    // must agree on whether `config.issuer` is a resolvable issuer: `build_resolver`
+    // folds it into the trust map only when there is a `jwks_url` for it, so adding
+    // it here unconditionally would leave `Validation` accepting a name the resolver
+    // can never resolve. That is fail-closed (the resolver errors first), but a
+    // backstop widened past the thing it backstops is not one you want to keep —
+    // and the same `Validation` is handed to third-party resolvers. Raised in
+    // review of #243.
     if let Some(issuer) = config
         .issuer
         .as_ref()
         .filter(|issuer| !config.trusted_issuers.contains_key(*issuer))
+        .filter(|_| !config.jwks_url.is_empty())
     {
         accepted_issuers.push(issuer);
     }
@@ -715,6 +734,19 @@ fn unverified_issuer(token: &str) -> Result<Option<String>, ValidationError> {
             ))
         }
     };
+    // Reject a fourth segment explicitly. Without this, `h.p1.p2.s` yields `p1`
+    // here while `jsonwebtoken` (two `rsplitn(2, '.')` passes) reads `p2` as the
+    // payload — so the issuer used to *select* a key and the claims that get
+    // *validated* would come from different segments. That disagreement is the
+    // classic select-one-key/validate-another setup. It is fail-closed today only
+    // by accident (`decode_header` receives `"h.p1"`, whose `.` base64 rejects),
+    // which is not a property worth resting on. Raised in review of #243.
+    if segments.next().is_some() {
+        return Err(ValidationError::InvalidToken(
+            "token has more than three segments; a JWS compact serialization has exactly three"
+                .to_string(),
+        ));
+    }
 
     let payload = URL_SAFE_NO_PAD.decode(payload).map_err(|e| {
         ValidationError::InvalidToken(format!("token payload is not valid base64url: {e}"))
