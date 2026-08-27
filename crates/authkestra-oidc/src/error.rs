@@ -66,6 +66,18 @@ impl From<authkestra_resource::jwt::ValidationError> for OidcError {
             authkestra_resource::jwt::ValidationError::MissingKid => {
                 OidcError::ValidationError("Token is missing a required 'kid' header".to_string())
             }
+            // Multi-issuer resolution (#243). Both are validation failures from
+            // an RP's point of view: the token names an issuer this verifier
+            // holds no JWKS for, or names none at all so no JWKS can be picked.
+            authkestra_resource::jwt::ValidationError::UntrustedIssuer(issuer) => {
+                OidcError::ValidationError(format!(
+                    "Token issuer {issuer:?} is not in the configured trust map"
+                ))
+            }
+            authkestra_resource::jwt::ValidationError::MissingIssuer => OidcError::ValidationError(
+                "Token is missing a required 'iss' claim; an issuer is needed to select a JWKS"
+                    .to_string(),
+            ),
             authkestra_resource::jwt::ValidationError::Paseto(e) => OidcError::ValidationError(e),
             authkestra_resource::jwt::ValidationError::Validation(e) => {
                 OidcError::ValidationError(e)

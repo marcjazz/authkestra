@@ -834,3 +834,48 @@ async fn single_issuer_configuration_is_unchanged_by_multi_issuer_support() {
         "single-issuer behaviour must be unchanged, including this pre-existing laxity"
     );
 }
+
+/// A `with_resolver` strategy must still reject a token with no `iss`, even
+/// when no static trust map is configured.
+///
+/// Raised in review of #254. `build_validation` inferred "multi-issuer" from
+/// `trusted_issuers` being non-empty, but a `with_resolver` caller resolves
+/// issuers dynamically and so configures no map at all — leaving that path with
+/// neither `set_issuer` nor `iss` in `required_spec_claims`. Both backstops were
+/// off precisely where the docs said they applied, so a resolver lax about
+/// `None` would authenticate an issuer-less token.
+///
+/// The resolver here is deliberately maximally lax: it hands back the same
+/// cache whatever the issuer, including `None`. The rejection must therefore
+/// come from `Validation`, not from the resolver.
+#[tokio::test]
+async fn with_resolver_rejects_an_issuerless_token_even_with_no_trust_map() {
+    struct AlwaysSame(Arc<JwksCache>);
+
+    #[async_trait::async_trait]
+    impl authkestra_resource::jwt::JwksResolver for AlwaysSame {
+        async fn resolve(&self, _issuer: Option<&str>) -> Result<Arc<JwksCache>, ValidationError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    let key = generate_rsa_key(Some("a-key"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    // No `iss` at all, signed by a key the resolver will happily hand over.
+    let token = sign_token(&key.encoding_key, Some("a-key"), &issued_claims(None, "u"));
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+    let strategy: JwtStrategy<IssuedClaims> =
+        JwtStrategy::with_resolver(config, Box::new(AlwaysSame(cache_for(&server))));
+
+    let result = strategy
+        .authenticate(&bearer_request_parts(&token, None))
+        .await;
+    assert!(
+        result.is_err() || result.as_ref().is_ok_and(|id| id.is_none()),
+        "an iss-less token must not authenticate through a custom resolver, got: {result:?}"
+    );
+}

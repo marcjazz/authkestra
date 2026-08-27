@@ -458,7 +458,7 @@ impl<I> JwtStrategy<I> {
         let resolver = build_resolver(&config);
         Self {
             resolver,
-            validation: build_validation(&config),
+            validation: build_validation(&config, !config.trusted_issuers.is_empty()),
             require_cert_binding: config.require_cert_binding,
             _marker: std::marker::PhantomData,
         }
@@ -477,7 +477,9 @@ impl<I> JwtStrategy<I> {
     pub fn with_resolver(config: ValidationConfig, resolver: Box<dyn JwksResolver>) -> Self {
         Self {
             resolver,
-            validation: build_validation(&config),
+            // Unconditionally multi-issuer: supplying your own resolver *is* the
+            // multi-issuer case, whether or not a static trust map accompanies it.
+            validation: build_validation(&config, true),
             require_cert_binding: config.require_cert_binding,
             _marker: std::marker::PhantomData,
         }
@@ -532,7 +534,7 @@ fn build_resolver(config: &ValidationConfig) -> Box<dyn JwksResolver> {
 }
 
 /// Builds the claim-validation half of a [`JwtStrategy`] from a config.
-fn build_validation(config: &ValidationConfig) -> Validation {
+fn build_validation(config: &ValidationConfig, multi_issuer: bool) -> Validation {
     let mut validation = Validation::new(config.algorithms[0]);
     validation.algorithms = config.algorithms.clone();
 
@@ -552,11 +554,17 @@ fn build_validation(config: &ValidationConfig) -> Validation {
         validation.set_issuer(&accepted_issuers);
     }
 
-    if !config.trusted_issuers.is_empty() {
+    if multi_issuer {
         // In multi-issuer mode `iss` selects the key, so a token without one must
         // never reach the decode step. The resolver already refuses it; requiring
         // the claim here means a custom resolver that is laxer than it should be
         // still cannot let an `iss`-less token through.
+        //
+        // Gated on `multi_issuer` rather than on `trusted_issuers` being
+        // non-empty: a `with_resolver` caller resolves issuers dynamically and so
+        // configures no trust map at all, which is exactly the case this backstop
+        // was written for. Inferring it from the map left that path with neither
+        // `set_issuer` nor this check -- raised in review of #254.
         validation.required_spec_claims.insert("iss".to_string());
     }
 
