@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.5.5...authkestra-op-v0.6.0) - 2026-08-27
+
+### Added
+
+- *(op)* route authorization_code grant through the OpStore seam ([#249](https://github.com/marcjazz/authkestra/pull/249))
+
+### Fixed
+
+- *(crypto)* [**breaking**] harden authkestra-resource and authkestra-op against low-order Ed25519 keys ([#261](https://github.com/marcjazz/authkestra/pull/261))
+
+### Other
+
+- massive sweep to add non_exhaustive to all public structs ([#259](https://github.com/marcjazz/authkestra/pull/259))
+
 ## [0.5.5](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.5.4...authkestra-op-v0.5.5) - 2026-08-24
 
 ### Other

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.5.5...authkestra-oidc-v0.6.0) - 2026-08-27
+
+### Added
+
+- *(resource)* resolve JWKS per issuer for multi-issuer resource servers ([#254](https://github.com/marcjazz/authkestra/pull/254))
+
+### Fixed
+
+- *(oidc)* [**breaking**] make Claims non-exhaustive and omit spec step 3 ([#258](https://github.com/marcjazz/authkestra/pull/258))
+- *(oidc)* [**breaking**] accept array-valued `aud` in ID tokens and verify `azp` ([#244](https://github.com/marcjazz/authkestra/pull/244)) ([#251](https://github.com/marcjazz/authkestra/pull/251))
+
 ## [0.5.3](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.5.2...authkestra-oidc-v0.5.3) - 2026-08-24
 
 ### Fixed
