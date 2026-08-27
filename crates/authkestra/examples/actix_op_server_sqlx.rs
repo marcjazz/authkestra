@@ -79,7 +79,7 @@ async fn main() -> std::io::Result<()> {
     .bind("test-client")
     .bind(None::<String>)
     .bind(true)
-    .bind(sqlx::types::Json(vec!["http://localhost:3000/callback"]))
+    .bind(sqlx::types::Json(vec!["http://localhost:3000/auth/callback/github"]))
     .bind(sqlx::types::Json(vec!["authorization_code"]))
     .bind(sqlx::types::Json(vec!["openid", "profile"]))
     .bind(sqlx::types::Json(Vec::<String>::new()))

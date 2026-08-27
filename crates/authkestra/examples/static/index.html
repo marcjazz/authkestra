@@ -23,14 +23,19 @@
         // example which providers its engine actually has rather than
         // hardcoding one. Examples that register none (e.g. *_basic_setup)
         // legitimately have nothing to link to.
+        // Returns `null` when the endpoint is absent, as opposed to `[]` for an
+        // example that genuinely registers no providers. Several examples serve
+        // this page without mounting `/api/providers`; collapsing both cases to
+        // `[]` made the page assert "registers no OAuth providers", which it
+        // cannot actually know. Raised in review of #194.
         async function fetchProviders() {
             try {
                 const res = await fetch('/api/providers');
-                if (!res.ok) return [];
+                if (!res.ok) return null;
                 const body = await res.json();
                 return body.providers || [];
             } catch (err) {
-                return [];
+                return null;
             }
         }
 
@@ -51,14 +56,18 @@
                 }
 
                 const providers = await fetchProviders();
-                const buttons = providers
+                const buttons = (providers || [])
                     .map(p => `<a href="/auth/login/${p}" class="btn">Login with ${p}</a>`)
                     .join(' ');
+                const empty = providers === null
+                    ? '<p><em>This example does not expose <code>/api/providers</code>, so the ' +
+                      'available providers are unknown.</em></p>'
+                    : '<p><em>This example registers no OAuth providers.</em></p>';
                 app.innerHTML = `
                     <h2>Not Authenticated</h2>
                     <p>Please log in to continue.</p>
                     <div id="login-methods">
-                        ${buttons || '<p><em>This example registers no OAuth providers.</em></p>'}
+                        ${buttons || empty}
                     </div>
                 `;
             } catch (err) {

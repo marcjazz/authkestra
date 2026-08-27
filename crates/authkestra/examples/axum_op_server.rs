@@ -72,8 +72,10 @@ async fn main() {
                 client_id: "test-client".to_string(),
                 client_secret_hash: None,
                 // The RP's callback, not this server's — an OP redirects back
-                // to the client application.
-                redirect_uris: vec!["http://localhost:3000/callback".to_string()],
+                // to the client application. This is the path the sibling RP
+                // examples actually serve (`/auth/callback/{provider}`), so the
+                // OP on :8080 and an RP on :3000 compose without editing either.
+                redirect_uris: vec!["http://localhost:3000/auth/callback/github".to_string()],
                 require_pkce: true,
                 scopes: vec!["openid".to_string(), "profile".to_string()],
                 grant_types: vec![authkestra_op::client::GrantType::AuthorizationCode],
