@@ -63,6 +63,7 @@
 
 mod attestation;
 mod config;
+mod eddsa;
 mod error;
 mod identity;
 mod jwks;
