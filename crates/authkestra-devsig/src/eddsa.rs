@@ -165,3 +165,64 @@ fn ed25519_verifying_key(jwk: &Jwk) -> Result<VerifyingKey, VerifyFailure> {
 
     Ok(key)
 }
+
+#[cfg(test)]
+mod tests {
+    use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+
+    /// The identity point: the canonical universal low-order vector.
+    const IDENTITY: [u8; 32] = {
+        let mut b = [0u8; 32];
+        b[0] = 1;
+        b
+    };
+
+    /// Pins `verify_strict` over the non-strict `Verifier::verify`.
+    ///
+    /// Raised in review of #242: swapping `verify_strict` for `Verifier::verify`
+    /// in [`super::verify_jws_signature`] leaves the whole conformance suite
+    /// green, so nothing pinned the strict call itself. That is expected rather
+    /// than alarming — [`super::ed25519_verifying_key`]'s `is_weak()` gate
+    /// rejects a small-order `A` *before* verification runs, and producing a
+    /// small-order `R` that satisfies the equation under a non-small-order `A`
+    /// would require solving a discrete log. So there is no reachable
+    /// end-to-end input that distinguishes the two verifiers.
+    ///
+    /// The distinguishing input therefore has to be a small-order *key*, which
+    /// means calling dalek directly here, below that gate. This is the pair the
+    /// two verifiers genuinely disagree about, and it is what makes the strict
+    /// call load-bearing rather than decorative: without it, a future refactor
+    /// could drop `verify_strict` and CI would stay green.
+    #[test]
+    fn strict_verification_rejects_a_low_order_key_that_non_strict_accepts() {
+        let weak = VerifyingKey::from_bytes(&IDENTITY).expect("identity is a valid Edwards point");
+        assert!(weak.is_weak(), "the identity point must be low-order");
+
+        // (R = identity, S = 0): both sides of [S]B - [k]A == R collapse to the
+        // identity for every challenge scalar, so this verifies under ANY message.
+        let mut forged = [0u8; 64];
+        forged[..32].copy_from_slice(&IDENTITY);
+        let forged = Signature::from_bytes(&forged);
+
+        assert!(
+            weak.verify(b"authkestra", &forged).is_ok(),
+            "precondition: the NON-strict verifier accepts this forgery — if this ever fails, \
+             upstream changed and this test no longer proves what it claims"
+        );
+        assert!(
+            weak.verify_strict(b"authkestra", &forged).is_err(),
+            "verify_strict must reject a low-order key that non-strict accepts"
+        );
+    }
+
+    /// Positive control: a fix that rejects everything is not a fix.
+    #[test]
+    fn strict_verification_still_accepts_a_genuine_signature() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let key = signing.verifying_key();
+        assert!(!key.is_weak());
+
+        let genuine = signing.sign(b"authkestra");
+        assert!(key.verify_strict(b"authkestra", &genuine).is_ok());
+    }
+}
