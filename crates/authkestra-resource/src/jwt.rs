@@ -579,17 +579,10 @@ fn build_validation(config: &ValidationConfig, multi_issuer: bool) -> Validation
         validation.set_issuer(&accepted_issuers);
     }
 
-    if multi_issuer {
-        // In multi-issuer mode `iss` selects the key, so a token without one must
-        // never reach the decode step. The resolver already refuses it; requiring
-        // the claim here means a custom resolver that is laxer than it should be
-        // still cannot let an `iss`-less token through.
-        //
-        // Gated on `multi_issuer` rather than on `trusted_issuers` being
-        // non-empty: a `with_resolver` caller resolves issuers dynamically and so
-        // configures no trust map at all, which is exactly the case this backstop
-        // was written for. Inferring it from the map left that path with neither
-        // `set_issuer` nor this check -- raised in review of #254.
+    // In multi-issuer mode `iss` selects the key. In single-issuer mode, we now also
+    // strictly require the `iss` claim if an issuer was configured, closing the legacy
+    // laxity where an `iss`-less token was accepted.
+    if multi_issuer || !accepted_issuers.is_empty() {
         validation.required_spec_claims.insert("iss".to_string());
     }
 
@@ -612,8 +605,13 @@ where
             // could only introduce a discrepancy.
             let cache = match resolve_cache(token, self.resolver.as_ref()).await {
                 Ok(cache) => cache,
-                Err(e @ (ValidationError::InvalidToken(_) | ValidationError::Jwt(_))) => {
-                    tracing::debug!(error = %e, "could not read the token's issuer; no identity");
+                Err(
+                    e @ (ValidationError::InvalidToken(_)
+                    | ValidationError::Jwt(_)
+                    | ValidationError::UntrustedIssuer(_)
+                    | ValidationError::MissingIssuer),
+                ) => {
+                    tracing::debug!(error = %e, "could not read or trust the token's issuer; no identity");
                     return Ok(None);
                 }
                 Err(e) => {
