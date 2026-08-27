@@ -67,7 +67,8 @@ fn exchange_request(subject_token: &str) -> TokenRequest {
         "client_id": "client1",
         "subject_token": subject_token,
         "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 #[tokio::test]
