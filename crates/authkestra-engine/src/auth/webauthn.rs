@@ -4,6 +4,7 @@ use std::sync::Arc;
 use webauthn_rs::prelude::*;
 
 /// WebAuthn Passkeys authentication method.
+#[non_exhaustive]
 pub struct WebAuthnAuthMethod<S: CredentialStore> {
     webauthn: Arc<Webauthn>,
     store: S,

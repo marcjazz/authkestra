@@ -35,6 +35,7 @@ extern crate self as authkestra_axum;
 pub use authkestra_macros::AxumState;
 #[cfg(feature = "macros")]
 #[derive(Clone, authkestra_macros::AxumState)]
+#[non_exhaustive]
 pub struct AxumState<S = Missing, T = Missing> {
     #[authkestra(engine)]
     pub authkestra: Engine<S, T>,

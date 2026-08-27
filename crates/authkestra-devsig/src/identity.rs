@@ -10,6 +10,7 @@ use serde_json::Value;
 /// separately here to document that this value was derived from the live request, not merely
 /// copied out of the attestation).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DeviceIdentity {
     /// The attestation's `sub` claim — the authenticated identity.
     pub subject: String,

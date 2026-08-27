@@ -43,6 +43,7 @@ pub enum AuthError {
 
 /// Represents an error response from an OAuth2 provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct OAuthErrorResponse {
     /// The error code.
     pub error: String,

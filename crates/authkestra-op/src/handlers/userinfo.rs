@@ -4,6 +4,7 @@ use serde::Serialize;
 
 /// Request payload for the userinfo endpoint.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct UserInfoRequest {
     /// The access token provided in the Authorization header.
     pub access_token: String,
@@ -11,6 +12,7 @@ pub struct UserInfoRequest {
 
 /// Success response for the userinfo endpoint.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct UserInfoResponse {
     /// Subject identifier.
     pub sub: String,
@@ -27,6 +29,7 @@ pub struct UserInfoResponse {
 
 /// Error response for the userinfo endpoint.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct UserInfoErrorResponse {
     /// The error code.
     pub error: String,
@@ -97,6 +100,23 @@ pub async fn handle_userinfo(
     tracing::info!(sub = %response.sub, "Successfully returned userinfo");
 
     Ok(response)
+}
+
+impl UserInfoRequest {
+    /// Creates a new UserInfoRequest.
+    pub fn new(access_token: String) -> Self {
+        Self { access_token }
+    }
+}
+
+impl UserInfoErrorResponse {
+    /// Creates a new UserInfoErrorResponse.
+    pub fn new(error: String, error_description: String) -> Self {
+        Self {
+            error,
+            error_description,
+        }
+    }
 }
 
 #[cfg(test)]

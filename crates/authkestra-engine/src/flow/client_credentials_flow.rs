@@ -33,6 +33,7 @@ enum ClientAuth {
 ///
 /// This flow is used by clients to obtain an access token outside of the context
 /// of a user. This is typically used for client-to-client communication.
+#[non_exhaustive]
 pub struct ClientCredentialsFlow {
     client_id: String,
     auth: ClientAuth,

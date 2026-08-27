@@ -164,6 +164,7 @@ pub trait OpStore:
 /// It is a defaulted type parameter rather than a fifth argument to
 /// [`CompositeOpStore::new`] so that existing four-store call sites keep
 /// compiling untouched.
+#[non_exhaustive]
 pub struct CompositeOpStore<C, A, R, D, J = NoClientAssertionStore> {
     clients: C,
     codes: A,

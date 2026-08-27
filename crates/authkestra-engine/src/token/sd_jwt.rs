@@ -91,6 +91,7 @@ const RESERVED_CLAIM_NAMES: &[&str] = &[
 /// [`generate_disclosure_salt`]) and one digest in the issued token's
 /// `_sd[]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DisclosableClaim {
     /// The claim name, e.g. `"email"`. Must not collide with a
     /// [`RESERVED_CLAIM_NAMES`] entry — [`TokenManager::issue_sd_jwt`]
@@ -129,6 +130,7 @@ impl DisclosableClaim {
 /// (in case the caller wants to persist or selectively re-forward a subset
 /// later, e.g. to build a holder-controlled presentation).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct IssuedSdJwt {
     /// The Issuer-signed JWT alone — three dot-separated segments, no `~`.
     /// Useful for callers that want to store the JWT and Disclosures
@@ -155,6 +157,7 @@ pub struct IssuedSdJwt {
 /// the issuer never signed for cannot appear here (see
 /// [`TokenManager::validate_sd_jwt`]'s rejection rules).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct VerifiedSdJwt {
     /// The underlying JWT claims, already validated (signature, issuer,
     /// audience, expiry) by [`TokenManager::validate_token`].

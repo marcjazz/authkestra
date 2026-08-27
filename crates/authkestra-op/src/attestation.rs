@@ -57,6 +57,7 @@ impl PrincipalType {
 /// that every existing handler already depends on, and this extension
 /// should not force every call site to grow new fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AttestationConfig {
     /// Lifetime, in seconds, of an issued attestation. ADR 0014 decision
     /// point 6 chose **24 hours** as the default: short enough that a
@@ -83,6 +84,7 @@ pub struct AttestationConfig {
 /// trait's docs for why this is a pluggable hook rather than a built-in SMS
 /// OTP implementation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SecondFactorProof {
     /// Application-defined discriminator (e.g. `"sms_otp"`,
     /// `"bootstrap_secret"`, `"admin_approval"`). Opaque to `authkestra-op`.
@@ -152,6 +154,7 @@ pub trait AttestationStatusProvider: Send + Sync {
 /// steps 3-5. **Never accept a client-chosen value in its place**; that
 /// does not satisfy proof-of-possession (conformance case 21).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EnrolmentChallenge {
     /// The opaque, server-generated challenge value.
     pub challenge: String,
@@ -450,6 +453,23 @@ pub(crate) fn attestation_extra_claims(
     );
     extra.insert("att".to_string(), attributes);
     extra
+}
+
+impl AttestationConfig {
+    /// Creates a new AttestationConfig.
+    pub fn new() -> Self {
+        Self {
+            attestation_ttl_secs: 86_400,
+            attestation_reissue_after_secs: 43_200,
+            challenge_ttl_secs: 300,
+        }
+    }
+}
+
+impl Default for AttestationConfig {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

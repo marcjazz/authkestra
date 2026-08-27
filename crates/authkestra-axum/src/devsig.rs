@@ -89,6 +89,7 @@ struct Shared {
 /// On rejection, short-circuits with a `401 Unauthorized` (or `413 Payload Too Large` if the
 /// body exceeds [`DeviceSignatureLayer::max_body_size`]) and never calls the inner service.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct DeviceSignatureLayer {
     shared: Arc<Shared>,
 }
@@ -154,6 +155,7 @@ impl<S> Layer<S> for DeviceSignatureLayer {
 
 /// The `tower::Service` produced by [`DeviceSignatureLayer`]. Not constructed directly.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct DeviceSignatureService<S> {
     inner: S,
     shared: Arc<Shared>,
@@ -275,6 +277,7 @@ pub struct AuthDeviceSignature(pub DeviceIdentity);
 /// was never run (or rejected the request but the handler was reached anyway, which should not
 /// normally happen).
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct MissingDeviceIdentity;
 
 impl IntoResponse for MissingDeviceIdentity {

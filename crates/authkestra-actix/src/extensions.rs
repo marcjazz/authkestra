@@ -128,6 +128,7 @@ where
 ///
 /// [`AuthenticationStrategy`]: authkestra_engine::auth::AuthenticationStrategy
 #[derive(Clone, Default)]
+#[non_exhaustive]
 pub struct CarriedExtensions {
     carriers: Vec<Carrier>,
 }

@@ -6,6 +6,7 @@ use redis::aio::ConnectionManager;
 
 /// A Redis-backed store for client assertions to prevent replay attacks.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct RedisClientAssertionStore {
     conn: ConnectionManager,
     prefix: String,

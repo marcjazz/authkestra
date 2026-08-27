@@ -19,6 +19,7 @@ use crate::store::{KvStore, StoreError};
             SqlKvStore remains a valid choice for generic KV/session storage when you prefer SQL \
             over Redis and do not need OP-specific semantics."
 )]
+#[non_exhaustive]
 pub struct SqlKvStore<DB: Database> {
     #[allow(dead_code)]
     pub pool: sqlx::Pool<DB>,
@@ -35,6 +36,7 @@ pub type SqlStore<DB> = SqlKvStore<DB>;
 
 /// Internal data model for a KV entry in the SQL database.
 #[derive(sqlx::FromRow)]
+#[non_exhaustive]
 pub struct SqlKvModel {
     pub key: String,
     pub value: String,

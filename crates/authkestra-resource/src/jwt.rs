@@ -51,6 +51,7 @@ pub enum ValidationError {
 pub use authkestra_engine::token::jwk::Jwk;
 
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct Jwks {
     pub keys: Vec<Jwk>,
 }
@@ -70,6 +71,7 @@ impl Jwks {
     }
 }
 
+#[non_exhaustive]
 pub struct JwksCache {
     jwks_uri: String,
     jwks: RwLock<Option<(Jwks, Instant)>>,
@@ -170,6 +172,7 @@ pub trait JwksResolver: Send + Sync {
 /// `Validation::set_issuer`, exactly as before. It is only safe *because* there
 /// is one endpoint and therefore nothing to confuse — do not reuse it as the
 /// default arm of a multi-issuer resolver.
+#[non_exhaustive]
 pub struct SingleJwksResolver {
     cache: Arc<JwksCache>,
 }
@@ -201,6 +204,7 @@ impl JwksResolver for SingleJwksResolver {
 /// list handed to `Validation::set_issuer` — and anything logged from it — has a
 /// stable order, which keeps failures reproducible.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct IssuerTrustMap {
     caches: BTreeMap<String, Arc<JwksCache>>,
 }
@@ -299,6 +303,7 @@ impl ValidationConfig {
 
 /// A builder for configuring JWT validation.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct ValidationConfigBuilder {
     jwks_url: Option<String>,
     refresh_interval: Option<Duration>,
@@ -448,6 +453,7 @@ impl ValidationConfigBuilder {
 }
 
 /// A JWT authentication strategy that performs offline JWT validation using JWKS.
+#[non_exhaustive]
 pub struct JwtStrategy<I> {
     resolver: Box<dyn JwksResolver>,
     validation: Validation,

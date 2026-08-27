@@ -22,6 +22,7 @@ pub use chrono;
 
 /// Context for an authentication flow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FlowContext {
     /// The current state identifier.
     pub state: String,
@@ -66,6 +67,7 @@ pub use device_flow::{DeviceAuthorizationResponse, DeviceFlow};
 pub use oauth2::OAuth2Flow;
 
 /// Orchestrates a direct credentials flow.
+#[non_exhaustive]
 pub struct CredentialsFlow<P: CredentialsProvider, M: UserMapper = ()> {
     provider: P,
     mapper: Option<M>,

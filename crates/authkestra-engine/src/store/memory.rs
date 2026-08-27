@@ -25,6 +25,7 @@ impl<T> StoreEntry<T> {
 /// **Note**: This store is not persistent and will be cleared when the application restarts.
 /// It is primarily intended for development and testing.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct MemoryStore<T> {
     data: Arc<Mutex<HashMap<String, StoreEntry<T>>>>,
     indices: Arc<Mutex<HashMap<String, String>>>,

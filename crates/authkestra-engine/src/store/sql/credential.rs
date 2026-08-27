@@ -15,6 +15,7 @@ use crate::auth::store::CredentialStore;
 
 /// SQLx implementation of the `CredentialStore` trait.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct SqlxCredentialStore<DB: Database> {
     pub pool: sqlx::Pool<DB>,
     pub table_name: String,

@@ -24,12 +24,14 @@ use tower_cookies::{Cookie, Cookies};
 use super::cookie::create_axum_cookie;
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub struct OAuthCallbackParams {
     pub code: String,
     pub state: String,
 }
 
 #[derive(serde::Deserialize)]
+#[non_exhaustive]
 pub struct OAuthLoginParams {
     pub scope: Option<String>,
     pub success_url: Option<String>,
@@ -146,11 +148,11 @@ pub async fn handle_oauth_callback_erased(
     }
 
     let session_duration = config.max_age.unwrap_or(chrono::Duration::hours(24));
-    let session = Session {
-        id: uuid::Uuid::new_v4().to_string(),
+    let session = Session::new(
+        uuid::Uuid::new_v4().to_string(),
         identity,
-        expires_at: chrono::Utc::now() + session_duration,
-    };
+        chrono::Utc::now() + session_duration,
+    );
 
     store.save_session(&session).await.map_err(|e| {
         (

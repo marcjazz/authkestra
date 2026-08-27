@@ -27,6 +27,7 @@ use crate::config::is_symmetric;
 use crate::error::VerifyError;
 
 /// The three raw (still base64url-encoded) segments of a compact JWS.
+#[non_exhaustive]
 pub struct RawJws<'a> {
     pub header_b64: &'a str,
     pub payload_b64: &'a str,

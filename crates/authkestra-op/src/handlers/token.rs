@@ -16,6 +16,7 @@ use std::collections::HashMap;
 
 /// Request payload for the token endpoint.
 #[derive(Debug, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct TokenRequest {
     /// OAuth2 grant type.
     pub grant_type: String,
@@ -62,6 +63,7 @@ pub struct TokenRequest {
 
 /// Success response for the token endpoint.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct TokenResponse {
     /// The access token issued by the authorization server.
     pub access_token: String,
@@ -91,6 +93,7 @@ pub struct TokenResponse {
 
 /// Error response for the token endpoint.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct TokenErrorResponse {
     /// The OAuth2 error code.
     pub error: String,
@@ -4281,3 +4284,28 @@ mod device_tests;
 
 #[cfg(test)]
 mod client_auth_tests;
+
+impl TokenResponse {
+    /// Creates a new TokenResponse.
+    pub fn new(access_token: String, token_type: String, expires_in: u64) -> Self {
+        Self {
+            access_token,
+            token_type,
+            expires_in,
+            refresh_token: None,
+            id_token: None,
+            scope: None,
+            issued_token_type: None,
+        }
+    }
+}
+
+impl TokenErrorResponse {
+    /// Creates a new TokenErrorResponse.
+    pub fn new(error: String, error_description: String) -> Self {
+        Self {
+            error,
+            error_description,
+        }
+    }
+}

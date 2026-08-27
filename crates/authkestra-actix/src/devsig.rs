@@ -58,6 +58,7 @@ struct Shared {
 /// be constructed once, outside `HttpServer::new(move || ...)`, and cloned per worker -- the
 /// standard shape for actix middleware factories that carry state.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct DeviceSignatureAuth {
     shared: Arc<Shared>,
 }
@@ -131,6 +132,7 @@ where
 }
 
 /// The `actix_web::dev::Service` produced by [`DeviceSignatureAuth`]. Not constructed directly.
+#[non_exhaustive]
 pub struct DeviceSignatureAuthMiddleware<S> {
     service: Rc<S>,
     shared: Arc<Shared>,

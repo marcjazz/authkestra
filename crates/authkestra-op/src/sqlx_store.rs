@@ -10,6 +10,7 @@ use async_trait::async_trait;
 
 /// Opinionated, native SQL implementation of OpStore using sqlx.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct SqlxOpStore<DB: sqlx::Database> {
     pool: sqlx::Pool<DB>,
 }

@@ -53,6 +53,7 @@ struct RawSignatureClaims {
 /// Result of the cheap, parse-only step: split the compact JWS, validate `alg`, and locate the
 /// (still untrusted) embedded `jwk`. No cryptographic or binding decisions are made here — that's
 /// [`verify_bound_and_signed`].
+#[non_exhaustive]
 pub struct ParsedSignature<'a> {
     raw: RawJws<'a>,
     alg: Algorithm,
@@ -76,6 +77,7 @@ pub fn parse<'a>(
 }
 
 /// What `verify()` needs from a request signature that passed every check.
+#[non_exhaustive]
 pub struct VerifiedSignature {
     pub jti: String,
     pub exp: i64,

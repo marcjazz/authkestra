@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 
 /// Proof Key for Code Exchange (PKCE) parameters.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Pkce {
     /// High-entropy cryptographic random string
     pub code_verifier: String,

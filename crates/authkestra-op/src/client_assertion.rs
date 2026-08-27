@@ -75,6 +75,7 @@ pub use authkestra_engine::client_assertion::MAX_CLIENT_ASSERTION_LIFETIME_SECS;
 /// `client_id` during verification, so there is nothing else worth handing
 /// back.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct VerifiedClientAssertion {
     /// The assertion's `jti`, to be spent exactly once.
     pub jti: String,
@@ -109,6 +110,7 @@ pub trait ClientAssertionStore: Send + Sync {
 /// captured assertion stayed replayable for its whole lifetime. So the
 /// default refuses rather than silently degrades.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct NoClientAssertionStore;
 
 #[async_trait]
@@ -132,6 +134,7 @@ impl ClientAssertionStore for NoClientAssertionStore {
 /// `authkestra_engine::store::memory::MemoryStore`: correct for single-node
 /// and for tests, not a production cluster answer.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct MemoryClientAssertionStore {
     seen: Mutex<HashMap<String, DateTime<Utc>>>,
 }

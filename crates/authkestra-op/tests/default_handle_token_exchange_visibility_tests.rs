@@ -62,25 +62,13 @@ fn test_client() -> ClientRegistration {
 }
 
 fn exchange_request(subject_token: &str) -> TokenRequest {
-    TokenRequest {
-        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
-        code: None,
-        redirect_uri: None,
-        client_id: Some("client1".to_string()),
-        client_secret: None,
-        code_verifier: None,
-        scope: None,
-        refresh_token: None,
-        device_code: None,
-        subject_token: Some(subject_token.to_string()),
-        subject_token_type: Some("urn:ietf:params:oauth:token-type:access_token".to_string()),
-        actor_token: None,
-        actor_token_type: None,
-        requested_token_type: None,
-        audience: None,
-        client_assertion: None,
-        client_assertion_type: None,
-    }
+    serde_json::from_value(serde_json::json!({
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "client_id": "client1",
+        "subject_token": subject_token,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+    }))
+    .unwrap()
 }
 
 #[tokio::test]

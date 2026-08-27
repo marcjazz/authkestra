@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Request payload for the device verification endpoint.
 #[derive(Debug, Deserialize)]
+#[non_exhaustive]
 pub struct DeviceVerifyRequest {
     /// The user code provided by the device.
     pub user_code: String,
@@ -14,6 +15,7 @@ pub struct DeviceVerifyRequest {
 
 /// Response payload for a successful device verification request.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct DeviceVerifyResponse {
     /// Indicates whether the verification was processed successfully.
     pub success: bool,

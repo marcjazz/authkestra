@@ -4,6 +4,7 @@ use crate::error::AuthError;
 
 /// Metadata for an OpenID Connect provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ProviderMetadata {
     /// The issuer URL
     pub issuer: String,

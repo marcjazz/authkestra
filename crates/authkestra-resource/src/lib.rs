@@ -20,6 +20,7 @@ pub enum AuthPolicy {
 }
 
 /// A service that orchestrates multiple authentication strategies.
+#[non_exhaustive]
 pub struct Guard<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,
@@ -67,6 +68,7 @@ impl<I> Guard<I> {
 }
 
 /// Builder for the `Guard`.
+#[non_exhaustive]
 pub struct GuardBuilder<I> {
     strategies: Vec<Box<dyn AuthenticationStrategy<I>>>,
     policy: AuthPolicy,

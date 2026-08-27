@@ -121,6 +121,7 @@ fn take_jti(extra: &mut HashMap<String, serde_json::Value>) -> String {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[non_exhaustive]
 pub struct Claims {
     // Standard OIDC claims
     pub iss: Option<String>,
@@ -144,6 +145,7 @@ pub struct Claims {
 }
 
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct TokenManager {
     encoding_key: EncodingKey,
     decoding_key: DecodingKey,

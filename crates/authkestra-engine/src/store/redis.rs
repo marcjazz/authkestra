@@ -4,6 +4,7 @@ use redis::AsyncCommands;
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
 
+#[non_exhaustive]
 pub struct RedisStore {
     client: redis::Client,
     prefix: String,

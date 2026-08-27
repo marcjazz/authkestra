@@ -14,6 +14,7 @@ use jsonwebtoken::Algorithm;
 /// leaves the device, so there is no symmetric secret the verifier could ever legitimately share
 /// with a signer — belt and braces, not a suggestion.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct VerifierConfig {
     /// Attestation `iss` values this verifier trusts.
     pub trusted_issuers: HashSet<String>,

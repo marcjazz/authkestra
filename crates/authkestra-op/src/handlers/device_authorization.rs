@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Request payload for the device authorization endpoint.
 #[derive(Debug, Deserialize)]
+#[non_exhaustive]
 pub struct DeviceAuthorizationRequest {
     /// The client identifier.
     pub client_id: Option<String>,
@@ -24,6 +25,7 @@ pub struct DeviceAuthorizationRequest {
 
 /// Response payload for a successful device authorization request.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct DeviceAuthorizationResponse {
     /// The device verification code.
     pub device_code: String,
@@ -42,6 +44,7 @@ pub struct DeviceAuthorizationResponse {
 
 /// Response payload for an error in the device authorization endpoint.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct DeviceAuthorizationErrorResponse {
     /// A single ASCII error code.
     pub error: String,
