@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.5.5...authkestra-engine-v0.6.0) - 2026-08-27
+
+### Fixed
+
+- *(crypto)* [**breaking**] harden authkestra-resource and authkestra-op against low-order Ed25519 keys ([#261](https://github.com/marcjazz/authkestra/pull/261))
+- *(oidc)* [**breaking**] accept array-valued `aud` in ID tokens and verify `azp` ([#244](https://github.com/marcjazz/authkestra/pull/244)) ([#251](https://github.com/marcjazz/authkestra/pull/251))
+
+### Other
+
+- massive sweep to add non_exhaustive to all public structs ([#259](https://github.com/marcjazz/authkestra/pull/259))
+
 ## [0.5.5](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.5.4...authkestra-engine-v0.5.5) - 2026-08-24
 
 ### Added

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.5.5...authkestra-resource-v0.6.0) - 2026-08-27
+
+### Added
+
+- *(resource)* resolve JWKS per issuer for multi-issuer resource servers ([#254](https://github.com/marcjazz/authkestra/pull/254))
+
+### Fixed
+
+- *(resource)* gracefully reject untrusted issuers and enforce iss claim ([#260](https://github.com/marcjazz/authkestra/pull/260))
+
+### Other
+
+- massive sweep to add non_exhaustive to all public structs ([#259](https://github.com/marcjazz/authkestra/pull/259))
+- *(resource)* [**breaking**] mark ValidationConfig non_exhaustive and pin its defaults ([#250](https://github.com/marcjazz/authkestra/pull/250))
+
 ## [0.5.4](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.5.3...authkestra-resource-v0.5.4) - 2026-08-24
 
 > **⚠️ Note on Semantic Versioning Break**

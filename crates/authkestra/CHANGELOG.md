@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/marcjazz/authkestra/compare/authkestra-v0.5.5...authkestra-v0.6.0) - 2026-08-27
+
+### Other
+
+- *(examples)* migrate attestation and devsig examples to the unified engine patterns ([#194](https://github.com/marcjazz/authkestra/pull/194)) ([#262](https://github.com/marcjazz/authkestra/pull/262))
+- massive sweep to add non_exhaustive to all public structs ([#259](https://github.com/marcjazz/authkestra/pull/259))
+- *(examples)* modernise examples for the unified engine ([#194](https://github.com/marcjazz/authkestra/pull/194)) ([#255](https://github.com/marcjazz/authkestra/pull/255))
+
 ## [0.5.5](https://github.com/marcjazz/authkestra/compare/authkestra-v0.5.4...authkestra-v0.5.5) - 2026-08-24
 
 ### Other
