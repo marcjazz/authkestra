@@ -53,8 +53,13 @@ use actix_web::dev::Extensions as ActixExtensions;
 ///
 /// Deliberately a plain `fn` pointer rather than a boxed closure: the transfer
 /// is fully determined by `T`, so there is no state to capture, and `fn`
-/// pointers keep [`CarriedExtensions`] `Clone + Send + Sync` for free (it is
-/// stored in actix `app_data`, which requires `Send + Sync`).
+/// pointers keep [`CarriedExtensions`] `Clone + Send + Sync` for free.
+///
+/// Note `App::app_data` and `HttpRequest::app_data` themselves require only
+/// `'static`, not `Send + Sync`; those bounds arrive transitively from
+/// `HttpServer::new`'s factory, which must be `Send + Clone` to be moved into
+/// each worker. The `fn`-pointer choice is still right — it just isn't
+/// `app_data` that forces it.
 type Carrier = fn(&ActixExtensions, &mut http::Extensions);
 
 /// The body of a [`Carrier`], monomorphised once per registered type.
@@ -103,6 +108,23 @@ where
 /// ```
 ///
 /// A strategy can then read `parts.extensions.get::<TenantId>()`.
+///
+/// # Registration forms and their precedence
+///
+/// Both `.app_data(web::Data::new(registry))` and the bare
+/// `.app_data(registry)` are accepted, because matching only one would turn
+/// the other into a silent no-op — the failure mode #246 is about.
+///
+/// If **both** are present, the `web::Data` form always wins, *even when the
+/// bare form is registered on a more specific scope*. `HttpRequest::app_data`
+/// scans the whole App → Scope → Resource chain for one type before the
+/// fallback is consulted, so an app-level `web::Data` registration takes
+/// precedence over a resource-level bare one. Register one form, not both.
+///
+/// # Feature gate
+///
+/// This type is only available with the `resource` feature, which is what
+/// gates the [`Auth`](crate::Auth) extractor it feeds.
 ///
 /// [`AuthenticationStrategy`]: authkestra_engine::auth::AuthenticationStrategy
 #[derive(Clone, Default)]

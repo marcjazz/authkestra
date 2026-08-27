@@ -361,14 +361,33 @@ where
                 match registry {
                     Some(registry) => {
                         let carried = registry.apply(&src, &mut parts.extensions);
-                        tracing::debug!(
-                            registered = registry.len(),
-                            carried,
-                            "carried registered actix request extensions into request parts"
-                        );
+                        if !registry.is_empty() && carried == 0 {
+                            // The host registered types but none were present
+                            // on the request. Almost always a wiring mistake:
+                            // wrong type registered, or the middleware that
+                            // inserts it ordered after this extractor. Warn
+                            // rather than debug — the symptom is otherwise a
+                            // bare 401 with no operator-visible signal, which
+                            // is the exact silence #246 exists to remove.
+                            tracing::warn!(
+                                registered = registry.len(),
+                                "CarriedExtensions registered types but none were present on \
+                                 the request; check the registered type and that the \
+                                 middleware inserting it runs before the extractor"
+                            );
+                        } else {
+                            tracing::debug!(
+                                registered = registry.len(),
+                                carried,
+                                "carried registered actix request extensions into request parts"
+                            );
+                        }
                     }
                     None => {
-                        tracing::debug!(
+                        // Deliberately `trace!`, not `debug!`: this arm fires on
+                        // every request of every app that never opts in, where
+                        // it carries no signal.
+                        tracing::trace!(
                             "no CarriedExtensions registry in actix app data; only \
                              ClientCertificateDer is carried into request parts"
                         );

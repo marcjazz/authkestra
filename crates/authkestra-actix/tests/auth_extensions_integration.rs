@@ -35,6 +35,12 @@ struct TenantId(String);
 #[derive(Clone, Debug)]
 struct NeverInserted;
 
+/// A third test-only type, carried alongside [`TenantId`] so that registering
+/// two types that are *both* present is covered — one type succeeding could
+/// otherwise mask a registry that only ever applies its first carrier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RequestScope(String);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TestIdentity(String);
 
@@ -70,6 +76,22 @@ impl AuthenticationStrategy<TestIdentity> for CertStrategy {
     }
 }
 
+/// Reads **two** registered types and fails unless both arrived, so a registry
+/// that applied only its first carrier would be caught.
+struct BothStrategy;
+
+#[async_trait]
+impl AuthenticationStrategy<TestIdentity> for BothStrategy {
+    async fn authenticate(&self, parts: &Parts) -> Result<Option<TestIdentity>, AuthError> {
+        let tenant = parts.extensions.get::<TenantId>();
+        let scope = parts.extensions.get::<RequestScope>();
+        Ok(match (tenant, scope) {
+            (Some(t), Some(s)) => Some(TestIdentity(format!("{}/{}", t.0, s.0))),
+            _ => None,
+        })
+    }
+}
+
 async fn whoami(Auth(identity): Auth<TestIdentity>) -> impl Responder {
     HttpResponse::Ok().body(identity.0)
 }
@@ -80,6 +102,45 @@ fn tenant_guard() -> Arc<Guard<TestIdentity>> {
 
 fn cert_guard() -> Arc<Guard<TestIdentity>> {
     Arc::new(Guard::builder().strategy(CertStrategy).build())
+}
+
+fn both_guard() -> Arc<Guard<TestIdentity>> {
+    Arc::new(Guard::builder().strategy(BothStrategy).build())
+}
+
+/// Two registered types, both present on the request, must *both* be carried.
+///
+/// Every other positive test registers types of which only one is ever
+/// actually inserted, so a registry that stopped after applying its first
+/// carrier would still pass them. This pins that `apply` runs every carrier.
+#[actix_web::test]
+async fn two_registered_types_are_both_carried() {
+    let app = test::init_service(
+        App::new()
+            .wrap_fn(|req, srv| {
+                req.extensions_mut().insert(TenantId("acme".to_string()));
+                req.extensions_mut()
+                    .insert(RequestScope("admin".to_string()));
+                srv.call(req)
+            })
+            .app_data(web::Data::new(both_guard()))
+            .app_data(web::Data::new(
+                CarriedExtensions::new()
+                    .carry::<TenantId>()
+                    .carry::<RequestScope>(),
+            ))
+            .route("/whoami", web::get().to(whoami)),
+    )
+    .await;
+
+    let resp = test::call_service(&app, TestRequest::get().uri("/whoami").to_request()).await;
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "both registered extension types must reach the strategy"
+    );
+    assert_eq!(test::read_body(resp).await, "acme/admin");
 }
 
 /// The regression test for #246. A middleware inserts `TenantId` into actix's
