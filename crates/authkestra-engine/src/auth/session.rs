@@ -91,7 +91,12 @@ impl<S: crate::store::KvStore<Session>> SessionStore for S {
 }
 
 impl Session {
+    /// Creates a new Session.
     pub fn new(id: String, identity: Identity, expires_at: chrono::DateTime<chrono::Utc>) -> Self {
-        Self { id, identity, expires_at }
+        Self {
+            id,
+            identity,
+            expires_at,
+        }
     }
 }

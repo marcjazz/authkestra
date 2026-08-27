@@ -173,21 +173,17 @@ impl<
             let access_token = tokens
                 .issue_client_token(&client_id, 3600, None, None)
                 .unwrap();
-            return Ok(authkestra_op::handlers::token::TokenResponse {
+            return Ok(authkestra_op::handlers::token::TokenResponse::new(
                 access_token,
-                token_type: "Bearer".to_string(),
-                expires_in: 3600,
-                refresh_token: None,
-                id_token: None,
-                scope: None,
-                issued_token_type: None,
-            });
+                "Bearer".to_string(),
+                3600,
+            ));
         }
 
-        Err(authkestra_op::handlers::token::TokenErrorResponse {
-            error: "unsupported_grant_type".to_string(),
-            error_description: "Unsupported custom grant".to_string(),
-        })
+        Err(authkestra_op::handlers::token::TokenErrorResponse::new(
+            "unsupported_grant_type".to_string(),
+            "Unsupported custom grant".to_string(),
+        ))
     }
 }
 

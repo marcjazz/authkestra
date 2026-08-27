@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use authkestra_engine::auth::state::Identity;
 use authkestra_engine::token::TokenManager;
-use authkestra_op::client::{ClientRegistration, GrantType};
+use authkestra_op::client::ClientRegistration;
 use authkestra_op::config::OpConfig;
 use authkestra_op::handlers::token::TokenRequest;
 
@@ -44,7 +44,8 @@ fn test_config() -> OpConfig {
         "access_token_ttl_secs": 3600,
         "device_code_ttl_secs": 1800,
         "token_exchange_enabled": true
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 fn test_client() -> ClientRegistration {
@@ -58,7 +59,8 @@ fn test_client() -> ClientRegistration {
         "allowed_audiences": [],
         "token_endpoint_auth_method": null,
         "jwks": null
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 fn exchange_request(subject_token: &str) -> TokenRequest {
@@ -67,7 +69,8 @@ fn exchange_request(subject_token: &str) -> TokenRequest {
         "client_id": "client1",
         "subject_token": subject_token,
         "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
-    })).unwrap()
+    }))
+    .unwrap()
 }
 
 #[tokio::test]

@@ -455,6 +455,23 @@ pub(crate) fn attestation_extra_claims(
     extra
 }
 
+impl AttestationConfig {
+    /// Creates a new AttestationConfig.
+    pub fn new() -> Self {
+        Self {
+            attestation_ttl_secs: 86_400,
+            attestation_reissue_after_secs: 43_200,
+            challenge_ttl_secs: 300,
+        }
+    }
+}
+
+impl Default for AttestationConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

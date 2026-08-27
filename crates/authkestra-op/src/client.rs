@@ -90,7 +90,6 @@ pub enum TokenEndpointAuthMethod {
 /// see RFC-003 §7. This is the single most important invariant in this
 /// type; do not relax it for convenience.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct ClientRegistration {
     /// Public client identifier.
     pub client_id: String,

@@ -169,13 +169,14 @@ pub async fn actix_userinfo_handler(
         _ => {
             return HttpResponse::Unauthorized()
                 .insert_header(("WWW-Authenticate", "Bearer"))
-                .json(UserInfoErrorResponse::new("invalid_request".to_string(), "Missing or invalid Authorization header".to_string(),
+                .json(UserInfoErrorResponse::new(
+                    "invalid_request".to_string(),
+                    "Missing or invalid Authorization header".to_string(),
                 ));
         }
     };
 
-    let req = UserInfoRequest::new(auth_header[7..].to_string(),
-    );
+    let req = UserInfoRequest::new(auth_header[7..].to_string());
 
     match handle_userinfo(req, config.get_ref(), tokens.get_ref().as_ref()).await {
         Ok(resp) => HttpResponse::Ok().json(resp),

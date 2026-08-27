@@ -125,7 +125,6 @@ where
 ///
 /// Validates a Bearer token against a configured `JwksCache` and `JwtValidation`.
 #[cfg(feature = "resource")]
-#[non_exhaustive]
 pub struct Jwt<T>(pub T);
 
 #[cfg(feature = "resource")]

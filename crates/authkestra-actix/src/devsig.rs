@@ -245,7 +245,6 @@ fn reject(err: VerifyError) -> Error {
 /// (`DeviceIdentity`, from `authkestra-devsig`) being implemented against, and this crate owns
 /// neither of those directly -- it owns this wrapper instead.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub struct AuthDeviceSignature(pub DeviceIdentity);
 
 impl FromRequest for AuthDeviceSignature {

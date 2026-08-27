@@ -271,7 +271,6 @@ fn reject(err: VerifyError) -> Box<Response> {
 /// (`DeviceIdentity`, from `authkestra-devsig`) being implemented against, and this crate owns
 /// neither of those directly -- it owns this wrapper instead.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub struct AuthDeviceSignature(pub DeviceIdentity);
 
 /// Rejection returned by the [`AuthDeviceSignature`] extractor when the [`DeviceSignatureLayer`]

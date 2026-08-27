@@ -211,7 +211,6 @@ impl FromRequest for AuthToken {
 ///
 /// Validates a Bearer token against a configured `JwksCache` and `jsonwebtoken::Validation`.
 #[cfg(feature = "resource")]
-#[non_exhaustive]
 pub struct Jwt<T>(pub T);
 
 #[cfg(feature = "resource")]

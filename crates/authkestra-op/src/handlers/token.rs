@@ -4284,3 +4284,28 @@ mod device_tests;
 
 #[cfg(test)]
 mod client_auth_tests;
+
+impl TokenResponse {
+    /// Creates a new TokenResponse.
+    pub fn new(access_token: String, token_type: String, expires_in: u64) -> Self {
+        Self {
+            access_token,
+            token_type,
+            expires_in,
+            refresh_token: None,
+            id_token: None,
+            scope: None,
+            issued_token_type: None,
+        }
+    }
+}
+
+impl TokenErrorResponse {
+    /// Creates a new TokenErrorResponse.
+    pub fn new(error: String, error_description: String) -> Self {
+        Self {
+            error,
+            error_description,
+        }
+    }
+}

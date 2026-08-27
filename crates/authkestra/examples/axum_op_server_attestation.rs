@@ -104,11 +104,7 @@ async fn main() {
         .store(op_store)
         .challenge_store(Arc::new(MemoryStore::<EnrolmentChallenge>::new()))
         .second_factor_verifier(Arc::new(DemoOtpVerifier))
-        .attestation_config(AttestationConfig {
-            attestation_ttl_secs: 86_400,
-            attestation_reissue_after_secs: 43_200,
-            challenge_ttl_secs: 300,
-        })
+        .attestation_config(AttestationConfig::new())
         .build();
 
     let app: axum::Router<()> = state

@@ -102,6 +102,23 @@ pub async fn handle_userinfo(
     Ok(response)
 }
 
+impl UserInfoRequest {
+    /// Creates a new UserInfoRequest.
+    pub fn new(access_token: String) -> Self {
+        Self { access_token }
+    }
+}
+
+impl UserInfoErrorResponse {
+    /// Creates a new UserInfoErrorResponse.
+    pub fn new(error: String, error_description: String) -> Self {
+        Self {
+            error,
+            error_description,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -209,17 +226,5 @@ mod tests {
         assert_eq!(result.sub, "user-123");
         assert_eq!(result.email, None); // Should be None because email scope wasn't requested
         assert_eq!(result.name.as_deref(), Some("Test User"));
-    }
-}
-
-impl UserInfoRequest {
-    pub fn new(access_token: String) -> Self {
-        Self { access_token }
-    }
-}
-
-impl UserInfoErrorResponse {
-    pub fn new(error: String, error_description: String) -> Self {
-        Self { error, error_description }
     }
 }

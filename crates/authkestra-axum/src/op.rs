@@ -229,15 +229,16 @@ where
             return (
                 StatusCode::UNAUTHORIZED,
                 [("WWW-Authenticate", "Bearer")],
-                Json(UserInfoErrorResponse::new("invalid_request".to_string(), "Missing or invalid Authorization header".to_string(),
+                Json(UserInfoErrorResponse::new(
+                    "invalid_request".to_string(),
+                    "Missing or invalid Authorization header".to_string(),
                 )),
             )
                 .into_response();
         }
     };
 
-    let req = UserInfoRequest::new(auth_header[7..].to_string(),
-    );
+    let req = UserInfoRequest::new(auth_header[7..].to_string());
 
     let config = OpConfig::from_ref(&state);
 
@@ -537,7 +538,6 @@ pub type CompleteOp = authkestra_op::Op<
 
 /// A newtype wrapper around `CompleteOp` to implement `axum::extract::FromRef` and bypass orphan rules.
 #[derive(Clone)]
-#[non_exhaustive]
 pub struct OpState(pub CompleteOp);
 
 impl FromRef<OpState> for Result<Arc<dyn authkestra_op::OpStore>, AxumError> {
