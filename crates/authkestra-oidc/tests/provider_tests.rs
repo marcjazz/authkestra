@@ -24,7 +24,6 @@ struct TestClaims {
     nonce: Option<String>,
 }
 
-
 #[tokio::test]
 async fn test_oidc_discover_and_auth_url() {
     let mock_server = MockServer::start().await;
