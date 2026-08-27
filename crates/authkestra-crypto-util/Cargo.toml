@@ -1,0 +1,18 @@
+[package]
+name = "authkestra-crypto-util"
+exclude.workspace = true
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+ed25519-dalek = "2"
+base64 = "0.22"
+thiserror = "2"
+tracing = "0.1"
+
+[features]
+default = []

@@ -280,9 +280,14 @@ pub fn parse_public_jwk(raw: &Value) -> Result<Jwk, OpError> {
         .map_err(|e| OpError::BadJwk(format!("failed to parse jwk: {e}")))?;
 
     match &jwk.algorithm {
-        AlgorithmParameters::EllipticCurve(_)
-        | AlgorithmParameters::RSA(_)
-        | AlgorithmParameters::OctetKeyPair(_) => Ok(jwk),
+        AlgorithmParameters::EllipticCurve(_) | AlgorithmParameters::RSA(_) => Ok(jwk),
+        AlgorithmParameters::OctetKeyPair(params) => {
+            if params.curve == jsonwebtoken::jwk::EllipticCurve::Ed25519 {
+                authkestra_crypto_util::parse_ed25519_verifying_key_strict(&params.x)
+                    .map_err(|e| OpError::BadJwk(e.to_string()))?;
+            }
+            Ok(jwk)
+        }
         AlgorithmParameters::OctetKey(_) => Err(OpError::BadJwk(
             "symmetric keys are never valid for device/service attestation".to_string(),
         )),
@@ -474,6 +479,24 @@ impl Default for AttestationConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_public_jwk_rejects_low_order_ed25519_key() {
+        // The identity point: the canonical universal low-order vector.
+        let identity_b64 = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let jwk_json = serde_json::json!({
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": identity_b64
+        });
+
+        let err = super::parse_public_jwk(&jwk_json).expect_err("should reject low order point");
+        assert!(
+            err.to_string().contains("low-order"),
+            "expected low-order point rejection, got: {}",
+            err
+        );
+    }
+
     use super::*;
 
     fn valid_ec_jwk() -> Value {

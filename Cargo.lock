@@ -524,10 +524,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "authkestra-crypto-util"
+version = "0.5.5"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
 name = "authkestra-devsig"
 version = "0.5.5"
 dependencies = [
  "async-trait",
+ "authkestra-crypto-util",
  "base64 0.22.1",
  "ed25519-dalek",
  "jsonwebtoken",
@@ -550,6 +561,7 @@ dependencies = [
  "actix-files",
  "aes-gcm",
  "async-trait",
+ "authkestra-crypto-util",
  "base64 0.22.1",
  "chrono",
  "dotenvy",
@@ -614,6 +626,7 @@ version = "0.5.5"
 dependencies = [
  "argon2",
  "async-trait",
+ "authkestra-crypto-util",
  "authkestra-engine",
  "authkestra-resource",
  "base64 0.22.1",

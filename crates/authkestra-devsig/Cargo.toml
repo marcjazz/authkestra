@@ -26,6 +26,7 @@ sha2 = "0.10"
 subtle = "2.6"
 tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
+authkestra-crypto-util.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
