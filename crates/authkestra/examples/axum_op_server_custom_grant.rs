@@ -194,9 +194,22 @@ impl<
 
 #[tokio::main]
 async fn main() {
+    // `RUST_LOG=authkestra=debug` surfaces the engine's own instrumentation.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
+    let port = port_from_env();
+    let issuer = format!("http://localhost:{port}");
+
+    // The token manager's `iss` claim must equal `OpConfig::issuer` below, or
+    // relying parties will reject every id_token this OP mints.
     let token_manager = Arc::new(TokenManager::new(
         b"my-super-secret-key-that-is-32bytes-long",
-        Some("issuer".to_string()),
+        Some(issuer.clone()),
     ));
 
     let clients = MemoryStore::new();
@@ -255,7 +268,7 @@ async fn main() {
         auth,
         op_store,
         config: OpConfig {
-            issuer: "http://localhost:3000".to_string(),
+            issuer: issuer.clone(),
             scopes_supported: vec![
                 "openid".to_string(),
                 "profile".to_string(),
@@ -275,7 +288,20 @@ async fn main() {
         .merge(state.op_axum_router())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    println!("🚀 Axum OP Server running on http://localhost:8080");
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+        .await
+        .expect("failed to bind example server");
+
+    tracing::info!(%issuer, "Axum OP server (custom grant) listening on {issuer}");
+    tracing::info!("custom grant_type: urn:example:custom");
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Bind port, overridable via `PORT`. Defaults to 8080 so an OP and a relying
+/// party (which the other examples run on 3000) can be started side by side.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8080)
 }

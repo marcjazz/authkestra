@@ -464,6 +464,7 @@ dependencies = [
  "tower-http",
  "tower-layer",
  "tower-service",
+ "tracing",
  "tracing-subscriber",
  "url",
  "uuid",

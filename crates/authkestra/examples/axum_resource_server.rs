@@ -1,3 +1,18 @@
+//! # Axum resource server — manual JWKS wiring (lower level)
+//!
+//! Protects endpoints with JWTs issued by an external OIDC provider, wiring
+//! [`JwksCache`] and `jsonwebtoken::Validation` into the state by hand and
+//! extracting with `Jwt<T>`.
+//!
+//! Reach for this when you need direct control over `Validation`. For the
+//! common case prefer `axum_resource_server_strategy.rs`, which hides all of
+//! the below behind a `Guard`.
+//!
+//! ```sh
+//! OIDC_ISSUER=https://accounts.google.com OIDC_AUDIENCE=my-api \
+//!   cargo run -p authkestra --example axum_resource_server --all-features
+//! ```
+
 use authkestra_axum::Jwt;
 use authkestra_resource::jwt::{JwksCache, ValidationConfig};
 use axum::{
@@ -9,9 +24,6 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
-
-/// This example demonstrates an Axum resource server that protects its endpoints
-/// using JWTs validated against an external OIDC provider's JWKS.
 
 #[derive(Debug, Deserialize)]
 struct MyClaims {
@@ -60,6 +72,14 @@ impl Config {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `RUST_LOG=authkestra=debug` surfaces the engine's own instrumentation.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
     dotenvy::dotenv().ok();
     let config = Config::from_env();
 
@@ -95,9 +115,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/protected", get(protected))
         .with_state(state);
 
-    let addr = format!("0.0.0.0:{}", config.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("📡 Listening on http://{addr}");
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.port)).await?;
+    tracing::info!(
+        port = config.port,
+        issuer = %config.issuer,
+        "Axum resource server listening on http://localhost:{}",
+        config.port
+    );
 
     axum::serve(listener, app).await?;
 
@@ -109,6 +133,7 @@ async fn index() -> impl IntoResponse {
 }
 
 async fn protected(Jwt(claims): Jwt<MyClaims>) -> impl IntoResponse {
+    tracing::debug!(sub = %claims.sub, "bearer token accepted");
     Json(json!({
         "message": "You have access to this protected resource.",
         "user_id": claims.sub,

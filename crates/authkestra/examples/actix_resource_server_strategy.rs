@@ -1,7 +1,13 @@
-//! # Actix Resource Server Strategy Example
+//! # Actix resource server — `Guard` strategy (preferred)
 //!
-//! This example demonstrates how to use the Resource Server strategy with `Guard`
-//! and the `Auth` extractor to protect an API.
+//! Validates bearer tokens issued by *someone else* (any OIDC provider). This
+//! is the recommended shape: a [`Guard`] owns one or more strategies, and the
+//! `Auth<T>` extractor asks the guard rather than reaching for JWT internals.
+//!
+//! ```sh
+//! OIDC_ISSUER=https://accounts.google.com \
+//!   cargo run -p authkestra --example actix_resource_server_strategy --all-features
+//! ```
 
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use authkestra_actix::{ActixState, Auth};
@@ -27,6 +33,14 @@ struct AppState {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // `RUST_LOG=authkestra=debug` surfaces the engine's own instrumentation.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
     dotenvy::dotenv().ok();
 
     // 1. Configure the JWT Strategy
@@ -47,7 +61,8 @@ async fn main() -> std::io::Result<()> {
         guard: Arc::new(guard),
     };
 
-    println!("📡 Resource Server Strategy listening on http://0.0.0.0:3000");
+    let port = port_from_env();
+    tracing::info!(%port, "Actix resource server (Guard strategy) listening on http://localhost:{port}");
 
     HttpServer::new(move || {
         let app_state = state.clone();
@@ -56,9 +71,18 @@ async fn main() -> std::io::Result<()> {
             .service(index)
             .service(protected)
     })
-    .bind(("0.0.0.0", 3000))?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
+}
+
+/// Bind port, overridable via `PORT` so several examples can run without
+/// colliding on 3000.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000)
 }
 
 #[get("/")]
@@ -72,12 +96,18 @@ async fn index() -> impl Responder {
 #[get("/api/protected")]
 async fn protected(auth: Option<Auth<UserIdentity>>) -> impl Responder {
     match auth {
-        Some(Auth(user)) => HttpResponse::Ok().json(json!({
-            "message": "Access granted via Resource Server Strategy!",
-            "user": user,
-        })),
-        None => HttpResponse::Unauthorized().json(json!({
-            "error": "Authentication failed or token missing/invalid",
-        })),
+        Some(Auth(user)) => {
+            tracing::debug!(sub = %user.sub, "bearer token accepted by guard");
+            HttpResponse::Ok().json(json!({
+                "message": "Access granted via Resource Server Strategy!",
+                "user": user,
+            }))
+        }
+        None => {
+            tracing::debug!("bearer token missing or rejected by guard");
+            HttpResponse::Unauthorized().json(json!({
+                "error": "Authentication failed or token missing/invalid",
+            }))
+        }
     }
 }

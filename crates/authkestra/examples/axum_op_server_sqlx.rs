@@ -2,15 +2,26 @@
 //!
 //! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Axum.
 //! It uses the batteries-included `SqlxOpStore` for a production-ready relational database schema.
-use authkestra_axum::OpExt;
-use authkestra_engine::{AkEngine, TokenManager};
+//!
+//! Unlike `axum_op_server.rs` (which composes four `KvStore`s), `SqlxOpStore`
+//! is a single normalised schema with foreign keys and `ON DELETE CASCADE` —
+//! prefer it for OP data; `SqlKvStore` is deprecated for this purpose.
+//!
+//! ```sh
+//! cargo run -p authkestra --example axum_op_server_sqlx --all-features
+//! ```
+//!
+//! Set `PORT` to bind somewhere other than 8080; `issuer` follows it, because
+//! relying parties resolve `/.well-known/openid-configuration` against the
+//! issuer URL and a mismatch breaks discovery.
+use authkestra_axum::{AxumState, OpExt};
+use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::{AkEngine, Engine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::config::OpConfig;
 use authkestra_op::sqlx_store::SqlxOpStore;
 use axum::Router;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
-
-use authkestra_axum::AxumState;
 
 #[derive(Clone, AxumState)]
 struct AppState {
@@ -26,9 +37,22 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
+    // `RUST_LOG=authkestra=debug` surfaces the engine's own instrumentation.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,authkestra=debug".into()),
+        )
+        .init();
+
+    let port = port_from_env();
+    let issuer = format!("http://localhost:{port}");
+
+    // The token manager's `iss` claim must equal `OpConfig::issuer` below, or
+    // relying parties will reject every id_token this OP mints.
     let token_manager = Arc::new(TokenManager::new(
         b"my-super-secret-key-that-is-32bytes-long",
-        Some("issuer".to_string()),
+        Some(issuer.clone()),
     ));
 
     // Create a SQLite connection pool (in-memory for the example, but can be a file path)
@@ -44,8 +68,10 @@ async fn main() {
     // Automatically run schema migrations to create the required tables
     sqlx_store.migrate().await.unwrap();
 
-    // Seed a dummy OAuth client directly using sqlx (since SqlxOpStore abstracts the trait away)
-    // You could also use `sqlx_store.store_client(...)` if that method existed, but ClientRegistration is fetched via ClientStore trait
+    // Seed a demo OAuth client. `ClientStore` is read-only by design —
+    // registration is the deployment's business — so the example writes the
+    // row directly. `redirect_uris` is the *relying party's* callback, not
+    // this server's.
     sqlx::query(
         "INSERT INTO authkestra_oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
          VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -63,14 +89,15 @@ async fn main() {
 
     let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(sqlx_store);
 
-    let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
-        Arc::new(authkestra_engine::store::memory::MemoryStore::new());
-    let session_config = authkestra_engine::SessionConfig {
+    // Only the OP data lives in SQL here; the end-user login session can use
+    // any `SessionStore`, so the example keeps that part dependency-free.
+    let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::new());
+    let session_config = SessionConfig {
         cookie_name: "authkestra_sid".to_string(),
         ..Default::default()
     };
 
-    let auth = authkestra_engine::Engine::builder()
+    let auth = Engine::builder()
         .session_store(session_store)
         .session_config(session_config)
         .token_manager(token_manager)
@@ -80,7 +107,7 @@ async fn main() {
         auth,
         op_store,
         config: OpConfig {
-            issuer: "http://localhost:3000".to_string(),
+            issuer: issuer.clone(),
             scopes_supported: vec![
                 "openid".to_string(),
                 "profile".to_string(),
@@ -100,7 +127,20 @@ async fn main() {
         .merge(state.op_axum_router())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    println!("🚀 Axum OP Server running on http://localhost:8080");
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+        .await
+        .expect("failed to bind example server");
+
+    tracing::info!(%issuer, "Axum OP server (SqlxOpStore) listening on {issuer}");
+    tracing::info!("discovery: {issuer}/.well-known/openid-configuration");
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Bind port, overridable via `PORT`. Defaults to 8080 so an OP and a relying
+/// party (which the other examples run on 3000) can be started side by side.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8080)
 }
