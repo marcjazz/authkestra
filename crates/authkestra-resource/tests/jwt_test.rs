@@ -2,6 +2,7 @@
 //! - multi-value audience support on `ValidationConfig` / `ValidationConfigBuilder`
 //! - backward compatibility of the single-value `.audience(...)` builder method
 //! - opt-in strict `kid` enforcement on `JwksCache`
+//! - the documented default values produced by `ValidationConfigBuilder`
 //!
 //! JWKS is served via a local `wiremock` server and tokens are signed with
 //! freshly generated RSA keys so the full offline-validation path (JWKS fetch,
@@ -482,4 +483,37 @@ async fn cert_binding_is_not_enforced_when_require_cert_binding_is_false() {
             "without require_cert_binding, a certificate-bound token is still a valid bearer token",
         );
     assert_eq!(result.sub, "service-a");
+}
+
+/// Pins every documented default of a minimally-configured `ValidationConfig`.
+///
+/// The security-relevant assertions are `require_cert_binding` and
+/// `require_kid`: both are documented as off by default, and flipping either
+/// on would silently start *rejecting* tokens that a deployed resource server
+/// accepts today — a change that no existing test would otherwise catch,
+/// because every other test in this file opts in explicitly. See issue #247.
+#[test]
+fn builder_defaults_match_documented_behaviour() {
+    let config = ValidationConfig::builder()
+        .jwks_url("https://issuer.example.com/.well-known/jwks.json")
+        .build();
+
+    assert_eq!(
+        config.jwks_url,
+        "https://issuer.example.com/.well-known/jwks.json"
+    );
+    assert_eq!(config.refresh_interval, Duration::from_secs(3600));
+    assert_eq!(config.issuer, None);
+    assert!(config.audience.is_empty());
+    assert_eq!(config.algorithms, vec![Algorithm::RS256]);
+    assert!(
+        !config.require_kid,
+        "require_kid must stay off by default: turning it on would reject every token whose \
+         header omits `kid`, which validated fine before"
+    );
+    assert!(
+        !config.require_cert_binding,
+        "require_cert_binding must stay off by default: turning it on would reject every \
+         certificate-bound token not presented over a matching mTLS connection"
+    );
 }
