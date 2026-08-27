@@ -644,11 +644,144 @@ async fn single_valued_aud_with_foreign_azp_is_accepted() {
     assert_eq!(identity.external_id, "user-123");
 }
 
+/// A one-element `aud` array with an `azp` naming a different client must be
+/// accepted, exactly like the bare-string form above.
+///
+/// This is the case that makes the `values.len() > 1` guard load-bearing
+/// rather than `matches!(aud, Audience::Multiple(_))`: `["test_client"]`
+/// deserializes to `Multiple`, but it is semantically ONE audience, so
+/// §3.1.3.7's `azp` requirement does not apply. The sibling test above
+/// covers only the bare-string shape and so would not catch a regression here.
+#[tokio::test]
+async fn one_element_array_aud_with_foreign_azp_is_accepted() {
+    let mock_server = MockServer::start().await;
+    let (provider, key) = setup_provider(&mock_server, "test_client").await;
+
+    let id_token = sign_json(
+        &key.encoding_key,
+        "kid-1",
+        &json!({
+            "sub": "user-123",
+            "iss": mock_server.uri(),
+            "aud": ["test_client"],
+            "azp": "some_frontend_client",
+            "exp": future_exp(),
+        }),
+    );
+    mount_token_response(&mock_server, &id_token).await;
+
+    let (identity, _token) = provider
+        .exchange_code_for_identity("code123", None, None)
+        .await
+        .expect("a one-element array aud with a foreign azp must still be accepted");
+    assert_eq!(identity.external_id, "user-123");
+}
+
+/// An empty `aud` array must be rejected. It deserializes to
+/// `Audience::Multiple(vec![])`, whose length is not `> 1`, so
+/// `verify_authorized_party` returns early — rejection therefore rests
+/// entirely on the audience check derived in `default_validation`. That is
+/// fail-closed today, but nothing pinned it, so a refactor of either side
+/// could silently start accepting an audience-less token.
+#[tokio::test]
+async fn empty_array_aud_is_rejected() {
+    let mock_server = MockServer::start().await;
+    let (provider, key) = setup_provider(&mock_server, "test_client").await;
+
+    let id_token = sign_json(
+        &key.encoding_key,
+        "kid-1",
+        &json!({
+            "sub": "user-123",
+            "iss": mock_server.uri(),
+            "aud": [],
+            "exp": future_exp(),
+        }),
+    );
+    mount_token_response(&mock_server, &id_token).await;
+
+    let err = provider
+        .exchange_code_for_identity("code123", None, None)
+        .await
+        .expect_err("an ID token with an empty aud array must be rejected");
+    assert!(
+        err.to_string().contains("InvalidAudience"),
+        "expected an InvalidAudience rejection, got: {err}"
+    );
+}
+
+/// A duplicated audience (`["test_client", "test_client"]`) is ONE distinct
+/// audience, so `azp` must not be required for it.
+///
+/// The raw `Vec` length is 2, so a naive `values.len() > 1` check demands
+/// `azp` and spuriously fails the login for an IdP that emits a harmlessly
+/// duplicated `aud`. jsonwebtoken itself parses the claim into a `HashSet`
+/// and dedupes, so the audience check already treats this as one value —
+/// counting distinct values here keeps the two halves consistent. Direction
+/// of the old bug was fail-closed (a false reject, not a bypass), which is
+/// why it was a correctness rather than security fix.
+#[tokio::test]
+async fn duplicated_aud_entries_do_not_require_azp() {
+    let mock_server = MockServer::start().await;
+    let (provider, key) = setup_provider(&mock_server, "test_client").await;
+
+    let id_token = sign_json(
+        &key.encoding_key,
+        "kid-1",
+        &json!({
+            "sub": "user-123",
+            "iss": mock_server.uri(),
+            "aud": ["test_client", "test_client"],
+            "exp": future_exp(),
+        }),
+    );
+    mount_token_response(&mock_server, &id_token).await;
+
+    let (identity, _token) = provider
+        .exchange_code_for_identity("code123", None, None)
+        .await
+        .expect("a duplicated single audience must not require azp");
+    assert_eq!(identity.external_id, "user-123");
+}
+
+/// Two genuinely distinct audiences must still require `azp`, so the
+/// de-duplication above cannot be mistaken for switching the check off.
+#[tokio::test]
+async fn distinct_multi_aud_still_requires_azp_after_dedup() {
+    let mock_server = MockServer::start().await;
+    let (provider, key) = setup_provider(&mock_server, "test_client").await;
+
+    let id_token = sign_json(
+        &key.encoding_key,
+        "kid-1",
+        &json!({
+            "sub": "user-123",
+            "iss": mock_server.uri(),
+            "aud": ["test_client", "test_client", "other_client"],
+            "exp": future_exp(),
+        }),
+    );
+    mount_token_response(&mock_server, &id_token).await;
+
+    let err = provider
+        .exchange_code_for_identity("code123", None, None)
+        .await
+        .expect_err("two distinct audiences must still require azp");
+    assert!(
+        err.to_string().contains("no azp claim"),
+        "expected an azp rejection, got: {err}"
+    );
+}
+
 /// Regression guard for the serialization side of the `aud` widening: a
 /// `Claims` carrying one audience must still go on the wire as a bare JSON
-/// string, exactly as it did when the field was a `String`. If
-/// `Audience::Single` ever serialized as a one-element array, every token
-/// this type has ever produced would change shape.
+/// string, exactly as it did when the field was a `String`.
+///
+/// `authkestra-oidc` is a relying party and only ever *consumes* ID tokens,
+/// so this does not guard tokens this crate issues. It guards round-tripping:
+/// anything that re-serializes a decoded `Claims` — caching, audit logging,
+/// forwarding — would change shape if `Audience::Single` ever emitted a
+/// one-element array.
 #[test]
 fn single_audience_claims_still_serialize_aud_as_a_bare_string() {
     let claims = Claims {

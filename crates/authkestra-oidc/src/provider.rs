@@ -48,9 +48,22 @@ pub struct Claims {
     /// ever evaluated. See #244.
     pub aud: Audience,
     pub exp: u64,
-    /// The `azp` (authorized party) claim. Verified against `client_id` when
-    /// `aud` carries multiple values, per OIDC Core §3.1.3.7; see
-    /// [`verify_authorized_party`].
+    /// The `azp` (authorized party) claim.
+    ///
+    /// Verified against `client_id` when `aud` carries **more than one
+    /// distinct** value: in that case `azp` must be present and must equal
+    /// `client_id`, or the token is rejected. This prevents a token minted
+    /// for client A with `aud = [A, B]` being replayed against a deployment
+    /// configured as client B.
+    ///
+    /// A **single**-valued `aud` is deliberately not checked against `azp`,
+    /// even when `azp` names a different client: providers including Google
+    /// legitimately issue single-audience ID tokens whose `azp` identifies a
+    /// different front-end client, and enforcing it would reject those
+    /// outright. Pinned by a test so it cannot be silently tightened.
+    ///
+    /// Note this is stricter than OIDC Core incorporating errata set 2,
+    /// which relaxed the multi-audience `azp` requirement to a MAY.
     pub azp: Option<String>,
     pub email: Option<String>,
     pub name: Option<String>,
@@ -201,10 +214,17 @@ impl OidcProvider {
     ///
     /// Whatever you pass becomes the entire policy. `Validation::new` starts
     /// with no issuer and no audience configured, so passing a bare
-    /// `Validation::new(Algorithm::RS256)` silently disables the `iss` and
-    /// `aud` checks [`default_validation`] would otherwise apply —
-    /// reintroducing exactly the gaps #225 fixed. Call `set_issuer` and
-    /// `set_audience` on the `Validation` you supply.
+    /// `Validation::new(Algorithm::RS256)` **silently disables the `iss`
+    /// check** [`default_validation`] would otherwise apply, reintroducing
+    /// that half of the gap #225 fixed. Call `set_issuer` on the `Validation`
+    /// you supply.
+    ///
+    /// The `aud` half behaves differently, and an earlier version of this
+    /// doc had it wrong: leaving the audience unset does **not** skip the
+    /// check. `jsonwebtoken` rejects any token carrying an `aud` claim when
+    /// no expected audience is configured, so an override without
+    /// `set_audience` fails closed (every real ID token is refused) rather
+    /// than open. Call `set_audience` too, or nothing will authenticate.
     pub fn with_validation(mut self, validation: Validation) -> Self {
         self.validation_override = Some(validation);
         self
@@ -237,36 +257,88 @@ fn default_validation(metadata: &ProviderMetadata, client_id: &str) -> Validatio
     validation.algorithms = algorithms;
     validation.set_issuer(std::slice::from_ref(&metadata.issuer));
     validation.set_audience(std::slice::from_ref(&client_id.to_string()));
+    // `Validation::new` requires only `exp`, and neither `set_issuer` nor
+    // `set_audience` adds to that set. jsonwebtoken skips the `iss`/`aud`
+    // checks entirely for an *absent* claim, so today the only thing
+    // rejecting an `iss`-less or `aud`-less ID token is that `Claims::iss`
+    // and `Claims::aud` are non-`Option` and fail to deserialize. Require
+    // them explicitly, so a future "tolerance" change making either field
+    // optional cannot silently switch the checks off.
+    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
     validation
 }
 
-/// Enforces the OIDC Core §3.1.3.7 step-4/5 `azp` rules on an ID token whose
-/// signature, `iss` and `aud` have *already* been verified by
-/// `jsonwebtoken`.
+/// Enforces an `azp` (authorized party) check on an ID token whose signature,
+/// `iss` and `aud` have *already* been verified by `jsonwebtoken`.
 ///
-/// When `aud` carries more than one value, `azp` must be present and must be
-/// this client's `client_id`: `aud` alone then only proves the token was
-/// issued for a set of audiences that includes us, not that *we* are the
-/// party it was authorized for.
+/// When `aud` carries more than one **distinct** value, `azp` must be present
+/// and must be this client's `client_id`: `aud` alone then only proves the
+/// token was issued for a set of audiences that includes us, not that *we*
+/// are the party it was authorized for. Without this, a token minted for
+/// client A with `aud = [A, B]` could be replayed against a deployment
+/// configured as client B.
+///
+/// # Relationship to the spec
+///
+/// OIDC Core 1.0 **incorporating errata set 2** relaxed this area: the
+/// earlier "multiple audiences ⇒ the Client MUST verify `azp`" wording was
+/// removed, and step 5 now reads that validation *MAY* include verifying
+/// `client_id` against `azp` when present. This function is therefore
+/// deliberately **stricter than the current normative text** on the
+/// multi-audience path, because that path is the one where audience
+/// substitution is otherwise possible.
 ///
 /// # Why a single-valued `aud` is not checked against `azp`
 ///
-/// §3.1.3.7 step 5 is a SHOULD, not a MUST, and enforcing it here would
-/// reject legitimate deployments: providers such as Google issue ID tokens
-/// where `aud` is a backend's client ID while `azp` names the front-end
-/// client that actually requested it. Rejecting those would reintroduce
-/// exactly the fail-closed compatibility gap #244 exists to remove. The
-/// multi-audience case has no such ambiguity, so it is enforced.
+/// Enforcing it there would reject legitimate deployments: providers such as
+/// Google issue ID tokens where `aud` is a backend's client ID while `azp`
+/// names the front-end client that actually requested it. Rejecting those
+/// would reintroduce exactly the fail-closed compatibility gap #244 exists to
+/// remove. The multi-audience case has no such ambiguity, so it is enforced.
+///
+/// # Not covered
+///
+/// The spec's "reject if `aud` contains audiences not trusted by the Client"
+/// rule is **not** implemented — there is no trusted-audience configuration,
+/// so `aud = ["account", "test_client"]` is accepted. The `azp` gate above is
+/// the practical substitute, since an honest IdP sets `azp` to the client
+/// that actually requested the token.
 fn verify_authorized_party(
     aud: &Audience,
     azp: Option<&str>,
     client_id: &str,
 ) -> Result<(), AuthError> {
+    // Count *distinct* values. jsonwebtoken parses the same claim into a
+    // `HashSet` and dedupes, so `["a", "a"]` is one audience to the audience
+    // check; counting the raw Vec length here would demand `azp` for a token
+    // carrying a single, duplicated audience and spuriously fail the login.
+    let distinct: std::collections::HashSet<&String> = match aud {
+        Audience::Multiple(values) => values.iter().collect(),
+        Audience::Single(_) => Default::default(),
+    };
+
     let audiences = match aud {
-        Audience::Multiple(values) if values.len() > 1 => values,
-        // A single audience — whether it arrived as a bare string or as a
-        // one-element array — is not "multiple audiences" for §3.1.3.7.
-        _ => return Ok(()),
+        Audience::Multiple(values) if distinct.len() > 1 => values,
+        // A single audience — whether it arrived as a bare string, a
+        // one-element array, or the same value repeated — is not "multiple
+        // audiences" for the purposes of the check above.
+        _ => {
+            // Log the skip: this is the branch implementing the deliberate
+            // step-5 deviation documented above, so an operator asking why a
+            // token bearing a foreign `azp` was accepted has a signal rather
+            // than silence.
+            if let Some(azp) = azp {
+                if azp != client_id {
+                    tracing::debug!(
+                        azp = %azp,
+                        client_id = %client_id,
+                        "ID token has a single audience and an azp naming a different \
+                         client; accepting per OIDC Core 3.1.3.7 step 5 being a SHOULD"
+                    );
+                }
+            }
+            return Ok(());
+        }
     };
 
     tracing::debug!(
@@ -275,10 +347,17 @@ fn verify_authorized_party(
     );
 
     match azp {
-        Some(azp) if azp == client_id => Ok(()),
+        Some(azp) if azp == client_id => {
+            tracing::debug!(
+                azp = %azp,
+                "ID token azp matches the configured client_id"
+            );
+            Ok(())
+        }
         Some(azp) => {
             tracing::error!(
                 azp = %azp,
+                client_id = %client_id,
                 "ID token azp does not match the configured client_id"
             );
             Err(AuthError::Token(

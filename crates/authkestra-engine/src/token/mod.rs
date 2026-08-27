@@ -36,6 +36,55 @@ impl Audience {
     }
 }
 
+/// Renders the audience for logging and display: a single audience as the
+/// bare string, multiple as comma-separated values.
+///
+/// This exists so that code reading an `aud` claim has an ergonomic path
+/// back to a string. Without it, every `format!("{}", claims.aud)` and
+/// `tracing::info!(aud = %claims.aud)` at a call site that previously held
+/// a `String` is a hard compile error with no one-line replacement. Use
+/// [`Audience::contains`] for membership tests — do **not** parse this
+/// output back apart, since an audience value may itself contain a comma.
+impl std::fmt::Display for Audience {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Audience::Single(s) => f.write_str(s),
+            Audience::Multiple(values) => {
+                for (i, value) in values.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    f.write_str(value)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Compares against a single audience string, so `claims.aud == "client"`
+/// keeps compiling where `aud` used to be a `String`. Note this is exact
+/// equality against a *single*-valued audience, not membership — a
+/// [`Audience::Multiple`] never equals a bare `str`, even one it contains.
+/// Use [`Audience::contains`] when you mean "is this one of the audiences".
+impl PartialEq<str> for Audience {
+    fn eq(&self, other: &str) -> bool {
+        matches!(self, Audience::Single(s) if s == other)
+    }
+}
+
+impl PartialEq<&str> for Audience {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl PartialEq<String> for Audience {
+    fn eq(&self, other: &String) -> bool {
+        self == other.as_str()
+    }
+}
+
 impl From<String> for Audience {
     fn from(value: String) -> Self {
         Audience::Single(value)
