@@ -14,9 +14,10 @@
 //! Set `PORT` to bind somewhere other than 8080; `issuer` follows it, because
 //! relying parties resolve `/.well-known/openid-configuration` against the
 //! issuer URL and a mismatch breaks discovery.
+use authkestra::Authkestra;
 use authkestra_axum::{AxumState, OpExt};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::{AkEngine, Engine, SessionConfig, SessionStore, TokenManager};
+use authkestra_engine::{AkEngine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::config::OpConfig;
 use authkestra_op::sqlx_store::SqlxOpStore;
 use axum::Router;
@@ -97,7 +98,7 @@ async fn main() {
         ..Default::default()
     };
 
-    let auth = Engine::builder()
+    let auth = Authkestra::builder()
         .session_store(session_store)
         .session_config(session_config)
         .token_manager(token_manager)

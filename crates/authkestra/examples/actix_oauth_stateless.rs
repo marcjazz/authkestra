@@ -19,8 +19,9 @@
 //! 3. Call `/api/user` with `Authorization: Bearer <token>`.
 
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use authkestra::Authkestra;
 use authkestra_actix::{ActixState, ActixStatelessExt, AuthToken};
-use authkestra_engine::{AkApiEngine, Engine, OAuth2Flow};
+use authkestra_engine::{AkApiEngine, OAuth2Flow};
 use authkestra_providers::github::GithubProvider;
 use serde_json::json;
 
@@ -58,7 +59,7 @@ async fn main() -> std::io::Result<()> {
     // Stateless mode: `jwt_secret` configures the token manager and leaves the
     // session-store slot `Missing`. Load a real secret from your secret
     // manager — this literal is only acceptable in an example.
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .provider(OAuth2Flow::new(github_provider))
         .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
         .build();

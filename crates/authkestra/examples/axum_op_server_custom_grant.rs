@@ -1,6 +1,7 @@
 //! # Axum OP Server with Custom Grant Type Example
 //!
 //! This example demonstrates setting up an OpenID Connect Provider using authkestra-op and Axum.
+use authkestra::Authkestra;
 use authkestra_engine::store::KvStore;
 
 use authkestra_axum::OpExt;
@@ -254,7 +255,7 @@ async fn main() {
         ..Default::default()
     };
 
-    let auth = authkestra_engine::Engine::builder()
+    let auth = Authkestra::builder()
         .session_store(session_store)
         .session_config(session_config)
         .token_manager(token_manager)

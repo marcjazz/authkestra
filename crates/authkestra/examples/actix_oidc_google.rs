@@ -16,9 +16,10 @@
 
 use actix_files::Files;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use authkestra::Authkestra;
 use authkestra_actix::{ActixExt, ActixState, AuthSession};
 use authkestra_engine::store::memory::MemoryStore;
-use authkestra_engine::{AkWebAppEngine, Engine, OAuth2Flow, SessionConfig, SessionStore};
+use authkestra_engine::{AkWebAppEngine, OAuth2Flow, SessionConfig, SessionStore};
 use authkestra_providers::google::GoogleProvider;
 use serde_json::json;
 use std::sync::Arc;
@@ -56,7 +57,7 @@ async fn main() -> std::io::Result<()> {
     // `SqlKvStore` without touching anything below this line.
     let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .provider(OAuth2Flow::new(google_provider))
         .session_store(session_store)
         .session_config(SessionConfig {

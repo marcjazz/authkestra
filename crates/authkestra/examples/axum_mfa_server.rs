@@ -19,8 +19,8 @@
 //!
 //! Set `PORT` to bind somewhere other than 3000.
 
+use authkestra::Authkestra;
 use authkestra_engine::auth::{AuthError, AuthInput, AuthResult, CredentialStore};
-use authkestra_engine::Engine;
 use axum::{extract::State, routing::post, Json, Router};
 use std::sync::Arc;
 use url::Url;
@@ -67,7 +67,7 @@ impl CredentialStore for MemoryCredentialStore {
 /// Issuing a session or a JWT afterwards is what the other examples cover.
 #[derive(Clone)]
 struct AppState {
-    engine: Engine,
+    engine: Authkestra,
 }
 
 #[tokio::main]
@@ -95,7 +95,7 @@ async fn main() {
     // `with_totp` / `with_webauthn` are the shorthands for the built-in
     // methods; both are thin wrappers over `with_auth_method`, so a custom
     // `AuthMethod` registers exactly the same way.
-    let engine = Engine::builder()
+    let engine = Authkestra::builder()
         .with_webauthn(Arc::new(webauthn), store.clone())
         // TOTP is registered as step-up only: it cannot be used as a first
         // factor on its own, only to answer an `MfaRequired` challenge.

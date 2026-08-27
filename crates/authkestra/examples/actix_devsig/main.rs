@@ -40,7 +40,6 @@ use serde_json::json;
 
 use signing::Demo;
 
-const ADDR: (&str, u16) = ("127.0.0.1", 8090);
 const TRANSFER_BODY: &str = r#"{"amount_cents":1000,"to":"acct_demo"}"#;
 
 #[post("/v1/transfer")]
@@ -69,31 +68,40 @@ async fn main() -> std::io::Result<()> {
         .replay_store(replay_store)
         .build();
 
-    let addr = format!("{}:{}", ADDR.0, ADDR.1);
-    println!("authkestra-actix devsig example listening on http://{addr}");
-    println!();
-    println!("Valid request (expect 200 OK):");
-    println!(
+    let port = port_from_env();
+    let addr = format!("127.0.0.1:{}", port);
+    tracing::info!("authkestra-actix devsig example listening on http://{addr}");
+    tracing::info!("");
+    tracing::info!("Valid request (expect 200 OK):");
+    tracing::info!(
         "curl -i -X POST http://{addr}/v1/transfer \\\n  \
          -H 'Content-Type: application/json' \\\n  \
          -H 'X-Signature: {valid_signature}' \\\n  \
          -H 'X-Attestation: {attestation}' \\\n  \
          -d '{TRANSFER_BODY}'"
     );
-    println!();
-    println!("Unauthenticated request (expect 401 Unauthorized):");
-    println!(
+    tracing::info!("");
+    tracing::info!("Unauthenticated request (expect 401 Unauthorized):");
+    tracing::info!(
         "curl -i -X POST http://{addr}/v1/transfer \\\n  \
          -H 'Content-Type: application/json' \\\n  \
          -d '{TRANSFER_BODY}'"
     );
-    println!();
+    tracing::info!("");
 
     HttpServer::new(move || {
         let auth = DeviceSignatureAuth::from(devsig.clone());
         App::new().wrap(auth).service(transfer_handler)
     })
-    .bind(ADDR)?
+    .bind(("127.0.0.1", port))?
     .run()
     .await
+}
+
+/// Bind port, overridable via `PORT` so examples can run without colliding.
+fn port_from_env() -> u16 {
+    std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8090)
 }
