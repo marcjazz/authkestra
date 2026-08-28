@@ -600,6 +600,49 @@ pub(crate) mod tests {
         }
     }
 
+    /// Directly exercises the **second** gate in `verify_client_assertion`, the
+    /// one `rejects_a_client_assertion_under_a_low_order_ed25519_key` above
+    /// cannot reach.
+    ///
+    /// Raised in review of #265, and measured: deleting the whole
+    /// `ensure_strict_eddsa_signature` block from `verify_client_assertion`
+    /// left the suite at `153 passed; 0 failed`. Every existing test routes
+    /// through `select_key` -> `parse_public_jwk`, which refuses these keys at
+    /// ingest, so the strict gate never ran and nothing pinned it.
+    ///
+    /// This is the same vacuity trap the author identified and fixed for the
+    /// enrolment test (`challenge_signature_verification_itself_refuses_low_order_keys`);
+    /// it simply was not re-applied here. Built with `serde_json::from_value`
+    /// rather than `parse_public_jwk` for exactly that reason: ingest is
+    /// bypassed on purpose so the gate under test is the one that runs.
+    #[test]
+    fn strict_gate_itself_refuses_low_order_keys_for_client_assertions() {
+        for crv in ["Ed25519", "P-256", "P-384", "P-521"] {
+            let jwk: Jwk = serde_json::from_value(
+                serde_json::json!({"kty":"OKP","crv":crv,"x": b64(&IDENTITY_POINT)}),
+            )
+            .expect("test jwk must parse");
+
+            let assertion = forged_eddsa_assertion(&good_claims());
+            let outcome = crate::strict_jws::ensure_strict_eddsa_signature(&assertion, &jwk);
+
+            assert!(
+                outcome.is_err(),
+                "VULNERABLE: the strict gate accepted the universal low-order forgery \
+                 for crv={crv}: {outcome:?}"
+            );
+            // A bad KEY, not a bad signature -- the classification convention
+            // shared with authkestra-devsig.
+            assert!(
+                matches!(
+                    outcome,
+                    Err(crate::strict_jws::StrictEdDsaRejection::Key(_))
+                ),
+                "expected a Key rejection for crv={crv}, got {outcome:?}"
+            );
+        }
+    }
+
     /// Positive control: a genuine registered Ed25519 client key must still
     /// authenticate. `private_key_jwt` with EdDSA is a supported, conformant
     /// configuration and this fix must not break it.

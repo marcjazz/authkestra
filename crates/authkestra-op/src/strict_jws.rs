@@ -189,9 +189,21 @@ mod tests {
         format!("{signing_input}.{}", b64(signature))
     }
 
-    /// Pins `verify_strict` over the non-strict `Verifier::verify`, by exercising the exact input
-    /// the two verifiers disagree about. Without this, a refactor that swapped `verify_strict`
-    /// back for `Verifier::verify` could leave the suite green.
+    /// Pins that the universal low-order forgery — the one the **non-strict** verifier accepts —
+    /// is refused here.
+    ///
+    /// Note what this does *not* pin, corrected after review of #265: it does not distinguish
+    /// `verify_strict` from `Verifier::verify`. Measured — swapping the `verify_strict` call for
+    /// `Verifier::verify` leaves the whole suite green. The tell is this test's own assertion: it
+    /// expects a `Key(low-order)` rejection, which `ed25519_verifying_key`'s `is_weak()` emits
+    /// *before* the signature check runs at all.
+    ///
+    /// That gap is not worth closing with code. The only inputs the two verifiers disagree on are
+    /// a small-order `A` — already refused by `is_weak()` — and a small-order `R` under a
+    /// non-small-order `A`, which plain `verify` also rejects because `expected_R` will not match.
+    /// So `verify_strict` is genuine belt-and-braces here, and no end-to-end test can tell the two
+    /// apart. Keeping it is still correct: it is the documented-strict API, and it stops the
+    /// guarantee resting solely on `is_weak()`.
     #[test]
     fn strict_verification_rejects_the_universal_forgery_non_strict_accepts() {
         let weak = VerifyingKey::from_bytes(&IDENTITY).expect("identity is a valid Edwards point");
