@@ -15,10 +15,10 @@ Because OP Servers are an advanced use case, the OP logic is not included in the
 
 ```toml
 [dependencies]
-authkestra-op = "0.4.0"
-authkestra-axum = { version = "0.4", features = ["op"] }
+authkestra-op = "0.6"
+authkestra-axum = { version = "0.6", features = ["op"] }
 # Or if using Actix:
-# authkestra-actix = { version = "0.4", features = ["op"] }
+# authkestra-actix = { version = "0.6", features = ["op"] }
 ```
 
 ## The OpStore Interface
@@ -51,7 +51,9 @@ let op_store = CompositeOpStore::new(
 The `OpStore` interface allows overriding `handle_refresh_token` for custom refresh token rotation or revocation policies. When the `openid` scope is requested during the refresh flow, Authkestra automatically issues an updated `id_token` alongside the new access token.
 :::
 
-Check the [op_server.rs](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/op_server.rs) example in the repository for full database wiring code.
+Check the [axum_op_server.rs](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/examples/axum_op_server.rs)
+example in the repository for full database wiring code (`cargo run -p authkestra --example
+axum_op_server --all-features`); `actix_op_server.rs` is the Actix counterpart.
 
 ## Supported Grant Types
 
@@ -61,7 +63,7 @@ Authkestra's OP server natively supports the following OAuth 2.0 / OIDC grant ty
 2. **Client Credentials** (`GrantType::ClientCredentials`): Server-to-server machine authentication.
 3. **Refresh Token** (`GrantType::RefreshToken`): Allows clients to exchange a refresh token for new tokens (with automatic `id_token` issuance when `openid` scope is active).
 4. **Device Code** (`GrantType::DeviceCode`): The OAuth 2.0 Device Authorization Grant (RFC 8628).
-5. **Token Exchange** (`GrantType::TokenExchange`): The OAuth 2.0 Token Exchange grant (RFC 8693).
+5. **Token Exchange** (`GrantType::TokenExchange`): The OAuth 2.0 Token Exchange grant (RFC 8693). Gated behind `OpConfig.token_exchange_enabled`, which defaults to `false` so delegation endpoints are never exposed by accident.
 
 ## Supported Algorithms & Scopes
 
@@ -72,7 +74,7 @@ Authkestra uses `jsonwebtoken` and `sha2`/`ed25519-dalek` to provide robust supp
 - `ES256`, `ES384` (ECDSA)
 - `EdDSA` / `Ed25519` (Octet Key Pair)
 
-When configuring your OP server, **you must choose an asymmetric algorithm** (such as `RS256` or `EdDSA`). Authkestra intentionally rejects symmetric algorithms (`HS256`) for OP servers so Resource Servers can verify tokens via the public `/jwks` endpoint.
+When configuring your OP server, **you must choose an asymmetric algorithm** (such as `RS256` or `EdDSA`). Authkestra intentionally rejects symmetric algorithms (`HS256`) for OP servers so Resource Servers can verify tokens via the public `/jwks.json` endpoint.
 
 ### Scopes
 
@@ -87,11 +89,16 @@ use authkestra_op::config::OpConfig;
 use authkestra_op::Op;
 
 let config = OpConfig {
+    // No trailing slash — the discovery/JWKS URLs are built by appending to this.
     issuer: "http://localhost:3000".to_string(),
     scopes_supported: vec!["openid".to_string(), "profile".to_string(), "email".to_string()],
     response_types_supported: vec!["code".to_string()],
     grant_types_supported: vec!["authorization_code".to_string(), "refresh_token".to_string()],
     id_token_signing_alg: "EdDSA".to_string(), // Supports RS256, ES256, EdDSA, etc.
+    authorization_code_ttl_secs: 60,           // RFC-003 §7 recommends ≤ 60
+    access_token_ttl_secs: 3600,
+    device_code_ttl_secs: 600,
+    token_exchange_enabled: false,             // RFC 8693, off by default
 };
 
 let op = Op::builder()
@@ -101,23 +108,58 @@ let op = Op::builder()
     .build();
 ```
 
+:::caution
+`OpConfig` has no `Default` impl, so every field above is required. The four TTL/toggle fields
+are easy to miss when copying an older snippet — a struct literal that omits them will not
+compile.
+:::
+
 ## Custom Grant Types
 
 Beyond built-in grant types, Authkestra allows extension grants by adding `GrantType::Custom("urn:my:grant".into())` to client registrations and overriding `handle_custom_grant` on your `OpStore`.
 
 ## Wiring the OP Endpoints
 
-Wire server routes using `op_axum_router()` or `op_actix_router()`:
+Wire server routes using `op_axum_router()` (Axum) or `op_actix_scope()` (Actix-web):
 
 ```rust
 use authkestra_axum::op::{OpExt, OpState};
 use axum::Router;
 
-let app = Router::new().merge(op.op_axum_router()).with_state(OpState(op));
+let app = Router::new()
+    .merge(op.op_axum_router())
+    .with_state(OpState(op));
+```
+
+```rust
+// Actix returns a `Scope`; `configure_op` registers the OP's pieces as app data.
+use authkestra_actix::op::{OpActixExt, OpExt};
+
+App::new()
+    .configure(|cfg| { cfg.configure_op(op.clone()); })
+    .service(op.op_actix_scope())
 ```
 
 Exposed endpoints:
 1. **`GET /.well-known/openid-configuration`**: OIDC Discovery endpoint.
-2. **`GET /jwks`**: Public key set (supports RSA, ECDSA, and Ed25519 / OKP keys).
+2. **`GET /jwks.json`**: Public key set (supports RSA, ECDSA, and Ed25519 / OKP keys).
 3. **`GET /authorize`**: Authorization endpoint.
-4. **`POST /token`**: Token exchange endpoint (code, refresh token, client credentials, etc.).
+4. **`POST /token`**: Token endpoint (code, refresh token, client credentials, device code, token exchange).
+5. **`GET`/`POST /userinfo`**: UserInfo endpoint.
+6. **`POST /device_authorization`**: Device Authorization Grant endpoint (RFC 8628).
+7. **`POST /device/verify`**: Verification endpoint where the user submits their `user_code`.
+
+The device/service attestation routes (`POST /enrol`, `POST /enrol/complete`, `POST /reissue`)
+are deliberately **not** part of `op_axum_router()`. On Axum they live in a separate
+`op_axum_attestation_router()`, so an application that only wants the standard OIDC surface is
+not forced to supply attestation-specific dependencies just to compile:
+
+```rust
+let app = Router::new()
+    .merge(op.op_axum_router())
+    .merge(op.op_axum_attestation_router())
+    .with_state(state);
+```
+
+On Actix, `op_actix_scope()` wires all of them together and resolves each attestation dependency
+from `app_data`, leaving the optional `AttestationStatusProvider` as `None` when it is absent.

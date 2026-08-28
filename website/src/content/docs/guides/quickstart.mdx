@@ -16,8 +16,9 @@ Add the `authkestra` facade crate to your `Cargo.toml`. The facade re-exports al
 
 ```toml
 [dependencies]
-authkestra = { version = "0.3", features = ["axum", "github"] }
-tower-cookies = "0.10"
+authkestra = { version = "0.6", features = ["axum", "session", "github"] }
+authkestra-engine = { version = "0.6", features = ["session", "memory"] }
+tower-cookies = "0.11"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -26,7 +27,8 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 [dependencies]
-authkestra = { version = "0.3", features = ["actix", "github"] }
+authkestra = { version = "0.6", features = ["actix", "session", "github"] }
+authkestra-engine = { version = "0.6", features = ["session", "memory"] }
 actix-web = "4"
 ```
 
@@ -35,12 +37,13 @@ actix-web = "4"
 
 ## Setting Up the Engine
 
-The core logic of Authkestra is identical regardless of which web framework you choose. First, initialize the Identity Provider (`GithubProvider`) and construct the `Engine` using the Typestate Builder Pattern (`Authkestra::builder()`).
+The core logic of Authkestra is identical regardless of which web framework you choose. First, initialize the Identity Provider (`GithubProvider`), wrap it in an `OAuth2Flow`, and construct the `Engine` using the Typestate Builder Pattern (`Authkestra::builder()`).
 
 ```rust
 use authkestra::Authkestra;
 use authkestra::providers::github::GithubProvider;
-use authkestra::store::memory::MemoryStore;
+use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::{OAuth2Flow, SessionStore};
 use std::sync::Arc;
 
 // 1. Initialize the GitHub Provider
@@ -51,14 +54,20 @@ let github_provider = GithubProvider::new(
 );
 
 // 2. Setup the Session Store
-let session_store = Arc::new(MemoryStore::default());
+let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 
 // 3. Build the Authkestra Engine
 let auth_engine = Authkestra::builder()
-    .provider(github_provider)
+    // `.provider()` takes a `Flow`, not a bare provider — wrap it in `OAuth2Flow`.
+    .provider(OAuth2Flow::new(github_provider))
     .session_store(session_store)
     .build();
 ```
+
+:::note
+`.session_store()` expects an `Arc<dyn SessionStore>`. The explicit type annotation above is what
+coerces the concrete `MemoryStore` into that trait object; without it the call will not resolve.
+:::
 
 ## Wiring the Router
 
@@ -71,8 +80,9 @@ Once the engine is built, integrate it into your web framework's routing layer. 
 use authkestra::axum::{AxumExt, AxumState};
 use authkestra::core::AkWebAppEngine;
 use authkestra::providers::github::GithubProvider;
-use authkestra::store::memory::MemoryStore;
 use authkestra::Authkestra;
+use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::{OAuth2Flow, SessionStore};
 use axum::Router;
 use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
@@ -85,19 +95,22 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
+    let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
+
     let auth_engine = Authkestra::builder()
-        .provider(GithubProvider::new(
+        .provider(OAuth2Flow::new(GithubProvider::new(
             "YOUR_CLIENT_ID".to_string(),
             "YOUR_CLIENT_SECRET".to_string(),
             "http://localhost:3000/auth/callback/github".to_string(),
-        ))
-        .session_store(Arc::new(MemoryStore::default()))
+        )))
+        .session_store(session_store)
         .build();
 
     let state = AppState { auth: auth_engine.clone() };
 
     let app = Router::new()
-        // `axum_router()` automatically wires `/auth/login/{provider}` and `/auth/callback/{provider}`
+        // `axum_router()` wires `/auth/login/{provider}`, `/auth/callback/{provider}`
+        // and `/auth/logout`.
         .merge(auth_engine.axum_router())
         .layer(CookieManagerLayer::new())
         .with_state(state);
@@ -107,38 +120,67 @@ async fn main() {
 }
 ```
 
+The full version of this example is runnable from the repository:
+
+```bash
+cargo run -p authkestra --example axum_oauth2_github --all-features
+```
+
   </TabItem>
   <TabItem label="Actix-web" icon="seti:rust">
 
 ```rust
 use actix_web::{web, App, HttpServer};
-use authkestra::actix::ActixExt;
+use authkestra::actix::{ActixExt, ActixState};
+use authkestra::core::AkWebAppEngine;
 use authkestra::providers::github::GithubProvider;
-use authkestra::store::memory::MemoryStore;
 use authkestra::Authkestra;
+use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::{OAuth2Flow, SessionStore};
 use std::sync::Arc;
+
+#[derive(Clone, ActixState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkWebAppEngine,
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
+
     let auth_engine = Authkestra::builder()
-        .provider(GithubProvider::new(
+        .provider(OAuth2Flow::new(GithubProvider::new(
             "YOUR_CLIENT_ID".to_string(),
             "YOUR_CLIENT_SECRET".to_string(),
             "http://localhost:3000/auth/callback/github".to_string(),
-        ))
-        .session_store(Arc::new(MemoryStore::default()))
+        )))
+        .session_store(session_store)
         .build();
 
+    let state = AppState { auth: auth_engine };
+
     HttpServer::new(move || {
+        let app_state = state.clone();
+        let config_state = app_state.clone();
         App::new()
-            .app_data(web::Data::new(auth_engine.clone()))
-            // `actix_router()` automatically wires `/auth/login/{provider}` and `/auth/callback/{provider}`
-            .configure(|cfg| auth_engine.actix_router(cfg))
+            // `configure_authkestra` (from `ActixState`) registers the session store
+            // and config as app data so the extractors can find them.
+            .configure(move |cfg| config_state.configure_authkestra(cfg))
+            // `actix_scope()` mounts `/auth/login/{provider}`,
+            // `/auth/callback/{provider}` and `/auth/logout`.
+            .service(app_state.auth.actix_scope())
     })
     .bind("0.0.0.0:3000")?
     .run()
     .await
 }
+```
+
+The full version of this example is runnable from the repository:
+
+```bash
+cargo run -p authkestra --example actix_oauth2_github --all-features
 ```
 
   </TabItem>

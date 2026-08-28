@@ -81,51 +81,31 @@ Authkestra is a modular auth platform, not a monolith or a simple library. It is
 
 ## 🛣️ Roadmap
 
-### Phase 0 — Stabilize Core
-
-- Normalize APIs
-- Define internal interfaces (e.g., `AuthMethod`, `Provider`, `PolicyEngine`)
-
-### Phase 1 — Modern Auth Baseline
-
-- Add WebAuthn, Magic Links, TOTP as plugins
-- Ensure plugin architecture for extensibility
-
-### Phase 2 — Advanced Authorization
-
-- Implement RBAC, then ABAC-lite
-- Plan for a policy DSL
-
-### Phase 3 — Developer Experience
-
-- Build CLI
-- TypeScript SDK
-- Local dev mode
-
-### Phase 4 — Deployment Duality
-
-- Embedded SDK (npm, minimal config)
-- Server mode (Docker, REST + Admin API, multi-tenant)
-
-### Phase 5 — AI-Native Workflows
-
-- Config → system generator
-- Validation engine (security checks)
-- AI hooks (audit, explain, generate)
+The phased roadmap lives in a single place — [roadmap.md](./roadmap.md) — so it cannot drift
+against a second copy. Per the hierarchy above, that file is what tracks what is actually being
+built next.
 
 ---
 
-## 🧩 Crate/Module Structure (Target)
+## 🧩 Workspace Crates (Current)
 
-- `authkestra/` (DX façade)
-- `authkestra-engine/` (merged core, flow, token)
-- `authkestra-token/` (token creation)
-- `authkestra-resource/` (validation, enforcement)
-- `authkestra-session/` (traits and implementations via features memory/redis/sql-*)
-- `authkestra-oidc/`, `authkestra-providers-*` (providers)
-- `authkestra-axum/`, `authkestra-actix/` (adapters)
-- `authkestra-macros/` (optional)
-- `authkestra-examples/` (integration tests, docs source)
+The RFC-001 consolidation is done; these are the crates that actually exist today:
+
+- `authkestra/` — DX façade, re-exports the rest behind features, and hosts every runnable example
+- `authkestra-engine/` — the merged core: identity, flows, sessions, tokens, and the stores
+  (`memory`, `redis`, `sql-postgres`/`sql-mysql`/`sql-sqlite` features)
+- `authkestra-resource/` — validation and enforcement (`Guard`, JWT strategies)
+- `authkestra-providers/` — GitHub, Google, Discord
+- `authkestra-oidc/` — generic OIDC relying-party client
+- `authkestra-op/` — OpenID Provider (authorization server)
+- `authkestra-devsig/` — device-bound signature authentication
+- `authkestra-crypto-util/` — shared strict signature/key verification helpers
+- `authkestra-axum/`, `authkestra-actix/` — framework adapters
+- `authkestra-macros/` — `AxumState` / `ActixState` / `KvStore` derives
+
+There is no separate `authkestra-core`, `authkestra-flow`, `authkestra-token`, or
+`authkestra-session` crate — all four were folded into `authkestra-engine` by RFC-001. Older docs
+that mention them are describing the pre-migration layout.
 
 ---
 
@@ -155,4 +135,5 @@ Authkestra is a modular auth platform, not a monolith or a simple library. It is
 
 ---
 
-For more, see the [conversion.md](../conversion.md) for the full vision and architectural review.
+For more, see [rfc-002-next-gen-identity.md](./rfc-002-next-gen-identity.md) for the full vision
+and architectural review.

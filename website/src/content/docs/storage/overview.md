@@ -11,14 +11,22 @@ All data persistence is defined through simple Rust traits. For example, to mana
 
 ```rust
 #[async_trait]
-pub trait SessionStore: Send + Sync {
-    async fn get(&self, id: &str) -> Option<Session>;
-    async fn set(&self, session: Session) -> Result<(), AuthError>;
-    async fn delete(&self, id: &str) -> Result<(), AuthError>;
+pub trait SessionStore: Send + Sync + 'static {
+    /// Load a session by its ID.
+    async fn load_session(&self, id: &str) -> Result<Option<Session>, AuthError>;
+    /// Save or update a session.
+    async fn save_session(&self, session: &Session) -> Result<(), AuthError>;
+    /// Delete a session by its ID.
+    async fn delete_session(&self, id: &str) -> Result<(), AuthError>;
 }
 ```
 
 Because this is a trait, you can implement it using `sqlx`, `diesel`, `redis`, or a simple in-memory `HashMap`.
+
+In practice you rarely implement it directly: `authkestra-engine` carries a blanket impl of
+`SessionStore` for any `KvStore<Session>`, so implementing the smaller [`KvStore`](/storage/kv-store)
+trait gets you a session store for free — which is exactly how `MemoryStore`, `RedisStore`, and
+`SqlKvStore` all qualify.
 
 ## Included Stores
 

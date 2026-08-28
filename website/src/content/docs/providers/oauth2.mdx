@@ -18,37 +18,44 @@ If you are using multiple OAuth providers (e.g., GitHub and Google), enable thei
 
 ```toml
 [dependencies]
-authkestra = { version = "0.3", features = ["github", "google"] }
+authkestra = { version = "0.6", features = ["axum", "token", "github", "google"] }
 ```
 
 ## Stateless Engine Configuration
 
-Notice how we completely omit `.session_store()` and use `.jwt_secret()` instead. You can chain multiple providers directly:
+Notice how we completely omit `.session_store()` and use `.jwt_secret()` instead. You can chain multiple providers, each wrapped in an `OAuth2Flow`:
 
 ```rust
 use authkestra::Authkestra;
 use authkestra::providers::github::GithubProvider;
 use authkestra::providers::google::GoogleProvider;
+use authkestra_engine::OAuth2Flow;
 
 // Initialize Authkestra in stateless mode supporting multiple providers
 let auth_engine = Authkestra::builder()
-    .provider(GithubProvider::new(
+    .provider(OAuth2Flow::new(GithubProvider::new(
         "GITHUB_CLIENT_ID".into(),
         "GITHUB_CLIENT_SECRET".into(),
         "http://localhost:3000/auth/callback/github".into(),
-    ))
-    .provider(GoogleProvider::new(
+    )))
+    .provider(OAuth2Flow::new(GoogleProvider::new(
         "GOOGLE_CLIENT_ID".into(),
         "GOOGLE_CLIENT_SECRET".into(),
         "http://localhost:3000/auth/callback/google".into(),
-    ))
+    )))
     .jwt_secret(b"your-256-bit-secret-key-at-least-32-bytes-long")
     .build();
 ```
 
+A runnable version of this setup lives in the repository:
+
+```bash
+cargo run -p authkestra --example axum_oauth_stateless --all-features
+```
+
 ## Wiring the Routes
 
-Because we are not using sessions, we use the stateless router counterpart: `auth_engine.axum_router_stateless()` for Axum or `auth_engine.actix_router_stateless()` for Actix-web.
+Because we are not using sessions, we use the stateless router counterpart: `auth_engine.axum_router_stateless()` for Axum or `auth_engine.actix_scope_stateless()` for Actix-web.
 
 <Tabs>
 <TabItem label="Axum">
@@ -62,7 +69,7 @@ let app = axum::Router::new().merge(auth_engine.axum_router_stateless());
 ```rust
 use authkestra::actix::ActixStatelessExt;
 
-let app = actix_web::App::new().configure(|cfg| auth_engine.actix_router_stateless(cfg));
+let app = actix_web::App::new().service(auth_engine.actix_scope_stateless());
 ```
 </TabItem>
 </Tabs>
@@ -92,9 +99,11 @@ async fn login_handler(
 use actix_web::{web, Responder};
 use authkestra::actix::helpers;
 
+// `Engine<S, T>` is the typestate engine itself — `S`/`T` are the session-store and
+// token-manager states, not your application state.
 async fn login_handler(
     path: web::Path<String>,
-    authkestra: web::Data<Engine<AppState, ()>>,
+    authkestra: web::Data<AkApiEngine>,
     params: web::Query<helpers::OAuthLoginParams>,
 ) -> impl Responder {
     helpers::actix_login_handler(path, authkestra, params).await

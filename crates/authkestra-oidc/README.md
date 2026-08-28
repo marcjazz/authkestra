@@ -18,13 +18,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-oidc = "0.2.0"
-authkestra-engine = "0.2.0"
+authkestra-oidc = "0.6"
+authkestra-engine = "0.6"
 ```
 
 ### Example
 
-```rust
+```rust,ignore
 use authkestra_oidc::OidcProvider;
 use authkestra_engine::OAuthProvider;
 

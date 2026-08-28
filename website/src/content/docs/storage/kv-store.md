@@ -7,12 +7,15 @@ KV Stores (Key-Value) are the primary way `authkestra-engine` persists session d
 
 ## Available Implementations
 
-Authkestra includes a few generic KV stores. Enable the required feature flags to use them:
+Authkestra includes a few generic KV stores. The store implementations and their feature flags
+live on `authkestra-engine` — the `authkestra` facade does not re-export `memory`/`redis`/`sql-*`
+as features of its own, so depend on the engine directly for these:
 
 ```toml
 [dependencies]
+authkestra = { version = "0.6", features = ["axum", "session"] }
 # Example: Using Redis and SQLite KV stores
-authkestra = { version = "0.3", features = ["redis", "sql-sqlite"] }
+authkestra-engine = { version = "0.6", features = ["session", "redis", "sql-sqlite"] }
 ```
 
 ### 1. Memory Store (`memory`)
@@ -21,19 +24,29 @@ Great for testing and local development. Data is stored entirely in memory and i
 
 ```rust
 use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::SessionStore;
+use std::sync::Arc;
 
-let store = MemoryStore::new();
+// `MemoryStore<T>` is generic; the `Arc<dyn SessionStore>` annotation picks
+// `T = Session` via the blanket `KvStore<Session>` impl.
+let store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 ```
 
 ### 2. Redis Store (`redis`)
 
-A production-ready distributed cache utilizing `redis` and `mobc` for connection pooling.
+A production-ready distributed cache backed by `redis`.
+
+`RedisStore::new` is synchronous and takes a key prefix alongside the URL; the prefix namespaces
+every key this store writes, so several stores can share one Redis instance without colliding.
 
 ```rust
 use authkestra_engine::store::redis::RedisStore;
 
-let store = RedisStore::new("redis://127.0.0.1:6379/").await?;
+let store = RedisStore::new("redis://127.0.0.1:6379/", "session".to_string())?;
 ```
+
+If you already hold an open `redis::Client`, prefer `RedisStore::with_client(client, prefix)` —
+it lets several prefixed stores share one connection pool instead of opening a new one each.
 
 ### 3. Generic SQL KV Store (`sql-postgres`, `sql-mysql`, `sql-sqlite`)
 
@@ -51,14 +64,19 @@ use sqlx::sqlite::SqlitePoolOptions;
 
 let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await?;
 
-// The SqlKvStore will automatically create the necessary `authkestra_kv`
-// table if it does not already exist.
 let store = SqlKvStore::new(pool);
+// `migrate()` issues `CREATE TABLE IF NOT EXISTS` for the KV table and its
+// expiry index. It is not run for you — call it once at startup.
 store.migrate().await?;
 ```
 
+The table defaults to `authkestra_kv`; use `SqlKvStore::with_table_name(pool, name)` to point it
+somewhere else.
+
 ## Setup Differences (KV vs SQL Store)
 
-When initializing a `SqlKvStore`, the table is automatically managed for you using a simple generic schema (typically a `key` column and a `value` JSON blob column). You do not need to manually run migrations.
+`SqlKvStore` uses a single generic schema (a key column, a JSON blob value column, and an
+expiry), and its `migrate()` call is idempotent — so "run migrations" here means one
+`store.migrate().await?` at startup rather than a managed migration history.
 
 This differs significantly from the specialized **[SQL Store](/storage/sql-store)** used in `authkestra-op`, which provides a proper normalized relational schema.

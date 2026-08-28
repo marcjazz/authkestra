@@ -11,7 +11,7 @@ To use Passkeys, you must first enable the `webauthn` feature in your `Cargo.tom
 
 ```toml
 [dependencies]
-authkestra-engine = { version = "0.3", features = ["webauthn"] }
+authkestra-engine = { version = "0.6", features = ["webauthn"] }
 ```
 
 ## Configuration
@@ -22,8 +22,7 @@ Authkestra uses `webauthn-rs` to power passkey support. You'll need to instantia
 use std::sync::Arc;
 use webauthn_rs::prelude::WebauthnBuilder;
 use url::Url;
-use authkestra_engine::auth::webauthn::WebAuthnAuthMethod;
-use authkestra_engine::engine::Engine;
+use authkestra::Authkestra;
 
 let rp_id = "example.com";
 let origin = Url::parse("https://example.com").unwrap();
@@ -34,10 +33,18 @@ let webauthn = WebauthnBuilder::new(rp_id, &origin)
     .build()
     .unwrap();
 
-// `my_store` implements the `CredentialStore` trait
+// `my_store` implements the `CredentialStore` trait.
+// `with_webauthn` is shorthand for `.with_auth_method(WebAuthnAuthMethod::new(..))`
+// and registers the method under the name `"webauthn"`.
 let engine = Authkestra::builder()
     .with_webauthn(Arc::new(webauthn), my_store)
     .build();
+```
+
+A runnable example combining passkeys with TOTP lives in the repository:
+
+```bash
+cargo run -p authkestra --example axum_mfa_server --all-features
 ```
 
 ## Authentication Ceremony

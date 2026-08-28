@@ -33,12 +33,14 @@ Framework wiring lives in the adapter crates, not here:
   `authkestra_axum::devsig::DeviceSignatureLayer` (a `tower::Layer`) plus the
   `authkestra_axum::devsig::AuthDeviceSignature` extractor. See
   [`authkestra-axum`'s README](../authkestra-axum/README.md) and
-  `crates/authkestra-axum/examples/devsig/`.
+  `crates/authkestra/examples/axum_devsig/`
+  (`cargo run -p authkestra --example axum_devsig --all-features`).
 - **Actix Web**: enable the `devsig` feature on `authkestra-actix` and use
   `authkestra_actix::devsig::DeviceSignatureAuth` (an `actix_web::dev::Transform` middleware)
   plus the `authkestra_actix::devsig::AuthDeviceSignature` extractor. See
   [`authkestra-actix`'s README](../authkestra-actix/README.md) and
-  `crates/authkestra-actix/examples/devsig/`.
+  `crates/authkestra/examples/actix_devsig/`
+  (`cargo run -p authkestra --example actix_devsig --all-features`).
 
 Both adapters buffer the request body ahead of their framework's own extraction (needed for the
 `bdh` check) and call this crate's plain [`verify`] function underneath — see their `devsig`

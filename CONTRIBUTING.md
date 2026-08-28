@@ -27,8 +27,13 @@ Thank you for your interest in contributing to Authkestra! We welcome contributi
 3. Run the tests to ensure everything is set up correctly:
 
     ```bash
-    cargo test --workspace
+    cargo test --workspace --all-features
     ```
+
+    Some integration tests use [testcontainers](https://docs.rs/testcontainers) and need a
+    reachable Docker daemon. Under rootless Docker, point `DOCKER_HOST` at your user socket
+    (e.g. `export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock`) or those tests will fail
+    with a permission error.
 
 ## Development Workflow
 
@@ -40,17 +45,25 @@ Thank you for your interest in contributing to Authkestra! We welcome contributi
 
 2. **Make Changes**: Implement your changes, ensuring you follow the project's coding style and include documentation for any new public APIs.
 
-3. **Run Lints and Formatting**:
+3. **Run Lints and Formatting**: these are exactly the commands CI runs, so run them verbatim
+   rather than an approximation.
 
     ```bash
     cargo fmt --all -- --check
-    cargo clippy --workspace -- -D warnings
+    cargo clippy --workspace --all-features -- -D warnings
     ```
 
 4. **Run Tests**: Ensure all tests pass, including any new tests you've added.
 
     ```bash
-    cargo test --workspace
+    cargo test --workspace --all-features
+    ```
+
+    CI additionally enforces a line-coverage floor and the `deny.toml` dependency policy:
+
+    ```bash
+    cargo llvm-cov --workspace --all-features --fail-under-lines 78
+    cargo deny check
     ```
 
 5. **Submit a Pull Request**: Push your branch to your fork and submit a pull request to the `main` branch of the main repository.

@@ -16,7 +16,7 @@ We are committed to fostering an inclusive, welcoming community. All participant
 For significant architectural changes, new features, or major API modifications, we require an RFC (Request for Comments). The RFC process ensures that major changes are well-thought-out, discussed, and documented before implementation begins.
 
 1. **Draft an RFC**: Copy the RFC template and describe the motivation, design, and drawbacks of your proposal.
-2. **Submit a PR**: Open a Pull Request adding your draft to the `docs/rfcs` directory.
+2. **Submit a PR**: Open a Pull Request adding your draft to `docs/` as `rfc-NNN-short-title.md`, following the numbering of the existing RFCs.
 3. **Discussion**: The community and maintainers will discuss the proposal, ask questions, and suggest refinements.
 4. **Acceptance**: Once consensus is reached, the RFC is merged and marked as "Accepted." Implementation can then begin.
 
