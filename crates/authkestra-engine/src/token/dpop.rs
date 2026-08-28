@@ -1,0 +1,687 @@
+//! RFC 9449 DPoP (Demonstrating Proof-of-Possession) proof verification.
+//!
+//! This module verifies a single DPoP proof JWT and reports the RFC 7638
+//! thumbprint of its embedded public key — nothing more. It does not issue
+//! tokens, does not stamp a `cnf` claim, and does not track replay: those
+//! are call-site concerns (see below), kept out of this module so it stays
+//! a pure, independently-testable function.
+//!
+//! ## Why this lives in `authkestra-engine`, not `authkestra-op`
+//!
+//! DPoP applies at both ends of a token's life — issuance in
+//! `authkestra-op` and verification in `authkestra-resource` — and neither
+//! crate depends on the other. `authkestra-engine` is the one crate both
+//! already depend on, so this is where a proof verifier usable from either
+//! side has to live.
+//!
+//! ## Relationship to `authkestra-op`'s enrolment/attestation verifiers
+//!
+//! [`verify_dpop_proof`] follows the same shape as
+//! `authkestra_op::attestation::verify_challenge_signature` — peek the raw
+//! `alg` before trusting `jsonwebtoken`'s typed API (whose `Algorithm`
+//! deserializer hard-fails on `"none"` or an unrecognised value), derive
+//! the algorithm from the key rather than the header, and use
+//! [`authkestra_crypto_util::verify_ed25519_signature_strict`] ahead of
+//! `jsonwebtoken::decode` so a low-order key or a low-order signature `R`
+//! can never satisfy proof of possession (authkestra#242 / authkestra#256).
+//! The logic is **reimplemented here, not imported**: `authkestra-op`'s
+//! version is crate-private and `authkestra-engine` cannot depend on
+//! `authkestra-op` without inverting the dependency graph. Only the
+//! genuinely shared low-level primitive
+//! (`authkestra_crypto_util::verify_ed25519_signature_strict`) is reused;
+//! `authkestra-op::strict_jws` itself is untouched by this work.
+//!
+//! ## What callers still have to do
+//!
+//! - **Replay protection.** A DPoP proof's `jti` is client-generated, so
+//!   there is nothing for this server to have stored ahead of time — the
+//!   check is "was this `jti` already claimed", which is the shape
+//!   [`crate::store::AtomicInsert`] provides, not [`crate::store::AtomicConsume`].
+//!   Call `insert_if_absent(jti, ..., max_age)` after a proof verifies and
+//!   treat `Ok(false)` as a replay.
+//! - **Binding the `jkt` into an issued token**, and **comparing a proof's
+//!   `jkt` against an access token's `cnf.jkt`** — both call sites already
+//!   have everything needed for this ([`crate::token::TokenManager::issue_user_token_with_extra`]
+//!   and [`crate::token::cert_binding::constant_time_eq`] respectively).
+
+use authkestra_crypto_util::verify_ed25519_signature_strict;
+use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation};
+use serde::Deserialize;
+use serde_json::Value;
+
+/// JWK members that indicate private or symmetric key material. Mirrors
+/// `authkestra_op::attestation::PRIVATE_JWK_MEMBERS` — a JWK embedded in a
+/// DPoP proof header is exactly as attacker-controlled as one submitted to
+/// the enrolment ceremony that constant guards, and `jsonwebtoken::jwk::Jwk`
+/// silently drops unknown members on a typed parse, so this check must run
+/// against the raw JSON before that parse happens.
+const PRIVATE_JWK_MEMBERS: [&str; 7] = ["d", "p", "q", "dp", "dq", "qi", "k"];
+
+/// A DPoP proof that has passed signature, `typ`, `htm`/`htu`, freshness,
+/// and (when requested) `ath` verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedDpopProof {
+    /// The RFC 7638 SHA-256 thumbprint of the proof's embedded public key —
+    /// the value to stamp into (or compare against) an access token's
+    /// `cnf.jkt`.
+    pub jkt: String,
+    /// The proof's `jti` claim — pass this to a replay guard.
+    pub jti: String,
+    /// The proof's `iat` claim (Unix seconds), already checked against
+    /// `max_age` by [`verify_dpop_proof`] — exposed for callers that want
+    /// to log or further reason about it.
+    pub iat: i64,
+}
+
+/// Why a DPoP proof was refused.
+#[derive(Debug, thiserror::Error)]
+pub enum DpopError {
+    #[error("dpop proof is not a well-formed compact JWS: {0}")]
+    Malformed(String),
+    #[error("dpop proof header typ must be \"dpop+jwt\"")]
+    WrongTyp,
+    #[error("dpop proof alg is not permitted: {0}")]
+    UnsupportedAlgorithm(String),
+    #[error("dpop proof header carries no jwk, or jwk is malformed: {0}")]
+    MissingOrInvalidJwk(String),
+    #[error("dpop proof jwk carries a private or symmetric-secret component: {0}")]
+    PrivateOrSymmetricJwk(String),
+    #[error("dpop proof key is unsafe to use: {0}")]
+    WeakKey(String),
+    #[error("dpop proof signature is invalid: {0}")]
+    BadSignature(String),
+    #[error("dpop proof htm does not match the request method")]
+    WrongHtm,
+    #[error("dpop proof htu does not match the request URI")]
+    WrongHtu,
+    #[error("dpop proof iat is outside the allowed freshness window")]
+    Stale,
+    #[error("dpop proof ath does not match the presented access token")]
+    AthMismatch,
+    #[error("dpop proof thumbprint could not be computed: {0}")]
+    ThumbprintFailed(String),
+}
+
+/// The DPoP proof's payload claims (RFC 9449 §4.2).
+#[derive(Debug, Deserialize)]
+struct DpopClaims {
+    htm: String,
+    htu: String,
+    iat: i64,
+    jti: String,
+    #[serde(default)]
+    ath: Option<String>,
+}
+
+/// Verifies a DPoP proof JWT (RFC 9449 §4.3).
+///
+/// `expected_htm` is compared case-insensitively (§4.2: "the value of the
+/// HTTP method"). `expected_htu` and the proof's own `htu` are both
+/// stripped of query and fragment before comparison, per §4.3 step 6, using
+/// `url::Url` for canonicalization — pass in the request's URI as received,
+/// not pre-stripped.
+///
+/// `expected_ath` should be `Some(base64url(SHA256(access_token)))` when
+/// verifying a proof presented alongside an access token (the resource
+/// server case, §4.3 step 12), and `None` at the token endpoint, where no
+/// access token exists yet for the proof to bind to.
+///
+/// `max_age` is both the proof-freshness window (§4.3 step 11) and, by
+/// convention, the TTL a caller should pass to
+/// [`crate::store::AtomicInsert::insert_if_absent`] when recording the
+/// `jti` — a proof can never be usefully replayed after its own freshness
+/// window has elapsed, since it would independently fail this check first.
+///
+/// Does **not** check replay — see the module doc.
+pub fn verify_dpop_proof(
+    compact_jws: &str,
+    expected_htm: &str,
+    expected_htu: &str,
+    expected_ath: Option<&str>,
+    max_age: chrono::Duration,
+) -> Result<VerifiedDpopProof, DpopError> {
+    let mut parts = compact_jws.split('.');
+    let header_b64 = parts
+        .next()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| DpopError::Malformed("missing header segment".to_string()))?;
+    if parts.next().filter(|s| !s.is_empty()).is_none() {
+        return Err(DpopError::Malformed("missing payload segment".to_string()));
+    }
+    if parts.next().filter(|s| !s.is_empty()).is_none() {
+        return Err(DpopError::Malformed(
+            "missing signature segment".to_string(),
+        ));
+    }
+    if parts.next().is_some() {
+        return Err(DpopError::Malformed(
+            "compact JWS has more than three segments".to_string(),
+        ));
+    }
+
+    let header_bytes = base64_decode(header_b64)
+        .map_err(|e| DpopError::Malformed(format!("header is not valid base64url: {e}")))?;
+    let header_json: Value = serde_json::from_slice(&header_bytes)
+        .map_err(|e| DpopError::Malformed(format!("header is not valid JSON: {e}")))?;
+
+    // `typ` is a MUST per RFC 9449 §4.2 — it's what stops a proof from
+    // being confused with any other kind of JWT this server might accept.
+    let typ = header_json.get("typ").and_then(Value::as_str);
+    if typ != Some("dpop+jwt") {
+        return Err(DpopError::WrongTyp);
+    }
+
+    // Peeked before the typed jsonwebtoken API touches it: `Algorithm`'s
+    // deserializer hard-fails on `"none"` or an unrecognised value, which
+    // would otherwise collapse a `bad_alg` case into an opaque parse error
+    // rather than the specific rejection this reports.
+    let raw_alg = header_json
+        .get("alg")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DpopError::UnsupportedAlgorithm("missing".to_string()))?;
+    if raw_alg.eq_ignore_ascii_case("none") || matches!(raw_alg, "HS256" | "HS384" | "HS512") {
+        return Err(DpopError::UnsupportedAlgorithm(raw_alg.to_string()));
+    }
+
+    let jwk_json = header_json
+        .get("jwk")
+        .ok_or_else(|| DpopError::MissingOrInvalidJwk("no jwk in header".to_string()))?;
+    let jwk_obj = jwk_json
+        .as_object()
+        .ok_or_else(|| DpopError::MissingOrInvalidJwk("jwk is not a JSON object".to_string()))?;
+    for member in PRIVATE_JWK_MEMBERS {
+        if jwk_obj.contains_key(member) {
+            return Err(DpopError::PrivateOrSymmetricJwk(member.to_string()));
+        }
+    }
+    let jwk: Jwk = serde_json::from_value(jwk_json.clone())
+        .map_err(|e| DpopError::MissingOrInvalidJwk(e.to_string()))?;
+
+    let algorithm = expected_algorithm(&jwk)?;
+
+    // Strict EdDSA gate ahead of `jsonwebtoken`'s non-strict backend
+    // (authkestra#242 / authkestra#256) — a no-op for non-Ed25519 keys,
+    // since only an OctetKeyPair/Ed25519 key reaches that backend at all.
+    if let AlgorithmParameters::OctetKeyPair(params) = &jwk.algorithm {
+        let signing_input = compact_jws
+            .rsplit_once('.')
+            .map(|(input, _sig)| input)
+            .expect("already validated as header.payload.signature above");
+        let signature_b64 = compact_jws
+            .rsplit_once('.')
+            .map(|(_input, sig)| sig)
+            .expect("already validated as header.payload.signature above");
+
+        verify_ed25519_signature_strict(signing_input.as_bytes(), signature_b64, &params.x)
+            .map_err(|e| match e {
+                authkestra_crypto_util::EdDsaVerifyError::Key(key_err) => {
+                    DpopError::WeakKey(key_err.to_string())
+                }
+                authkestra_crypto_util::EdDsaVerifyError::Signature(msg) => {
+                    DpopError::BadSignature(msg)
+                }
+            })?;
+    }
+
+    let decoding_key =
+        DecodingKey::from_jwk(&jwk).map_err(|e| DpopError::MissingOrInvalidJwk(e.to_string()))?;
+    let mut validation = Validation::new(algorithm);
+    // DPoP proofs carry `iat`, not `exp` — freshness is checked explicitly
+    // below against `max_age`, not via jsonwebtoken's `exp`/`nbf` handling.
+    validation.validate_exp = false;
+    validation.required_spec_claims.clear();
+
+    let data = jsonwebtoken::decode::<DpopClaims>(compact_jws, &decoding_key, &validation)
+        .map_err(|e| DpopError::BadSignature(e.to_string()))?;
+    let claims = data.claims;
+
+    if !claims.htm.eq_ignore_ascii_case(expected_htm) {
+        return Err(DpopError::WrongHtm);
+    }
+    if canonicalize_htu(&claims.htu) != canonicalize_htu(expected_htu) {
+        return Err(DpopError::WrongHtu);
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    // A small allowance for clock skew between client and server on the
+    // "not yet valid" side; the "too old" side is exactly `max_age`.
+    const CLOCK_SKEW_ALLOWANCE_SECS: i64 = 5;
+    if claims.iat > now + CLOCK_SKEW_ALLOWANCE_SECS || now - claims.iat > max_age.num_seconds() {
+        return Err(DpopError::Stale);
+    }
+
+    if let Some(expected) = expected_ath {
+        let actual = claims.ath.as_deref().ok_or(DpopError::AthMismatch)?;
+        if !crate::token::cert_binding::constant_time_eq(actual, expected) {
+            return Err(DpopError::AthMismatch);
+        }
+    }
+
+    let jkt = compute_jwk_thumbprint(&jwk)?;
+
+    Ok(VerifiedDpopProof {
+        jkt,
+        jti: claims.jti,
+        iat: claims.iat,
+    })
+}
+
+/// Computes the RFC 7638 SHA-256 JWK thumbprint of a DPoP proof's embedded
+/// public key — the value that becomes (or is compared against) `cnf.jkt`.
+///
+/// Unlike `authkestra_op::attestation::compute_cnf_jkt`, this does not need
+/// a `catch_unwind` guard: verified directly against the pinned
+/// `jsonwebtoken = "11"` source (`jwk.rs`), `Jwk::thumbprint()` in this
+/// version returns `Err(InvalidKeyFormat)` for a structurally-inconsistent
+/// key (e.g. `kty: EC` with `crv: Ed25519`) rather than panicking — that
+/// panic was specific to the 10.4.0-era implementation.
+pub fn compute_jwk_thumbprint(jwk: &Jwk) -> Result<String, DpopError> {
+    jwk.thumbprint(jsonwebtoken::jwk::ThumbprintHash::SHA256)
+        .map_err(|e| DpopError::ThumbprintFailed(e.to_string()))
+}
+
+/// The algorithm a given public key can plausibly have been used with —
+/// derived from the key itself, never trusted from the (attacker-supplied)
+/// header, mirroring `authkestra_op::attestation::expected_algorithm`.
+fn expected_algorithm(jwk: &Jwk) -> Result<Algorithm, DpopError> {
+    match &jwk.algorithm {
+        AlgorithmParameters::EllipticCurve(params) => match &params.curve {
+            EllipticCurve::P256 => Ok(Algorithm::ES256),
+            EllipticCurve::P384 => Ok(Algorithm::ES384),
+            other => Err(DpopError::UnsupportedAlgorithm(format!("{other:?}"))),
+        },
+        AlgorithmParameters::RSA(_) => Ok(Algorithm::RS256),
+        AlgorithmParameters::OctetKeyPair(params) => {
+            if params.curve == EllipticCurve::Ed25519 {
+                Ok(Algorithm::EdDSA)
+            } else {
+                Err(DpopError::UnsupportedAlgorithm(format!(
+                    "OKP curve {:?}",
+                    params.curve
+                )))
+            }
+        }
+        other => Err(DpopError::UnsupportedAlgorithm(format!("{other:?}"))),
+    }
+}
+
+/// Strips query and fragment from a URI for `htu` comparison (RFC 9449
+/// §4.3 step 6). Falls back to the original string, lowercased, if it does
+/// not parse as a URL at all — that failure mode still compares two
+/// unparsed strings consistently rather than panicking or silently
+/// accepting a mismatch.
+fn canonicalize_htu(uri: &str) -> String {
+    match url::Url::parse(uri) {
+        Ok(mut url) => {
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => uri.to_string(),
+    }
+}
+
+fn base64_decode(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
+    fn b64_json(v: &Value) -> String {
+        b64(serde_json::to_vec(v).unwrap().as_slice())
+    }
+
+    /// Builds a real, well-formed, genuinely-signed DPoP proof so tests
+    /// exercise the actual signature path rather than stubbing it out.
+    struct ProofBuilder {
+        signing_key: SigningKey,
+        htm: String,
+        htu: String,
+        iat: i64,
+        jti: String,
+        ath: Option<String>,
+        typ_override: Option<String>,
+        alg_override: Option<String>,
+    }
+
+    impl ProofBuilder {
+        fn new() -> Self {
+            Self {
+                signing_key: SigningKey::from_bytes(&[7u8; 32]),
+                htm: "POST".to_string(),
+                htu: "https://as.example.com/token".to_string(),
+                iat: chrono::Utc::now().timestamp(),
+                jti: "proof-jti-1".to_string(),
+                ath: None,
+                typ_override: None,
+                alg_override: None,
+            }
+        }
+
+        fn build(self) -> String {
+            let verifying = self.signing_key.verifying_key();
+            let jwk = serde_json::json!({
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": b64(verifying.as_bytes()),
+            });
+            let header = serde_json::json!({
+                "typ": self.typ_override.unwrap_or_else(|| "dpop+jwt".to_string()),
+                "alg": self.alg_override.unwrap_or_else(|| "EdDSA".to_string()),
+                "jwk": jwk,
+            });
+            let mut payload = serde_json::json!({
+                "htm": self.htm,
+                "htu": self.htu,
+                "iat": self.iat,
+                "jti": self.jti,
+            });
+            if let Some(ath) = self.ath {
+                payload["ath"] = serde_json::Value::String(ath);
+            }
+
+            let signing_input = format!("{}.{}", b64_json(&header), b64_json(&payload));
+            let signature = self.signing_key.sign(signing_input.as_bytes());
+            format!("{signing_input}.{}", b64(&signature.to_bytes()))
+        }
+    }
+
+    #[test]
+    fn accepts_a_genuine_fresh_proof_and_reports_the_correct_jkt() {
+        let builder = ProofBuilder::new();
+        let expected_jkt = compute_jwk_thumbprint(
+            &serde_json::from_value(serde_json::json!({
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": b64(builder.signing_key.verifying_key().as_bytes()),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let proof = ProofBuilder::new().build();
+
+        let verified = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect("a genuine, fresh proof must be accepted");
+
+        assert_eq!(verified.jkt, expected_jkt);
+        assert_eq!(verified.jti, "proof-jti-1");
+    }
+
+    #[test]
+    fn htm_comparison_is_case_insensitive() {
+        let proof = ProofBuilder::new().build();
+        verify_dpop_proof(
+            &proof,
+            "post",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect("htm must compare case-insensitively");
+    }
+
+    #[test]
+    fn rejects_wrong_htm() {
+        let proof = ProofBuilder::new().build();
+        let err = verify_dpop_proof(
+            &proof,
+            "GET",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a mismatched htm must be refused");
+        assert!(matches!(err, DpopError::WrongHtm));
+    }
+
+    #[test]
+    fn htu_comparison_ignores_query_and_fragment() {
+        let proof = ProofBuilder::new().build();
+        verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token?foo=bar#frag",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect("htu must compare ignoring query/fragment");
+    }
+
+    #[test]
+    fn rejects_wrong_htu() {
+        let proof = ProofBuilder::new().build();
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/other-path",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a mismatched htu must be refused");
+        assert!(matches!(err, DpopError::WrongHtu));
+    }
+
+    #[test]
+    fn rejects_a_stale_proof() {
+        let mut builder = ProofBuilder::new();
+        builder.iat = chrono::Utc::now().timestamp() - 120;
+        let proof = builder.build();
+
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a proof older than max_age must be refused");
+        assert!(matches!(err, DpopError::Stale));
+    }
+
+    #[test]
+    fn rejects_a_proof_too_far_in_the_future() {
+        let mut builder = ProofBuilder::new();
+        builder.iat = chrono::Utc::now().timestamp() + 3600;
+        let proof = builder.build();
+
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a proof from the future must be refused");
+        assert!(matches!(err, DpopError::Stale));
+    }
+
+    #[test]
+    fn rejects_wrong_typ() {
+        let mut builder = ProofBuilder::new();
+        builder.typ_override = Some("JWT".to_string());
+        let proof = builder.build();
+
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a non-dpop+jwt typ must be refused");
+        assert!(matches!(err, DpopError::WrongTyp));
+    }
+
+    #[test]
+    fn checks_ath_when_requested() {
+        let mut builder = ProofBuilder::new();
+        builder.ath = Some("correct-ath".to_string());
+        let proof = builder.build();
+
+        verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            Some("correct-ath"),
+            chrono::Duration::seconds(60),
+        )
+        .expect("a matching ath must be accepted");
+
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            Some("wrong-ath"),
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a mismatched ath must be refused");
+        assert!(matches!(err, DpopError::AthMismatch));
+    }
+
+    #[test]
+    fn requires_ath_when_caller_expects_one() {
+        let proof = ProofBuilder::new().build(); // no ath in the proof
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            Some("expected-ath"),
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a missing ath must be refused when the caller expects one");
+        assert!(matches!(err, DpopError::AthMismatch));
+    }
+
+    #[test]
+    fn rejects_a_low_order_key() {
+        // The identity point: the canonical universal low-order vector.
+        let identity = {
+            let mut b = [0u8; 32];
+            b[0] = 1;
+            b
+        };
+        let jwk = serde_json::json!({
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": b64(&identity),
+        });
+        let header = serde_json::json!({
+            "typ": "dpop+jwt",
+            "alg": "EdDSA",
+            "jwk": jwk,
+        });
+        let payload = serde_json::json!({
+            "htm": "POST",
+            "htu": "https://as.example.com/token",
+            "iat": chrono::Utc::now().timestamp(),
+            "jti": "j1",
+        });
+        let signing_input = format!("{}.{}", b64_json(&header), b64_json(&payload));
+        // The universal forgery: R = identity, S = 0.
+        let mut forged_sig = [0u8; 64];
+        forged_sig[..32].copy_from_slice(&identity);
+        let proof = format!("{signing_input}.{}", b64(&forged_sig));
+
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a low-order key must be refused");
+        assert!(matches!(err, DpopError::WeakKey(_)));
+    }
+
+    #[test]
+    fn rejects_a_private_jwk_member() {
+        let builder = ProofBuilder::new();
+        let header = serde_json::json!({
+            "typ": "dpop+jwt",
+            "alg": "EdDSA",
+            "jwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": b64(builder.signing_key.verifying_key().as_bytes()),
+                "d": "smuggled-private-scalar",
+            },
+        });
+        let payload = serde_json::json!({
+            "htm": "POST",
+            "htu": "https://as.example.com/token",
+            "iat": chrono::Utc::now().timestamp(),
+            "jti": "j1",
+        });
+        let signing_input = format!("{}.{}", b64_json(&header), b64_json(&payload));
+        let signature = builder.signing_key.sign(signing_input.as_bytes());
+        let proof = format!("{signing_input}.{}", b64(&signature.to_bytes()));
+
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a jwk carrying a private component must be refused");
+        assert!(matches!(err, DpopError::PrivateOrSymmetricJwk(_)));
+    }
+
+    #[test]
+    fn rejects_a_missing_jwk() {
+        let header = serde_json::json!({
+            "typ": "dpop+jwt",
+            "alg": "EdDSA",
+        });
+        let payload = serde_json::json!({
+            "htm": "POST",
+            "htu": "https://as.example.com/token",
+            "iat": chrono::Utc::now().timestamp(),
+            "jti": "j1",
+        });
+        let signing_input = format!("{}.{}", b64_json(&header), b64_json(&payload));
+        // The signature content doesn't matter — this must be rejected
+        // before signature verification, for lack of a key to verify with.
+        let proof = format!("{signing_input}.{}", b64(&[0u8; 64]));
+
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a proof with no embedded jwk must be refused");
+        assert!(matches!(err, DpopError::MissingOrInvalidJwk(_)));
+    }
+
+    #[test]
+    fn thumbprint_matches_a_known_rfc7638_test_vector() {
+        // The exact example key and thumbprint from RFC 7638 §3.1.
+        let jwk: Jwk = serde_json::from_value(serde_json::json!({
+            "kty": "RSA",
+            "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+            "e": "AQAB",
+        }))
+        .unwrap();
+        assert_eq!(
+            compute_jwk_thumbprint(&jwk).unwrap(),
+            "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+        );
+    }
+}

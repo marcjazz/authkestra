@@ -127,7 +127,60 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Red
     }
 }
 
-use crate::store::{AtomicConsume, IndexedKvStore};
+use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore};
+
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T> for RedisStore {
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        tracing::debug!(key = %key, "atomically inserting into redis store if absent");
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis connection error");
+                StoreError::Internal(format!("Redis connection error: {e}"))
+            })?;
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+
+        let ttl_secs = ttl.as_secs();
+        if ttl_secs == 0 {
+            // Mirrors `set`'s handling of a zero TTL: nothing would be
+            // retained long enough to matter, so there is nothing to guard.
+            tracing::warn!("ttl is 0, not inserting into redis");
+            return Ok(true);
+        }
+
+        // `SET key value NX EX ttl` — a single atomic Redis command. Redis
+        // replies `+OK` (parsed by this crate as `Value::Okay`, which
+        // `bool`'s `FromRedisValue` maps to `true`) on a fresh insert, or
+        // nil (maps to `false`) when the key already existed and NX blocked
+        // the write — exactly the replay-vs-fresh signal this trait needs.
+        let options = redis::SetOptions::default()
+            .conditional_set(redis::ExistenceCheck::NX)
+            .with_expiration(redis::SetExpiry::EX(ttl_secs));
+
+        let inserted: bool = conn
+            .set_options(self.key(key), json, options)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis set_options (NX) error");
+                StoreError::Internal(format!("Redis set_options (NX) error: {e}"))
+            })?;
+
+        Ok(inserted)
+    }
+}
 
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicConsume<T> for RedisStore {
@@ -313,6 +366,28 @@ mod tests {
 
         let val2: Option<String> = store.consume("key1").await.unwrap();
         assert_eq!(val2, None);
+    }
+
+    #[tokio::test]
+    async fn test_redis_insert_if_absent() {
+        let (store, _c) = setup_redis().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        // A second insert under the same key — the replay case — must be
+        // rejected, and must not clobber the value the first insert wrote.
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use sqlx::Database;
 use std::time::Duration;
 
-use crate::store::{KvStore, StoreError};
+use crate::store::{AtomicInsert, KvStore, StoreError};
 
 #[derive(Clone, Debug)]
 #[deprecated(
@@ -401,11 +401,140 @@ impl_sql_store! {
     }
 }
 
+// `AtomicInsert` is implemented directly per dialect (rather than folded
+// into the `impl_sql_store!` macro above) since it needs none of the
+// get/set/delete/index query strings that macro parametrizes over — each
+// dialect's insert-if-absent is a single, self-contained statement.
+
+#[cfg(feature = "sql-postgres")]
+#[async_trait]
+#[allow(deprecated)]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
+    for SqlKvStore<sqlx::Postgres>
+{
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        tracing::debug!(key = %key, "atomically inserting into Postgres store if absent");
+        let query = format!(
+            "INSERT INTO {} (key, value, expires_at) VALUES ($1, $2, $3) ON CONFLICT(key) DO NOTHING",
+            self.table_name
+        );
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        let result = sqlx::query(&query)
+            .bind(key)
+            .bind(json)
+            .bind(expires_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Postgres insert_if_absent error");
+                StoreError::Internal(format!("Postgres insert_if_absent error: {e}"))
+            })?;
+
+        Ok(result.rows_affected() == 1)
+    }
+}
+
+#[cfg(feature = "sql-sqlite")]
+#[async_trait]
+#[allow(deprecated)]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
+    for SqlKvStore<sqlx::Sqlite>
+{
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        tracing::debug!(key = %key, "atomically inserting into Sqlite store if absent");
+        let query = format!(
+            "INSERT INTO {} (key, value, expires_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO NOTHING",
+            self.table_name
+        );
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        let result = sqlx::query(&query)
+            .bind(key)
+            .bind(json)
+            .bind(expires_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Sqlite insert_if_absent error");
+                StoreError::Internal(format!("Sqlite insert_if_absent error: {e}"))
+            })?;
+
+        Ok(result.rows_affected() == 1)
+    }
+}
+
+#[cfg(feature = "sql-mysql")]
+#[async_trait]
+#[allow(deprecated)]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
+    for SqlKvStore<sqlx::MySql>
+{
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        tracing::debug!(key = %key, "atomically inserting into MySql store if absent");
+        // `INSERT IGNORE` (rather than `ON DUPLICATE KEY UPDATE`, used by
+        // this dialect's `set`) skips the row entirely on a primary-key
+        // conflict, so `rows_affected()` cleanly distinguishes a fresh
+        // insert (1) from an already-claimed key (0).
+        let query = format!(
+            "INSERT IGNORE INTO {} (`key`, value, expires_at) VALUES (?, ?, ?)",
+            self.table_name
+        );
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        let result = sqlx::query(&query)
+            .bind(key)
+            .bind(json)
+            .bind(expires_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "MySql insert_if_absent error");
+                StoreError::Internal(format!("MySql insert_if_absent error: {e}"))
+            })?;
+
+        Ok(result.rows_affected() == 1)
+    }
+}
+
 #[cfg(all(test, feature = "sql-sqlite"))]
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
+    use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::time::Duration;
 
@@ -455,6 +584,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sqlite_insert_if_absent() {
+        let store = setup_db().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+    }
+
+    #[tokio::test]
     async fn test_sqlite_indexed_store() {
         let store = setup_db().await;
 
@@ -479,7 +628,7 @@ mod tests {
 #[allow(deprecated)]
 mod postgres_tests {
     use super::*;
-    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
+    use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore};
     use sqlx::postgres::PgPoolOptions;
     use std::time::Duration;
     use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
@@ -541,6 +690,26 @@ mod postgres_tests {
     }
 
     #[tokio::test]
+    async fn test_postgres_insert_if_absent() {
+        let (store, _c) = setup_db().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+    }
+
+    #[tokio::test]
     async fn test_postgres_indexed_store() {
         let (store, _c) = setup_db().await;
 
@@ -564,7 +733,7 @@ mod postgres_tests {
 #[allow(deprecated)]
 mod mysql_tests {
     use super::*;
-    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
+    use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore};
     use sqlx::mysql::MySqlPoolOptions;
     use std::time::Duration;
     use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
@@ -622,6 +791,26 @@ mod mysql_tests {
 
         let val2: Option<String> = store.consume("key1").await.unwrap();
         assert_eq!(val2, None);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_insert_if_absent() {
+        let (store, _c) = setup_db().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
     }
 
     #[tokio::test]
