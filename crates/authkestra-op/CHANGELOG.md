@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.6.2...authkestra-op-v0.6.3) - 2026-08-28
+
+### Fixed
+
+- *(op)* add public constructors for non_exhaustive store types ([#271](https://github.com/marcjazz/authkestra/pull/271))
+
 ## [0.6.2](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.6.1...authkestra-op-v0.6.2) - 2026-08-28
 
 ### Other
