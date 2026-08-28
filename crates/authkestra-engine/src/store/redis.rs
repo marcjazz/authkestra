@@ -161,9 +161,13 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T> fo
         // entry and *also* reports "fresh" — silently disabling the replay
         // guard entirely for any caller using a sub-second TTL (e.g. a
         // DPoP freshness window configured in milliseconds). Redis' `EX`
-        // only accepts whole seconds, so round up to a 1-second floor
-        // rather than truncate to zero.
-        let ttl_secs = ttl.as_secs().max(1);
+        // only accepts whole seconds, so round *up* on any fractional
+        // remainder (not just when the whole-second part is zero) — a
+        // plain `.as_secs().max(1)` still truncates, say, 1.9s down to 1s,
+        // silently shortening the replay window below what the caller
+        // asked for on every call with a sub-second remainder, not only
+        // the exact-zero case.
+        let ttl_secs = (ttl.as_secs() + u64::from(ttl.subsec_nanos() > 0)).max(1);
 
         // `SET key value NX EX ttl` — a single atomic Redis command. Redis
         // replies `+OK` (parsed by this crate as `Value::Okay`, which
@@ -438,6 +442,31 @@ mod tests {
             .await
             .unwrap();
         assert!(!inserted_again, "a zero-TTL replay must still be rejected");
+    }
+
+    /// Regression test for authkestra#277's review: a fractional-second TTL
+    /// must round *up*, not truncate down — `.as_secs()` alone would floor
+    /// 1.5s to 1s, silently shortening the replay window below what the
+    /// caller asked for on every call with a sub-second remainder, not just
+    /// the exact-zero case the other two tests above cover.
+    #[tokio::test]
+    async fn test_redis_insert_if_absent_rounds_a_fractional_ttl_up() {
+        let (store, _c) = setup_redis().await;
+
+        store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(1500))
+            .await
+            .unwrap();
+
+        let mut conn = store
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        let ttl: i64 = redis::AsyncCommands::ttl(&mut conn, store.key("key1"))
+            .await
+            .unwrap();
+        assert_eq!(ttl, 2, "a 1.5s TTL must round up to 2s, not truncate to 1s");
     }
 
     #[tokio::test]

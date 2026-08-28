@@ -529,6 +529,69 @@ mod tests {
         assert!(matches!(err, DpopError::Stale));
     }
 
+    /// authkestra#277 review: none of `verify_dpop_proof`'s six distinct
+    /// `Malformed` production sites (missing header/payload/signature
+    /// segment, too many segments, header not valid base64url, header not
+    /// valid JSON) had test coverage. Covers the structural (segment-count)
+    /// cases here; the two content-level cases (bad base64url, bad JSON)
+    /// get their own tests below since they need a well-formed segment
+    /// count to reach.
+    #[test]
+    fn rejects_malformed_compact_jws_segment_shapes() {
+        let cases: [(&str, &str); 4] = [
+            ("", "empty string has no segments at all"),
+            ("only-one-segment", "missing payload and signature segments"),
+            ("header-only.payload-only", "missing signature segment"),
+            ("a.b.c.d", "more than three segments"),
+        ];
+        for (proof, description) in cases {
+            let err = verify_dpop_proof(
+                proof,
+                "POST",
+                "https://as.example.com/token",
+                None,
+                chrono::Duration::seconds(60),
+            )
+            .expect_err(&format!(
+                "case ({description}) must be rejected as malformed"
+            ));
+            assert!(
+                matches!(err, DpopError::Malformed(_)),
+                "case ({description}): expected Malformed, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_header_segment_that_is_not_valid_base64url() {
+        // `!` is outside the base64url alphabet (A-Z, a-z, 0-9, -, _).
+        let proof = "!!!not-base64url!!!.payload.signature";
+        let err = verify_dpop_proof(
+            proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a header segment that isn't valid base64url must be rejected");
+        assert!(matches!(err, DpopError::Malformed(_)));
+    }
+
+    #[test]
+    fn rejects_a_header_segment_that_decodes_but_is_not_valid_json() {
+        let header_b64 = b64(b"not valid json at all");
+        let proof = format!("{header_b64}.payload.signature");
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("a header that decodes but isn't valid JSON must be rejected");
+        assert!(matches!(err, DpopError::Malformed(_)));
+    }
+
     #[test]
     fn rejects_wrong_typ() {
         let mut builder = ProofBuilder::new();

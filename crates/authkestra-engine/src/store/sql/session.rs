@@ -708,6 +708,41 @@ mod tests {
         assert_eq!(val, Some("value2".to_string()));
     }
 
+    /// authkestra#277 review: the SQL layer's `insert_if_absent` has now
+    /// been wrong three times in ways that read correctly on inspection —
+    /// MySQL's affected-rows assumption, its follow-up `SELECT ... FOR
+    /// UPDATE` deadlock, and (had it existed) an equivalent unverified
+    /// assumption here. Reasoning from what the SQL says rather than what
+    /// the engine does under concurrency is exactly the pattern that broke
+    /// three times, so this proves the property directly rather than by
+    /// inspection of the `ON CONFLICT DO UPDATE ... WHERE` clause.
+    #[tokio::test]
+    async fn test_sqlite_insert_if_absent_is_atomic_under_concurrency() {
+        let store = std::sync::Arc::new(setup_db().await);
+
+        let mut handles = Vec::new();
+        for i in 0..32u32 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                store
+                    .insert_if_absent("shared-key", i.to_string(), Duration::from_secs(10))
+                    .await
+            }));
+        }
+
+        let mut successes = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(true) => successes += 1,
+                Ok(false) => {}
+                Err(e) => panic!(
+                    "insert_if_absent must never error under concurrency on a shared key, got {e:?}"
+                ),
+            }
+        }
+        assert_eq!(successes, 1, "exactly one racing insert must win");
+    }
+
     #[tokio::test]
     async fn test_sqlite_indexed_store() {
         let store = setup_db().await;
@@ -842,6 +877,38 @@ mod postgres_tests {
         assert_eq!(val, Some("value2".to_string()));
     }
 
+    /// See the Sqlite version of this test for why it exists: this
+    /// property was previously only asserted by inspection of the
+    /// `ON CONFLICT DO UPDATE ... WHERE` clause, the exact kind of
+    /// reasoning that broke three times over for this trait already.
+    #[tokio::test]
+    async fn test_postgres_insert_if_absent_is_atomic_under_concurrency() {
+        let (store, _c) = setup_db().await;
+        let store = std::sync::Arc::new(store);
+
+        let mut handles = Vec::new();
+        for i in 0..32u32 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                store
+                    .insert_if_absent("shared-key", i.to_string(), Duration::from_secs(10))
+                    .await
+            }));
+        }
+
+        let mut successes = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(true) => successes += 1,
+                Ok(false) => {}
+                Err(e) => panic!(
+                    "insert_if_absent must never error under concurrency on a shared key, got {e:?}"
+                ),
+            }
+        }
+        assert_eq!(successes, 1, "exactly one racing insert must win");
+    }
+
     #[tokio::test]
     async fn test_postgres_indexed_store() {
         let (store, _c) = setup_db().await;
@@ -947,10 +1014,10 @@ mod mysql_tests {
     }
 
     /// Regression test: an expired existing row must be reclaimable rather
-    /// than permanently blocking that key. Also pins the MySQL-specific
-    /// affected-rows quirk this dialect's fix relies on: `ON DUPLICATE KEY
-    /// UPDATE` reports a *changed* row as 2 affected rows, not 1, so the
-    /// impl checks `> 0` rather than `== 1`.
+    /// than permanently blocking that key. Exercises the second statement
+    /// of the two-statement `insert_if_absent` (`INSERT IGNORE` finds the
+    /// key already present, then the guarded
+    /// `UPDATE ... WHERE expires_at <= ?` reclaims it).
     #[tokio::test]
     async fn test_mysql_insert_if_absent_reclaims_an_expired_key() {
         let (store, _c) = setup_db().await;
