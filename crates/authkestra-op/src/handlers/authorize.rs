@@ -18,7 +18,15 @@ pub struct AuthorizeRequest {
     pub redirect_uri: String,
     /// Response type (must be "code").
     pub response_type: String,
-    /// Space-delimited scopes requested.
+    /// Space-delimited scopes requested. Defaults to empty when the client
+    /// omits the parameter entirely — RFC 6749 §3.3 makes this legal, and
+    /// nothing here distinguishes "omitted" from "explicitly empty"
+    /// (authkestra#280): both mean no scope requested, and neither is an
+    /// error. Plain `String` rather than `Option<String>` precisely because
+    /// that distinction is never made — there is no default-*value* branch
+    /// (as opposed to default-*absence*) implemented, so a `None` variant
+    /// would carry no information a `""` doesn't already carry.
+    #[serde(default)]
     pub scope: String,
     /// Optional opaque state parameter.
     pub state: Option<String>,
@@ -247,6 +255,29 @@ mod tests {
             outcome,
             AuthorizeOutcome::DirectError(OpError::UnknownClient(_))
         ));
+    }
+
+    /// The actual regression test for authkestra#280: `AuthorizeRequest` is
+    /// what `axum`'s and `actix`'s `Query` extractors deserialize from the
+    /// request's query string via the same generic serde `Deserialize`
+    /// derive exercised here — a JSON object is used purely as a
+    /// dependency-free stand-in for "a request with no `scope` key at all",
+    /// not because the real transport is JSON. Before this fix, a `String`
+    /// field with no `#[serde(default)]` and no key present would fail
+    /// deserialization outright, which is what turned an RFC-6749-legal
+    /// omitted `scope` into a raw framework 400 instead of ever reaching
+    /// `handle_authorize`.
+    #[test]
+    fn deserializes_successfully_when_scope_is_entirely_absent() {
+        let json = serde_json::json!({
+            "client_id": "client-1",
+            "redirect_uri": "https://app.example.com/cb",
+            "response_type": "code",
+            // no "scope" key at all
+        });
+        let req: AuthorizeRequest =
+            serde_json::from_value(json).expect("a missing scope must not fail deserialization");
+        assert_eq!(req.scope, "");
     }
 
     #[tokio::test]
@@ -500,6 +531,80 @@ mod tests {
             assert_eq!(persisted.identity.external_id, "user-123");
         } else {
             panic!("Expected Redirect");
+        }
+    }
+
+    /// authkestra#280: an omitted `scope` (RFC 6749 §3.3 makes this legal)
+    /// must not be an error at all — end to end, from deserialization
+    /// through to a persisted code with `scope == ""`. Builds `req` via
+    /// `serde_json::from_value` with no `scope` key present (rather than a
+    /// struct literal) specifically so this test exercises the same
+    /// deserialization path the `Query` extractors do, not just the
+    /// handler's behavior given an already-empty `String`.
+    #[tokio::test]
+    async fn test_missing_scope_is_treated_as_no_scope_and_succeeds() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req: AuthorizeRequest = serde_json::from_value(serde_json::json!({
+            "client_id": "client-1",
+            "redirect_uri": "https://app.example.com/cb",
+            "response_type": "code",
+            "code_challenge": "s256challenge",
+            "code_challenge_method": "S256",
+            // no "scope" key at all
+        }))
+        .expect("a missing scope must not fail deserialization");
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                codes.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.starts_with("https://app.example.com/cb?code="));
+            let code_val = url
+                .split("code=")
+                .nth(1)
+                .unwrap()
+                .split('&')
+                .next()
+                .unwrap();
+            let persisted = codes.consume_code(code_val).await.unwrap().unwrap();
+            assert_eq!(persisted.scope, "");
+        } else {
+            panic!("Expected Redirect, a missing scope must not be an error");
         }
     }
 
