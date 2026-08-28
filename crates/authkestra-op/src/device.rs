@@ -37,6 +37,33 @@ pub struct DeviceCodeSession {
 }
 
 impl DeviceCodeSession {
+    /// Creates a new device code session with no poll recorded yet.
+    ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
+    /// this crate, but `DeviceCodeStore` implementations must be able to
+    /// reconstruct a session from their own storage — this is the seam that
+    /// makes that possible (authkestra#268). `last_polled_at` starts `None`
+    /// and, since it's a `pub` field, can be set directly on the returned
+    /// value.
+    pub fn new(
+        device_code: String,
+        user_code: String,
+        client_id: String,
+        scope: String,
+        expires_at: DateTime<Utc>,
+        status: DeviceCodeStatus,
+    ) -> Self {
+        Self {
+            device_code,
+            user_code,
+            client_id,
+            scope,
+            expires_at,
+            status,
+            last_polled_at: None,
+        }
+    }
+
     /// Checks if the device code session is expired.
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
         now >= self.expires_at

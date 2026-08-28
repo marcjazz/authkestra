@@ -61,6 +61,38 @@ pub struct TokenRequest {
     pub client_assertion_type: Option<String>,
 }
 
+impl TokenRequest {
+    /// Creates a new token request with only `grant_type` set; every other
+    /// field starts `None` and, since all fields here are `pub`, can be set
+    /// directly on the returned value.
+    ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
+    /// this crate, so downstream code that builds a `TokenRequest`
+    /// programmatically (e.g. in tests) had no way to construct one at all
+    /// (authkestra#268).
+    pub fn new(grant_type: String) -> Self {
+        Self {
+            grant_type,
+            code: None,
+            device_code: None,
+            redirect_uri: None,
+            client_id: None,
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
+        }
+    }
+}
+
 /// Success response for the token endpoint.
 #[derive(Debug, Serialize)]
 #[non_exhaustive]

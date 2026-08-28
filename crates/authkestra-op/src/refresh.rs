@@ -19,6 +19,30 @@ pub struct RefreshToken {
     pub expires_at: DateTime<Utc>,
 }
 
+impl RefreshToken {
+    /// Creates a new refresh token.
+    ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
+    /// this crate, but `RefreshTokenStore` implementations must be able to
+    /// reconstruct a token from their own storage — this is the seam that
+    /// makes that possible (authkestra#268).
+    pub fn new(
+        token: String,
+        client_id: String,
+        identity: Identity,
+        scope: String,
+        expires_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            token,
+            client_id,
+            identity,
+            scope,
+            expires_at,
+        }
+    }
+}
+
 /// Storage interface for refresh tokens.
 #[async_trait]
 pub trait RefreshTokenStore: Send + Sync {

@@ -177,6 +177,32 @@ pub struct EnrolmentChallenge {
 }
 
 impl EnrolmentChallenge {
+    /// Creates a new enrolment/re-issuance challenge.
+    ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
+    /// this crate, but `EnrolmentChallengeStore` implementations must be
+    /// able to reconstruct a challenge from their own storage — this is the
+    /// seam that makes that possible (authkestra#268).
+    pub fn new(
+        challenge: String,
+        subject: String,
+        principal_id: String,
+        principal_type: PrincipalType,
+        public_jwk: Value,
+        attributes: Value,
+        expires_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            challenge,
+            subject,
+            principal_id,
+            principal_type,
+            public_jwk,
+            attributes,
+            expires_at,
+        }
+    }
+
     /// Returns true if this challenge is expired as of `now`.
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
         now >= self.expires_at
