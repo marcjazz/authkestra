@@ -18,12 +18,16 @@ pub struct AuthorizeRequest {
     pub redirect_uri: String,
     /// Response type (must be "code").
     pub response_type: String,
-    /// Space-delimited scopes requested. `None` when the client omits the
-    /// parameter entirely — RFC 6749 §3.3 makes this legal, and
-    /// `handle_authorize` treats it the same as an explicitly empty scope
-    /// (authkestra#280): no scope requested, not an error and not
-    /// distinguished from `Some(String::new())`.
-    pub scope: Option<String>,
+    /// Space-delimited scopes requested. Defaults to empty when the client
+    /// omits the parameter entirely — RFC 6749 §3.3 makes this legal, and
+    /// nothing here distinguishes "omitted" from "explicitly empty"
+    /// (authkestra#280): both mean no scope requested, and neither is an
+    /// error. Plain `String` rather than `Option<String>` precisely because
+    /// that distinction is never made — there is no default-*value* branch
+    /// (as opposed to default-*absence*) implemented, so a `None` variant
+    /// would carry no information a `""` doesn't already carry.
+    #[serde(default)]
+    pub scope: String,
     /// Optional opaque state parameter.
     pub state: Option<String>,
     /// PKCE code challenge.
@@ -103,7 +107,7 @@ pub async fn handle_authorize(
     // it was never granted. Rejects on the first offending scope, naming it
     // specifically, mirroring `default_handle_client_credentials`'s
     // existing (and correct) scope check at the token endpoint.
-    for s in req.scope.as_deref().unwrap_or_default().split_whitespace() {
+    for s in req.scope.split_whitespace() {
         if !client.allows_scope(s) {
             tracing::warn!(client_id = %req.client_id, scope = %s, "Client requested unauthorized scope");
             return error_redirect(
@@ -165,7 +169,7 @@ pub async fn handle_authorize(
         code: code_val.clone(),
         client_id: client.client_id.clone(),
         redirect_uri: req.redirect_uri.clone(),
-        scope: req.scope.clone().unwrap_or_default(),
+        scope: req.scope.clone(),
         code_challenge: req.code_challenge.clone(),
         code_challenge_method: req.code_challenge_method.clone(),
         nonce: req.nonce.clone(),
@@ -239,7 +243,7 @@ mod tests {
             client_id: "unknown".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid".to_string()),
+            scope: "openid".to_string(),
             state: None,
             code_challenge: None,
             code_challenge_method: None,
@@ -259,7 +263,7 @@ mod tests {
     /// derive exercised here — a JSON object is used purely as a
     /// dependency-free stand-in for "a request with no `scope` key at all",
     /// not because the real transport is JSON. Before this fix, a `String`
-    /// (not `Option<String>`) field with no key present would fail
+    /// field with no `#[serde(default)]` and no key present would fail
     /// deserialization outright, which is what turned an RFC-6749-legal
     /// omitted `scope` into a raw framework 400 instead of ever reaching
     /// `handle_authorize`.
@@ -273,7 +277,7 @@ mod tests {
         });
         let req: AuthorizeRequest =
             serde_json::from_value(json).expect("a missing scope must not fail deserialization");
-        assert_eq!(req.scope, None);
+        assert_eq!(req.scope, "");
     }
 
     #[tokio::test]
@@ -309,7 +313,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb/".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid".to_string()),
+            scope: "openid".to_string(),
             state: None,
             code_challenge: None,
             code_challenge_method: None,
@@ -355,7 +359,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "token".to_string(), // not code
-            scope: Some("openid".to_string()),
+            scope: "openid".to_string(),
             state: Some("xyz".to_string()),
             code_challenge: None,
             code_challenge_method: None,
@@ -404,7 +408,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid".to_string()),
+            scope: "openid".to_string(),
             state: None,
             code_challenge: None, // Missing PKCE
             code_challenge_method: None,
@@ -451,7 +455,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid".to_string()),
+            scope: "openid".to_string(),
             state: None,
             code_challenge: Some("challenge".to_string()),
             code_challenge_method: Some("plain".to_string()), // plain is rejected
@@ -498,7 +502,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid profile".to_string()),
+            scope: "openid profile".to_string(),
             state: Some("abc".to_string()),
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
@@ -531,9 +535,12 @@ mod tests {
     }
 
     /// authkestra#280: an omitted `scope` (RFC 6749 §3.3 makes this legal)
-    /// must not be an error at all — it's treated identically to an
-    /// explicitly empty scope, succeeding all the way through to a
-    /// persisted code with `scope == ""`.
+    /// must not be an error at all — end to end, from deserialization
+    /// through to a persisted code with `scope == ""`. Builds `req` via
+    /// `serde_json::from_value` with no `scope` key present (rather than a
+    /// struct literal) specifically so this test exercises the same
+    /// deserialization path the `Query` extractors do, not just the
+    /// handler's behavior given an already-empty `String`.
     #[tokio::test]
     async fn test_missing_scope_is_treated_as_no_scope_and_succeeds() {
         let clients = authkestra_engine::store::memory::MemoryStore::<
@@ -562,16 +569,15 @@ mod tests {
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
-        let req = AuthorizeRequest {
-            client_id: "client-1".to_string(),
-            redirect_uri: "https://app.example.com/cb".to_string(),
-            response_type: "code".to_string(),
-            scope: None,
-            state: None,
-            code_challenge: Some("s256challenge".to_string()),
-            code_challenge_method: Some("S256".to_string()),
-            nonce: None,
-        };
+        let req: AuthorizeRequest = serde_json::from_value(serde_json::json!({
+            "client_id": "client-1",
+            "redirect_uri": "https://app.example.com/cb",
+            "response_type": "code",
+            "code_challenge": "s256challenge",
+            "code_challenge_method": "S256",
+            // no "scope" key at all
+        }))
+        .expect("a missing scope must not fail deserialization");
 
         let outcome = handle_authorize(
             req,
@@ -640,7 +646,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid".to_string()),
+            scope: "openid".to_string(),
             state: Some(dangerous_state.to_string()),
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
@@ -709,7 +715,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid".to_string()),
+            scope: "openid".to_string(),
             state: None,
             code_challenge: None,
             code_challenge_method: Some("S256".to_string()), // Method provided without challenge
@@ -761,7 +767,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid".to_string()),
+            scope: "openid".to_string(),
             state: None,
             code_challenge: None,
             code_challenge_method: None,
@@ -824,7 +830,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("admin".to_string()),
+            scope: "admin".to_string(),
             state: None,
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
@@ -886,7 +892,7 @@ mod tests {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
-            scope: Some("openid admin".to_string()),
+            scope: "openid admin".to_string(),
             state: None,
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
