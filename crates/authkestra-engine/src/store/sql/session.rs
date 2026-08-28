@@ -524,74 +524,82 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
         value: T,
         ttl: Duration,
     ) -> Result<bool, StoreError> {
-        // A single-statement `INSERT ... ON DUPLICATE KEY UPDATE` turned out
-        // not to give a reliable "did this actually change a row" signal on
-        // this driver/version combination — a conflict against a still-valid
-        // (not-yet-expired) row, whose `IF(...)`-guarded SET list should be a
-        // pure no-op, was still observed to report `rows_affected() > 0`.
-        // Rather than depend on that affected-rows accounting, this uses the
-        // same `SELECT ... FOR UPDATE` transaction pattern this file's
-        // MySQL `consume` impl already uses: lock the row (if any), decide
-        // in Rust whether it's absent-or-expired, and only then write —
-        // avoiding a TOCTOU race the same way `consume` does.
-        tracing::debug!(key = %key, "atomically inserting into MySql store if absent, using transaction");
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            tracing::error!(error = %e, "MySql transaction error");
-            StoreError::Internal(format!("MySql transaction error: {e}"))
-        })?;
-
-        let select_query = format!(
-            "SELECT `key`, value, expires_at FROM {} WHERE `key` = ? FOR UPDATE",
-            self.table_name
-        );
-        let now = chrono::Utc::now();
-
-        let existing: Option<SqlKvModel> = sqlx::query_as(&select_query)
-            .bind(key)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "MySql select for update error");
-                StoreError::Internal(format!("MySql select for update error: {e}"))
-            })?;
-
-        let is_claimable = existing.as_ref().is_none_or(|row| row.expires_at <= now);
-        if !is_claimable {
-            tx.rollback().await.map_err(|e| {
-                tracing::error!(error = %e, "MySql rollback error");
-                StoreError::Internal(format!("MySql rollback error: {e}"))
-            })?;
-            return Ok(false);
-        }
+        // Second attempt at this method (review of authkestra#277 caught
+        // the first): a `SELECT ... FOR UPDATE` transaction, matching this
+        // file's MySQL `consume` pattern, is *unsafe* here specifically
+        // because the row being locked usually doesn't exist yet.  Under
+        // InnoDB's default REPEATABLE READ, `SELECT ... FOR UPDATE` against
+        // a non-matching row still takes a gap lock (to prevent phantom
+        // inserts within the transaction) — so two concurrent callers
+        // racing on the same absent key each take a gap lock, then each
+        // tries to insert into the gap the other is holding, which
+        // deadlocks. Safety held (InnoDB kills one side rather than letting
+        // both "win"), but the loser got `Err`, not `Ok(false)` — turning a
+        // replayed proof into a 500 instead of a clean rejection, and
+        // failing this trait's own concurrency contract test.
+        //
+        // No explicit transaction is needed at all: two separate,
+        // individually-autocommitted statements are enough, because each
+        // one is already atomic on its own and MySQL releases each
+        // statement's locks the moment it completes (nothing is held open
+        // across the gap between them, so there's nothing for a second
+        // caller to deadlock against). `INSERT IGNORE` claims a genuinely
+        // absent key in one step; only on conflict does a second statement
+        // ask "is the existing row already expired", and that statement's
+        // own `WHERE` re-evaluates under its own lock, so two callers
+        // racing to reclaim the same expired row still can't both succeed
+        // (whichever commits its `UPDATE` first changes `expires_at`,
+        // which then falsifies the second caller's own `WHERE` clause).
+        tracing::debug!(key = %key, "atomically inserting into MySql store if absent");
 
         let json = serde_json::to_string(&value).map_err(|e| {
             tracing::error!(error = %e, "Serialization error");
             StoreError::Serialization(format!("Serialization error: {e}"))
         })?;
+        let now = chrono::Utc::now();
         let expires_at = now + chrono::Duration::seconds(ttl.as_secs() as i64);
 
-        let upsert_query = format!(
-            "INSERT INTO {} (`key`, value, expires_at) VALUES (?, ?, ?) \
-             ON DUPLICATE KEY UPDATE value = VALUES(value), expires_at = VALUES(expires_at)",
+        let insert_query = format!(
+            "INSERT IGNORE INTO {} (`key`, value, expires_at) VALUES (?, ?, ?)",
             self.table_name
         );
-        sqlx::query(&upsert_query)
+        let inserted = sqlx::query(&insert_query)
             .bind(key)
-            .bind(json)
+            .bind(&json)
             .bind(expires_at)
-            .execute(&mut *tx)
+            .execute(&self.pool)
             .await
             .map_err(|e| {
-                tracing::error!(error = %e, "MySql insert_if_absent upsert error");
-                StoreError::Internal(format!("MySql insert_if_absent upsert error: {e}"))
+                tracing::error!(error = %e, "MySql insert_if_absent insert error");
+                StoreError::Internal(format!("MySql insert_if_absent insert error: {e}"))
             })?;
 
-        tx.commit().await.map_err(|e| {
-            tracing::error!(error = %e, "MySql commit error");
-            StoreError::Internal(format!("MySql commit error: {e}"))
-        })?;
+        if inserted.rows_affected() > 0 {
+            return Ok(true);
+        }
 
-        Ok(true)
+        // A key already existed. Reclaim it only if it's already expired —
+        // this single guarded UPDATE is what makes concurrent reclaim
+        // attempts on the same expired key safe without a transaction: only
+        // one caller's WHERE clause can still be true by the time it
+        // actually acquires the row.
+        let reclaim_query = format!(
+            "UPDATE {} SET value = ?, expires_at = ? WHERE `key` = ? AND expires_at <= ?",
+            self.table_name
+        );
+        let reclaimed = sqlx::query(&reclaim_query)
+            .bind(&json)
+            .bind(expires_at)
+            .bind(key)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "MySql insert_if_absent reclaim error");
+                StoreError::Internal(format!("MySql insert_if_absent reclaim error: {e}"))
+            })?;
+
+        Ok(reclaimed.rows_affected() > 0)
     }
 }
 
@@ -953,7 +961,15 @@ mod mysql_tests {
             .unwrap();
         assert!(inserted);
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // MySQL's `TIMESTAMP` column (no fractional-second precision in
+        // this migration) *rounds* a sub-second value to the nearest whole
+        // second rather than truncating it, so a 1ms TTL's stored
+        // `expires_at` can land up to a full second after the actual
+        // insert instant — a 50ms sleep was flaky (~1 run in 3) for exactly
+        // that reason. Sleeping past that worst case removes the flake
+        // without needing a schema change that would affect every
+        // consumer of this migration, not just this test.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
 
         let reclaimed = store
             .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
@@ -966,6 +982,41 @@ mod mysql_tests {
 
         let val: Option<String> = store.get("key1").await.unwrap();
         assert_eq!(val, Some("value2".to_string()));
+    }
+
+    /// Regression test for authkestra#277's review: a `SELECT ... FOR
+    /// UPDATE` transaction over a possibly-absent row deadlocked InnoDB
+    /// under concurrent access (a gap lock taken by each of two racers on
+    /// the same non-existent key, each then trying to insert into the gap
+    /// the other holds). The fix drops the transaction entirely; this
+    /// proves many concurrent callers racing on the same key never error
+    /// and exactly one of them wins.
+    #[tokio::test]
+    async fn test_mysql_insert_if_absent_is_atomic_under_concurrency() {
+        let (store, _c) = setup_db().await;
+        let store = std::sync::Arc::new(store);
+
+        let mut handles = Vec::new();
+        for i in 0..32u32 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                store
+                    .insert_if_absent("shared-key", i.to_string(), Duration::from_secs(10))
+                    .await
+            }));
+        }
+
+        let mut successes = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(true) => successes += 1,
+                Ok(false) => {}
+                Err(e) => panic!(
+                    "insert_if_absent must never error under concurrency on a shared key, got {e:?}"
+                ),
+            }
+        }
+        assert_eq!(successes, 1, "exactly one racing insert must win");
     }
 
     #[tokio::test]
