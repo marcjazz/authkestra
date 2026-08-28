@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.6.1...authkestra-providers-v0.6.2) - 2026-08-28
+
+### Other
+
+- correct API drift across README, crate docs, website and book ([#269](https://github.com/marcjazz/authkestra/pull/269))
+
 ## [0.5.5](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.5.4...authkestra-providers-v0.5.5) - 2026-08-24
 
 ### Other
