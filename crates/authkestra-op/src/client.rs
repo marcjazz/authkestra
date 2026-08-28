@@ -154,6 +154,16 @@ impl ClientRegistration {
         self.grant_types.contains(grant_type)
     }
 
+    /// Checks if the client is registered for a single scope value.
+    ///
+    /// Takes one already-split scope token, not a space-delimited string —
+    /// callers validating a whole `scope` request should split it
+    /// themselves and check each token, so they can name the specific
+    /// offending scope in their own error response (authkestra#278).
+    pub fn allows_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == scope)
+    }
+
     /// Verifies the provided secret against the stored argon2 hash in constant time.
     pub fn verify_secret(&self, secret: &str) -> bool {
         if let Some(hash_str) = &self.client_secret_hash {
