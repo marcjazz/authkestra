@@ -1408,6 +1408,7 @@ pub async fn default_handle_token_exchange(
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod tests {
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
@@ -2293,7 +2294,14 @@ mod tests {
             &test_tokens(),
         )
         .await;
-        assert_eq!(res.unwrap_err().error, "invalid_grant");
+        let err = res.unwrap_err();
+        assert_eq!(err.error, "invalid_grant");
+        // `invalid_grant` alone is produced by several other rejection
+        // paths in this function (expired code, wrong client, redirect_uri
+        // mismatch, ...) — pin the description too so this test actually
+        // proves the PKCE-mandatory-at-redemption guard fired, not just
+        // that *some* rejection did.
+        assert_eq!(err.error_description, "PKCE is required");
     }
 
     #[tokio::test]
@@ -4413,9 +4421,11 @@ mod tests {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod device_tests;
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod client_auth_tests;
 
 impl TokenResponse {

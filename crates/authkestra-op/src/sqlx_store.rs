@@ -42,6 +42,7 @@ macro_rules! impl_opstore_sql {
         #[cfg(feature = $feature)]
         #[async_trait]
         impl ClientStore for SqlxOpStore<$backend> {
+            #[allow(deprecated)] // `require_pkce` (authkestra#273) — still round-tripped for wire/storage compatibility
             async fn find_client(&self, client_id: &str) -> Result<Option<ClientRegistration>, OpError> {
                 let query = format!(
                     "SELECT 

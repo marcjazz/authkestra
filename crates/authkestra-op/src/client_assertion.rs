@@ -470,6 +470,7 @@ pub fn verify_client_assertion(
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 pub(crate) mod tests {
     use super::*;
     use crate::client::{GrantType, TokenEndpointAuthMethod};

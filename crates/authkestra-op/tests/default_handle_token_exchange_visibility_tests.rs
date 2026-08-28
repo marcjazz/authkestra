@@ -47,6 +47,7 @@ fn test_config() -> OpConfig {
     }
 }
 
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — this fixture doesn't exercise it
 fn test_client() -> ClientRegistration {
     ClientRegistration {
         client_id: "client1".to_string(),

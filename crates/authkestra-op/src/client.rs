@@ -107,6 +107,12 @@ pub struct ClientRegistration {
     /// unconditionally, per OAuth 2.1 §4.1 (authkestra#273) — both
     /// `handlers::authorize` and `handlers::token` enforce it regardless of
     /// this value.
+    #[deprecated(
+        since = "0.7.0",
+        note = "PKCE is mandatory for every client on the authorization code grant, \
+                unconditionally, per OAuth 2.1 §4.1 (authkestra#273). This field is no longer \
+                read by handlers::authorize or handlers::token and has no effect."
+    )]
     pub require_pkce: bool,
     /// Downstream audiences (resources) this client is permitted to target
     /// during token exchange.
@@ -197,6 +203,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod tests {
 
     use super::*;

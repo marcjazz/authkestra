@@ -174,6 +174,7 @@ pub async fn handle_authorize(
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod tests {
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
