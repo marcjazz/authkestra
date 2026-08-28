@@ -117,24 +117,16 @@ pub async fn handle_authorize(
         );
     }
 
-    // 6. PKCE requirements
-    if client.require_pkce {
-        if req.code_challenge.is_none() {
-            tracing::warn!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
-            return error_redirect("invalid_request", "code_challenge is required");
-        }
-        if req.code_challenge_method.as_deref() != Some("S256") {
-            tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
-            return error_redirect("invalid_request", "code_challenge_method must be S256");
-        }
-    } else if req.code_challenge.is_none() && req.code_challenge_method.is_some() {
-        tracing::warn!(client_id = %req.client_id, "code_challenge_method specified without code_challenge");
-        return error_redirect(
-            "invalid_request",
-            "code_challenge is required when method is specified",
-        );
-    } else if req.code_challenge.is_some() && req.code_challenge_method.as_deref() != Some("S256") {
-        tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method provided (optional PKCE), S256 required");
+    // 6. PKCE requirements — mandatory for every client, per OAuth 2.1 §4.1
+    // (authkestra#273). `client.require_pkce` no longer gates this: OAuth 2.1
+    // does not grandfather in confidential clients or any other exemption,
+    // and per-client opt-out was the exact gap #273 closes.
+    if req.code_challenge.is_none() {
+        tracing::warn!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
+        return error_redirect("invalid_request", "code_challenge is required");
+    }
+    if req.code_challenge_method.as_deref() != Some("S256") {
+        tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
         return error_redirect("invalid_request", "code_challenge_method must be S256");
     }
 
@@ -182,6 +174,7 @@ pub async fn handle_authorize(
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod tests {
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
@@ -524,14 +517,17 @@ mod tests {
         // State containing characters that require URL encoding
         let dangerous_state = "foo&bar=baz#123";
 
+        // PKCE is mandatory (authkestra#273) regardless of `require_pkce`,
+        // and unrelated to what this test actually covers (state encoding),
+        // but required to reach the success path at all.
         let req = AuthorizeRequest {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
             scope: "openid".to_string(),
             state: Some(dangerous_state.to_string()),
-            code_challenge: None,
-            code_challenge_method: None,
+            code_challenge: Some("s256challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
             nonce: None,
         };
 
@@ -561,6 +557,10 @@ mod tests {
         }
     }
 
+    /// PKCE is mandatory regardless of `client.require_pkce` (authkestra#273):
+    /// a client not opted into PKCE that still omits `code_challenge` (even
+    /// while sending `code_challenge_method`) is rejected exactly like one
+    /// that requires it.
     #[tokio::test]
     async fn test_pkce_method_without_challenge_redirect_error() {
         let clients = authkestra_engine::store::memory::MemoryStore::<
@@ -575,7 +575,7 @@ mod tests {
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
                     scopes: vec![],
-                    require_pkce: false, // PKCE is optional
+                    require_pkce: false, // no longer changes the outcome — PKCE is always required
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
                     jwks: None,
@@ -603,11 +603,71 @@ mod tests {
         let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.contains("error=invalid_request"));
-            assert!(
-                url.contains(
-                    "error_description=code_challenge+is+required+when+method+is+specified"
-                ) || url.contains("code_challenge%20is%20required")
-            );
+            assert!(url.contains("error_description=code_challenge+is+required"));
+        } else {
+            panic!("Expected Redirect");
+        }
+    }
+
+    /// The core regression test for authkestra#273: a client explicitly
+    /// registered with `require_pkce: false` and sending no PKCE parameters
+    /// at all must still be rejected, since OAuth 2.1 §4.1 makes PKCE
+    /// mandatory unconditionally rather than an opt-in per client.
+    #[tokio::test]
+    async fn test_pkce_is_mandatory_even_when_client_does_not_require_it() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req = AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid".to_string(),
+            state: None,
+            code_challenge: None,
+            code_challenge_method: None,
+            nonce: None,
+        };
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.contains("error=invalid_request"));
+            assert!(url.contains("error_description=code_challenge+is+required"));
         } else {
             panic!("Expected Redirect");
         }

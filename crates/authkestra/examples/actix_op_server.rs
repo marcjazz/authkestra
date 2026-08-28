@@ -66,6 +66,7 @@ async fn main() -> std::io::Result<()> {
     let redis_client = redis::Client::open(redis_url.as_str()).expect("Failed to connect to Redis");
 
     let clients = RedisStore::with_client(redis_client.clone(), "op_clients".into());
+    #[allow(deprecated)] // require_pkce (authkestra#273) — PKCE is mandatory unconditionally now
     clients
         .set(
             "test-client",
