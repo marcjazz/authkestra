@@ -16,6 +16,18 @@ pub struct OidcDiscovery {
     /// advertising one would point clients at an endpoint that 404s.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_endpoint: Option<String>,
+    /// JSON array of PKCE code challenge methods this OP supports (RFC 8414
+    /// §2 / RFC 7636 §4.3).
+    ///
+    /// `handlers::authorize::handle_authorize` requires PKCE unconditionally
+    /// for every client (authkestra#273) — this field exists so a
+    /// spec-conformant client actually finds out, rather than discovering it
+    /// only after being rejected. Omitted entirely, for the same reason
+    /// `authorization_endpoint` is: a provider with no `authorization_code`
+    /// grant has no `/authorize` endpoint for a `code_challenge_method` to
+    /// apply to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_challenge_methods_supported: Option<Vec<String>>,
     /// URL of the OP's OAuth 2.0 Token Endpoint.
     pub token_endpoint: String,
     /// URL of the OP's JSON Web Key Set document.
@@ -56,13 +68,17 @@ use crate::config::OpConfig;
 impl OidcDiscovery {
     /// Creates a discovery document reflecting the provided OP configuration.
     pub fn from_config(config: &OpConfig) -> Self {
+        let has_authorization_code_grant = config
+            .grant_types_supported
+            .iter()
+            .any(|grant| grant == "authorization_code");
+
         Self {
             issuer: config.issuer.clone(),
-            authorization_endpoint: config
-                .grant_types_supported
-                .iter()
-                .any(|grant| grant == "authorization_code")
+            authorization_endpoint: has_authorization_code_grant
                 .then(|| config.authorization_endpoint()),
+            code_challenge_methods_supported: has_authorization_code_grant
+                .then(|| vec!["S256".to_string()]),
             token_endpoint: config.token_endpoint(),
             jwks_uri: config.jwks_url(),
             userinfo_endpoint: Some(config.userinfo_endpoint()),
@@ -256,6 +272,42 @@ mod tests {
             Some(&serde_json::Value::String(
                 "https://auth.example.com/authorize".to_string()
             ))
+        );
+    }
+
+    /// authkestra#273: PKCE is mandatory at `/authorize` for every client —
+    /// a provider that serves the `authorization_code` grant must advertise
+    /// that, so a spec-conformant client finds out before being rejected
+    /// rather than after.
+    #[test]
+    fn code_challenge_methods_supported_advertises_s256_when_auth_code_grant_supported() {
+        let doc = OidcDiscovery::from_config(&discovery_config());
+        assert_eq!(
+            doc.code_challenge_methods_supported,
+            Some(vec!["S256".to_string()])
+        );
+    }
+
+    /// A provider with no `authorization_code` grant has no `/authorize`
+    /// endpoint for a code challenge method to apply to — must be omitted
+    /// entirely, mirroring `authorization_endpoint`'s own omission rule.
+    #[test]
+    fn code_challenge_methods_supported_omitted_when_no_auth_code_grant() {
+        let mut config = discovery_config();
+        config.grant_types_supported = vec![
+            "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
+            "refresh_token".to_string(),
+        ];
+        config.response_types_supported = vec![];
+
+        let doc = OidcDiscovery::from_config(&config);
+        assert_eq!(doc.code_challenge_methods_supported, None);
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert!(
+            json.get("code_challenge_methods_supported").is_none(),
+            "must be omitted (not null) when the provider has no authorization_code grant; got {:?}",
+            json.get("code_challenge_methods_supported")
         );
     }
 
