@@ -797,8 +797,15 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
                 error_description: "code_verifier is invalid".to_string(),
             });
         }
-    } else if client.require_pkce {
-        tracing::warn!("PKCE was required by client config but code lacks challenge");
+    } else {
+        // PKCE is mandatory for every client, per OAuth 2.1 §4.1
+        // (authkestra#273): `client.require_pkce` no longer gates this. In
+        // ordinary operation `handle_authorize` never stores a code without
+        // a challenge, so this only fires for a code that reached storage
+        // by some other path (a legacy pre-#273 code, or a downstream
+        // `OpStore::store_code` override) — reject it rather than silently
+        // skip PKCE verification for it.
+        tracing::warn!("PKCE is mandatory but the stored authorization code has no code_challenge");
         return Err(TokenErrorResponse {
             error: "invalid_grant".to_string(),
             error_description: "PKCE is required".to_string(),
@@ -1921,6 +1928,15 @@ mod tests {
             .await
             .unwrap();
 
+        // PKCE is mandatory (authkestra#273), so this fixture needs a real
+        // challenge/verifier pair — unrelated to what this test actually
+        // covers (OpStore default-dispatch behavior), but required to reach
+        // that code path at all.
+        let verifier = "test_verifier";
+        let mut hasher = sha2::Sha256::new();
+        sha2::Digest::update(&mut hasher, verifier.as_bytes());
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
         let codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
@@ -1932,8 +1948,8 @@ mod tests {
                 scope: "openid offline_access".to_string(),
                 nonce: None,
                 expires_at: Utc::now() + Duration::minutes(5),
-                code_challenge: None,
-                code_challenge_method: None,
+                code_challenge: Some(challenge),
+                code_challenge_method: Some("S256".to_string()),
                 used: false,
             })
             .await
@@ -1943,7 +1959,10 @@ mod tests {
         // — this is the compatibility guarantee: it must behave identically
         // to before the trait method existed.
         let res = handle_token(
-            auth_code_test_req("code-default"),
+            TokenRequest {
+                code_verifier: Some(verifier.to_string()),
+                ..auth_code_test_req("code-default")
+            },
             None,
             &test_config(false),
             &crate::store::CompositeOpStore::new(
@@ -2193,6 +2212,88 @@ mod tests {
         )
         .await;
         assert_eq!(res.unwrap_err().error, "server_error");
+    }
+
+    /// authkestra#273: PKCE is mandatory at redemption too, not just at
+    /// `/authorize`. `handle_authorize` never stores a challenge-less code
+    /// any more, but a code can still reach storage without one via a
+    /// legacy pre-#273 row or a downstream `OpStore::store_code` override —
+    /// this must not be treated as "PKCE wasn't required for this client".
+    #[tokio::test]
+    async fn test_pkce_is_mandatory_at_redemption_even_for_a_challenge_less_code() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client1",
+                ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec![],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        codes
+            .store_code(AuthorizationCode {
+                code: "code1".to_string(),
+                client_id: "client1".to_string(),
+                redirect_uri: "https://cb".to_string(),
+                identity: test_identity(),
+                scope: "".to_string(),
+                nonce: None,
+                expires_at: Utc::now() + Duration::minutes(5),
+                code_challenge: None,
+                code_challenge_method: None,
+                used: false,
+            })
+            .await
+            .unwrap();
+
+        let req = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("code1".to_string()),
+            redirect_uri: Some("https://cb".to_string()),
+            client_id: Some("client1".to_string()),
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            device_code: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
+        };
+        let res = handle_token(
+            req,
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients.clone(),
+                codes.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &test_tokens(),
+        )
+        .await;
+        assert_eq!(res.unwrap_err().error, "invalid_grant");
     }
 
     #[tokio::test]
