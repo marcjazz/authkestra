@@ -18,10 +18,10 @@ Like the OP Server, the Resource Server is an advanced component and is not incl
 
 ```toml
 [dependencies]
-authkestra-resource = "0.4.0"
-authkestra-axum = { version = "0.4", features = ["resource"] }
+authkestra-resource = "0.6"
+authkestra-axum = { version = "0.6", features = ["resource"] }
 # Or if using Actix:
-# authkestra-actix = { version = "0.4", features = ["resource"] }
+# authkestra-actix = { version = "0.6", features = ["resource"] }
 ```
 
 ### TLS Backend Selection
@@ -30,7 +30,7 @@ Outbound HTTP requests for JWKS discovery require a TLS backend. Authkestra enab
 
 ```toml
 [dependencies]
-authkestra-resource = { version = "0.4.0", default-features = false, features = ["rustls-no-provider"] }
+authkestra-resource = { version = "0.6", default-features = false, features = ["rustls-no-provider"] }
 ```
 
 ## Building with Authkestra Guard
@@ -73,7 +73,16 @@ let advanced_config = ValidationConfig::builder()
 
 ### 2. Flexible Strategy Chaining
 
-The `Guard` builder allows you to chain multiple strategies together. A request passes if *any* of the chained strategies successfully validate it (e.g., accepting an OIDC JWT *or* an API key).
+The `Guard` builder allows you to chain multiple strategies together. Under the default policy —
+`AuthPolicy::FirstSuccess` — a request passes if *any* of the chained strategies successfully
+validates it (e.g., accepting an OIDC JWT *or* an API key). `AuthPolicy::AllSuccess` and
+`AuthPolicy::FailFast` are the alternatives; pass one to `.policy(...)` to override.
+
+`ApiKeyStrategy` below is illustrative, not something Authkestra ships. Any type implementing
+`authkestra_engine::strategy::AuthenticationStrategy<I>` slots into the chain — the trait is a
+single `async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError>`, where
+`Ok(None)` means "no credentials of my kind here, try the next strategy" and `Err` fails the
+whole chain.
 
 <Tabs>
 <TabItem label="Axum" icon="seti:rust">

@@ -18,7 +18,10 @@ Add the `authkestra-devsig` crate to your dependencies:
 
 ```toml
 [dependencies]
-authkestra-devsig = "0.3.0"
+authkestra-devsig = "0.6"
+# ...plus the `devsig` feature on whichever adapter you use:
+authkestra-axum = { version = "0.6", features = ["devsig"] }
+# authkestra-actix = { version = "0.6", features = ["devsig"] }
 ```
 
 ## How to use `authkestra-devsig`
@@ -30,17 +33,26 @@ The easiest way to use `authkestra-devsig` is via the official web framework int
 To start, construct the `DevSig` configuration state using the unified typestate builder. You will need a `VerifierConfig`, an `IssuerJwks` (a JWKS cache of the issuers trusted to mint attestations), and a `ReplayStore` (to protect against replay attacks).
 
 ```rust
-use authkestra_devsig::{DevSig, VerifierConfig, IssuerJwks, replay::InMemoryReplayStore};
+use authkestra_devsig::{DevSig, InMemoryReplayStore, IssuerJwks, ReplayStore, VerifierConfig};
+use jsonwebtoken::Algorithm;
 use std::sync::Arc;
+use std::time::Duration;
 
-let config = VerifierConfig {
-    max_clock_skew_secs: 5,
-    max_request_age_secs: 60,
-    attestation_issuers: vec!["https://op.example.test".to_string()],
-};
+// `VerifierConfig` is `#[non_exhaustive]`, so build it with `new(...)` rather than a
+// struct literal. Arguments, in order:
+//   trusted_issuers, allowed_algs, max_clock_skew, max_signature_lifetime, audience
+let config = VerifierConfig::new(
+    ["https://op.example.test"],
+    [Algorithm::ES256, Algorithm::EdDSA],
+    Duration::from_secs(5),
+    Duration::from_secs(60),
+    "https://api.example.test",
+);
 
-let jwks = IssuerJwks::new();
-let replay_store = Arc::new(InMemoryReplayStore::new());
+// The JWKS cache does no network I/O of its own — populate it with
+// `jwks.insert(issuer, kid, jwk).await` from wherever you fetch and refresh keys.
+let jwks = Arc::new(IssuerJwks::new());
+let replay_store: Arc<dyn ReplayStore> = Arc::new(InMemoryReplayStore::new());
 
 let devsig = DevSig::builder()
     .config(config)
@@ -48,6 +60,12 @@ let devsig = DevSig::builder()
     .replay_store(replay_store)
     .build();
 ```
+
+:::caution
+`allowed_algs` is asymmetric-only. `VerifierConfig::new` silently drops any HMAC algorithm you
+pass, and `verify()` rejects the whole HMAC family regardless — the device's private key never
+leaves the device, so there is no symmetric secret a verifier could legitimately share.
+:::
 
 ### 2. Wiring the Middleware
 
@@ -94,3 +112,10 @@ HttpServer::new(move || {
 </Tabs>
 
 By verifying the signature, you ensure that the request was genuinely initiated by the enrolled device, providing high-assurance authentication suitable for sensitive operations.
+
+Complete, runnable versions of both wirings live in the repository:
+
+```bash
+cargo run -p authkestra --example axum_devsig --all-features
+cargo run -p authkestra --example actix_devsig --all-features
+```

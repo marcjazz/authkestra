@@ -15,7 +15,7 @@ Ensure you have enabled the correct web framework feature on the `authkestra` cr
 
 ```toml
 [dependencies]
-authkestra = { version = "0.3", features = ["axum", "session"] }
+authkestra = { version = "0.6", features = ["axum", "session"] }
 ```
 
   </TabItem>
@@ -23,7 +23,7 @@ authkestra = { version = "0.3", features = ["axum", "session"] }
 
 ```toml
 [dependencies]
-authkestra = { version = "0.3", features = ["actix", "session"] }
+authkestra = { version = "0.6", features = ["actix", "session"] }
 ```
 
   </TabItem>
@@ -56,20 +56,23 @@ pub async fn my_handler(
   </TabItem>
   <TabItem label="Actix-web" icon="seti:rust">
 
+Actix extractors reject with `actix_web::Error`, so the idiomatic form here is `Option<AuthSession>`
+(or `Result<AuthSession, actix_web::Error>`) — there is no `ActixError` type.
+
 ```rust
-use authkestra::actix::{AuthSession, ActixError};
+use authkestra::actix::AuthSession;
 use actix_web::{get, HttpResponse, Responder};
 
 #[get("/api/user")]
-async fn get_user(session: Result<AuthSession, ActixError>) -> impl Responder {
+async fn get_user(session: Option<AuthSession>) -> impl Responder {
     match session {
-        Ok(AuthSession(session_data)) => HttpResponse::Ok().json(
+        Some(AuthSession(session_data)) => HttpResponse::Ok().json(
             serde_json::json!({
                 "message": "Welcome!",
                 "user_id": session_data.identity.external_id,
             })
         ),
-        Err(_) => HttpResponse::Unauthorized().json(
+        None => HttpResponse::Unauthorized().json(
             serde_json::json!({ "error": "Not authenticated" })
         ),
     }
@@ -106,19 +109,19 @@ pub async fn token_protected_handler(
   <TabItem label="Actix-web" icon="seti:rust">
 
 ```rust
-use authkestra::actix::{AuthToken, ActixError};
+use authkestra::actix::AuthToken;
 use actix_web::{get, HttpResponse, Responder};
 
 #[get("/api/protected")]
-async fn get_protected(token: Result<AuthToken, ActixError>) -> impl Responder {
+async fn get_protected(token: Option<AuthToken>) -> impl Responder {
     match token {
-        Ok(AuthToken(claims)) => HttpResponse::Ok().json(
+        Some(AuthToken(claims)) => HttpResponse::Ok().json(
             serde_json::json!({
                 "message": "Valid Token!",
                 "sub": claims.sub,
             })
         ),
-        Err(_) => HttpResponse::Unauthorized().json(
+        None => HttpResponse::Unauthorized().json(
             serde_json::json!({ "error": "Invalid token" })
         ),
     }
@@ -129,7 +132,7 @@ async fn get_protected(token: Result<AuthToken, ActixError>) -> impl Responder {
 
 ## Router Setup
 
-To wire up standard authentication endpoints automatically, use `axum_router()` / `axum_router_stateless()` for Axum, or `actix_router()` / `actix_router_stateless()` for Actix-web on the built `Engine`.
+To wire up standard authentication endpoints automatically, use `axum_router()` / `axum_router_stateless()` for Axum, or `actix_scope()` / `actix_scope_stateless()` for Actix-web on the built `Engine`. The Axum methods return an `axum::Router`; the Actix methods return an `actix_web::Scope` you mount with `.service(...)`.
 
 <Tabs>
   <TabItem label="Axum" icon="seti:rust">
@@ -158,13 +161,24 @@ let app = Router::new()
   <TabItem label="Actix-web" icon="seti:rust">
 
 ```rust
-use actix_web::{web, App, HttpServer};
-use authkestra::actix::ActixExt;
+use actix_web::{App, HttpServer};
+use authkestra::actix::{ActixExt, ActixState};
+use authkestra::core::AkWebAppEngine;
+
+#[derive(Clone, ActixState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkWebAppEngine,
+}
+
+let state = AppState { auth: auth_engine };
 
 HttpServer::new(move || {
+    let app_state = state.clone();
+    let config_state = app_state.clone();
     App::new()
-        .app_data(web::Data::new(auth_engine.clone()))
-        .configure(|cfg| auth_engine.actix_router(cfg))
+        .configure(move |cfg| config_state.configure_authkestra(cfg))
+        .service(app_state.auth.actix_scope())
 })
 ```
 

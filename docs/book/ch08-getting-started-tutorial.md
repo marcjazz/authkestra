@@ -1,6 +1,13 @@
 # Chapter 8: Getting Started Tutorial
 
-Welcome to the Authkestra getting started guide! This chapter provides a highly practical "Hello World" tutorial that walks you through setting up `Engine` in a basic web application. We'll use the popular `axum` framework for this example, but the concepts apply similarly to `actix-web`.
+Welcome to the Authkestra getting started guide! This chapter walks you through wiring an
+`Engine` into a basic web application. We'll use `axum` here, but the engine construction is
+byte-for-byte identical for `actix-web` — only the adapter call at the end differs.
+
+> The canonical, always-compiled version of this tutorial is
+> `crates/authkestra/examples/axum_basic_setup.rs`. If anything below disagrees with it, the
+> example is right — run it with
+> `cargo run -p authkestra --example axum_basic_setup --all-features`.
 
 ## Prerequisites
 
@@ -18,104 +25,149 @@ cargo new authkestra-hello-world
 cd authkestra-hello-world
 ```
 
-Add the necessary dependencies to your `Cargo.toml`:
+Add the dependencies to your `Cargo.toml`. The `authkestra` facade re-exports the rest of the
+workspace behind feature flags; you also want `authkestra-engine` directly for the store types:
 
 ```toml
 [dependencies]
-tokio = { version = "1.0", features = ["full"] }
-axum = "0.7"
-authkestra-core = { version = "0.1", features = ["axum"] }
-# Include necessary providers if needed, e.g.:
-# authkestra-providers-github = "0.1"
+authkestra = { version = "0.6", features = ["axum", "session"] }
+authkestra-axum = { version = "0.6", features = ["macros", "session"] }
+authkestra-engine = { version = "0.6", features = ["session", "memory"] }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-cookies = "0.11"
+serde_json = "1"
 ```
 
-## Step 2: Initialize Engine
+## Step 2: Build the Engine
 
-The core of Authkestra is the `Engine`. Let's initialize it in our `main.rs`. For this tutorial, we will set up a basic in-memory configuration.
+The core of Authkestra is the `Engine`, constructed through a **typestate builder**. Methods only
+exist once their prerequisite has been supplied — calling a session API on an engine built
+without `.session_store()` is a compile error, not a runtime panic.
 
-```rust
-use axum::{routing::get, Router};
-use authkestra_core::engine::{Engine, EngineConfig};
-use authkestra_core::providers::LocalProvider;
+`AkWebAppEngine` is the alias for a session-configured engine. Using the alias, rather than
+spelling out the typestate generics, keeps the compiler error legible when a builder call is
+missing.
+
+```rust,ignore
+use authkestra::Authkestra;
+use authkestra_axum::{AuthSession, AxumExt, AxumState};
+use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::{AkWebAppEngine, SessionConfig, SessionStore};
+use axum::{response::Json, routing::get, Router};
+use serde_json::json;
 use std::sync::Arc;
+use tower_cookies::CookieManagerLayer;
+
+/// The `AxumState` derive generates every `FromRef` impl the extractors need.
+#[derive(Clone, AxumState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkWebAppEngine,
+}
 
 #[tokio::main]
 async fn main() {
-    // 1. Configure the engine
-    let config = EngineConfig::default()
-        .with_secret_key("super_secret_development_key_do_not_use_in_prod");
+    // 1. Pick a storage backend. `SessionStore` is a trait, so swapping `MemoryStore`
+    //    for `RedisStore` or `SqlKvStore` is a one-line change. The explicit
+    //    `Arc<dyn SessionStore>` annotation is what coerces the concrete store into
+    //    the trait object `.session_store()` expects.
+    let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 
-    // 2. Instantiate the engine and add providers
-    let mut engine = Engine::new(config);
+    // 2. Build the engine.
+    let engine = Authkestra::builder()
+        .session_store(session_store)
+        .session_config(SessionConfig {
+            secure: false, // plain HTTP for local development
+            ..Default::default()
+        })
+        .build();
 
-    // Add a local email/password provider for demonstration
-    engine.add_provider(LocalProvider::new());
+    let state = AppState { auth: engine.clone() };
 
-    let engine = Arc::new(engine);
-
-    // 3. Set up the Axum router
+    // 3. Mount the engine's routes. `axum_router()` wires
+    //    `/auth/login/{provider}`, `/auth/callback/{provider}` and `/auth/logout`.
     let app = Router::new()
         .route("/", get(|| async { "Hello, Authkestra!" }))
-        // Mount Authkestra routes under /auth
-        .nest("/auth", authkestra_axum::routes(engine.clone()))
-        // Use the engine as state if needed in other routes
-        .with_state(engine);
+        .route("/api/user", get(get_user))
+        .merge(engine.axum_router())
+        .layer(CookieManagerLayer::new())
+        .with_state(state);
 
-    // 4. Run the server
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("Server running on http://localhost:3000");
     axum::serve(listener, app).await.unwrap();
 }
 ```
 
-## Step 3: Run the Application
+Note that no provider is registered yet — this step is about the *session* half of the engine.
+`CookieManagerLayer` is required: the session and OAuth-state cookies are read through
+`tower-cookies`.
 
-Run your application using Cargo:
+## Step 3: Protect a Route
+
+Use the `AuthSession` extractor. Taking it as `Option<AuthSession>` lets you return your own
+response for the unauthenticated case instead of the adapter's default rejection:
+
+```rust,ignore
+async fn get_user(session: Option<AuthSession>) -> Json<serde_json::Value> {
+    match session {
+        Some(AuthSession(session)) => Json(json!({
+            "id": session.identity.external_id,
+            "email": session.identity.email,
+        })),
+        None => Json(json!({ "error": "not authenticated" })),
+    }
+}
+```
+
+## Step 4: Run It
 
 ```bash
 cargo run
 ```
 
-You should see `Server running on http://localhost:3000`.
+You should see `Server running on http://localhost:3000`. `GET /api/user` returns
+`{"error":"not authenticated"}` until a session cookie exists — which brings us to providers.
 
-## Exploring the Endpoints
+## Adding OAuth2
 
-By mounting the Authkestra routes under `/auth`, you immediately gain access to standard authentication flows.
+An OAuth provider is registered as a `Flow`, not as a bare provider: wrap it in an `OAuth2Flow`.
+The provider's own `provider_id()` (here, `"github"`) is what the `{provider}` path segment
+matches against, so this registration is what makes `/auth/login/github` resolve.
 
-- **Login**: Navigate to `http://localhost:3000/auth/login` (if UI is enabled) or use the API endpoint `POST /auth/login`.
-- **Register**: `POST /auth/register` (for local providers).
+```rust,ignore
+use authkestra_engine::OAuth2Flow;
+use authkestra_providers::github::GithubProvider;
 
-## Adding OAuth2 (Optional)
-
-Adding an OAuth2 provider like GitHub is just a few extra lines:
-
-```rust
-use authkestra_providers_github::GitHubProvider;
-
-// Inside main, before wrapping engine in Arc:
-let github_provider = GitHubProvider::new(
-    std::env::var("GITHUB_CLIENT_ID").unwrap(),
-    std::env::var("GITHUB_CLIENT_SECRET").unwrap(),
+let github = GithubProvider::new(
+    std::env::var("AUTHKESTRA_GITHUB_CLIENT_ID").unwrap(),
+    std::env::var("AUTHKESTRA_GITHUB_CLIENT_SECRET").unwrap(),
+    // Must exactly match the callback URL registered with GitHub.
+    "http://localhost:3000/auth/callback/github".to_string(),
 );
-engine.add_provider(github_provider);
+
+let engine = Authkestra::builder()
+    .provider(OAuth2Flow::new(github))
+    .session_store(session_store)
+    .build();
 ```
 
-## Securing a Route
+Add `authkestra = { version = "0.6", features = ["axum", "session", "github"] }` to pull in the
+provider. Registering a second provider is another `.provider(...)` call — the same two routes
+serve both, resolved at runtime.
 
-To protect a route, you can use Authkestra's provided extractors or middleware to ensure the user is authenticated.
+The full version of this is
+`crates/authkestra/examples/axum_oauth2_github.rs`:
 
-```rust
-use authkestra_axum::extract::RequireAuth;
-use axum::response::IntoResponse;
-
-async fn protected_profile(user: RequireAuth) -> impl IntoResponse {
-    format!("Hello, user {}!", user.id())
-}
-
-// In router:
-// .route("/profile", get(protected_profile))
+```bash
+AUTHKESTRA_GITHUB_CLIENT_ID=... AUTHKESTRA_GITHUB_CLIENT_SECRET=... \
+  cargo run -p authkestra --example axum_oauth2_github --all-features
 ```
 
 ## Conclusion
 
-You've successfully integrated Authkestra into a basic Rust web application! From here, you can explore adding persistent storage adapters, implementing custom authorization policies, or adding more identity providers.
+You've integrated Authkestra into a basic Rust web application. From here, explore swapping in a
+persistent store (Chapter 6), protecting an API with the `Guard` and JWT strategies, or standing
+up your own OpenID Provider with `authkestra-op`. Every scenario has a runnable counterpart under
+`crates/authkestra/examples/`.

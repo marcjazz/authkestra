@@ -20,11 +20,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-actix = "0.2.0"
-authkestra-engine = "0.2.0"
-authkestra-token = "0.2.0"
+authkestra-actix = { version = "0.6", features = ["session", "token"] }
+authkestra-engine = { version = "0.6", features = ["session", "memory"] }
 actix-web = "4"
 ```
+
+Token support lives in `authkestra-engine` behind its `token` feature; there is no separate
+`authkestra-token` crate.
 
 ### Extractors
 
@@ -128,15 +130,26 @@ For **SPA (Single Page Application)** use cases where you want to receive a JWT 
 3. The frontend then performs a **POST** (or GET) request to your backend's callback endpoint (e.g., `/api/auth/callback`) with these parameters.
 4. The backend uses `handle_oauth_callback_jwt` to exchange the code for a JWT and returns it to the frontend.
 
-```rust
-use authkestra_actix::{initiate_oauth_login, handle_oauth_callback, logout, SessionConfig, OAuthCallbackParams};
+These live in the `helpers` module (`authkestra_actix::helpers::*`); only the pre-built
+`actix_login_handler` / `actix_callback_handler` / `actix_logout_handler` are re-exported at the
+crate root.
+
+```rust,ignore
+use authkestra_actix::helpers::{
+    handle_oauth_callback, initiate_oauth_login, logout, OAuthCallbackParams, SessionConfig,
+};
 use actix_web::{web, HttpRequest, HttpResponse, get};
 use std::sync::Arc;
 
+// `OAuth2Flow` is generic over the provider and an optional user mapper (which
+// defaults to `()`); the alias keeps the handler signatures readable.
+type GithubFlow = OAuth2Flow<GithubProvider>;
+
 // 1. Initiate Login
 #[get("/login")]
-async fn login(flow: web::Data<OAuth2Flow>, config: web::Data<SessionConfig>) -> HttpResponse {
-    initiate_oauth_login(&flow, &config, &["user:email"])
+async fn login(flow: web::Data<GithubFlow>, config: web::Data<SessionConfig>) -> HttpResponse {
+    // (flow, scopes, config, success_url)
+    initiate_oauth_login(&flow, &["user:email"], &config, None)
 }
 
 // 2. Handle Callback (Server-Side Session)
@@ -144,7 +157,7 @@ async fn login(flow: web::Data<OAuth2Flow>, config: web::Data<SessionConfig>) ->
 async fn callback(
     req: HttpRequest,
     params: web::Query<OAuthCallbackParams>,
-    flow: web::Data<OAuth2Flow>,
+    flow: web::Data<GithubFlow>,
     store: web::Data<Arc<dyn SessionStore>>,
     config: web::Data<SessionConfig>,
 ) -> Result<HttpResponse, actix_web::Error> {
@@ -173,17 +186,17 @@ async fn sign_out(
 
 To use the extractors and helpers, you must configure your Actix app with the necessary data:
 
-```rust
+```rust,ignore
 use actix_web::{web, App, HttpServer};
-use authkestra_actix::SessionConfig;
-use authkestra_engine::MemoryStore;
-use authkestra_token::TokenManager;
+use authkestra_actix::{SessionConfig, SessionStore, TokenManager};
+use authkestra_engine::store::memory::MemoryStore;
 use std::sync::Arc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::new());
-    let token_manager = Arc::new(TokenManager::new("your-secret".to_string()));
+    let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
+    // `TokenManager::new(secret: &[u8], issuer: Option<String>)`
+    let token_manager = Arc::new(TokenManager::new(b"your-secret", None));
     let session_config = SessionConfig::default();
 
     HttpServer::new(move || {
@@ -207,8 +220,8 @@ network call.
 
 ```toml
 [dependencies]
-authkestra-actix = { version = "0.3", features = ["devsig"] }
-authkestra-devsig = "0.1.0"
+authkestra-actix = { version = "0.6", features = ["devsig"] }
+authkestra-devsig = "0.6"
 ```
 
 ```rust,ignore
@@ -234,11 +247,12 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-See [`crates/authkestra-actix/examples/devsig/`](examples/devsig/) for a complete, runnable
-example:
+See
+[`crates/authkestra/examples/actix_devsig/`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/actix_devsig)
+for a complete, runnable example (all examples live in the `authkestra` facade crate):
 
 ```bash
-cargo run -p authkestra-actix --example actix_devsig --features devsig
+cargo run -p authkestra --example actix_devsig --all-features
 ```
 
 ## Part of authkestra

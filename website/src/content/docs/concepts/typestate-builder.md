@@ -24,9 +24,10 @@ When you call `Authkestra::builder()`, it starts in an empty state. As you appen
 Consider building an engine that issues sessions. If you attempt to invoke session-related handler generation without first providing a `SessionStore`, the compiler will reject it.
 
 ```rust
-use authkestra::flow::{Engine, OAuth2Flow};
-use authkestra_providers::github::GithubProvider;
+use authkestra::Authkestra;
 use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::{OAuth2Flow, SessionStore};
+use authkestra_providers::github::GithubProvider;
 use std::sync::Arc;
 
 // 1. Initialize a Provider
@@ -36,12 +37,20 @@ let github_provider = GithubProvider::new(
     "URI".to_string()
 );
 
+let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
+
 // 2. Build the Engine
 let auth_engine = Authkestra::builder()
     .provider(OAuth2Flow::new(github_provider))
     // If you omit this line, methods reliant on a session store won't exist!
-    .session_store(Arc::new(MemoryStore::default())) 
+    .session_store(session_store)
     .build();
 ```
+
+The typestate lives in the two generic parameters of `Engine<S, T>` — the session-store slot and
+the token-manager slot — each of which is either `Missing` or `Configured<_>`. The aliases
+`AkWebAppEngine` (sessions), `AkApiEngine` (tokens) and `AkEngine` (both) name the combinations
+you are most likely to store in your application state, and are far more readable in a compiler
+error than the expanded generics.
 
 By leveraging this pattern, Authkestra provides an incredibly robust Developer Experience (DX). You can confidently rely on cargo and rust-analyzer to guide you through a correct, secure authentication setup.

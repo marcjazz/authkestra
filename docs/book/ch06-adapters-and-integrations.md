@@ -1,6 +1,6 @@
 # Chapter 6: Adapters and Integrations
 
-To be truly framework-agnostic, the core engine must not know about HTTP requests or specific database connections. Adapters bridge this gap. Our architecture strictly separates interfaces from implementations—for example, treating `authkestra-session` purely as a contract by default, while implementations plug in dynamically via feature flags (e.g., `memory`, `redis`).
+To be truly framework-agnostic, the core engine must not know about HTTP requests or specific database connections. Adapters bridge this gap. Our architecture strictly separates interfaces from implementations—for example, `authkestra-engine`'s `store` module defines the `KvStore`/`SessionStore` contracts unconditionally, while the implementations plug in dynamically via feature flags (e.g., `memory`, `redis`).
 
 ## Web Framework Adapters
 
@@ -13,9 +13,11 @@ These are not just loose helpers, but robust, native-feeling extensions providin
 
 ### Supported Session Providers
 
-- **Memory** (`memory` feature in `authkestra-session`) for local development.
-- **Redis** (`redis` feature in `authkestra-session`) via `redis-rs`.
-- **SQL** (`sql-postgres`, `sql-mysql` features in `authkestra-session`) for Postgres, MySQL.
+All three live in `authkestra-engine`'s `store` module, behind features on that crate:
+
+- **Memory** (`memory` feature) for local development.
+- **Redis** (`redis` feature) via `redis-rs`.
+- **SQL** (`sql-postgres`, `sql-mysql`, `sql-sqlite` features) for Postgres, MySQL and SQLite.
 
 ## Database Adapters
 
@@ -41,10 +43,10 @@ middleware" split as the rest of this chapter:
   check), calls `authkestra_devsig::verify`, and injects the verified identity into request
   extensions on success — or short-circuits with `401`/`413` on failure. The
   `AuthDeviceSignature` extractor reads that identity back out via `FromRequestParts`. See
-  `crates/authkestra-axum/examples/devsig/` for a runnable example.
+  `crates/authkestra/examples/axum_devsig/` for a runnable example.
 - **Actix Web** (`authkestra-actix`, `devsig` feature): `DeviceSignatureAuth` is the equivalent
   `actix_web::dev::Transform` middleware, with an `AuthDeviceSignature` extractor implementing
-  `FromRequest`. See `crates/authkestra-actix/examples/devsig/` for a runnable example.
+  `FromRequest`. See `crates/authkestra/examples/actix_devsig/` for a runnable example.
 
 Both adapters buffer the whole body before verification (never just streaming it through) —
 buffering is a deliberate, explicitly-capped memory trade-off, because the `bdh` check needs the
@@ -117,8 +119,8 @@ trait — implemented as a blanket impl over any `KvStore` + `AtomicConsume`
 backend, so Redis/SQL/in-memory all work via the same mechanism session and
 OP data already use elsewhere in this chapter.
 
-See `crates/authkestra/examples/axum/op_server_attestation.rs` and
-`crates/authkestra/examples/actix/op_server_attestation.rs` for a
+See `crates/authkestra/examples/axum_op_server_attestation.rs` and
+`crates/authkestra/examples/actix_op_server_attestation.rs` for a
 self-contained, runnable walkthrough of enrolment and re-issuance end to end
 (no external services required — the challenge store is an in-memory
 `MemoryStore` for the example).

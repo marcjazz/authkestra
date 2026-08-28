@@ -19,8 +19,9 @@ This crate provides Axum-specific extractors and helpers to easily integrate the
 - **Session Management**:
   - `logout`: Clears the session cookie and removes it from the store.
   - `SessionConfig`: Customizable session settings (cookie name, secure, http_only, etc.).
-- **Macros**:
-  - `FromRef`: Automatically generate `FromRef` implementations for your application state.
+- **Macros** (`macros` feature):
+  - `AxumState`: derive macro that generates the `axum::extract::FromRef` implementations your
+    application state needs (re-exported from `authkestra-macros`).
 - **Device-Bound Signature Authentication** (`devsig` feature):
   - `DeviceSignatureLayer`: a `tower::Layer` that verifies `X-Signature` + `X-Attestation`
     headers (per-request proof-of-possession, no session store, no per-request network call —
@@ -34,26 +35,25 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.3", features = ["macros"] }
-tower-cookies = "0.10" # Required for session support
+authkestra-axum = { version = "0.6", features = ["macros", "session"] }
+tower-cookies = "0.11" # Required for session support
 ```
 
-### Quick Start with FromRef (Recommended)
+### Quick Start with AxumState (Recommended)
 
-The easiest way to integrate Authkestra with custom Axum state is using the `FromRef` macro:
+The easiest way to integrate Authkestra with custom Axum state is using the `AxumState` derive
+macro. Mark the engine field with `#[authkestra(engine)]`; the macro derives every `FromRef`
+impl the extractors below require.
 
-```rust
+```rust,ignore
 use axum::{routing::get, Router};
-use authkestra_axum::{AuthSession, FromRef};
-use authkestra::flow::Engine;
-use authkestra_flow::{Configured, Missing};
-use authkestra_engine::SessionStore;
+use authkestra_axum::{AuthSession, AxumExt, AxumState};
+use authkestra_engine::AkWebAppEngine;
 use tower_cookies::CookieManagerLayer;
-use std::sync::Arc;
 
 #[derive(Clone, AxumState)]
 struct AppState {
-    #[authkestra]
+    #[authkestra(engine)]
     auth: AkWebAppEngine,
     // other fields...
 }
@@ -72,13 +72,14 @@ fn app(state: AppState) -> Router {
 
 ### Manual Integration
 
-If you prefer not to use the macro or need more control, you can manually implement the required traits:
+If you prefer not to use the macro or need more control, you can manually implement the required
+traits. Note that `AuthSession` asks the state for a `Result<Arc<dyn SessionStore>, AxumError>`,
+not a bare `Arc<dyn SessionStore>` — that is what lets a typestate-incomplete engine surface a
+runtime error instead of failing to compile at the extractor:
 
-```rust
-use axum::{routing::get, Router, extract::FromRef};
-use authkestra_axum::{AuthSession, SessionConfig, Error};
-use authkestra_engine::SessionStore;
-use tower_cookies::CookieManagerLayer;
+```rust,ignore
+use axum::extract::FromRef;
+use authkestra_axum::{AxumError, SessionConfig, SessionStore};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -87,9 +88,9 @@ struct AppState {
     session_config: SessionConfig,
 }
 
-impl FromRef<AppState> for Arc<dyn SessionStore> {
+impl FromRef<AppState> for Result<Arc<dyn SessionStore>, AxumError> {
     fn from_ref(state: &AppState) -> Self {
-        state.session_store.clone()
+        Ok(state.session_store.clone())
     }
 }
 
@@ -104,12 +105,12 @@ impl FromRef<AppState> for SessionConfig {
 
 The `Auth<I>` extractor allows you to use a central `Guard` that can try multiple authentication methods in order.
 
-```rust
+```rust,ignore
 use axum::{routing::get, Router, extract::FromRef};
 use authkestra_axum::Auth;
 use authkestra_resource::{Guard, AuthPolicy};
 use authkestra_resource::jwt::JwtStrategy;
-use authkestra_engine::SessionStrategy;
+use authkestra_engine::auth::strategy::SessionStrategy;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -129,7 +130,9 @@ impl FromRef<AppState> for Arc<Guard<User>> {
 fn app() -> Router {
     let guard = Guard::builder()
         .strategy(JwtStrategy::new(jwt_config))
-        .strategy(SessionStrategy::new(session_store, "session_cookie"))
+        // The first argument is a `SessionProvider`, i.e. your own mapping from a
+        // session id to your `User` type — not a raw `SessionStore`.
+        .strategy(SessionStrategy::new(session_provider, "session_cookie"))
         .policy(AuthPolicy::FirstSuccess)
         .build();
 
@@ -156,8 +159,8 @@ network call.
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.3", features = ["devsig"] }
-authkestra-devsig = "0.1.0"
+authkestra-axum = { version = "0.6", features = ["devsig"] }
+authkestra-devsig = "0.6"
 ```
 
 ```rust,ignore
@@ -176,11 +179,12 @@ async fn transfer_handler(AuthDeviceSignature(identity): AuthDeviceSignature) ->
 }
 ```
 
-See [`crates/authkestra-axum/examples/devsig/`](examples/devsig/) for a complete, runnable
-example:
+See
+[`crates/authkestra/examples/axum_devsig/`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples/axum_devsig)
+for a complete, runnable example (all examples live in the `authkestra` facade crate):
 
 ```bash
-cargo run -p authkestra-axum --example axum_devsig --features devsig
+cargo run -p authkestra --example axum_devsig --all-features
 ```
 
 ## Part of authkestra

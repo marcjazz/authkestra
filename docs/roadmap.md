@@ -27,17 +27,21 @@ This roadmap outlines the evolution of Authkestra into a next-generation identit
 
 ## 2. Architecture & Crate Structure
 
-**The Unified Engine:**
-- `authkestra-engine`: The central brain. Framework-agnostic. Implements the core orchestrator and traits.
+**The Unified Engine (shipped):**
+- `authkestra-engine`: The central brain. Framework-agnostic. Implements the core orchestrator
+  and traits, and carries session/token storage plus the pluggable backends (Redis, SQL, Memory)
+  behind feature flags — there is no separate `authkestra-session` crate.
 
 **Extension Ecosystem:**
-- `authkestra-webauthn`: PQC-ready hardware-backed authentication.
-- `authkestra-vc`: Verifiable Credentials & OIDC4VP implementation.
-- `authkestra-policy`: Fine-grained ReBAC/ABAC enforcement.
-- `authkestra-ssf`: Shared Signals Framework receiver/transmitter.
-- `authkestra-session`: Pluggable storage backends (Redis, SQL, Memory) gated by features.
+- *(shipped)* `authkestra-op`, `authkestra-devsig`, `authkestra-oidc`, `authkestra-providers`,
+  `authkestra-resource`, `authkestra-crypto-util`.
+- *(planned)* `authkestra-vc`: Verifiable Credentials & OIDC4VP implementation.
+- *(planned)* `authkestra-policy`: Fine-grained ReBAC/ABAC enforcement.
+- *(planned)* `authkestra-ssf`: Shared Signals Framework receiver/transmitter.
+- *(planned)* PQC-ready hardware-backed authentication; WebAuthn ships today inside
+  `authkestra-engine` behind the `webauthn` feature.
 
-**Adapters:**
+**Adapters (shipped):**
 - `authkestra-axum` / `authkestra-actix`: Native web framework integrations.
 
 ---
@@ -45,9 +49,9 @@ This roadmap outlines the evolution of Authkestra into a next-generation identit
 ## 3. Phased Roadmap
 
 ### Phase 1: Engine Consolidation & GNAP Prep
-- Merge `core`, `flow`, `token` into `authkestra-engine`.
-- Implement `Engine` builder with Typestate pattern.
-- Update `Flow` trait for GNAP compatibility.
+- ✅ Merge `core`, `flow`, `token` into `authkestra-engine`.
+- ✅ Implement `Engine` builder with Typestate pattern.
+- ⬜ Update `Flow` trait for GNAP compatibility.
 
 ### Phase 2: Quantum-Safe & Privacy-Preserving Auth
 - Support ML-DSA in WebAuthn.
@@ -67,4 +71,4 @@ This roadmap outlines the evolution of Authkestra into a next-generation identit
 ---
 
 ## 4. Community & Contribution
-We use RFCs for major architectural shifts. See `docs/rfc-002-next-gen-identity.md` (coming soon) for technical deep dives.
+We use RFCs for major architectural shifts. See [`docs/rfc-002-next-gen-identity.md`](./rfc-002-next-gen-identity.md) for technical deep dives.

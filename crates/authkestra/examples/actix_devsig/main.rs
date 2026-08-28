@@ -16,7 +16,7 @@
 //! Run with:
 //!
 //! ```bash
-//! cargo run -p authkestra-actix --example actix_devsig --features devsig
+//! cargo run -p authkestra --example actix_devsig --all-features
 //! ```
 //!
 //! A valid signed request looks like this (values are freshly minted on every run, hence the

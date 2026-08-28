@@ -2,45 +2,50 @@
 
 Procedural macros for [authkestra](https://github.com/marcjazz/authkestra).
 
-This crate provides procedural macros to eliminate boilerplate code when integrating the `authkestra` authentication framework into web applications, specifically targeting Axum application state.
+This crate provides procedural macros to eliminate boilerplate code when integrating the `authkestra` authentication framework into web applications.
 
 ## Features
 
-- **FromRef**: A derive macro that automatically generates the 4 required `FromRef` trait implementations for Axum.
+- **`AxumState`**: derive macro that generates the `axum::extract::FromRef` implementations Axum's extractors need.
+- **`ActixState`**: the Actix counterpart, generating a `configure_authkestra` method that registers the engine's pieces as `app_data`.
+- **`KvStore`**: derive macro that forwards the `authkestra_engine::store::KvStore` trait through a newtype wrapper.
+
+You normally do not depend on this crate directly — `authkestra-axum` and `authkestra-actix`
+re-export the relevant derive behind their own `macros` feature.
 
 ## Usage
 
-Add this to your `Cargo.toml`:
-
 ```toml
 [dependencies]
-authkestra-macros = "0.1.0"
+authkestra-axum = { version = "0.6", features = ["macros"] }
+# or, to depend on the macros directly:
+authkestra-macros = "0.6"
 ```
 
-### FromRef
+### AxumState / ActixState
 
-The `FromRef` macro is designed to work with the `Engine<S, T>` type from `authkestra-flow`. It automatically implements `FromRef` for the state, the session store, the session config, and the token manager.
+Both derives work on a struct holding an `Engine<S, T>` (or one of its aliases:
+`AkWebAppEngine`, `AkApiEngine`, `AkEngine`). Mark that field with `#[authkestra(engine)]`.
+Additional store fields can be marked with `#[authkestra(store)]` to get a `FromRef` impl for
+them too.
 
-```rust
-use authkestra_axum::FromRef;
-use authkestra::flow::Engine;
-use authkestra_flow::{Configured, Missing};
-use authkestra_engine::SessionStore;
-use std::sync::Arc;
+```rust,ignore
+use authkestra_axum::AxumState;
+use authkestra_engine::AkWebAppEngine;
 
 #[derive(Clone, AxumState)]
 struct AppState {
-    #[authkestra]
+    #[authkestra(engine)]
     auth: AkWebAppEngine,
     // Other application state...
 }
 ```
 
-This macro eliminates the need to manually implement `FromRef` for:
+For Axum, this eliminates the need to manually implement `FromRef` for:
 - `Engine<S, T>`
-- `Result<Arc<dyn SessionStore>, Error>` (if sessions are configured)
+- `Result<Arc<dyn SessionStore>, AxumError>` (if sessions are configured)
 - `SessionConfig`
-- `Result<Arc<TokenManager>, Error>` (if tokens are configured)
+- `Result<Arc<TokenManager>, AxumError>` (if tokens are configured)
 
 ## Part of authkestra
 

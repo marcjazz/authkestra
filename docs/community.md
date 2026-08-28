@@ -13,7 +13,7 @@ Welcome to the Authkestra community! This guide will help you get started as a c
 ## 🚀 Getting Started
 
 1. **Read the Vision**
-   - See [docs/README.md](./README.md) and [conversion.md](../conversion.md) for the big picture.
+   - See [docs/README.md](./README.md) and [rfc-002-next-gen-identity.md](./rfc-002-next-gen-identity.md) for the big picture.
 2. **Understand the Roadmap**
    - Review [docs/roadmap.md](./roadmap.md) for current and future milestones.
 3. **Pick an Area**

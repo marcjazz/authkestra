@@ -11,7 +11,7 @@ To use TOTP, enable the `totp` feature in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-engine = { version = "0.3", features = ["totp"] }
+authkestra-engine = { version = "0.6", features = ["totp"] }
 ```
 
 ## Configuration
@@ -21,14 +21,20 @@ In Authkestra, TOTP is implemented via the `TotpAuthMethod` struct. You initiali
 Because a 6-digit TOTP code alone is generally insufficient as a primary credential, it is strongly recommended to register TOTP as an **MFA-only** method. You do this by registering it with the `EngineBuilder` using `.with_mfa_method()`.
 
 ```rust
+use authkestra::Authkestra;
 use authkestra_engine::auth::totp::TotpAuthMethod;
-use authkestra_engine::engine::Engine;
 
 // `my_store` implements the `CredentialStore` trait (e.g. `SqlxCredentialStore`)
 let engine = Authkestra::builder()
     .with_mfa_method(TotpAuthMethod::new(my_store)) // Step-up only!
     .build();
 ```
+
+:::note
+`EngineBuilder::with_totp(store)` also exists, but it registers TOTP as a *primary*
+`AuthMethod`. Use `.with_mfa_method(TotpAuthMethod::new(store))` as shown above when you want the
+step-up-only behaviour described here.
+:::
 
 By registering it this way, the Engine will automatically block any attempt to use TOTP directly for primary authentication (enforcing that it can only be submitted in an `MfaChallenge` after a primary method like a password is authenticated).
 

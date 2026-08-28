@@ -11,7 +11,7 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 # Use the facade with the features you need
-authkestra = { version = "0.3", features = ["axum", "github"] }
+authkestra = { version = "0.6", features = ["axum", "github"] }
 ```
 
 For advanced users, individual crates are still available and can be used independently if preferred.
@@ -33,7 +33,7 @@ provider yourself:
 
 ```toml
 [dependencies]
-authkestra = { version = "0.3", default-features = false, features = ["axum", "github", "rustls-no-provider"] }
+authkestra = { version = "0.6", default-features = false, features = ["axum", "github", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 ```
 
@@ -65,16 +65,17 @@ check with `cargo tree -i aws-lc-rs -e features`.
 
 | Crate | Description |
 | --- | --- |
-| [`authkestra`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra/README.md)                                     | **Primary Facade**: Re-exports all other crates behind features.          |
-| [`authkestra-engine`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/README.md)                       | Foundational types, traits and the **Engine** orchestrator.           |
-| [`authkestra-resource`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-resource/README.md)                   | Resource server enforcement and validation (JWT, etc).                    |
-| [`authkestra-providers`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-providers/README.md)                 | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
-| [`authkestra-axum`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/README.md)                           | Axum-specific integration, including `AuthSession` extractors.            |
-| [`authkestra-actix`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-actix/README.md)                         | Actix-specific integration, including `State` macro support.    |
-| [`authkestra-oidc`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-oidc/README.md)                           | OpenID Connect discovery and provider support.                            |
-| [`authkestra-op`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-op/README.md)                               | OpenID Connect Provider (OP) implementation.                              |
-| [`authkestra-devsig`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-devsig/README.md)                       | Device-bound signature authentication (proof-of-possession + Issuer attestation). |
-| [`authkestra-macros`](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-macros/README.md)                       | Procedural macros for simplifying Authkestra integration.                 |
+| [`authkestra`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra)                     | **Primary Facade**: Re-exports all other crates behind features. Hosts the runnable examples. |
+| [`authkestra-engine`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-engine)       | Foundational types, traits and the **Engine** orchestrator.               |
+| [`authkestra-resource`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-resource)   | Resource server enforcement and validation (JWT, etc).                    |
+| [`authkestra-providers`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-providers) | Concrete implementation for OAuth providers (GitHub, Google, Discord).    |
+| [`authkestra-axum`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-axum)           | Axum-specific integration, including `AuthSession` extractors.            |
+| [`authkestra-actix`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-actix)         | Actix-specific integration, including `ActixState` macro support.         |
+| [`authkestra-oidc`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-oidc)           | OpenID Connect discovery and provider support.                            |
+| [`authkestra-op`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-op)               | OpenID Connect Provider (OP) implementation.                              |
+| [`authkestra-devsig`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-devsig)       | Device-bound signature authentication (proof-of-possession + Issuer attestation). |
+| [`authkestra-crypto-util`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-crypto-util) | Shared strict signature/key verification helpers used by the OP and devsig crates. |
+| [`authkestra-macros`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-macros)       | Procedural macros for simplifying Authkestra integration.                 |
 
 ## 🛠️ Usage
 
@@ -82,33 +83,51 @@ Authkestra utilizes a powerful **Typestate Builder Pattern** (`Engine::builder()
 
 ### Quick Start Example
 
-```rust
-use authkestra::flow::{Engine, OAuth2Flow};
+```rust,ignore
+use authkestra::Authkestra;
+use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::{OAuth2Flow, SessionStore};
 use authkestra_providers::github::GithubProvider;
+use std::sync::Arc;
 
 // The builder ensures compile-time safety for your authentication stack
 let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
+let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 
-let auth_engine = Engine::builder()
+let auth_engine = Authkestra::builder()
     .provider(OAuth2Flow::new(github_provider))
     .session_store(session_store)
     .build();
 ```
 
-To see complete, runnable examples for various frameworks and flows, check out the examples directory inside each crate:
+Every runnable example lives in the facade crate, under
+[`crates/authkestra/examples/`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra/examples),
+so a single `cargo run -p authkestra --example <name>` covers both frameworks. Each example's
+own module docs list the environment variables it needs.
 
-- [Axum Basic Setup](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/basic_setup.rs): `cargo run -p authkestra-axum --example basic_setup`
-- [Actix Basic Setup](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-actix/examples/basic_setup.rs): `cargo run -p authkestra-actix --example basic_setup`
-- [Axum with GitHub OAuth](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/oauth2_github.rs): `cargo run -p authkestra-axum --example oauth2_github`
-- [Axum with Google OIDC](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/oidc_google.rs): `cargo run -p authkestra-axum --example oidc_google`
-- [Axum with Redis Session](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/session_redis.rs): `cargo run -p authkestra-axum --example session_redis`
-- [Axum with SQL Store](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/sql_store.rs): `cargo run -p authkestra-axum --example sql_store`
+| Example | Command |
+| --- | --- |
+| Axum basic setup | `cargo run -p authkestra --example axum_basic_setup --all-features` |
+| Actix basic setup | `cargo run -p authkestra --example actix_basic_setup --all-features` |
+| Axum with GitHub OAuth | `cargo run -p authkestra --example axum_oauth2_github --all-features` |
+| Axum with Google OIDC | `cargo run -p authkestra --example axum_oidc_google --all-features` |
+| Axum stateless OAuth (JWT callback) | `cargo run -p authkestra --example axum_oauth_stateless --all-features` |
+| Axum with Redis session | `cargo run -p authkestra --example axum_session_redis --all-features` |
+| Axum with SQL store | `cargo run -p authkestra --example axum_sql_store --all-features` |
+| Axum resource server | `cargo run -p authkestra --example axum_resource_server --all-features` |
+| Axum OP server | `cargo run -p authkestra --example axum_op_server --all-features` |
+| Axum OP server on SQLx | `cargo run -p authkestra --example axum_op_server_sqlx --all-features` |
+| Axum OP server with device attestation | `cargo run -p authkestra --example axum_op_server_attestation --features full` |
+| Axum MFA server (TOTP + WebAuthn) | `cargo run -p authkestra --example axum_mfa_server --all-features` |
+| Axum device-bound signatures | `cargo run -p authkestra --example axum_devsig --all-features` |
+
+The Actix counterparts follow the same naming (`actix_oauth2_github`, `actix_op_server`,
+`actix_devsig`, …). Three protocol-level examples live in `authkestra-engine` instead, because
+they need no web framework at all:
+
 - [Client Credentials Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/client_credentials.rs): `cargo run -p authkestra-engine --example client_credentials`
 - [Device Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/device_flow.rs): `cargo run -p authkestra-engine --example device_flow`
 - [SD-JWT (Selective Disclosure)](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/sd_jwt.rs): `cargo run -p authkestra-engine --example sd_jwt`
-- [Axum Resource Server](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/resource_server.rs): `cargo run -p authkestra-axum --example resource_server`
-- [Axum OP Server](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/op_server.rs): `cargo run -p authkestra-axum --example op_server`
-- [Axum MFA Server (TOTP + WebAuthn)](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-axum/examples/mfa_server.rs): `cargo run -p authkestra-axum --example mfa_server`
 
 ## 🏗️ Technical Design Principles
 
