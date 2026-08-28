@@ -101,7 +101,19 @@ pub enum DpopError {
     AthMismatch,
     #[error("dpop proof thumbprint could not be computed: {0}")]
     ThumbprintFailed(String),
+    #[error("dpop proof jti is too long ({0} bytes, max {MAX_JTI_LEN})")]
+    JtiTooLong(usize),
 }
+
+/// The largest `jti` this module accepts. RFC 9449 places no length limit
+/// on `jti` itself, but this module documents it as a value callers pass
+/// straight through to a replay-guard store as a key — and the MySQL
+/// `AtomicInsert` backend's key column is `VARCHAR(255)` (see
+/// `crate::store::sql::session`), so an unbounded `jti` is a
+/// client-controlled way to make that store call fail. Rejecting it here,
+/// before any store is ever involved, is a single, explicit check rather
+/// than every possible backend needing its own truncation-or-error policy.
+const MAX_JTI_LEN: usize = 255;
 
 /// The DPoP proof's payload claims (RFC 9449 §4.2).
 #[derive(Debug, Deserialize)]
@@ -180,7 +192,10 @@ pub fn verify_dpop_proof(
         .get("alg")
         .and_then(Value::as_str)
         .ok_or_else(|| DpopError::UnsupportedAlgorithm("missing".to_string()))?;
-    if raw_alg.eq_ignore_ascii_case("none") || matches!(raw_alg, "HS256" | "HS384" | "HS512") {
+    if ["none", "HS256", "HS384", "HS512"]
+        .iter()
+        .any(|bad| raw_alg.eq_ignore_ascii_case(bad))
+    {
         return Err(DpopError::UnsupportedAlgorithm(raw_alg.to_string()));
     }
 
@@ -235,6 +250,10 @@ pub fn verify_dpop_proof(
     let data = jsonwebtoken::decode::<DpopClaims>(compact_jws, &decoding_key, &validation)
         .map_err(|e| DpopError::BadSignature(e.to_string()))?;
     let claims = data.claims;
+
+    if claims.jti.len() > MAX_JTI_LEN {
+        return Err(DpopError::JtiTooLong(claims.jti.len()));
+    }
 
     if !claims.htm.eq_ignore_ascii_case(expected_htm) {
         return Err(DpopError::WrongHtm);
@@ -307,10 +326,10 @@ fn expected_algorithm(jwk: &Jwk) -> Result<Algorithm, DpopError> {
 }
 
 /// Strips query and fragment from a URI for `htu` comparison (RFC 9449
-/// §4.3 step 6). Falls back to the original string, lowercased, if it does
-/// not parse as a URL at all — that failure mode still compares two
-/// unparsed strings consistently rather than panicking or silently
-/// accepting a mismatch.
+/// §4.3 step 6). Falls back to comparing the original, unmodified string
+/// (no case-folding or other normalization) if it does not parse as a URL
+/// at all — that failure mode still compares two unparsed strings
+/// consistently rather than panicking or silently accepting a mismatch.
 fn canonicalize_htu(uri: &str) -> String {
     match url::Url::parse(uri) {
         Ok(mut url) => {
@@ -527,6 +546,33 @@ mod tests {
         assert!(matches!(err, DpopError::WrongTyp));
     }
 
+    /// The algorithm-confusion gate (RFC 9449 requires an asymmetric
+    /// signature) rejects `alg: none` and every HMAC algorithm, regardless
+    /// of case — `alg_override` lets a test declare a header `alg` the
+    /// embedded (still-Ed25519) key never actually signs with, exercising
+    /// the peek-before-parse rejection in isolation from the key itself.
+    #[test]
+    fn rejects_alg_none_and_hmac_algorithms_case_insensitively() {
+        for bad_alg in ["none", "None", "NONE", "HS256", "hs256", "Hs384", "HS512"] {
+            let mut builder = ProofBuilder::new();
+            builder.alg_override = Some(bad_alg.to_string());
+            let proof = builder.build();
+
+            let err = verify_dpop_proof(
+                &proof,
+                "POST",
+                "https://as.example.com/token",
+                None,
+                chrono::Duration::seconds(60),
+            )
+            .expect_err(&format!("alg {bad_alg:?} must be refused"));
+            assert!(
+                matches!(err, DpopError::UnsupportedAlgorithm(_)),
+                "alg {bad_alg:?}: expected UnsupportedAlgorithm, got {err:?}"
+            );
+        }
+    }
+
     #[test]
     fn checks_ath_when_requested() {
         let mut builder = ProofBuilder::new();
@@ -668,6 +714,100 @@ mod tests {
         )
         .expect_err("a proof with no embedded jwk must be refused");
         assert!(matches!(err, DpopError::MissingOrInvalidJwk(_)));
+    }
+
+    /// Every other test in this module signs with Ed25519 via
+    /// `ProofBuilder`. ES256 (an EC P-256 key) is the algorithm most
+    /// real-world DPoP clients actually use, and exercises a genuinely
+    /// different code path: `expected_algorithm`'s `EllipticCurve` arm and
+    /// `jsonwebtoken`'s ECDSA verifier, neither of which the strict-EdDSA
+    /// gate (a no-op for non-OKP keys) touches at all.
+    #[test]
+    fn accepts_a_genuine_es256_proof() {
+        use jsonwebtoken::{Algorithm as JwtAlgorithm, EncodingKey, Header};
+        use p256::ecdsa::SigningKey as P256SigningKey;
+        use p256::elliptic_curve::{JwkEcKey, PublicKey as P256PublicKey};
+        use p256::pkcs8::EncodePrivateKey;
+        use rand_core::OsRng;
+
+        let signing_key = P256SigningKey::random(&mut OsRng);
+        let public_key: P256PublicKey<p256::NistP256> = signing_key.verifying_key().into();
+        let public_jwk: Jwk =
+            serde_json::from_value(serde_json::to_value(JwkEcKey::from(&public_key)).unwrap())
+                .expect("a p256 public JwkEcKey must parse as a jsonwebtoken Jwk");
+
+        let mut header = Header::new(JwtAlgorithm::ES256);
+        header.typ = Some("dpop+jwt".to_string());
+        header.jwk = Some(public_jwk);
+
+        let claims = serde_json::json!({
+            "htm": "POST",
+            "htu": "https://as.example.com/token",
+            "iat": chrono::Utc::now().timestamp(),
+            "jti": "es256-proof-1",
+        });
+
+        let pkcs8_der = signing_key.to_pkcs8_der().unwrap().as_bytes().to_vec();
+        let proof = jsonwebtoken::encode(&header, &claims, &EncodingKey::from_ec_der(&pkcs8_der))
+            .expect("encoding a genuine ES256 JWS must succeed");
+
+        let verified = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect("a genuine ES256 proof must be accepted");
+        assert_eq!(verified.jti, "es256-proof-1");
+    }
+
+    /// authkestra#277 review: a `jti` this module hands to a downstream
+    /// replay-guard store must not be unbounded — the MySQL `AtomicInsert`
+    /// backend's key column is `VARCHAR(255)`, so a longer `jti` would
+    /// otherwise fail there instead of being cleanly refused here.
+    #[test]
+    fn rejects_a_jti_longer_than_the_max() {
+        let mut builder = ProofBuilder::new();
+        builder.jti = "j".repeat(MAX_JTI_LEN + 1);
+        let proof = builder.build();
+
+        let err = verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect_err("an over-long jti must be refused");
+        assert!(matches!(err, DpopError::JtiTooLong(len) if len == MAX_JTI_LEN + 1));
+    }
+
+    #[test]
+    fn a_jti_at_exactly_the_max_length_is_accepted() {
+        let mut builder = ProofBuilder::new();
+        builder.jti = "j".repeat(MAX_JTI_LEN);
+        let proof = builder.build();
+
+        verify_dpop_proof(
+            &proof,
+            "POST",
+            "https://as.example.com/token",
+            None,
+            chrono::Duration::seconds(60),
+        )
+        .expect("a jti at exactly the max length must be accepted");
+    }
+
+    /// `canonicalize_htu`'s non-URL fallback compares the original strings
+    /// as-is — no case-folding, matching the (corrected) doc comment. Calls
+    /// the private function directly since there is no other way to
+    /// observe this branch: both sides of `verify_dpop_proof`'s comparison
+    /// always run through the same fallback together.
+    #[test]
+    fn canonicalize_htu_falls_back_to_exact_comparison_for_non_urls() {
+        assert_eq!(canonicalize_htu("not-a-url"), "not-a-url");
+        assert_ne!(canonicalize_htu("not-a-url"), canonicalize_htu("Not-A-Url"));
     }
 
     #[test]

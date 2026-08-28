@@ -91,6 +91,15 @@ required-features = ["totp", "sql-sqlite"]
 
 [dev-dependencies]
 
+# Test-only: generating real EC P-256 keypairs and ES256-signing DPoP
+# proofs with them, so token::dpop's tests exercise the actual EC path
+# (the algorithm most real-world DPoP clients use) rather than only
+# Ed25519. Already present in the dependency graph via jsonwebtoken's
+# `rust_crypto` feature; declared directly here so tests can construct
+# keys themselves — mirrors authkestra-op's identical dev-dependency,
+# added there for the same reason (enrolment ceremony tests).
+p256 = { version = "0.13", features = ["jwk"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 
 dotenvy = "0.15"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
