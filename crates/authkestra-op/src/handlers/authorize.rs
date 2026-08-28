@@ -92,6 +92,23 @@ pub async fn handle_authorize(
         AuthorizeOutcome::Redirect(url.into())
     };
 
+    // 3. Validate requested scope against the client's registration
+    // (authkestra#278). `req.scope` was previously copied verbatim into the
+    // stored code — and from there into the eventual token — with no check
+    // at all, letting any registered client request (and receive) a scope
+    // it was never granted. Rejects on the first offending scope, naming it
+    // specifically, mirroring `default_handle_client_credentials`'s
+    // existing (and correct) scope check at the token endpoint.
+    for s in req.scope.split_whitespace() {
+        if !client.allows_scope(s) {
+            tracing::warn!(client_id = %req.client_id, scope = %s, "Client requested unauthorized scope");
+            return error_redirect(
+                "invalid_scope",
+                &format!("Scope {s} is not allowed for this client"),
+            );
+        }
+    }
+
     // 4. Check response_type == "code"
     if req.response_type != "code" {
         tracing::warn!(
@@ -292,7 +309,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -341,7 +358,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: true,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -388,7 +405,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: true,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -435,7 +452,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string(), "profile".to_string()],
                     require_pkce: true,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -499,7 +516,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -574,7 +591,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: false, // no longer changes the outcome — PKCE is always required
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -626,7 +643,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -668,6 +685,130 @@ mod tests {
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.contains("error=invalid_request"));
             assert!(url.contains("error_description=code_challenge+is+required"));
+        } else {
+            panic!("Expected Redirect");
+        }
+    }
+
+    /// The core regression test for authkestra#278: a client registered
+    /// with a narrow scope must not be able to request — and receive an
+    /// authorization code for — a scope it was never granted.
+    #[tokio::test]
+    async fn test_scope_not_granted_to_client_is_rejected() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["profile".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req = AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "admin".to_string(),
+            state: None,
+            code_challenge: Some("s256challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            nonce: None,
+        };
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.contains("error=invalid_scope"));
+            assert!(url.contains("error_description=Scope+admin+is+not+allowed"));
+        } else {
+            panic!("Expected Redirect");
+        }
+    }
+
+    /// A request mixing a granted and an ungranted scope must still be
+    /// rejected — partial credit is not an option.
+    #[tokio::test]
+    async fn test_one_ungranted_scope_among_several_is_rejected() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string(), "profile".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req = AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid admin".to_string(),
+            state: None,
+            code_challenge: Some("s256challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            nonce: None,
+        };
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.contains("error=invalid_scope"));
         } else {
             panic!("Expected Redirect");
         }
