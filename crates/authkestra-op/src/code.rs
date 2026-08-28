@@ -41,6 +41,36 @@ pub struct AuthorizationCode {
 }
 
 impl AuthorizationCode {
+    /// Creates a new, unused authorization code.
+    ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
+    /// this crate, but `AuthorizationCodeStore` implementations must be able
+    /// to reconstruct a code from their own storage — this is the seam that
+    /// makes that possible (authkestra#268). `code_challenge`,
+    /// `code_challenge_method` and `nonce` start `None` and, since every
+    /// field here is `pub`, can be set directly on the returned value.
+    pub fn new(
+        code: String,
+        client_id: String,
+        redirect_uri: String,
+        scope: String,
+        identity: Identity,
+        expires_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            code,
+            client_id,
+            redirect_uri,
+            scope,
+            code_challenge: None,
+            code_challenge_method: None,
+            nonce: None,
+            identity,
+            expires_at,
+            used: false,
+        }
+    }
+
     /// Returns true if this code is expired as of `now`.
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
         now >= self.expires_at

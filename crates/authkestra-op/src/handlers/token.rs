@@ -61,6 +61,38 @@ pub struct TokenRequest {
     pub client_assertion_type: Option<String>,
 }
 
+impl TokenRequest {
+    /// Creates a new token request with only `grant_type` set; every other
+    /// field starts `None` and, since all fields here are `pub`, can be set
+    /// directly on the returned value.
+    ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
+    /// this crate, so downstream code that builds a `TokenRequest`
+    /// programmatically (e.g. in tests) had no way to construct one at all
+    /// (authkestra#268).
+    pub fn new(grant_type: String) -> Self {
+        Self {
+            grant_type,
+            code: None,
+            device_code: None,
+            redirect_uri: None,
+            client_id: None,
+            client_secret: None,
+            code_verifier: None,
+            scope: None,
+            refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            actor_token: None,
+            actor_token_type: None,
+            requested_token_type: None,
+            audience: None,
+            client_assertion: None,
+            client_assertion_type: None,
+        }
+    }
+}
+
 /// Success response for the token endpoint.
 #[derive(Debug, Serialize)]
 #[non_exhaustive]
@@ -4276,6 +4308,53 @@ mod tests {
 
         let err = res.unwrap_err();
         assert_eq!(err.error, "unauthorized_client");
+    }
+
+    /// `AuthorizationCode`, `DeviceCodeSession`, `RefreshToken` and
+    /// `TokenRequest` are `#[non_exhaustive]`, which blocks struct-literal
+    /// construction — this is the same construction path a downstream
+    /// `*Store` implementation would use to reconstruct a value from its own
+    /// storage. Regression test for authkestra#268.
+    #[test]
+    fn non_exhaustive_store_types_are_constructible_via_new() {
+        let identity = test_identity();
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        let mut code = AuthorizationCode::new(
+            "code-1".to_string(),
+            "client-1".to_string(),
+            "https://example.com/callback".to_string(),
+            "openid".to_string(),
+            identity.clone(),
+            expires_at,
+        );
+        assert!(!code.used);
+        assert_eq!(code.code_challenge, None);
+        code.code_challenge = Some("challenge".to_string());
+        assert_eq!(code.code_challenge.as_deref(), Some("challenge"));
+
+        let session = crate::device::DeviceCodeSession::new(
+            "device-1".to_string(),
+            "USER-CODE".to_string(),
+            "client-1".to_string(),
+            "openid".to_string(),
+            expires_at,
+            crate::device::DeviceCodeStatus::Pending,
+        );
+        assert_eq!(session.last_polled_at, None);
+
+        let refresh = RefreshToken::new(
+            "refresh-1".to_string(),
+            "client-1".to_string(),
+            identity,
+            "openid".to_string(),
+            expires_at,
+        );
+        assert_eq!(refresh.token, "refresh-1");
+
+        let request = TokenRequest::new("authorization_code".to_string());
+        assert_eq!(request.grant_type, "authorization_code");
+        assert_eq!(request.code, None);
     }
 }
 
