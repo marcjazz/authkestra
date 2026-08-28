@@ -44,6 +44,13 @@ pub use attestation::{
     PrincipalType, SecondFactorProof, SecondFactorVerifier,
 };
 
+/// Strict Ed25519 gating in front of `jsonwebtoken`'s non-strict EdDSA
+/// backend (authkestra#256). Deliberately `pub(crate)`: it is an internal
+/// hardening detail of `attestation` and `client_assertion`, not an API this
+/// crate wants to be held to — the day `jsonwebtoken` verifies strictly on
+/// its own, this module should be deletable without a breaking release.
+pub(crate) mod strict_jws;
+
 /// Device Authorization Grant related types.
 pub mod device;
 

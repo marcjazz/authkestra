@@ -397,6 +397,7 @@ mod tests {
     }
     use async_trait::async_trait;
     use authkestra_engine::store::memory::MemoryStore;
+    use jsonwebtoken::jwk::Jwk;
     use jsonwebtoken::{Algorithm, EncodingKey, Header};
     use p256::ecdsa::SigningKey;
     use p256::elliptic_curve::{JwkEcKey, PublicKey};
@@ -476,6 +477,279 @@ mod tests {
 
     fn test_tokens() -> TokenManager {
         TokenManager::new(b"super_secret_key_that_is_long_enough_for_hmac", None)
+    }
+
+    // ---------------------------------------------------------------------
+    // authkestra#256: low-order Ed25519 keys must never be enrolled.
+    // ---------------------------------------------------------------------
+
+    /// The Ed25519 identity point, encoded as a compressed Edwards point.
+    ///
+    /// This is the *universal* forgery vector, and it is deliberately not the
+    /// all-zero encoding: the all-zero encoding is an order-4 point that only
+    /// verifies for roughly one message in four, whereas the identity
+    /// verifies for every message.
+    const IDENTITY_POINT: [u8; 32] = {
+        let mut b = [0u8; 32];
+        b[0] = 1;
+        b
+    };
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    /// The canned signature `(R = identity, S = 0)`.
+    ///
+    /// Under **non-strict** Ed25519 verification both sides of
+    /// `[S]B - [k]A == R` collapse to the identity for every challenge scalar
+    /// `k`, so this single 64-byte constant verifies against the identity
+    /// public key for *any* message. No private key exists for that public
+    /// key — not "is unknown", does not exist.
+    fn forged_universal_signature() -> [u8; 64] {
+        let mut sig = [0u8; 64];
+        sig[..32].copy_from_slice(&IDENTITY_POINT);
+        sig
+    }
+
+    /// A compact JWS whose signature is the canned universal forgery.
+    fn forged_challenge_jws(challenge: &str) -> String {
+        let header = b64(br#"{"alg":"EdDSA"}"#);
+        let payload = b64(serde_json::json!({ "challenge": challenge })
+            .to_string()
+            .as_bytes());
+        format!("{header}.{payload}.{}", b64(&forged_universal_signature()))
+    }
+
+    /// Runs the whole enrolment ceremony with `public_jwk` and returns
+    /// whichever step refused it — or `Ok(())` if an attestation was minted,
+    /// which for a forged key is the vulnerability.
+    async fn attempt_forged_enrolment(public_jwk: Value) -> Result<String, OpError> {
+        let challenges = MemoryStore::<EnrolmentChallenge>::new();
+        let tokens = test_tokens();
+        let config = test_config();
+
+        let start_res = handle_enrol_start(
+            EnrolStartRequest {
+                subject: "victim".to_string(),
+                principal_id: "attacker-device".to_string(),
+                principal_type: PrincipalType::Device,
+                public_jwk,
+                attributes: Value::Null,
+                second_factor: SecondFactorProof {
+                    kind: "sms_otp".to_string(),
+                    value: "123456".to_string(),
+                },
+                requested_cnf_jkt: None,
+            },
+            &AlwaysPassSecondFactor,
+            &challenges,
+            &config,
+        )
+        .await?;
+
+        let signature = forged_challenge_jws(&start_res.challenge);
+
+        let complete_res = handle_complete_challenge(
+            CompleteChallengeRequest {
+                challenge: start_res.challenge,
+                challenge_signature: signature,
+            },
+            &challenges,
+            &tokens,
+            &config,
+        )
+        .await?;
+
+        Ok(complete_res.attestation)
+    }
+
+    /// The exact vector authkestra#256 names: `crv: "Ed25519"` carrying the
+    /// identity point. Closed at ingest by #261; this pins it so the gate
+    /// cannot be removed silently.
+    #[tokio::test]
+    async fn enrolment_refuses_the_low_order_identity_point() {
+        let jwk = serde_json::json!({
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": b64(&IDENTITY_POINT),
+        });
+
+        match attempt_forged_enrolment(jwk).await {
+            Err(OpError::BadJwk(msg)) => assert!(
+                msg.contains("low-order"),
+                "expected the key to be refused as low-order, got: {msg}"
+            ),
+            Err(other) => panic!(
+                "expected BadJwk(low-order); got {other:?} — the key must be \
+                 refused on its own merits, not as a bad signature"
+            ),
+            Ok(attestation) => panic!(
+                "VULNERABLE: the OP minted an attestation for a low-order key \
+                 nobody holds a private key for: {attestation}"
+            ),
+        }
+    }
+
+    /// The same forgery smuggled past a `crv`-equality gate.
+    ///
+    /// `jsonwebtoken`'s `OctetKeyPairParameters::curve` is the *shared*
+    /// `EllipticCurve` enum, so `{"kty":"OKP","crv":"P-256"}` deserialises to
+    /// the `OctetKeyPair` variant carrying `P256`. `expected_algorithm` maps
+    /// **every** `OctetKeyPair` to `Algorithm::EdDSA`, and
+    /// `DecodingKey::from_jwk` sends every `OctetKeyPair` to
+    /// `from_ed_components` regardless of `crv` — so `x` is interpreted as
+    /// Ed25519 bytes either way. A low-order check written as
+    /// `if params.curve == Ed25519` therefore never runs for this key, while
+    /// the Ed25519 verifier still does.
+    #[tokio::test]
+    async fn enrolment_refuses_a_low_order_key_smuggled_past_the_crv_gate() {
+        let jwk = serde_json::json!({
+            "kty": "OKP",
+            "crv": "P-256",
+            "x": b64(&IDENTITY_POINT),
+        });
+
+        match attempt_forged_enrolment(jwk).await {
+            Err(OpError::BadJwk(_)) => {}
+            Err(other) => panic!("expected BadJwk; got {other:?}"),
+            Ok(attestation) => panic!(
+                "VULNERABLE: an OKP key with a non-Ed25519 `crv` bypassed the \
+                 low-order gate and the OP minted an attestation for it: {attestation}"
+            ),
+        }
+    }
+
+    /// The proof-of-possession check must refuse the forgery *on its own*.
+    ///
+    /// Regression guard with teeth: on `main` before this fix, the
+    /// `crv`-confusion vector below reached
+    /// [`verify_challenge_signature`] and it returned `Ok("CHAL")` — the
+    /// forged signature verified. The full ceremony was saved only
+    /// incidentally, by [`compute_cnf_jkt`] later failing with
+    /// `InvalidKeyFormat` because `jsonwebtoken` will not thumbprint an OKP
+    /// key whose `crv` is not Ed25519. That is an accident of an unrelated
+    /// downstream step, not a security control, and it would evaporate the
+    /// moment thumbprinting grew support for another OKP curve. This test
+    /// asserts the *verifier itself* refuses these keys, so the fix cannot
+    /// silently regress into depending on that accident again.
+    #[test]
+    fn challenge_signature_verification_itself_refuses_low_order_keys() {
+        for crv in ["Ed25519", "P-256", "P-384", "P-521"] {
+            // Deliberately built with `serde_json::from_value` rather than
+            // `parse_public_jwk`: routing through ingest would make this test
+            // vacuous, because ingest refuses these keys first and
+            // `verify_challenge_signature` would never run. The point here is
+            // the second gate, so the first one is bypassed on purpose.
+            let jwk: Jwk = serde_json::from_value(
+                serde_json::json!({"kty":"OKP","crv":crv,"x": b64(&IDENTITY_POINT)}),
+            )
+            .expect("test jwk must parse");
+
+            let outcome = verify_challenge_signature(&forged_challenge_jws("CHAL"), &jwk);
+
+            assert!(
+                outcome.is_err(),
+                "VULNERABLE: verify_challenge_signature accepted the universal low-order \
+                 forgery for crv={crv}: {outcome:?}"
+            );
+            // A bad KEY, not a bad signature — the classification convention
+            // this crate shares with authkestra-devsig.
+            assert!(
+                matches!(outcome, Err(OpError::BadJwk(_))),
+                "expected BadJwk for crv={crv}, got {outcome:?}"
+            );
+        }
+    }
+
+    /// Positive control for the second gate: a genuine Ed25519 signature must
+    /// survive `verify_challenge_signature` unchanged.
+    #[test]
+    fn challenge_signature_verification_still_accepts_a_genuine_ed25519_signature() {
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[11u8; 32]);
+        let jwk: Jwk = serde_json::from_value(serde_json::json!({
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": b64(signing.verifying_key().as_bytes()),
+        }))
+        .unwrap();
+
+        let header = b64(br#"{"alg":"EdDSA"}"#);
+        let payload = b64(serde_json::json!({ "challenge": "CHAL" })
+            .to_string()
+            .as_bytes());
+        let signing_input = format!("{header}.{payload}");
+        let sig = ed25519_dalek::Signer::sign(&signing, signing_input.as_bytes());
+
+        let out =
+            verify_challenge_signature(&format!("{signing_input}.{}", b64(&sig.to_bytes())), &jwk)
+                .expect("a genuine Ed25519 challenge signature must still verify");
+        assert_eq!(out, "CHAL");
+    }
+
+    /// Positive control: a fix that rejects everything is not a fix. A genuine
+    /// Ed25519 device key must still complete the ceremony end to end.
+    #[tokio::test]
+    async fn genuine_ed25519_key_still_enrols_end_to_end() {
+        let challenges = MemoryStore::<EnrolmentChallenge>::new();
+        let tokens = test_tokens();
+        let config = test_config();
+
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let public_jwk = serde_json::json!({
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": b64(signing.verifying_key().as_bytes()),
+        });
+
+        let start_res = handle_enrol_start(
+            EnrolStartRequest {
+                subject: "user-ed".to_string(),
+                principal_id: "device-ed".to_string(),
+                principal_type: PrincipalType::Device,
+                public_jwk: public_jwk.clone(),
+                attributes: serde_json::json!({"kyc_level": 3}),
+                second_factor: SecondFactorProof {
+                    kind: "sms_otp".to_string(),
+                    value: "123456".to_string(),
+                },
+                requested_cnf_jkt: None,
+            },
+            &AlwaysPassSecondFactor,
+            &challenges,
+            &config,
+        )
+        .await
+        .expect("a genuine Ed25519 key must be accepted at enrolment start");
+
+        let header = b64(br#"{"alg":"EdDSA"}"#);
+        let payload = b64(serde_json::json!({ "challenge": start_res.challenge })
+            .to_string()
+            .as_bytes());
+        let signing_input = format!("{header}.{payload}");
+        let sig = ed25519_dalek::Signer::sign(&signing, signing_input.as_bytes());
+        let jws = format!("{signing_input}.{}", b64(&sig.to_bytes()));
+
+        let complete_res = handle_complete_challenge(
+            CompleteChallengeRequest {
+                challenge: start_res.challenge,
+                challenge_signature: jws,
+            },
+            &challenges,
+            &tokens,
+            &config,
+        )
+        .await
+        .expect("a genuine Ed25519 signature must complete the ceremony");
+
+        let claims = tokens
+            .validate_token(&complete_res.attestation, None)
+            .unwrap();
+        assert_eq!(claims.sub, "user-ed");
+        assert_eq!(claims.extra.get("did").unwrap(), "device-ed");
+
+        let expected_jkt = compute_cnf_jkt(&parse_public_jwk(&public_jwk).unwrap()).unwrap();
+        assert_eq!(claims.extra.get("cnf").unwrap()["jkt"], expected_jkt);
     }
 
     #[tokio::test]

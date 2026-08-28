@@ -631,6 +631,7 @@ dependencies = [
  "authkestra-resource",
  "base64 0.22.1",
  "chrono",
+ "ed25519-dalek",
  "jsonwebtoken",
  "p256",
  "rand 0.9.5",

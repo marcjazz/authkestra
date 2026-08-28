@@ -370,6 +370,36 @@ pub fn verify_client_assertion(
     })?;
 
     let jwk = select_key(jwks, header.kid.as_deref())?;
+
+    // Strict EdDSA gate, ahead of `jsonwebtoken`'s non-strict backend
+    // (authkestra#256). A no-op for non-OKP keys. Lower reachability than the
+    // enrolment path — this key was registered by an administrator rather than
+    // supplied in the request — but it is the same defect, and "registered by
+    // an administrator" is not "provably not low-order".
+    if let Err(rejection) = crate::strict_jws::ensure_strict_eddsa_signature(assertion, &jwk) {
+        return Err(match rejection {
+            // A bad KEY is not a bad assertion: a low-order registered key is an
+            // operator-facing defect in the client's JWKS, not a client that
+            // signed badly.
+            crate::strict_jws::StrictEdDsaRejection::Key(msg) => {
+                tracing::warn!(
+                    client_id = %client.client_id,
+                    error = %msg,
+                    "registered jwk refused before verification"
+                );
+                OpError::BadJwk(msg)
+            }
+            crate::strict_jws::StrictEdDsaRejection::Signature(msg) => {
+                tracing::warn!(
+                    client_id = %client.client_id,
+                    error = %msg,
+                    "client assertion failed strict EdDSA verification"
+                );
+                OpError::InvalidClientAssertion
+            }
+        });
+    }
+
     let algorithms = assertion_algorithms(&jwk)?;
     let decoding_key = DecodingKey::from_jwk(&jwk).map_err(|e| {
         tracing::warn!(client_id = %client.client_id, error = %e, "registered jwk is unusable");
@@ -513,6 +543,126 @@ pub(crate) mod tests {
             "exp": (Utc::now() + chrono::Duration::seconds(60)).timestamp(),
             "iat": Utc::now().timestamp(),
         })
+    }
+
+    // ---------------------------------------------------------------------
+    // authkestra#256, `private_key_jwt` half.
+    //
+    // Lower reachability than enrolment: there is no dynamic-registration
+    // endpoint, so a low-order key has to have been registered by an
+    // administrator. Defence in depth — but "an administrator pasted it in"
+    // is not evidence that a key is not low-order.
+    // ---------------------------------------------------------------------
+
+    /// The Ed25519 identity point: the canonical *universal* low-order vector.
+    const IDENTITY_POINT: [u8; 32] = {
+        let mut b = [0u8; 32];
+        b[0] = 1;
+        b
+    };
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    fn okp_jwks(crv: &str, x: &[u8]) -> Value {
+        serde_json::json!({ "keys": [{ "kty": "OKP", "crv": crv, "x": b64(x) }] })
+    }
+
+    /// `(R = identity, S = 0)` over arbitrary claims: under non-strict
+    /// verification this verifies against the identity key for any message.
+    fn forged_eddsa_assertion(claims: &Value) -> String {
+        let header = b64(br#"{"alg":"EdDSA"}"#);
+        let payload = b64(claims.to_string().as_bytes());
+        let mut sig = [0u8; 64];
+        sig[..32].copy_from_slice(&IDENTITY_POINT);
+        format!("{header}.{payload}.{}", b64(&sig))
+    }
+
+    #[test]
+    fn rejects_a_client_assertion_under_a_low_order_ed25519_key() {
+        for crv in ["Ed25519", "P-256"] {
+            let client = test_client(Some(okp_jwks(crv, &IDENTITY_POINT)));
+            let assertion = forged_eddsa_assertion(&good_claims());
+
+            let outcome = verify_client_assertion(&assertion, &client, &audiences());
+
+            assert!(
+                outcome.is_err(),
+                "VULNERABLE: a client authenticated with a low-order Ed25519 key \
+                 (crv={crv}) that nobody holds a private key for: {outcome:?}"
+            );
+            // A bad KEY is not a bad assertion.
+            assert!(
+                matches!(outcome, Err(OpError::BadJwk(_))),
+                "expected BadJwk for crv={crv}, got {outcome:?}"
+            );
+        }
+    }
+
+    /// Directly exercises the **second** gate in `verify_client_assertion`, the
+    /// one `rejects_a_client_assertion_under_a_low_order_ed25519_key` above
+    /// cannot reach.
+    ///
+    /// Raised in review of #265, and measured: deleting the whole
+    /// `ensure_strict_eddsa_signature` block from `verify_client_assertion`
+    /// left the suite at `153 passed; 0 failed`. Every existing test routes
+    /// through `select_key` -> `parse_public_jwk`, which refuses these keys at
+    /// ingest, so the strict gate never ran and nothing pinned it.
+    ///
+    /// This is the same vacuity trap the author identified and fixed for the
+    /// enrolment test (`challenge_signature_verification_itself_refuses_low_order_keys`);
+    /// it simply was not re-applied here. Built with `serde_json::from_value`
+    /// rather than `parse_public_jwk` for exactly that reason: ingest is
+    /// bypassed on purpose so the gate under test is the one that runs.
+    #[test]
+    fn strict_gate_itself_refuses_low_order_keys_for_client_assertions() {
+        for crv in ["Ed25519", "P-256", "P-384", "P-521"] {
+            let jwk: Jwk = serde_json::from_value(
+                serde_json::json!({"kty":"OKP","crv":crv,"x": b64(&IDENTITY_POINT)}),
+            )
+            .expect("test jwk must parse");
+
+            let assertion = forged_eddsa_assertion(&good_claims());
+            let outcome = crate::strict_jws::ensure_strict_eddsa_signature(&assertion, &jwk);
+
+            assert!(
+                outcome.is_err(),
+                "VULNERABLE: the strict gate accepted the universal low-order forgery \
+                 for crv={crv}: {outcome:?}"
+            );
+            // A bad KEY, not a bad signature -- the classification convention
+            // shared with authkestra-devsig.
+            assert!(
+                matches!(
+                    outcome,
+                    Err(crate::strict_jws::StrictEdDsaRejection::Key(_))
+                ),
+                "expected a Key rejection for crv={crv}, got {outcome:?}"
+            );
+        }
+    }
+
+    /// Positive control: a genuine registered Ed25519 client key must still
+    /// authenticate. `private_key_jwt` with EdDSA is a supported, conformant
+    /// configuration and this fix must not break it.
+    #[test]
+    fn still_accepts_an_assertion_under_a_genuine_ed25519_key() {
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[13u8; 32]);
+        let client = test_client(Some(okp_jwks(
+            "Ed25519",
+            signing.verifying_key().as_bytes(),
+        )));
+
+        let header = b64(br#"{"alg":"EdDSA"}"#);
+        let payload = b64(good_claims().to_string().as_bytes());
+        let signing_input = format!("{header}.{payload}");
+        let sig = ed25519_dalek::Signer::sign(&signing, signing_input.as_bytes());
+        let assertion = format!("{signing_input}.{}", b64(&sig.to_bytes()));
+
+        let verified = verify_client_assertion(&assertion, &client, &audiences())
+            .expect("a genuine Ed25519 client assertion must still authenticate");
+        assert_eq!(verified.jti, "jti-1");
     }
 
     #[test]

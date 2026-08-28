@@ -21,6 +21,13 @@ async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+# Direct, not transitive-by-accident: `crate::strict_jws` calls
+# `VerifyingKey::verify_strict` itself because `jsonwebtoken`'s EdDSA backend uses the
+# non-strict verifier (authkestra#256). This adds no new code to the dependency graph —
+# `jsonwebtoken`'s `rust_crypto` backend, already enabled above, resolves the same
+# `ed25519-dalek` 2.x, as does `authkestra-crypto-util` below. Same rationale, and same
+# wording, as `authkestra-devsig`'s equivalent dependency added by #253.
+ed25519-dalek = "2"
 tracing = "0.1.44"
 rand = { workspace = true }
 base64 = "0.22.1"
