@@ -41,14 +41,22 @@ pub struct AuthorizationCode {
 }
 
 impl AuthorizationCode {
-    /// Creates a new, unused authorization code.
+    /// Creates a new authorization code.
     ///
     /// `#[non_exhaustive]` blocks struct-literal construction from outside
     /// this crate, but `AuthorizationCodeStore` implementations must be able
     /// to reconstruct a code from their own storage — this is the seam that
-    /// makes that possible (authkestra#268). `code_challenge`,
-    /// `code_challenge_method` and `nonce` start `None` and, since every
-    /// field here is `pub`, can be set directly on the returned value.
+    /// makes that possible (authkestra#268). `used` is a required parameter
+    /// rather than a default: this crate's own storage backends deliberately
+    /// fail *closed* on it (treating a code as already-used if its stored
+    /// value can't be read, e.g. `sqlx_store.rs`'s
+    /// `row.try_get("used").unwrap_or(true)`), and a constructor that
+    /// silently defaulted to `false` would make it easy for a downstream
+    /// implementation to reconstruct an already-spent code as fresh by
+    /// forgetting to set it. `code_challenge`, `code_challenge_method` and
+    /// `nonce` start `None` and, since every field here is `pub`, can be set
+    /// directly on the returned value.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         code: String,
         client_id: String,
@@ -56,6 +64,7 @@ impl AuthorizationCode {
         scope: String,
         identity: Identity,
         expires_at: DateTime<Utc>,
+        used: bool,
     ) -> Self {
         Self {
             code,
@@ -67,7 +76,7 @@ impl AuthorizationCode {
             nonce: None,
             identity,
             expires_at,
-            used: false,
+            used,
         }
     }
 
