@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.6.0...authkestra-op-v0.6.1) - 2026-08-28
+
+### Fixed
+
+- *(op)* verify EdDSA strictly and refuse low-order enrolment keys ([#256](https://github.com/marcjazz/authkestra/pull/256)) ([#265](https://github.com/marcjazz/authkestra/pull/265))
+
 ## [0.6.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.5.5...authkestra-op-v0.6.0) - 2026-08-27
 
 ### Added
