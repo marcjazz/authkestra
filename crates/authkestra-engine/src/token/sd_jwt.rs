@@ -75,13 +75,31 @@ use std::collections::{HashMap, HashSet};
 /// never coerced into this one.
 const SD_ALG_SHA256: &str = "sha-256";
 
-/// Claim names a Disclosure is never allowed to introduce, because they
-/// are either registered top-level [`Claims`] fields (forging them would
-/// let a holder rewrite the token's own identity/validity claims) or the
-/// SD-JWT mechanism's own bookkeeping keys.
-const RESERVED_CLAIM_NAMES: &[&str] = &[
-    "iss", "sub", "aud", "exp", "iat", "nbf", "jti", "scope", "identity", "_sd", "_sd_alg",
-];
+/// The SD-JWT mechanism's own bookkeeping keys, which a Disclosure is
+/// never allowed to introduce: they are what the verifier checks
+/// Disclosures *against*, so a Disclosure that could rewrite them would be
+/// grading its own homework.
+const SD_JWT_BOOKKEEPING_CLAIM_NAMES: &[&str] = &["_sd", "_sd_alg"];
+
+/// True for a claim name a Disclosure is never allowed to introduce: a
+/// registered top-level [`Claims`] field (forging one would let a holder
+/// rewrite the token's own identity/validity claims), or an SD-JWT
+/// bookkeeping key.
+///
+/// The registered-field half is read from [`super::NAMED_CLAIM_FIELDS`]
+/// rather than re-listed here. A second hand-maintained copy is exactly
+/// the drift #283 is about — a `Claims` field added in a minor release
+/// would otherwise have to be remembered in two places, and the one that
+/// got forgotten would fail silently.
+fn is_reserved_claim_name(name: &str) -> bool {
+    super::NAMED_CLAIM_FIELDS.contains(&name)
+        // `jti` is absent from NAMED_CLAIM_FIELDS because `take_jti` makes
+        // it a supported *issuance* override. That does not make it
+        // disclosable: nothing removes it on the verify side, so a
+        // Disclosure naming it would shadow the signed `jti`.
+        || name == "jti"
+        || SD_JWT_BOOKKEEPING_CLAIM_NAMES.contains(&name)
+}
 
 /// A claim an issuer wants to make selectively disclosable, instead of
 /// stamping it directly onto the JWT payload.
@@ -93,8 +111,8 @@ const RESERVED_CLAIM_NAMES: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DisclosableClaim {
-    /// The claim name, e.g. `"email"`. Must not collide with a
-    /// [`RESERVED_CLAIM_NAMES`] entry — [`TokenManager::issue_sd_jwt`]
+    /// The claim name, e.g. `"email"`. Must not collide with a reserved
+    /// name (see [`is_reserved_claim_name`]) — [`TokenManager::issue_sd_jwt`]
     /// does not currently validate this at issuance time (that check is
     /// enforced on the verify side, where it actually matters for
     /// security); an issuer accidentally naming a Disclosure `"aud"`
@@ -311,7 +329,7 @@ fn verify_disclosures(
         }
 
         let (name, value) = decode_disclosure(encoded)?;
-        if RESERVED_CLAIM_NAMES.contains(&name.as_str()) || claims.extra.contains_key(&name) {
+        if is_reserved_claim_name(&name) || claims.extra.contains_key(&name) {
             tracing::warn!(
                 claim_name = %name,
                 "rejecting SD-JWT: disclosed claim shadows a registered or already-present claim"
@@ -357,6 +375,14 @@ impl TokenManager {
     /// value per name" are responsible for enforcing that themselves; nothing
     /// about the wire format requires it.
     ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::Token`] without minting anything if `extra`
+    /// carries a key that collides with a named `Claims` field — see
+    /// [`TokenManager::issue_user_token_with_extra`] for the full rule
+    /// (#283). This applies to `extra` only; `disclosable_claims` names
+    /// are still not validated at issuance, as described above.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -389,6 +415,7 @@ impl TokenManager {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
         let jti = super::take_jti(&mut extra);
+        super::reject_named_claim_collisions(&extra)?;
 
         let mut digests = Vec::with_capacity(disclosable_claims.len());
         let mut disclosures = Vec::with_capacity(disclosable_claims.len());
