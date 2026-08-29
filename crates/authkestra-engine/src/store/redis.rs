@@ -127,7 +127,71 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Red
     }
 }
 
-use crate::store::{AtomicConsume, IndexedKvStore};
+use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore};
+
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T> for RedisStore {
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        tracing::debug!(key = %key, "atomically inserting into redis store if absent");
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis connection error");
+                StoreError::Internal(format!("Redis connection error: {e}"))
+            })?;
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+
+        // Unlike `set`, a sub-second `ttl` must never be treated as "skip
+        // the write" here: `insert_if_absent`'s return value is a
+        // security-critical replay signal, not a best-effort cache write,
+        // and reporting `Ok(true)` without actually storing anything means
+        // every subsequent call with the same key *also* sees no existing
+        // entry and *also* reports "fresh" — silently disabling the replay
+        // guard entirely for any caller using a sub-second TTL (e.g. a
+        // DPoP freshness window configured in milliseconds). Redis' `EX`
+        // only accepts whole seconds, so round *up* on any fractional
+        // remainder (not just when the whole-second part is zero) — a
+        // plain `.as_secs().max(1)` still truncates, say, 1.9s down to 1s,
+        // silently shortening the replay window below what the caller
+        // asked for on every call with a sub-second remainder, not only
+        // the exact-zero case.
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(u64::from(ttl.subsec_nanos() > 0))
+            .max(1);
+
+        // `SET key value NX EX ttl` — a single atomic Redis command. Redis
+        // replies `+OK` (parsed by this crate as `Value::Okay`, which
+        // `bool`'s `FromRedisValue` maps to `true`) on a fresh insert, or
+        // nil (maps to `false`) when the key already existed and NX blocked
+        // the write — exactly the replay-vs-fresh signal this trait needs.
+        let options = redis::SetOptions::default()
+            .conditional_set(redis::ExistenceCheck::NX)
+            .with_expiration(redis::SetExpiry::EX(ttl_secs));
+
+        let inserted: bool = conn
+            .set_options(self.key(key), json, options)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis set_options (NX) error");
+                StoreError::Internal(format!("Redis set_options (NX) error: {e}"))
+            })?;
+
+        Ok(inserted)
+    }
+}
 
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicConsume<T> for RedisStore {
@@ -313,6 +377,99 @@ mod tests {
 
         let val2: Option<String> = store.consume("key1").await.unwrap();
         assert_eq!(val2, None);
+    }
+
+    #[tokio::test]
+    async fn test_redis_insert_if_absent() {
+        let (store, _c) = setup_redis().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        // A second insert under the same key — the replay case — must be
+        // rejected, and must not clobber the value the first insert wrote.
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+    }
+
+    /// Regression test: a sub-second TTL must not silently disable the
+    /// replay guard. Before the fix, `ttl.as_secs()` truncated any
+    /// sub-second duration to 0, which hit an early-return path that
+    /// reported `Ok(true)` ("fresh") without ever calling Redis — so a
+    /// second `insert_if_absent` for the *same* key also found nothing
+    /// stored and *also* reported `Ok(true)`, meaning a replayed key was
+    /// never detected as long as its TTL was under a second.
+    #[tokio::test]
+    async fn test_redis_insert_if_absent_with_sub_second_ttl_still_blocks_a_replay() {
+        let (store, _c) = setup_redis().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(10))
+            .await
+            .unwrap();
+        assert!(inserted, "the first insert must succeed");
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_millis(10))
+            .await
+            .unwrap();
+        assert!(
+            !inserted_again,
+            "a second insert under the same key, even with a sub-second TTL, is a replay and must be rejected"
+        );
+    }
+
+    /// Same property at exactly `Duration::ZERO`, the most extreme case of
+    /// the same bug.
+    #[tokio::test]
+    async fn test_redis_insert_if_absent_with_zero_ttl_still_blocks_a_replay() {
+        let (store, _c) = setup_redis().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::ZERO)
+            .await
+            .unwrap();
+        assert!(inserted, "the first insert must succeed");
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::ZERO)
+            .await
+            .unwrap();
+        assert!(!inserted_again, "a zero-TTL replay must still be rejected");
+    }
+
+    /// Regression test for authkestra#277's review: a fractional-second TTL
+    /// must round *up*, not truncate down — `.as_secs()` alone would floor
+    /// 1.5s to 1s, silently shortening the replay window below what the
+    /// caller asked for on every call with a sub-second remainder, not just
+    /// the exact-zero case the other two tests above cover.
+    #[tokio::test]
+    async fn test_redis_insert_if_absent_rounds_a_fractional_ttl_up() {
+        let (store, _c) = setup_redis().await;
+
+        store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(1500))
+            .await
+            .unwrap();
+
+        let mut conn = store
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        let ttl: i64 = redis::AsyncCommands::ttl(&mut conn, store.key("key1"))
+            .await
+            .unwrap();
+        assert_eq!(ttl, 2, "a 1.5s TTL must round up to 2s, not truncate to 1s");
     }
 
     #[tokio::test]

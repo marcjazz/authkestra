@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::store::{AtomicConsume, IndexedKvStore, KvStore, StoreError};
+use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore, StoreError};
 use async_trait::async_trait;
 
 struct StoreEntry<T> {
@@ -95,6 +95,36 @@ impl<T: Clone + Send + Sync + 'static> AtomicConsume<T> for MemoryStore<T> {
             return Ok(Some(entry.value));
         }
         Ok(None)
+    }
+}
+
+#[async_trait]
+impl<T: Clone + Send + Sync + 'static> AtomicInsert<T> for MemoryStore<T> {
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        tracing::debug!(key = %key, "atomically inserting into memory store if absent");
+        // Held for the whole check-then-insert: this single lock is what
+        // makes the operation atomic, exactly like `consume`'s single
+        // `remove` call above.
+        let mut data = self.data.lock().unwrap();
+        if let Some(entry) = data.get(key) {
+            if !entry.is_expired() {
+                return Ok(false);
+            }
+        }
+        data.insert(
+            key.to_string(),
+            StoreEntry {
+                value,
+                expires_at: Some(Instant::now() + ttl),
+            },
+        );
+        Ok(true)
     }
 }
 
@@ -199,6 +229,82 @@ mod tests {
         // Second consume returns None
         let value2 = store.consume("key1").await.unwrap();
         assert_eq!(value2, None);
+    }
+
+    #[tokio::test]
+    async fn test_insert_if_absent_first_call_succeeds() {
+        let store = MemoryStore::<String>::new();
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+        assert_eq!(store.get("key1").await.unwrap(), Some("value1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_insert_if_absent_second_call_fails_and_keeps_the_first_value() {
+        let store = MemoryStore::<String>::new();
+
+        assert!(store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap());
+
+        // A second insert under the same key — the replay case — must be
+        // rejected, and must not clobber the value the first insert wrote.
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+        assert_eq!(store.get("key1").await.unwrap(), Some("value1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_insert_if_absent_allows_reuse_after_expiry() {
+        let store = MemoryStore::<String>::new();
+
+        store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(10))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted_again);
+        assert_eq!(store.get("key1").await.unwrap(), Some("value2".to_string()));
+    }
+
+    /// The property the whole replay-guard feature depends on: under real
+    /// concurrency, two racing inserts of the same key must never both
+    /// report success.
+    #[tokio::test]
+    async fn test_insert_if_absent_is_atomic_under_concurrency() {
+        let store = Arc::new(MemoryStore::<u32>::new());
+        let mut handles = Vec::new();
+        for i in 0..50u32 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                store
+                    .insert_if_absent("shared-key", i, Duration::from_secs(10))
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        let mut successes = 0;
+        for handle in handles {
+            if handle.await.unwrap() {
+                successes += 1;
+            }
+        }
+        assert_eq!(successes, 1, "exactly one racing insert must win");
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use sqlx::Database;
 use std::time::Duration;
 
-use crate::store::{KvStore, StoreError};
+use crate::store::{AtomicInsert, KvStore, StoreError};
 
 #[derive(Clone, Debug)]
 #[deprecated(
@@ -401,11 +401,213 @@ impl_sql_store! {
     }
 }
 
+// `AtomicInsert` is implemented directly per dialect (rather than folded
+// into the `impl_sql_store!` macro above) since it needs none of the
+// get/set/delete/index query strings that macro parametrizes over — each
+// dialect's insert-if-absent is a single, self-contained statement.
+
+#[cfg(feature = "sql-postgres")]
+#[async_trait]
+#[allow(deprecated)]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
+    for SqlKvStore<sqlx::Postgres>
+{
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        tracing::debug!(key = %key, "atomically inserting into Postgres store if absent");
+        // A plain `DO NOTHING` never reclaims a row once its key has been
+        // used once, even long after `expires_at` has passed — every
+        // distinct key ever inserted (e.g. every DPoP proof `jti` this
+        // server has ever seen) would occupy a row forever, since nothing
+        // in this crate runs a periodic sweep. `DO UPDATE ... WHERE
+        // expires_at <= $4` instead treats an *expired* existing row as
+        // available for reuse: the conflicting row is overwritten (and
+        // `rows_affected() > 0`, a fresh claim) only when it was already
+        // expired; a still-valid row blocks the write and reports 0 rows
+        // affected, unchanged from `DO NOTHING`'s behavior for that case.
+        // This bounds growth to the number of *distinct* keys active
+        // within one TTL window rather than every key ever seen, though a
+        // deployment with a very high volume of never-repeated keys still
+        // wants its own periodic `DELETE ... WHERE expires_at < now()`.
+        let query = format!(
+            "INSERT INTO {table} (key, value, expires_at) VALUES ($1, $2, $3) \
+             ON CONFLICT(key) DO UPDATE SET value = $2, expires_at = $3 \
+             WHERE {table}.expires_at <= $4",
+            table = self.table_name
+        );
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+        let now = chrono::Utc::now();
+        let expires_at = now + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        let result = sqlx::query(&query)
+            .bind(key)
+            .bind(json)
+            .bind(expires_at)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Postgres insert_if_absent error");
+                StoreError::Internal(format!("Postgres insert_if_absent error: {e}"))
+            })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+}
+
+#[cfg(feature = "sql-sqlite")]
+#[async_trait]
+#[allow(deprecated)]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
+    for SqlKvStore<sqlx::Sqlite>
+{
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        tracing::debug!(key = %key, "atomically inserting into Sqlite store if absent");
+        // See the Postgres impl's comment: `DO UPDATE ... WHERE expires_at
+        // <= ?4` reclaims an expired row instead of blocking on it forever,
+        // bounding growth to distinct keys active within one TTL window.
+        let query = format!(
+            "INSERT INTO {table} (key, value, expires_at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(key) DO UPDATE SET value = ?2, expires_at = ?3 \
+             WHERE {table}.expires_at <= ?4",
+            table = self.table_name
+        );
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+        let now = chrono::Utc::now();
+        let expires_at = now + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        let result = sqlx::query(&query)
+            .bind(key)
+            .bind(json)
+            .bind(expires_at)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Sqlite insert_if_absent error");
+                StoreError::Internal(format!("Sqlite insert_if_absent error: {e}"))
+            })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+}
+
+#[cfg(feature = "sql-mysql")]
+#[async_trait]
+#[allow(deprecated)]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
+    for SqlKvStore<sqlx::MySql>
+{
+    #[tracing::instrument(skip(self, value))]
+    async fn insert_if_absent(
+        &self,
+        key: &str,
+        value: T,
+        ttl: Duration,
+    ) -> Result<bool, StoreError> {
+        // Second attempt at this method (review of authkestra#277 caught
+        // the first): a `SELECT ... FOR UPDATE` transaction, matching this
+        // file's MySQL `consume` pattern, is *unsafe* here specifically
+        // because the row being locked usually doesn't exist yet.  Under
+        // InnoDB's default REPEATABLE READ, `SELECT ... FOR UPDATE` against
+        // a non-matching row still takes a gap lock (to prevent phantom
+        // inserts within the transaction) — so two concurrent callers
+        // racing on the same absent key each take a gap lock, then each
+        // tries to insert into the gap the other is holding, which
+        // deadlocks. Safety held (InnoDB kills one side rather than letting
+        // both "win"), but the loser got `Err`, not `Ok(false)` — turning a
+        // replayed proof into a 500 instead of a clean rejection, and
+        // failing this trait's own concurrency contract test.
+        //
+        // No explicit transaction is needed at all: two separate,
+        // individually-autocommitted statements are enough, because each
+        // one is already atomic on its own and MySQL releases each
+        // statement's locks the moment it completes (nothing is held open
+        // across the gap between them, so there's nothing for a second
+        // caller to deadlock against). `INSERT IGNORE` claims a genuinely
+        // absent key in one step; only on conflict does a second statement
+        // ask "is the existing row already expired", and that statement's
+        // own `WHERE` re-evaluates under its own lock, so two callers
+        // racing to reclaim the same expired row still can't both succeed
+        // (whichever commits its `UPDATE` first changes `expires_at`,
+        // which then falsifies the second caller's own `WHERE` clause).
+        tracing::debug!(key = %key, "atomically inserting into MySql store if absent");
+
+        let json = serde_json::to_string(&value).map_err(|e| {
+            tracing::error!(error = %e, "Serialization error");
+            StoreError::Serialization(format!("Serialization error: {e}"))
+        })?;
+        let now = chrono::Utc::now();
+        let expires_at = now + chrono::Duration::seconds(ttl.as_secs() as i64);
+
+        let insert_query = format!(
+            "INSERT IGNORE INTO {} (`key`, value, expires_at) VALUES (?, ?, ?)",
+            self.table_name
+        );
+        let inserted = sqlx::query(&insert_query)
+            .bind(key)
+            .bind(&json)
+            .bind(expires_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "MySql insert_if_absent insert error");
+                StoreError::Internal(format!("MySql insert_if_absent insert error: {e}"))
+            })?;
+
+        if inserted.rows_affected() > 0 {
+            return Ok(true);
+        }
+
+        // A key already existed. Reclaim it only if it's already expired —
+        // this single guarded UPDATE is what makes concurrent reclaim
+        // attempts on the same expired key safe without a transaction: only
+        // one caller's WHERE clause can still be true by the time it
+        // actually acquires the row.
+        let reclaim_query = format!(
+            "UPDATE {} SET value = ?, expires_at = ? WHERE `key` = ? AND expires_at <= ?",
+            self.table_name
+        );
+        let reclaimed = sqlx::query(&reclaim_query)
+            .bind(&json)
+            .bind(expires_at)
+            .bind(key)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "MySql insert_if_absent reclaim error");
+                StoreError::Internal(format!("MySql insert_if_absent reclaim error: {e}"))
+            })?;
+
+        Ok(reclaimed.rows_affected() > 0)
+    }
+}
+
 #[cfg(all(test, feature = "sql-sqlite"))]
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
+    use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::time::Duration;
 
@@ -455,6 +657,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sqlite_insert_if_absent() {
+        let store = setup_db().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+    }
+
+    /// Regression test: unlike a plain `ON CONFLICT DO NOTHING`, an
+    /// *expired* existing row must be reclaimable rather than permanently
+    /// blocking that key — otherwise every distinct key ever inserted
+    /// (e.g. every DPoP proof `jti`) occupies a row forever.
+    #[tokio::test]
+    async fn test_sqlite_insert_if_absent_reclaims_an_expired_key() {
+        let store = setup_db().await;
+
+        // A TTL under one second truncates to `expires_at == now` at
+        // insert time (`ttl.as_secs()` rounds down to 0), so this row is
+        // already expired by the time the sleep below elapses.
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(1))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let reclaimed = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(
+            reclaimed,
+            "an expired key must be reclaimable, not blocked forever"
+        );
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value2".to_string()));
+    }
+
+    /// authkestra#277 review: the SQL layer's `insert_if_absent` has now
+    /// been wrong three times in ways that read correctly on inspection —
+    /// MySQL's affected-rows assumption, its follow-up `SELECT ... FOR
+    /// UPDATE` deadlock, and (had it existed) an equivalent unverified
+    /// assumption here. Reasoning from what the SQL says rather than what
+    /// the engine does under concurrency is exactly the pattern that broke
+    /// three times, so this proves the property directly rather than by
+    /// inspection of the `ON CONFLICT DO UPDATE ... WHERE` clause.
+    #[tokio::test]
+    async fn test_sqlite_insert_if_absent_is_atomic_under_concurrency() {
+        let store = std::sync::Arc::new(setup_db().await);
+
+        let mut handles = Vec::new();
+        for i in 0..32u32 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                store
+                    .insert_if_absent("shared-key", i.to_string(), Duration::from_secs(10))
+                    .await
+            }));
+        }
+
+        let mut successes = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(true) => successes += 1,
+                Ok(false) => {}
+                Err(e) => panic!(
+                    "insert_if_absent must never error under concurrency on a shared key, got {e:?}"
+                ),
+            }
+        }
+        assert_eq!(successes, 1, "exactly one racing insert must win");
+    }
+
+    #[tokio::test]
     async fn test_sqlite_indexed_store() {
         let store = setup_db().await;
 
@@ -479,7 +768,7 @@ mod tests {
 #[allow(deprecated)]
 mod postgres_tests {
     use super::*;
-    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
+    use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore};
     use sqlx::postgres::PgPoolOptions;
     use std::time::Duration;
     use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
@@ -541,6 +830,86 @@ mod postgres_tests {
     }
 
     #[tokio::test]
+    async fn test_postgres_insert_if_absent() {
+        let (store, _c) = setup_db().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+    }
+
+    /// Regression test: an expired existing row must be reclaimable rather
+    /// than permanently blocking that key. See the Sqlite version of this
+    /// test for why a sub-second TTL is used.
+    #[tokio::test]
+    async fn test_postgres_insert_if_absent_reclaims_an_expired_key() {
+        let (store, _c) = setup_db().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(1))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let reclaimed = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(
+            reclaimed,
+            "an expired key must be reclaimable, not blocked forever"
+        );
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value2".to_string()));
+    }
+
+    /// See the Sqlite version of this test for why it exists: this
+    /// property was previously only asserted by inspection of the
+    /// `ON CONFLICT DO UPDATE ... WHERE` clause, the exact kind of
+    /// reasoning that broke three times over for this trait already.
+    #[tokio::test]
+    async fn test_postgres_insert_if_absent_is_atomic_under_concurrency() {
+        let (store, _c) = setup_db().await;
+        let store = std::sync::Arc::new(store);
+
+        let mut handles = Vec::new();
+        for i in 0..32u32 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                store
+                    .insert_if_absent("shared-key", i.to_string(), Duration::from_secs(10))
+                    .await
+            }));
+        }
+
+        let mut successes = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(true) => successes += 1,
+                Ok(false) => {}
+                Err(e) => panic!(
+                    "insert_if_absent must never error under concurrency on a shared key, got {e:?}"
+                ),
+            }
+        }
+        assert_eq!(successes, 1, "exactly one racing insert must win");
+    }
+
+    #[tokio::test]
     async fn test_postgres_indexed_store() {
         let (store, _c) = setup_db().await;
 
@@ -564,7 +933,7 @@ mod postgres_tests {
 #[allow(deprecated)]
 mod mysql_tests {
     use super::*;
-    use crate::store::{AtomicConsume, IndexedKvStore, KvStore};
+    use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore};
     use sqlx::mysql::MySqlPoolOptions;
     use std::time::Duration;
     use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
@@ -622,6 +991,99 @@ mod mysql_tests {
 
         let val2: Option<String> = store.consume("key1").await.unwrap();
         assert_eq!(val2, None);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_insert_if_absent() {
+        let (store, _c) = setup_db().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(!inserted_again);
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value1".to_string()));
+    }
+
+    /// Regression test: an expired existing row must be reclaimable rather
+    /// than permanently blocking that key. Exercises the second statement
+    /// of the two-statement `insert_if_absent` (`INSERT IGNORE` finds the
+    /// key already present, then the guarded
+    /// `UPDATE ... WHERE expires_at <= ?` reclaims it).
+    #[tokio::test]
+    async fn test_mysql_insert_if_absent_reclaims_an_expired_key() {
+        let (store, _c) = setup_db().await;
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(1))
+            .await
+            .unwrap();
+        assert!(inserted);
+
+        // MySQL's `TIMESTAMP` column (no fractional-second precision in
+        // this migration) *rounds* a sub-second value to the nearest whole
+        // second rather than truncating it, so a 1ms TTL's stored
+        // `expires_at` can land up to a full second after the actual
+        // insert instant — a 50ms sleep was flaky (~1 run in 3) for exactly
+        // that reason. Sleeping past that worst case removes the flake
+        // without needing a schema change that would affect every
+        // consumer of this migration, not just this test.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        let reclaimed = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(
+            reclaimed,
+            "an expired key must be reclaimable, not blocked forever"
+        );
+
+        let val: Option<String> = store.get("key1").await.unwrap();
+        assert_eq!(val, Some("value2".to_string()));
+    }
+
+    /// Regression test for authkestra#277's review: a `SELECT ... FOR
+    /// UPDATE` transaction over a possibly-absent row deadlocked InnoDB
+    /// under concurrent access (a gap lock taken by each of two racers on
+    /// the same non-existent key, each then trying to insert into the gap
+    /// the other holds). The fix drops the transaction entirely; this
+    /// proves many concurrent callers racing on the same key never error
+    /// and exactly one of them wins.
+    #[tokio::test]
+    async fn test_mysql_insert_if_absent_is_atomic_under_concurrency() {
+        let (store, _c) = setup_db().await;
+        let store = std::sync::Arc::new(store);
+
+        let mut handles = Vec::new();
+        for i in 0..32u32 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                store
+                    .insert_if_absent("shared-key", i.to_string(), Duration::from_secs(10))
+                    .await
+            }));
+        }
+
+        let mut successes = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(true) => successes += 1,
+                Ok(false) => {}
+                Err(e) => panic!(
+                    "insert_if_absent must never error under concurrency on a shared key, got {e:?}"
+                ),
+            }
+        }
+        assert_eq!(successes, 1, "exactly one racing insert must win");
     }
 
     #[tokio::test]
