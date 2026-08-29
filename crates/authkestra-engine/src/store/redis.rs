@@ -167,7 +167,10 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T> fo
         // silently shortening the replay window below what the caller
         // asked for on every call with a sub-second remainder, not only
         // the exact-zero case.
-        let ttl_secs = (ttl.as_secs() + u64::from(ttl.subsec_nanos() > 0)).max(1);
+        let ttl_secs = ttl
+            .as_secs()
+            .saturating_add(u64::from(ttl.subsec_nanos() > 0))
+            .max(1);
 
         // `SET key value NX EX ttl` — a single atomic Redis command. Redis
         // replies `+OK` (parsed by this crate as `Value::Okay`, which
