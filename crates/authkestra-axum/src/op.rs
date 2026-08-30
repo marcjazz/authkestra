@@ -183,6 +183,11 @@ where
 
     let client_cert_der = cert.map(|Extension(ClientCertificateDer(der))| der);
 
+    // RFC 9449 — an ordinary header, unlike the mTLS certificate above:
+    // `headers` already gives access to the whole map, no host-supplied
+    // `Extension` plumbing needed.
+    let dpop_header = headers.get("DPoP").and_then(|h| h.to_str().ok());
+
     match handle_token_with_client_cert(
         req,
         auth_header,
@@ -190,6 +195,7 @@ where
         op_store.as_ref(),
         tokens.as_ref(),
         client_cert_der.as_deref(),
+        dpop_header,
     )
     .await
     {

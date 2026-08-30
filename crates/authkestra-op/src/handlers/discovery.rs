@@ -28,6 +28,20 @@ pub struct OidcDiscovery {
     /// apply to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_challenge_methods_supported: Option<Vec<String>>,
+    /// JSON array of JWS `alg` values this OP accepts in a DPoP proof's
+    /// header (RFC 9449 §5).
+    ///
+    /// Opt-in via [`OidcDiscovery::with_dpop_support`], for the same reason
+    /// `private_key_jwt` support is: `handlers::token::handle_token_with_client_cert`
+    /// accepts a `DPoP` header unconditionally, but every request using one
+    /// is refused with `invalid_dpop_proof` unless the deployment's
+    /// `OpStore` also has a `DpopReplayStore` wired (it fails closed via
+    /// `NoDpopReplayStore` otherwise — see `store::OpStore::check_and_record_dpop_jti`).
+    /// A discovery document promising DPoP support the OP will reject at
+    /// runtime is worse than one that stays quiet, so the decision belongs
+    /// to whoever wired the store, exactly like `with_private_key_jwt`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dpop_signing_alg_values_supported: Option<Vec<String>>,
     /// URL of the OP's OAuth 2.0 Token Endpoint.
     pub token_endpoint: String,
     /// URL of the OP's JSON Web Key Set document.
@@ -79,6 +93,7 @@ impl OidcDiscovery {
                 .then(|| config.authorization_endpoint()),
             code_challenge_methods_supported: has_authorization_code_grant
                 .then(|| vec!["S256".to_string()]),
+            dpop_signing_alg_values_supported: None,
             token_endpoint: config.token_endpoint(),
             jwks_uri: config.jwks_url(),
             userinfo_endpoint: Some(config.userinfo_endpoint()),
@@ -124,6 +139,22 @@ impl OidcDiscovery {
         if !self.token_endpoint_auth_methods_supported.contains(&method) {
             self.token_endpoint_auth_methods_supported.push(method);
         }
+        self
+    }
+
+    /// Advertises DPoP support (RFC 9449 §5) with the algorithms
+    /// `authkestra_engine::token::dpop::verify_dpop_proof` accepts.
+    ///
+    /// Opt-in for the same reason [`OidcDiscovery::with_private_key_jwt`]
+    /// is — see this field's doc comment. Call alongside
+    /// `CompositeOpStore::with_dpop_replay_store` once that's wired.
+    pub fn with_dpop_support(mut self) -> Self {
+        self.dpop_signing_alg_values_supported = Some(vec![
+            "ES256".to_string(),
+            "ES384".to_string(),
+            "RS256".to_string(),
+            "EdDSA".to_string(),
+        ]);
         self
     }
 
@@ -231,6 +262,32 @@ mod tests {
         assert!(doc
             .token_endpoint_auth_methods_supported
             .contains(&"client_secret_basic".to_string()));
+    }
+
+    /// A discovery document must not promise DPoP support the OP will
+    /// reject at runtime because no replay store is wired — same rationale
+    /// as `private_key_jwt_is_not_advertised_by_default`.
+    #[test]
+    fn dpop_is_not_advertised_by_default() {
+        let doc = OidcDiscovery::from_config(&discovery_config());
+        assert_eq!(doc.dpop_signing_alg_values_supported, None);
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert!(
+            json.get("dpop_signing_alg_values_supported").is_none(),
+            "must be omitted (not null) when not opted in"
+        );
+    }
+
+    #[test]
+    fn dpop_is_advertised_once_opted_in() {
+        let doc = OidcDiscovery::from_config(&discovery_config()).with_dpop_support();
+
+        let algs = doc
+            .dpop_signing_alg_values_supported
+            .expect("must be Some once opted in");
+        assert!(algs.contains(&"ES256".to_string()));
+        assert!(algs.contains(&"EdDSA".to_string()));
     }
 
     /// A provider that serves no `authorization_code` grant (e.g. a

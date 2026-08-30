@@ -67,6 +67,7 @@ fn bare_request() -> TokenRequest {
         audience: None,
         client_assertion: None,
         client_assertion_type: None,
+        dpop_jkt: None,
     }
 }
 

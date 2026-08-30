@@ -133,6 +133,11 @@ pub async fn actix_token_handler(
         .get::<ClientCertificateDer>()
         .map(|c| c.0.clone());
 
+    // RFC 9449 — an ordinary header, unlike the mTLS certificate above:
+    // `http_req` already gives access to the whole header map, no
+    // extension-based plumbing needed.
+    let dpop_header = http_req.headers().get("DPoP").and_then(|h| h.to_str().ok());
+
     match handle_token_with_client_cert(
         req.into_inner(),
         auth_header,
@@ -140,6 +145,7 @@ pub async fn actix_token_handler(
         op_store.get_ref().as_ref(),
         tokens.get_ref().as_ref(),
         client_cert_der.as_deref(),
+        dpop_header,
     )
     .await
     {
