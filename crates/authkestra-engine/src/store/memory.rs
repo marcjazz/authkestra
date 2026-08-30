@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -9,6 +10,10 @@ struct StoreEntry<T> {
     value: T,
     expires_at: Option<Instant>,
 }
+
+/// A min-heap of (expiry, key) pairs, oldest first — see
+/// `MemoryStore::insert_if_absent` for why it exists and how it's used.
+type ExpiryQueue = BinaryHeap<Reverse<(Instant, String)>>;
 
 impl<T> StoreEntry<T> {
     fn is_expired(&self) -> bool {
@@ -29,6 +34,9 @@ impl<T> StoreEntry<T> {
 pub struct MemoryStore<T> {
     data: Arc<Mutex<HashMap<String, StoreEntry<T>>>>,
     indices: Arc<Mutex<HashMap<String, String>>>,
+    /// Expiry order for entries written through `insert_if_absent` — see
+    /// that method for why this exists and how it's used.
+    insert_only_expiry_queue: Arc<Mutex<ExpiryQueue>>,
 }
 
 impl<T> Default for MemoryStore<T> {
@@ -36,6 +44,7 @@ impl<T> Default for MemoryStore<T> {
         Self {
             data: Arc::new(Mutex::new(HashMap::new())),
             indices: Arc::new(Mutex::new(HashMap::new())),
+            insert_only_expiry_queue: Arc::new(Mutex::new(BinaryHeap::new())),
         }
     }
 }
@@ -44,6 +53,17 @@ impl<T> MemoryStore<T> {
     /// Create a new, empty `MemoryStore`.
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+#[cfg(test)]
+impl<T> MemoryStore<T> {
+    /// Test-only introspection: the number of entries currently held,
+    /// expired or not. Used to prove `insert_if_absent`'s opportunistic
+    /// sweep actually shrinks the map, not just that expired entries are
+    /// unreachable through the public API.
+    fn len(&self) -> usize {
+        self.data.lock().unwrap().len()
     }
 }
 
@@ -112,18 +132,66 @@ impl<T: Clone + Send + Sync + 'static> AtomicInsert<T> for MemoryStore<T> {
         // makes the operation atomic, exactly like `consume`'s single
         // `remove` call above.
         let mut data = self.data.lock().unwrap();
+        let mut expiry_queue = self.insert_only_expiry_queue.lock().unwrap();
+
+        // `get`/`consume` each self-heal by removing an expired entry the
+        // next time *that same key* is looked up — but `insert_if_absent`
+        // is also used for insert-only key spaces (a DPoP proof's `jti`,
+        // unique per proof) where no later call ever revisits the same
+        // key. Without reclaiming these separately, such an entry would
+        // sit expired-but-present forever: nothing else would ever touch
+        // its key to trigger removal, leaking one entry per call for the
+        // life of the process.
+        //
+        // `insert_only_expiry_queue` tracks exactly this key space, ordered
+        // by expiry. Popping while the earliest entry has expired costs
+        // O(log n) per popped item, and each item is pushed once and
+        // popped at most once — so the amortized cost per call is
+        // O(log n), not the O(n) a full-map scan on every call would be
+        // (which, at R requests/sec against a T-second TTL, is quadratic
+        // in R: each of the ~R*T live entries gets rescanned on every one
+        // of the R calls per second).
+        //
+        // A popped entry is discarded as a no-op, not removed from `data`,
+        // if `data` no longer holds it under the exact expiry this queue
+        // entry was pushed for — that happens when the same key was later
+        // reinserted with a new TTL after this entry was queued, which
+        // pushed its own, newer queue entry for the same key. Without this
+        // guard a stale queue entry could wrongly evict a key's *current*
+        // value.
+        let now = Instant::now();
+        while let Some(Reverse((expiry, _))) = expiry_queue.peek() {
+            if *expiry > now {
+                break;
+            }
+            let Reverse((expiry, stale_key)) = expiry_queue.pop().unwrap();
+            if data
+                .get(&stale_key)
+                .is_some_and(|entry| entry.expires_at == Some(expiry))
+            {
+                data.remove(&stale_key);
+            }
+        }
+
         if let Some(entry) = data.get(key) {
+            // Only reachable for a key written through some path other
+            // than `insert_if_absent` (e.g. `set`) that the queue above
+            // doesn't track — the sweep already handled everything in
+            // this key space.
             if !entry.is_expired() {
                 return Ok(false);
             }
         }
+
+        let expires_at = now + ttl;
         data.insert(
             key.to_string(),
             StoreEntry {
                 value,
-                expires_at: Some(Instant::now() + ttl),
+                expires_at: Some(expires_at),
             },
         );
+        expiry_queue.push(Reverse((expires_at, key.to_string())));
         Ok(true)
     }
 }
@@ -279,6 +347,87 @@ mod tests {
             .unwrap();
         assert!(inserted_again);
         assert_eq!(store.get("key1").await.unwrap(), Some("value2".to_string()));
+    }
+
+    /// `insert_if_absent` is the only primitive an insert-only key space
+    /// (e.g. a DPoP proof's `jti`, unique per proof) ever calls — nothing
+    /// ever revisits the same key the way `get`/`consume` are revisited for
+    /// server-issued values. Without an opportunistic sweep, an expired
+    /// entry under a never-repeated key would sit in the map forever,
+    /// leaking one entry per call for the life of the process. This proves
+    /// the map's size actually shrinks, not just that expired entries are
+    /// unreachable through `get`.
+    #[tokio::test]
+    async fn test_insert_if_absent_reclaims_expired_entries_under_other_keys() {
+        let store = MemoryStore::<String>::new();
+
+        for i in 0..50 {
+            store
+                .insert_if_absent(
+                    &format!("jti-{i}"),
+                    "spent".to_string(),
+                    Duration::from_millis(10),
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.len(), 50);
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // A single insert under a brand-new key must sweep every expired
+        // entry from the previous batch, even though none of their keys
+        // are ever looked up again.
+        store
+            .insert_if_absent("jti-new", "spent".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.len(),
+            1,
+            "expired insert-only entries under other keys must be swept, not retained forever"
+        );
+    }
+
+    /// The sweep's expiry queue can hold a stale entry for a key that was
+    /// later reinserted with a fresh, longer TTL (`insert_if_absent`
+    /// allows reuse once a key's own entry expires — see the test above).
+    /// The sweep must recognize that stale entry as no longer describing
+    /// the key's *current* value and leave it alone, not wrongly evict a
+    /// live entry just because an old queue record for the same key has
+    /// finally come due.
+    #[tokio::test]
+    async fn test_insert_if_absent_sweep_ignores_a_stale_queue_entry_for_a_reused_key() {
+        let store = MemoryStore::<String>::new();
+
+        store
+            .insert_if_absent("key1", "first".to_string(), Duration::from_millis(10))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Reuses "key1" with a long TTL — this pushes a second, newer
+        // queue entry for the same key; the first (now-expired) one is
+        // still sitting in the queue behind it.
+        assert!(store
+            .insert_if_absent("key1", "second".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap());
+
+        // Any other insert drives the sweep, which will reach that stale
+        // first queue entry for "key1" — it must be discarded as a no-op,
+        // not treated as license to remove "key1"'s current, still-live
+        // value.
+        store
+            .insert_if_absent("key2", "unrelated".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.get("key1").await.unwrap(),
+            Some("second".to_string()),
+            "a stale queue entry for a reused key must not evict its current value"
+        );
     }
 
     /// The property the whole replay-guard feature depends on: under real

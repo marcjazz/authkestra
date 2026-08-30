@@ -59,6 +59,21 @@ pub struct TokenRequest {
     /// [`crate::client_assertion::CLIENT_ASSERTION_TYPE_JWT_BEARER`] when
     /// `client_assertion` is present.
     pub client_assertion_type: Option<String>,
+
+    // DPoP (RFC 9449)
+    /// The RFC 7638 thumbprint of a verified DPoP proof's embedded key,
+    /// once `handle_token_with_client_cert` has verified the request's
+    /// `DPoP` header and checked its `jti` for replay — `None` otherwise.
+    ///
+    /// `#[serde(skip)]` is load-bearing, not incidental: this is never a
+    /// form field a client submits. Without it, a client could set
+    /// `dpop_jkt=<anything>` directly and bind a token to a key it never
+    /// proved possession of, bypassing DPoP verification entirely.
+    /// `pub(crate)` for the same reason — populated exactly once, by
+    /// `handle_token_with_client_cert` before grant dispatch, and read only
+    /// by the grant handlers in this crate.
+    #[serde(skip)]
+    pub(crate) dpop_jkt: Option<String>,
 }
 
 impl TokenRequest {
@@ -89,7 +104,24 @@ impl TokenRequest {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         }
+    }
+
+    /// The RFC 7638 thumbprint of the verified DPoP proof's embedded key
+    /// this request was presented with, or `None` if it wasn't
+    /// DPoP-bound. `None` both before `handle_token_with_client_cert` has
+    /// verified a proof and for a request with no `DPoP` header at all.
+    ///
+    /// Read-only: the field itself stays `pub(crate)` so a client can
+    /// never set it directly (see its doc comment for why that's
+    /// forgery-proof), but an `OpStore::handle_*_grant` override outside
+    /// this crate that delegates to a `default_handle_*` free function and
+    /// post-processes the result still needs to be able to tell whether
+    /// the request it just handled was DPoP-bound — e.g. to stamp its own
+    /// additional claims alongside `cnf.jkt` via [`merge_dpop_cnf`].
+    pub fn dpop_jkt(&self) -> Option<&str> {
+        self.dpop_jkt.as_deref()
     }
 }
 
@@ -154,7 +186,7 @@ pub async fn handle_token(
     op_store: &dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    handle_token_with_client_cert(req, auth_header, config, op_store, tokens, None).await
+    handle_token_with_client_cert(req, auth_header, config, op_store, tokens, None, None).await
 }
 
 /// Same as [`handle_token`], but additionally takes the DER bytes of the
@@ -171,14 +203,22 @@ pub async fn handle_token(
 /// [`handle_client_credentials`]), which stamps an RFC 8705 §3
 /// `cnf.x5t#S256` confirmation claim onto the issued access token when a
 /// certificate is present. It is ignored by every other grant type.
+///
+/// `dpop_header` is the raw value of the request's `DPoP` header, if any
+/// (RFC 9449) — unlike `client_cert_der`, this affects *every* grant type:
+/// a verified proof is recorded here (once, before dispatch) as
+/// `req.dpop_jkt`, which every grant handler reads to stamp `cnf.jkt` onto
+/// the token it issues and report `token_type: "DPoP"` instead of
+/// `"Bearer"`. See `crate::dpop` for the replay-tracking half of this.
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_token_with_client_cert(
-    req: TokenRequest,
+    mut req: TokenRequest,
     auth_header: Option<&str>,
     config: &OpConfig,
     op_store: &dyn OpStore,
     tokens: &TokenManager,
     client_cert_der: Option<&[u8]>,
+    dpop_header: Option<&str>,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
 
@@ -229,6 +269,73 @@ pub async fn handle_token_with_client_cert(
             error: "invalid_client".to_string(),
             error_description: "Client authentication failed".to_string(),
         });
+    }
+
+    // 3. DPoP (RFC 9449) — verified once, here, before any grant runs, so
+    //    every grant handler downstream just reads `req.dpop_jkt` rather
+    //    than each needing its own copy of proof verification and replay
+    //    checking. `expected_ath: None` since no access token exists yet
+    //    for the proof to bind to — that check is `authkestra-resource`'s
+    //    job, on the *next* request the client makes with the token this
+    //    one issues.
+    if let Some(proof) = dpop_header {
+        let verified = match authkestra_engine::token::dpop::verify_dpop_proof(
+            proof,
+            "POST",
+            &config.token_endpoint(),
+            None,
+            chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS),
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(client_id = %client_id, error = %e, "DPoP proof verification failed");
+                return Err(TokenErrorResponse {
+                    error: "invalid_dpop_proof".to_string(),
+                    error_description: "The presented DPoP proof is invalid".to_string(),
+                });
+            }
+        };
+
+        // Anchored to the proof's own `iat`, not the current time: a proof
+        // remains fresh (and so, re-presentable) up to `iat + max_age`
+        // regardless of how long after `iat` it happens to first arrive
+        // here. Anchoring to `Utc::now()` instead would let the replay
+        // record expire before that fixed freshness boundary whenever this
+        // request is processed even slightly after `iat` (network delay,
+        // queuing, or a fresh `iat` up to `CLOCK_SKEW_ALLOWANCE_SECS` in
+        // this server's future) — a real, if narrow, window in which the
+        // same jti could be replayed after its record expired but before
+        // `verify_dpop_proof` would independently reject it as stale. The
+        // extra second guards the exact boundary instant itself.
+        let expires_at = chrono::DateTime::<Utc>::from_timestamp(verified.iat, 0)
+            .unwrap_or_else(Utc::now)
+            + chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS)
+            + chrono::Duration::seconds(1);
+        match op_store
+            .check_and_record_dpop_jti(&verified.jti, expires_at)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    client_id = %client_id,
+                    "DPoP proof jti has already been spent — replay refused"
+                );
+                return Err(TokenErrorResponse {
+                    error: "invalid_dpop_proof".to_string(),
+                    error_description: "The presented DPoP proof has already been used".to_string(),
+                });
+            }
+            Err(e) => {
+                tracing::error!(client_id = %client_id, error = ?e, "DPoP replay check failed");
+                return Err(TokenErrorResponse {
+                    error: "invalid_dpop_proof".to_string(),
+                    error_description: "The presented DPoP proof could not be verified".to_string(),
+                });
+            }
+        }
+
+        req.dpop_jkt = Some(verified.jkt);
     }
 
     match req.grant_type.as_str() {
@@ -608,11 +715,15 @@ async fn handle_device_code(
                     Some(session.scope.clone())
                 };
 
-                let access_token = match tokens.issue_user_token(
+                let mut extra = HashMap::new();
+                merge_dpop_cnf(&mut extra, req.dpop_jkt.as_deref());
+
+                let access_token = match tokens.issue_user_token_with_extra(
                     identity.clone(),
                     expires_in,
                     scope_opt.clone(),
                     Some(client_id.clone()),
+                    extra,
                 ) {
                     Ok(t) => t,
                     Err(_) => {
@@ -646,15 +757,34 @@ async fn handle_device_code(
                         identity,
                         scope: session.scope,
                         expires_at: Utc::now() + chrono::Duration::days(30),
+                        // RFC 9449 §5: a refresh token minted alongside a
+                        // DPoP-bound access token must itself be bound to
+                        // the same key, so `default_handle_refresh_token`
+                        // can enforce continuity on every future rotation.
+                        jkt: req.dpop_jkt.clone(),
                     };
-                    if op_store.store_token(rt).await.is_ok() {
-                        issued_refresh_token = Some(refresh_val);
+                    match store_refresh_token_verifying_dpop_binding(op_store, rt).await {
+                        RefreshTokenStoreOutcome::Stored => {
+                            issued_refresh_token = Some(refresh_val)
+                        }
+                        RefreshTokenStoreOutcome::NonFatalStorageFailure => {}
+                        RefreshTokenStoreOutcome::DpopBindingFailed => {
+                            return Err(TokenErrorResponse {
+                                error: "server_error".to_string(),
+                                error_description: "Failed to persist DPoP token binding"
+                                    .to_string(),
+                            });
+                        }
                     }
                 }
 
                 Ok(TokenResponse {
                     access_token,
-                    token_type: "Bearer".to_string(),
+                    token_type: if req.dpop_jkt.is_some() {
+                        "DPoP".to_string()
+                    } else {
+                        "Bearer".to_string()
+                    },
                     expires_in,
                     id_token,
                     refresh_token: issued_refresh_token,
@@ -820,11 +950,15 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
         Some(auth_code.scope.clone())
     };
 
-    let access_token = match tokens.issue_user_token(
+    let mut extra = HashMap::new();
+    merge_dpop_cnf(&mut extra, req.dpop_jkt.as_deref());
+
+    let access_token = match tokens.issue_user_token_with_extra(
         auth_code.identity.clone(),
         expires_in,
         scope_opt.clone(),
         Some(client_id.clone()),
+        extra,
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -866,12 +1000,18 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
             identity: auth_code.identity.clone(),
             scope: auth_code.scope.clone(),
             expires_at: Utc::now() + chrono::Duration::days(30),
+            // RFC 9449 §5: see the identical comment in `handle_device_code`.
+            jkt: req.dpop_jkt.clone(),
         };
-        if let Err(e) = op_store.store_token(rt_model.clone()).await {
-            tracing::error!(error = ?e, "Failed to store refresh token");
-            // Non-fatal, just don't return a refresh token
-        } else {
-            issued_refresh_token = Some(refresh_val);
+        match store_refresh_token_verifying_dpop_binding(op_store, rt_model).await {
+            RefreshTokenStoreOutcome::Stored => issued_refresh_token = Some(refresh_val),
+            RefreshTokenStoreOutcome::NonFatalStorageFailure => {}
+            RefreshTokenStoreOutcome::DpopBindingFailed => {
+                return Err(TokenErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: "Failed to persist DPoP token binding".to_string(),
+                });
+            }
         }
     }
 
@@ -882,13 +1022,125 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
 
     Ok(TokenResponse {
         access_token,
-        token_type: "Bearer".to_string(),
+        token_type: if req.dpop_jkt.is_some() {
+            "DPoP".to_string()
+        } else {
+            "Bearer".to_string()
+        },
         expires_in,
         id_token,
         refresh_token: issued_refresh_token,
         scope: scope_opt,
         issued_token_type: None,
     })
+}
+
+/// Merges a DPoP `cnf.jkt` confirmation member (RFC 9449 §6.1) into an
+/// `extra` claims map, preserving whatever the `cnf` object already holds.
+///
+/// A plain `extra.insert("cnf", json!({"jkt": ...}))` would silently
+/// clobber an existing `cnf.x5t#S256` (RFC 8705) if a request is both
+/// mTLS-bound and DPoP-bound — the spec requires both confirmation members
+/// to coexist in one `cnf` object, not overwrite each other. A no-op when
+/// `dpop_jkt` is `None`, so every call site can call this unconditionally.
+///
+/// `pub`, not `pub(crate)`: an `OpStore::handle_*_grant` override outside
+/// this crate that delegates to a `default_handle_*` free function and
+/// then stamps its own additional claims onto the result needs this same
+/// merge — otherwise it would have to hand-roll the `cnf` merge itself and
+/// risk reintroducing the exact clobber this function exists to prevent.
+/// [`TokenRequest::dpop_jkt`] is the read-only accessor such an override
+/// reads the key from.
+pub fn merge_dpop_cnf(extra: &mut HashMap<String, serde_json::Value>, dpop_jkt: Option<&str>) {
+    let Some(jkt) = dpop_jkt else {
+        return;
+    };
+    let cnf = extra
+        .entry("cnf".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(obj) = cnf.as_object_mut() {
+        obj.insert(
+            "jkt".to_string(),
+            serde_json::Value::String(jkt.to_string()),
+        );
+    }
+}
+
+/// What happened when [`store_refresh_token_verifying_dpop_binding`] tried
+/// to persist a freshly minted refresh token.
+enum RefreshTokenStoreOutcome {
+    /// Stored, and — if it was meant to be DPoP-bound — confirmed bound.
+    Stored,
+    /// The store call itself failed and the token was never meant to be
+    /// DPoP-bound. Every call site already tolerates this exactly as it
+    /// did before this feature existed: log it, omit `refresh_token` from
+    /// the response, and otherwise succeed.
+    NonFatalStorageFailure,
+    /// The token was meant to be DPoP-bound (`jkt: Some(_)`) but that
+    /// binding cannot be confirmed to have persisted — never tolerated,
+    /// unlike the case above, because silently issuing a refresh token
+    /// whose RFC 9449 §5 continuity guarantee doesn't actually exist is
+    /// exactly the silent security gap this check exists to catch.
+    DpopBindingFailed,
+}
+
+/// Stores a freshly minted refresh token, then — only when it's meant to
+/// be DPoP-bound — reads it back and confirms the binding actually
+/// persisted.
+///
+/// A backend can silently drop `jkt` on write without `store_token`
+/// itself ever returning an error: exactly the case `sqlx_store.rs`'s
+/// `RefreshTokenStore` impl is in right now (its schema has no `jkt`
+/// column yet, so it accepts a token with `jkt: Some(_)` and simply
+/// never persists that field — see the comment on its `get_token`). If
+/// nothing ever checked, that token's RFC 9449 §5 continuity guarantee
+/// would quietly not exist: `default_handle_refresh_token` would see
+/// `jkt: None` on redemption and treat it as though it never asked for a
+/// DPoP-bound refresh token in the first place, while the client's
+/// response here claimed `token_type: "DPoP"` and a `cnf.jkt`-bound
+/// access token. Reading the write back and refusing loudly is what turns
+/// that silent security gap into a visible failure — the same principle
+/// this crate already applies to every other silent-degradation risk in
+/// this feature (`NoDpopReplayStore` failing closed rather than accepting
+/// an unverifiable proof, the consume-before-validate ordering fix, and
+/// so on).
+async fn store_refresh_token_verifying_dpop_binding<S: OpStore + ?Sized>(
+    op_store: &S,
+    rt: RefreshToken,
+) -> RefreshTokenStoreOutcome {
+    let token = rt.token.clone();
+    let expected_jkt = rt.jkt.clone();
+    let dpop_bound = expected_jkt.is_some();
+
+    if let Err(e) = op_store.store_token(rt).await {
+        tracing::error!(error = ?e, "Failed to store refresh token");
+        return if dpop_bound {
+            RefreshTokenStoreOutcome::DpopBindingFailed
+        } else {
+            RefreshTokenStoreOutcome::NonFatalStorageFailure
+        };
+    }
+
+    if !dpop_bound {
+        return RefreshTokenStoreOutcome::Stored;
+    }
+
+    match op_store.get_token(&token).await {
+        Ok(Some(stored)) if stored.jkt == expected_jkt => RefreshTokenStoreOutcome::Stored,
+        Ok(_) => {
+            tracing::error!(
+                "refresh token's DPoP binding did not survive storage — the configured \
+                 RefreshTokenStore silently dropped `jkt`, which would let this token be \
+                 redeemed without RFC 9449 §5 continuity enforcement; refusing rather than \
+                 handing back a token whose response claims a binding storage doesn't have"
+            );
+            RefreshTokenStoreOutcome::DpopBindingFailed
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to verify refresh token's DPoP binding");
+            RefreshTokenStoreOutcome::DpopBindingFailed
+        }
+    }
 }
 
 /// Handles the `client_credentials` grant (RFC 6749 §4.4).
@@ -988,6 +1240,7 @@ async fn handle_client_credentials(
             serde_json::json!({ "x5t#S256": thumbprint }),
         );
     }
+    merge_dpop_cnf(&mut extra, req.dpop_jkt.as_deref());
 
     let access_token = match tokens.issue_client_token_with_extra(
         &client_id,
@@ -1014,7 +1267,11 @@ async fn handle_client_credentials(
 
     Ok(TokenResponse {
         access_token,
-        token_type: "Bearer".to_string(),
+        token_type: if req.dpop_jkt.is_some() {
+            "DPoP".to_string()
+        } else {
+            "Bearer".to_string()
+        },
         expires_in,
         id_token: None, // client credentials does not issue ID tokens
         refresh_token: None,
@@ -1058,10 +1315,98 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         }
     };
 
+    // Looked up first, *not* consumed yet: every check below (client_id,
+    // expiry, DPoP continuity) runs against this non-destructive read.
+    // Consumption — the actual single-use, atomic revoke-and-return — only
+    // happens once every check has passed. Doing it in the other order
+    // (consume first, validate after, as this function used to) means any
+    // one of these checks failing after consumption permanently destroys a
+    // refresh token that was otherwise still valid. For the DPoP check in
+    // particular, that inverts the feature's own threat model: an attacker
+    // holding nothing but a leaked token *string* (no key at all) could
+    // send one request with no `DPoP` header and permanently log the
+    // legitimate holder out — turning a leaked-but-otherwise-useless token
+    // into a working denial-of-service weapon. The same trap would catch a
+    // legitimate client behind a proxy that strips the header. Validating
+    // first means a request that fails never has a side effect on a token
+    // it had no right to consume.
+    let candidate = match op_store.get_token(refresh_token_str).await {
+        Ok(Some(rt)) => rt,
+        Ok(None) => {
+            tracing::warn!("Invalid refresh token (unknown, revoked, or expired)");
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Invalid refresh token".to_string(),
+            });
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to look up refresh token");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Internal server error".to_string(),
+            });
+        }
+    };
+
+    if candidate.client_id != client_id {
+        tracing::warn!("Refresh token issued to a different client");
+        return Err(TokenErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "Invalid refresh token".to_string(),
+        });
+    }
+
+    if chrono::Utc::now() > candidate.expires_at {
+        tracing::warn!("Refresh token expired");
+        return Err(TokenErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "Refresh token expired".to_string(),
+        });
+    }
+
+    // RFC 9449 §5: a refresh token that was bound to a DPoP key when issued
+    // MUST continue to be redeemed with a proof for that *same* key on
+    // every rotation — a request that omits DPoP entirely, or presents a
+    // proof for a different key, is refused rather than silently falling
+    // back to a plain bearer token or re-binding to whatever key the
+    // presenter happens to hold. Without this, an exfiltrated DPoP-bound
+    // refresh token could be redeemed with the attacker's own key (or no
+    // proof at all), which is exactly the theft scenario DPoP exists to
+    // close for public clients (authkestra#274). A `candidate.jkt` of
+    // `None` means this refresh token was never DPoP-bound — that behavior
+    // is unchanged from before this feature existed.
+    if let Some(expected_jkt) = &candidate.jkt {
+        if req.dpop_jkt.as_deref() != Some(expected_jkt.as_str()) {
+            tracing::warn!(
+                client_id = %client_id,
+                "Refresh token is DPoP-bound but the request's proof key does not match"
+            );
+            return Err(TokenErrorResponse {
+                error: "invalid_dpop_proof".to_string(),
+                error_description: "This refresh token is bound to a different DPoP key"
+                    .to_string(),
+            });
+        }
+    }
+    // Carries the rotated token's binding forward. Deliberately reads from
+    // `candidate.jkt` rather than `req.dpop_jkt` when the token was already
+    // bound (the branch above already proved they're equal) — the stored,
+    // trusted value is preferred over re-deriving it from client input.
+    // When `candidate.jkt` is `None`, this is the first time the client has
+    // presented a DPoP proof for this token lineage, so `req.dpop_jkt`
+    // (possibly still `None`) begins the binding going forward.
+    let jkt = candidate.jkt.clone().or_else(|| req.dpop_jkt.clone());
+
+    // All checks passed — now, and only now, perform the actual single-use
+    // consumption. `consume_token`'s atomicity is still what prevents two
+    // concurrent requests presenting the same token from both succeeding:
+    // if a concurrent request already won that race between the `get_token`
+    // above and this call, this returns `Ok(None)` and the loser (this
+    // request) is correctly refused, with no destructive effect of its own.
     let old_rt = match op_store.consume_token(refresh_token_str).await {
         Ok(Some(rt)) => rt,
         Ok(None) => {
-            tracing::warn!("Invalid refresh token (possibly replayed)");
+            tracing::warn!("Refresh token was consumed by a concurrent request");
             return Err(TokenErrorResponse {
                 error: "invalid_grant".to_string(),
                 error_description: "Invalid refresh token".to_string(),
@@ -1076,22 +1421,6 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         }
     };
 
-    if old_rt.client_id != client_id {
-        tracing::warn!("Refresh token issued to a different client");
-        return Err(TokenErrorResponse {
-            error: "invalid_grant".to_string(),
-            error_description: "Invalid refresh token".to_string(),
-        });
-    }
-
-    if chrono::Utc::now() > old_rt.expires_at {
-        tracing::warn!("Refresh token expired");
-        return Err(TokenErrorResponse {
-            error: "invalid_grant".to_string(),
-            error_description: "Refresh token expired".to_string(),
-        });
-    }
-
     let new_refresh_val = uuid::Uuid::new_v4().to_string();
     let new_rt = RefreshToken {
         token: new_refresh_val.clone(),
@@ -1099,10 +1428,22 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         identity: old_rt.identity.clone(),
         scope: old_rt.scope.clone(),
         expires_at: chrono::Utc::now() + chrono::Duration::days(30),
+        jkt: jkt.clone(),
     };
 
-    if let Err(e) = op_store.store_token(new_rt).await {
-        tracing::error!(error = ?e, "Failed to store new refresh token");
+    match store_refresh_token_verifying_dpop_binding(op_store, new_rt).await {
+        RefreshTokenStoreOutcome::Stored => {}
+        // Pre-existing behavior for this grant, unrelated to DPoP: a plain
+        // storage failure here is logged but doesn't fail the request —
+        // the client still gets a `refresh_token` in the response even
+        // though it wasn't actually persisted. Not this fix's concern.
+        RefreshTokenStoreOutcome::NonFatalStorageFailure => {}
+        RefreshTokenStoreOutcome::DpopBindingFailed => {
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to persist DPoP token binding".to_string(),
+            });
+        }
     }
 
     let expires_in = config.access_token_ttl_secs;
@@ -1112,11 +1453,15 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         Some(old_rt.scope.clone())
     };
 
-    let access_token = match tokens.issue_user_token(
+    let mut extra = HashMap::new();
+    merge_dpop_cnf(&mut extra, jkt.as_deref());
+
+    let access_token = match tokens.issue_user_token_with_extra(
         old_rt.identity.clone(),
         expires_in,
         scope_opt.clone(),
         Some(client_id.clone()),
+        extra,
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -1157,7 +1502,11 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
 
     Ok(TokenResponse {
         access_token,
-        token_type: "Bearer".to_string(),
+        token_type: if jkt.is_some() {
+            "DPoP".to_string()
+        } else {
+            "Bearer".to_string()
+        },
         expires_in,
         id_token,
         refresh_token: Some(new_refresh_val),
@@ -1189,6 +1538,11 @@ pub async fn default_handle_token_exchange(
 ) -> Result<TokenResponse, TokenErrorResponse> {
     use crate::client::GrantType;
     use authkestra_engine::token::Claims;
+
+    // Captured up front: several `req` fields below are moved out
+    // (`req.audience`, `req.scope`) before the access token is issued, and
+    // `dpop_jkt` is needed at that point.
+    let dpop_jkt = req.dpop_jkt.clone();
 
     if !config.token_exchange_enabled {
         tracing::warn!("Token exchange is disabled globally");
@@ -1375,17 +1729,25 @@ pub async fn default_handle_token_exchange(
         None
     };
 
-    let access_token =
-        match tokens.issue_user_token(identity, expires_in, final_scope_str.clone(), new_aud) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to issue access token during exchange");
-                return Err(TokenErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: "Failed to generate token".to_string(),
-                });
-            }
-        };
+    let mut extra = HashMap::new();
+    merge_dpop_cnf(&mut extra, dpop_jkt.as_deref());
+
+    let access_token = match tokens.issue_user_token_with_extra(
+        identity,
+        expires_in,
+        final_scope_str.clone(),
+        new_aud,
+        extra,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to issue access token during exchange");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to generate token".to_string(),
+            });
+        }
+    };
 
     tracing::info!(
         client_id = %client_id,
@@ -1394,7 +1756,11 @@ pub async fn default_handle_token_exchange(
 
     Ok(TokenResponse {
         access_token,
-        token_type: "Bearer".to_string(),
+        token_type: if dpop_jkt.is_some() {
+            "DPoP".to_string()
+        } else {
+            "Bearer".to_string()
+        },
         expires_in,
         id_token,
         refresh_token: None,
@@ -1518,6 +1884,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
         let clients = authkestra_engine::store::memory::MemoryStore::<
             crate::client::ClientRegistration,
@@ -1587,6 +1954,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
         let clients = authkestra_engine::store::memory::MemoryStore::<
             crate::client::ClientRegistration,
@@ -1700,6 +2068,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
 
         let res = handle_token(
@@ -1869,6 +2238,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         }
     }
 
@@ -2043,6 +2413,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
         let res = handle_token(
             req,
@@ -2120,6 +2491,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
         let res = handle_token(
             req,
@@ -2197,6 +2569,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
         let res = handle_token(
             req,
@@ -2279,6 +2652,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
         let res = handle_token(
             req,
@@ -2345,6 +2719,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
         let res = handle_token(
             req,
@@ -2456,6 +2831,7 @@ mod tests {
             audience: audience.map(|a| a.to_string()),
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         }
     }
 
@@ -2484,6 +2860,7 @@ mod tests {
             &store,
             &tokens,
             Some(cert_der),
+            None,
         )
         .await
         .expect("client_credentials with a presented certificate should succeed");
@@ -2518,6 +2895,7 @@ mod tests {
             &test_config(false),
             &store,
             &tokens,
+            None,
             None,
         )
         .await
@@ -2627,6 +3005,7 @@ mod tests {
             &store,
             &tokens,
             Some(cert_der),
+            None,
         )
         .await
         .expect("a request with both an allowed audience and a certificate should succeed");
@@ -2682,6 +3061,7 @@ mod tests {
                 identity: test_identity(),
                 scope: "openid".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -2704,6 +3084,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
         let res = handle_token(
             req,
@@ -2877,6 +3258,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         }
     }
 
@@ -2946,6 +3328,7 @@ mod tests {
                 // teaches it to issue one for the `openid` scope.
                 scope: "profile".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -3034,6 +3417,7 @@ mod tests {
                     identity: test_identity(),
                     scope: "profile".to_string(),
                     expires_at: Utc::now() - Duration::minutes(1),
+                    jkt: None,
                 },
                 std::time::Duration::from_secs(60),
             )
@@ -3080,6 +3464,7 @@ mod tests {
                 identity: test_identity(),
                 scope: "profile".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -3137,6 +3522,7 @@ mod tests {
                 identity: test_identity(),
                 scope: "openid profile".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -3184,6 +3570,7 @@ mod tests {
                 identity: test_identity(),
                 scope: "profile".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -3516,6 +3903,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         }
     }
 
@@ -4313,6 +4701,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
 
         let clients = authkestra_engine::store::memory::MemoryStore::<
@@ -4376,6 +4765,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
         };
 
         let clients = authkestra_engine::store::memory::MemoryStore::<
@@ -4417,6 +4807,898 @@ mod tests {
 
         let err = res.unwrap_err();
         assert_eq!(err.error, "unauthorized_client");
+    }
+
+    // --- DPoP (RFC 9449) proof wiring — authkestra#274 Phase B ---
+
+    mod dpop_wiring_tests {
+        use super::*;
+        use crate::dpop::DpopJtiRecord;
+        use base64::Engine;
+        use ed25519_dalek::{Signer, SigningKey};
+
+        fn b64(bytes: &[u8]) -> String {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+        }
+        fn b64_json(v: &serde_json::Value) -> String {
+            b64(serde_json::to_vec(v).unwrap().as_slice())
+        }
+
+        /// Builds a real, genuinely Ed25519-signed DPoP proof for the OP's
+        /// token endpoint. Mirrors `authkestra_engine::token::dpop`'s own
+        /// `ProofBuilder` test helper, which is private to that crate's test
+        /// module and so re-authored here rather than shared.
+        struct DpopProofBuilder {
+            signing_key: SigningKey,
+            htu: String,
+            jti: String,
+        }
+
+        impl DpopProofBuilder {
+            fn new(htu: &str, jti: &str) -> Self {
+                Self::with_key_seed(9, htu, jti)
+            }
+
+            /// As [`Self::new`], but lets the caller pick which fixed key
+            /// this proof is signed with — needed by tests that must prove
+            /// two proofs are bound to the *same* key (reuse a seed) or
+            /// deliberately different ones (use distinct seeds).
+            fn with_key_seed(seed: u8, htu: &str, jti: &str) -> Self {
+                Self {
+                    signing_key: SigningKey::from_bytes(&[seed; 32]),
+                    htu: htu.to_string(),
+                    jti: jti.to_string(),
+                }
+            }
+
+            fn jwk(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": b64(self.signing_key.verifying_key().as_bytes()),
+                })
+            }
+
+            fn expected_jkt(&self) -> String {
+                authkestra_engine::token::dpop::compute_jwk_thumbprint(
+                    &serde_json::from_value(self.jwk()).unwrap(),
+                )
+                .unwrap()
+            }
+
+            fn build(&self) -> String {
+                let header = serde_json::json!({
+                    "typ": "dpop+jwt",
+                    "alg": "EdDSA",
+                    "jwk": self.jwk(),
+                });
+                let payload = serde_json::json!({
+                    "htm": "POST",
+                    "htu": self.htu,
+                    "iat": chrono::Utc::now().timestamp(),
+                    "jti": self.jti,
+                });
+                let signing_input = format!("{}.{}", b64_json(&header), b64_json(&payload));
+                let signature = self.signing_key.sign(signing_input.as_bytes());
+                format!("{signing_input}.{}", b64(&signature.to_bytes()))
+            }
+        }
+
+        /// As [`client_credentials_store`], but with a real `DpopReplayStore`
+        /// wired via `with_dpop_replay_store` instead of the fail-closed
+        /// `NoDpopReplayStore` default — needed by every test in this module
+        /// that expects a presented proof to actually be accepted.
+        async fn client_credentials_store_with_dpop_replay(
+            client_id: &str,
+        ) -> crate::store::CompositeOpStore<
+            authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
+            authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
+            authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>,
+            authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
+            crate::client_assertion::NoClientAssertionStore,
+            authkestra_engine::store::memory::MemoryStore<DpopJtiRecord>,
+        > {
+            client_credentials_store(client_id)
+                .await
+                .with_dpop_replay_store(authkestra_engine::store::memory::MemoryStore::<
+                    DpopJtiRecord,
+                >::new())
+        }
+
+        /// A valid DPoP proof on a `client_credentials` request must bind the
+        /// issued token to the proof's key (`cnf.jkt`) and switch
+        /// `token_type` to `"DPoP"`.
+        #[tokio::test]
+        async fn client_credentials_stamps_cnf_jkt_and_dpop_token_type() {
+            let store = client_credentials_store_with_dpop_replay("client1").await;
+            let tokens = test_tokens();
+            let proof_builder = DpopProofBuilder::new("https://auth.example.com/token", "jti-1");
+            let proof = proof_builder.build();
+
+            let resp = handle_token_with_client_cert(
+                client_credentials_request("client1"),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect("a valid, fresh DPoP proof must be accepted");
+
+            assert_eq!(resp.token_type, "DPoP");
+
+            let claims = tokens
+                .validate_token(&resp.access_token, Some("client1"))
+                .expect("issued token must validate");
+            let cnf = claims
+                .extra
+                .get("cnf")
+                .expect("a DPoP proof was presented; the token must carry a cnf claim");
+            assert_eq!(
+                cnf.get("jkt").and_then(|v| v.as_str()),
+                Some(proof_builder.expected_jkt().as_str()),
+            );
+        }
+
+        /// Companion regression: no `DPoP` header at all keeps issuing a
+        /// plain bearer token, exactly like before Phase B — proves the
+        /// feature is additive.
+        #[tokio::test]
+        async fn client_credentials_without_dpop_header_stays_bearer() {
+            let store = client_credentials_store_with_dpop_replay("client1").await;
+            let tokens = test_tokens();
+
+            let resp = handle_token_with_client_cert(
+                client_credentials_request("client1"),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(resp.token_type, "Bearer");
+            let claims = tokens
+                .validate_token(&resp.access_token, Some("client1"))
+                .unwrap();
+            assert!(!claims.extra.contains_key("cnf"));
+        }
+
+        /// RFC 9449 §11.1: a replayed `jti` must be rejected, not silently
+        /// accepted a second time.
+        #[tokio::test]
+        async fn a_replayed_dpop_proof_jti_is_rejected() {
+            let store = client_credentials_store_with_dpop_replay("client1").await;
+            let tokens = test_tokens();
+            let proof =
+                DpopProofBuilder::new("https://auth.example.com/token", "jti-replay").build();
+
+            handle_token_with_client_cert(
+                client_credentials_request("client1"),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect("first presentation of a fresh proof must succeed");
+
+            let err = handle_token_with_client_cert(
+                client_credentials_request("client1"),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect_err("replaying the same proof's jti must be rejected");
+
+            assert_eq!(err.error, "invalid_dpop_proof");
+        }
+
+        /// A deployment that has not wired a `DpopReplayStore` (the
+        /// `NoDpopReplayStore` default) must fail closed rather than accept
+        /// a proof it cannot guarantee is single-use.
+        #[tokio::test]
+        async fn no_dpop_replay_store_wired_fails_closed() {
+            // Deliberately the plain `client_credentials_store`, not the
+            // `_with_dpop_replay` variant — this store's `P` generic
+            // parameter defaults to `NoDpopReplayStore`.
+            let store = client_credentials_store("client1").await;
+            let tokens = test_tokens();
+            let proof = DpopProofBuilder::new("https://auth.example.com/token", "jti-1").build();
+
+            let err = handle_token_with_client_cert(
+                client_credentials_request("client1"),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect_err("no replay store is wired; the proof must be refused");
+
+            assert_eq!(err.error, "invalid_dpop_proof");
+        }
+
+        /// A proof whose `htu` doesn't match the token endpoint must be
+        /// rejected — proves `expected_htu` is actually threaded from
+        /// `config.token_endpoint()`, not hardcoded or ignored.
+        #[tokio::test]
+        async fn a_proof_for_the_wrong_endpoint_is_rejected() {
+            let store = client_credentials_store_with_dpop_replay("client1").await;
+            let tokens = test_tokens();
+            let proof =
+                DpopProofBuilder::new("https://not-this-server.example.com/token", "jti-1").build();
+
+            let err = handle_token_with_client_cert(
+                client_credentials_request("client1"),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect_err("a proof bound to a different htu must be refused");
+
+            assert_eq!(err.error, "invalid_dpop_proof");
+        }
+
+        /// The `authorization_code` grant must also stamp `cnf.jkt` /
+        /// `token_type: "DPoP"` — proves the wiring generalizes past
+        /// `client_credentials` (the only grant with pre-existing `extra`
+        /// claims machinery) to the other four grant handlers that had none.
+        #[tokio::test]
+        #[allow(deprecated)] // `require_pkce` (authkestra#273) — superseded by mandatory PKCE
+        async fn authorization_code_stamps_cnf_jkt_and_dpop_token_type() {
+            let clients = authkestra_engine::store::memory::MemoryStore::<
+                crate::client::ClientRegistration,
+            >::new();
+            clients
+                .set(
+                    "client1",
+                    ClientRegistration {
+                        client_id: "client1".to_string(),
+                        client_secret_hash: None,
+                        redirect_uris: vec!["https://cb".to_string()],
+                        grant_types: vec![GrantType::AuthorizationCode],
+                        scopes: vec!["openid".to_string()],
+                        require_pkce: true,
+                        allowed_audiences: vec![],
+                        token_endpoint_auth_method: None,
+                        jwks: None,
+                    },
+                    std::time::Duration::from_secs(31536000),
+                )
+                .await
+                .unwrap();
+
+            let verifier = "test_verifier";
+            let mut hasher = sha2::Sha256::new();
+            sha2::Digest::update(&mut hasher, verifier.as_bytes());
+            let challenge =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+            let codes = authkestra_engine::store::memory::MemoryStore::<
+                crate::code::AuthorizationCode,
+            >::new();
+            codes
+                .store_code(AuthorizationCode {
+                    code: "code1".to_string(),
+                    client_id: "client1".to_string(),
+                    redirect_uri: "https://cb".to_string(),
+                    identity: test_identity(),
+                    scope: "openid".to_string(),
+                    nonce: None,
+                    expires_at: Utc::now() + Duration::minutes(5),
+                    code_challenge: Some(challenge),
+                    code_challenge_method: Some("S256".to_string()),
+                    used: false,
+                })
+                .await
+                .unwrap();
+
+            let store = crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+                ),
+            )
+            .with_dpop_replay_store(authkestra_engine::store::memory::MemoryStore::<
+                DpopJtiRecord,
+            >::new());
+
+            let tokens = test_tokens();
+            let proof_builder = DpopProofBuilder::new("https://auth.example.com/token", "jti-ac-1");
+            let proof = proof_builder.build();
+
+            let req = TokenRequest {
+                grant_type: "authorization_code".to_string(),
+                code: Some("code1".to_string()),
+                redirect_uri: Some("https://cb".to_string()),
+                client_id: Some("client1".to_string()),
+                client_secret: None,
+                code_verifier: Some(verifier.to_string()),
+                scope: None,
+                refresh_token: None,
+                subject_token: None,
+                subject_token_type: None,
+                device_code: None,
+                actor_token: None,
+                actor_token_type: None,
+                requested_token_type: None,
+                audience: None,
+                client_assertion: None,
+                client_assertion_type: None,
+                dpop_jkt: None,
+            };
+
+            let resp = handle_token_with_client_cert(
+                req,
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect("a valid DPoP proof must be accepted on the authorization_code grant");
+
+            assert_eq!(resp.token_type, "DPoP");
+            let claims = tokens
+                .validate_token(&resp.access_token, Some("client1"))
+                .unwrap();
+            assert_eq!(
+                claims
+                    .extra
+                    .get("cnf")
+                    .and_then(|c| c.get("jkt"))
+                    .and_then(|v| v.as_str()),
+                Some(proof_builder.expected_jkt().as_str()),
+            );
+        }
+
+        // --- Refresh token DPoP key continuity (RFC 9449 §5) ---
+
+        /// Registers a client authorized for `authorization_code` +
+        /// `refresh_token` with `offline_access` allowed, and stores one
+        /// ready-to-redeem PKCE-protected authorization code for it. Every
+        /// continuity test below starts from this same fixture, then
+        /// exercises a different combination of DPoP proofs across the
+        /// initial grant and the subsequent refresh.
+        async fn dpop_refresh_continuity_store() -> (
+            crate::store::CompositeOpStore<
+                authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
+                authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
+                authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>,
+                authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
+                crate::client_assertion::NoClientAssertionStore,
+                authkestra_engine::store::memory::MemoryStore<DpopJtiRecord>,
+            >,
+            String,
+        ) {
+            let clients = authkestra_engine::store::memory::MemoryStore::<
+                crate::client::ClientRegistration,
+            >::new();
+            clients
+                .set(
+                    "client1",
+                    ClientRegistration {
+                        client_id: "client1".to_string(),
+                        client_secret_hash: None,
+                        redirect_uris: vec!["https://cb".to_string()],
+                        grant_types: vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
+                        scopes: vec!["openid".to_string(), "offline_access".to_string()],
+                        require_pkce: true,
+                        allowed_audiences: vec![],
+                        token_endpoint_auth_method: None,
+                        jwks: None,
+                    },
+                    std::time::Duration::from_secs(31536000),
+                )
+                .await
+                .unwrap();
+
+            let verifier = "test_verifier".to_string();
+            let mut hasher = sha2::Sha256::new();
+            sha2::Digest::update(&mut hasher, verifier.as_bytes());
+            let challenge =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+            let codes = authkestra_engine::store::memory::MemoryStore::<
+                crate::code::AuthorizationCode,
+            >::new();
+            codes
+                .store_code(AuthorizationCode {
+                    code: "code1".to_string(),
+                    client_id: "client1".to_string(),
+                    redirect_uri: "https://cb".to_string(),
+                    identity: test_identity(),
+                    scope: "openid offline_access".to_string(),
+                    nonce: None,
+                    expires_at: Utc::now() + Duration::minutes(5),
+                    code_challenge: Some(challenge),
+                    code_challenge_method: Some("S256".to_string()),
+                    used: false,
+                })
+                .await
+                .unwrap();
+
+            let store = crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+                ),
+            )
+            .with_dpop_replay_store(authkestra_engine::store::memory::MemoryStore::<
+                DpopJtiRecord,
+            >::new());
+
+            (store, verifier)
+        }
+
+        fn dpop_refresh_continuity_code_req(verifier: &str) -> TokenRequest {
+            TokenRequest {
+                grant_type: "authorization_code".to_string(),
+                code: Some("code1".to_string()),
+                redirect_uri: Some("https://cb".to_string()),
+                client_id: Some("client1".to_string()),
+                client_secret: None,
+                code_verifier: Some(verifier.to_string()),
+                scope: None,
+                refresh_token: None,
+                subject_token: None,
+                subject_token_type: None,
+                device_code: None,
+                actor_token: None,
+                actor_token_type: None,
+                requested_token_type: None,
+                audience: None,
+                client_assertion: None,
+                client_assertion_type: None,
+                dpop_jkt: None,
+            }
+        }
+
+        fn dpop_refresh_continuity_refresh_req(refresh_token: &str) -> TokenRequest {
+            TokenRequest {
+                grant_type: "refresh_token".to_string(),
+                code: None,
+                redirect_uri: None,
+                client_id: Some("client1".to_string()),
+                client_secret: None,
+                code_verifier: None,
+                scope: None,
+                refresh_token: Some(refresh_token.to_string()),
+                subject_token: None,
+                subject_token_type: None,
+                device_code: None,
+                actor_token: None,
+                actor_token_type: None,
+                requested_token_type: None,
+                audience: None,
+                client_assertion: None,
+                client_assertion_type: None,
+                dpop_jkt: None,
+            }
+        }
+
+        /// A refresh token minted alongside a DPoP-bound access token must
+        /// itself be bound: redeeming it with a fresh proof for the *same*
+        /// key must succeed, keep binding the rotated access token to that
+        /// key, and hand back a rotated refresh token that still carries
+        /// the binding forward.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_rotation_succeeds_with_the_same_dpop_key() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issue_proof =
+                DpopProofBuilder::with_key_seed(11, "https://auth.example.com/token", "jti-issue");
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&issue_proof.build()),
+            )
+            .await
+            .expect("issuing the code grant with a DPoP proof must succeed");
+            let refresh_token = issued
+                .refresh_token
+                .expect("offline_access must yield a refresh token");
+            assert_eq!(issued.token_type, "DPoP");
+
+            let rotate_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-rotate-same-key",
+            );
+            let rotated = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&rotate_proof.build()),
+            )
+            .await
+            .expect("rotating with a proof for the same key must succeed");
+
+            assert_eq!(rotated.token_type, "DPoP");
+            let claims = tokens
+                .validate_token(&rotated.access_token, Some("client1"))
+                .unwrap();
+            assert_eq!(
+                claims
+                    .extra
+                    .get("cnf")
+                    .and_then(|c| c.get("jkt"))
+                    .and_then(|v| v.as_str()),
+                Some(issue_proof.expected_jkt().as_str()),
+                "the rotated access token must stay bound to the refresh token's original key"
+            );
+        }
+
+        /// RFC 9449 §5: redeeming a DPoP-bound refresh token with a proof
+        /// for a *different* key must be refused — otherwise an exfiltrated
+        /// refresh token could simply be re-keyed by whoever stole it.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_rotation_rejects_a_different_dpop_key() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issue_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-issue-2",
+            );
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&issue_proof.build()),
+            )
+            .await
+            .expect("issuing the code grant with a DPoP proof must succeed");
+            let refresh_token = issued.refresh_token.unwrap();
+
+            let attacker_proof = DpopProofBuilder::with_key_seed(
+                22,
+                "https://auth.example.com/token",
+                "jti-rotate-wrong-key",
+            );
+            let err = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&attacker_proof.build()),
+            )
+            .await
+            .expect_err("a proof for a different key must be refused");
+
+            assert_eq!(err.error, "invalid_dpop_proof");
+        }
+
+        /// RFC 9449 §5, the other half of the same requirement: omitting
+        /// DPoP entirely on a bound refresh token must not silently fall
+        /// back to issuing a plain bearer token.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_rotation_rejects_a_missing_dpop_proof() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issue_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-issue-3",
+            );
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&issue_proof.build()),
+            )
+            .await
+            .expect("issuing the code grant with a DPoP proof must succeed");
+            let refresh_token = issued.refresh_token.unwrap();
+
+            let err = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .expect_err("omitting DPoP on a bound refresh token must be refused");
+
+            assert_eq!(err.error, "invalid_dpop_proof");
+        }
+
+        /// A failed DPoP continuity check (wrong key, or no proof at all)
+        /// must NOT consume the refresh token. Validation runs before
+        /// `consume_token`, specifically so a request that has no right to
+        /// redeem the token can't destroy it as a side effect of trying —
+        /// otherwise a bare stolen token *string* (no key needed at all)
+        /// would let an attacker permanently log the legitimate holder out
+        /// with a single throwaway request, and a legitimate client behind
+        /// a header-stripping proxy would lose its session irrecoverably
+        /// the first time it forgot to attach DPoP. This proves the token
+        /// survives a failed attempt and a correct retry still succeeds.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_survives_a_failed_dpop_attempt_and_a_correct_retry_still_succeeds() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issue_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-issue-4",
+            );
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&issue_proof.build()),
+            )
+            .await
+            .expect("issuing the code grant with a DPoP proof must succeed");
+            let refresh_token = issued.refresh_token.unwrap();
+
+            // First: an attacker holding only the token string, no key.
+            let attacker_attempt = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .expect_err("a missing proof must be refused");
+            assert_eq!(attacker_attempt.error, "invalid_dpop_proof");
+
+            // Then: the legitimate client, presenting the correct key,
+            // using that exact same still-unconsumed refresh token.
+            let retry_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-retry-after-failed-attempt",
+            );
+            let retried = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&retry_proof.build()),
+            )
+            .await
+            .expect("the refresh token must still be valid after a failed attempt by someone else");
+            assert_eq!(retried.token_type, "DPoP");
+        }
+
+        /// Companion regression: a refresh token minted *without* DPoP
+        /// (no proof presented on the original grant) stays an ordinary
+        /// bearer token — rotating it with no DPoP header keeps working
+        /// exactly as it did before this feature existed.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_rotation_without_prior_binding_is_unaffected() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .expect("issuing the code grant with no DPoP proof must still succeed");
+            assert_eq!(issued.token_type, "Bearer");
+            let refresh_token = issued.refresh_token.unwrap();
+
+            let rotated = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .expect("rotating an unbound refresh token with no DPoP proof must still succeed");
+            assert_eq!(rotated.token_type, "Bearer");
+        }
+
+        // --- Fail-closed guard against a backend that silently drops `jkt` ---
+
+        /// Wraps any `OpStore` but strips `jkt` on every `store_token`
+        /// call before delegating — simulating exactly what
+        /// `sqlx_store.rs`'s `RefreshTokenStore` impl does today (accepts
+        /// a DPoP-bound `RefreshToken`, reports success, never persists
+        /// the binding). Everything else forwards unchanged, including
+        /// `check_and_record_dpop_jti`, which must still reach the inner
+        /// store's real replay guard for a DPoP proof to verify at all.
+        struct JktDroppingRefreshStore<Inner> {
+            inner: Inner,
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::client::ClientStore for JktDroppingRefreshStore<Inner> {
+            async fn find_client(
+                &self,
+                client_id: &str,
+            ) -> Result<Option<ClientRegistration>, OpError> {
+                self.inner.find_client(client_id).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::code::AuthorizationCodeStore for JktDroppingRefreshStore<Inner> {
+            async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+                self.inner.store_code(code).await
+            }
+
+            async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
+                self.inner.consume_code(code).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> RefreshTokenStore for JktDroppingRefreshStore<Inner> {
+            async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+                let mut stripped = token;
+                stripped.jkt = None;
+                self.inner.store_token(stripped).await
+            }
+
+            async fn get_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+                self.inner.get_token(token).await
+            }
+
+            async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+                self.inner.revoke_token(token).await
+            }
+
+            async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+                self.inner.consume_token(token).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::device::DeviceCodeStore for JktDroppingRefreshStore<Inner> {
+            async fn store_device_code(
+                &self,
+                session: crate::device::DeviceCodeSession,
+            ) -> Result<(), OpError> {
+                self.inner.store_device_code(session).await
+            }
+
+            async fn get_device_code(
+                &self,
+                device_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.get_device_code(device_code).await
+            }
+
+            async fn get_by_user_code(
+                &self,
+                user_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.get_by_user_code(user_code).await
+            }
+
+            async fn update_device_code(
+                &self,
+                session: crate::device::DeviceCodeSession,
+            ) -> Result<(), OpError> {
+                self.inner.update_device_code(session).await
+            }
+
+            async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+                self.inner.delete_device_code(device_code).await
+            }
+
+            async fn consume_device_code(
+                &self,
+                device_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.consume_device_code(device_code).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> OpStore for JktDroppingRefreshStore<Inner> {
+            async fn check_and_record_dpop_jti(
+                &self,
+                jti: &str,
+                expires_at: chrono::DateTime<Utc>,
+            ) -> Result<bool, OpError> {
+                self.inner.check_and_record_dpop_jti(jti, expires_at).await
+            }
+        }
+
+        /// The regression test for the exact silent gap this whole round
+        /// of fixes is about: a `RefreshTokenStore` that reports
+        /// `store_token` success but doesn't actually persist `jkt` must
+        /// not result in a response that claims `token_type: "DPoP"` while
+        /// the stored token has no binding at all. `default_handle_
+        /// authorization_code` must catch this and fail loudly instead.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn a_backend_that_silently_drops_jkt_fails_the_request_instead_of_lying() {
+            let (inner, verifier) = dpop_refresh_continuity_store().await;
+            let store = JktDroppingRefreshStore { inner };
+            let tokens = test_tokens();
+
+            let proof =
+                DpopProofBuilder::new("https://auth.example.com/token", "jti-drop-1").build();
+
+            let err = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect_err(
+                "a store that silently drops the DPoP binding must fail the request, not \
+                 succeed as though the binding was persisted",
+            );
+
+            assert_eq!(err.error, "server_error");
+        }
     }
 }
 

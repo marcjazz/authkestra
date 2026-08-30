@@ -28,6 +28,7 @@ fn default_device_req(device_code: &str) -> TokenRequest {
         audience: None,
         client_assertion: None,
         client_assertion_type: None,
+        dpop_jkt: None,
     }
 }
 

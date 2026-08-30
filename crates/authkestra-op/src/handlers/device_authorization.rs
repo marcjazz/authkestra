@@ -264,6 +264,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
             requested_token_type: None,
             subject_token: None,
             subject_token_type: None,

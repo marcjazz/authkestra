@@ -62,6 +62,19 @@ pub enum OpError {
     #[error("client assertion replay protection is not configured")]
     ReplayProtectionUnavailable,
 
+    /// The presented DPoP proof carries a `jti` that has already been spent
+    /// (RFC 9449 §11.1). A captured proof is otherwise reusable for as long
+    /// as it stays within its freshness window; single-use `jti` is what
+    /// stops it from being replayed within that window.
+    #[error("dpop proof replayed")]
+    DpopProofReplayed,
+
+    /// The deployment's `OpStore` provides no DPoP `jti` replay tracking, so
+    /// a presented DPoP proof cannot be honoured safely. Fails closed on
+    /// purpose — see `store::OpStore::check_and_record_dpop_jti`.
+    #[error("dpop proof replay protection is not configured")]
+    DpopReplayProtectionUnavailable,
+
     /// Underlying storage error, opaque to the caller by design — storage
     /// backends should not leak implementation details (e.g. SQL errors)
     /// into OAuth error responses.

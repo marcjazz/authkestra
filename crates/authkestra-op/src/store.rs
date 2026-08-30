@@ -2,6 +2,7 @@ use crate::client::ClientStore;
 use crate::client_assertion::{ClientAssertionStore, NoClientAssertionStore};
 use crate::code::AuthorizationCodeStore;
 use crate::device::DeviceCodeStore;
+use crate::dpop::{DpopReplayStore, NoDpopReplayStore};
 use crate::error::OpError;
 use crate::refresh::RefreshTokenStore;
 use chrono::{DateTime, Utc};
@@ -35,6 +36,27 @@ pub trait OpStore:
         expires_at: DateTime<Utc>,
     ) -> Result<bool, OpError> {
         NoClientAssertionStore.record_jti(jti, expires_at).await
+    }
+
+    /// Atomically records the `jti` of a presented DPoP proof, returning
+    /// `Ok(false)` if it was already spent (RFC 9449 §11.1).
+    ///
+    /// A defaulted method, same reasoning as `record_client_assertion_jti`:
+    /// adding replay tracking must not break every existing `OpStore`
+    /// implementation.
+    ///
+    /// **The default refuses every proof.** See
+    /// `record_client_assertion_jti`'s doc comment for why failing closed
+    /// is the only safe default here too. See
+    /// `CompositeOpStore::with_dpop_replay_store` for how to wire one.
+    async fn check_and_record_dpop_jti(
+        &self,
+        jti: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<bool, OpError> {
+        NoDpopReplayStore
+            .check_and_record_dpop_jti(jti, expires_at)
+            .await
     }
 
     /// Handle a custom grant type request during token exchange.
@@ -155,32 +177,35 @@ pub trait OpStore:
     }
 }
 
-/// A helper struct that implements `OpStore` by delegating to 5 individual stores.
+/// A helper struct that implements `OpStore` by delegating to individual stores.
 /// Useful if you want to use different backends for different types of data (e.g., config for clients, Redis for codes).
 ///
-/// The client-assertion slot defaults to
-/// [`NoClientAssertionStore`], so `private_key_jwt` is refused until a
-/// deployment opts in with [`CompositeOpStore::with_client_assertion_store`].
-/// It is a defaulted type parameter rather than a fifth argument to
-/// [`CompositeOpStore::new`] so that existing four-store call sites keep
-/// compiling untouched.
+/// The client-assertion and DPoP-replay slots default to
+/// [`NoClientAssertionStore`] and [`NoDpopReplayStore`] respectively, so
+/// `private_key_jwt` and DPoP are both refused until a deployment opts in
+/// with [`CompositeOpStore::with_client_assertion_store`] /
+/// [`CompositeOpStore::with_dpop_replay_store`]. Both are defaulted type
+/// parameters rather than required arguments to [`CompositeOpStore::new`]
+/// so that existing four-store call sites keep compiling untouched.
 #[non_exhaustive]
-pub struct CompositeOpStore<C, A, R, D, J = NoClientAssertionStore> {
+pub struct CompositeOpStore<C, A, R, D, J = NoClientAssertionStore, P = NoDpopReplayStore> {
     clients: C,
     codes: A,
     refresh: R,
     devices: D,
     assertions: J,
+    dpop_replays: P,
 }
 
 #[async_trait::async_trait]
-impl<C, A, R, D, J> OpStore for CompositeOpStore<C, A, R, D, J>
+impl<C, A, R, D, J, P> OpStore for CompositeOpStore<C, A, R, D, J, P>
 where
     C: ClientStore,
     A: AuthorizationCodeStore,
     R: RefreshTokenStore,
     D: DeviceCodeStore,
     J: ClientAssertionStore,
+    P: DpopReplayStore,
     Self: Send + Sync,
 {
     async fn record_client_assertion_jti(
@@ -190,9 +215,19 @@ where
     ) -> Result<bool, OpError> {
         self.assertions.record_jti(jti, expires_at).await
     }
+
+    async fn check_and_record_dpop_jti(
+        &self,
+        jti: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<bool, OpError> {
+        self.dpop_replays
+            .check_and_record_dpop_jti(jti, expires_at)
+            .await
+    }
 }
 
-impl<C, A, R, D> CompositeOpStore<C, A, R, D, NoClientAssertionStore> {
+impl<C, A, R, D> CompositeOpStore<C, A, R, D, NoClientAssertionStore, NoDpopReplayStore> {
     /// Create a new `CompositeOpStore` from individual stores.
     pub fn new(clients: C, codes: A, refresh: R, devices: D) -> Self {
         Self {
@@ -201,11 +236,12 @@ impl<C, A, R, D> CompositeOpStore<C, A, R, D, NoClientAssertionStore> {
             refresh,
             devices,
             assertions: NoClientAssertionStore,
+            dpop_replays: NoDpopReplayStore,
         }
     }
 }
 
-impl<C, A, R, D, J> CompositeOpStore<C, A, R, D, J> {
+impl<C, A, R, D, J, P> CompositeOpStore<C, A, R, D, J, P> {
     /// Swaps in the backend that tracks spent `private_key_jwt` assertion
     /// `jti`s — the one thing this store needs before it will accept
     /// asymmetric client authentication at all.
@@ -219,20 +255,52 @@ impl<C, A, R, D, J> CompositeOpStore<C, A, R, D, J> {
     pub fn with_client_assertion_store<J2: ClientAssertionStore>(
         self,
         assertions: J2,
-    ) -> CompositeOpStore<C, A, R, D, J2> {
+    ) -> CompositeOpStore<C, A, R, D, J2, P> {
         CompositeOpStore {
             clients: self.clients,
             codes: self.codes,
             refresh: self.refresh,
             devices: self.devices,
             assertions,
+            dpop_replays: self.dpop_replays,
+        }
+    }
+
+    /// Swaps in the backend that tracks spent DPoP proof `jti`s — the one
+    /// thing this store needs before it will accept a `DPoP` header at
+    /// `/token` at all.
+    ///
+    /// Any backend `authkestra_engine::store::AtomicInsert` is implemented
+    /// for (`MemoryStore`, `RedisStore`, and the SQL backends) already
+    /// implements [`crate::dpop::DpopReplayStore`] via its blanket impl — no
+    /// DPoP-specific storage code is needed. A single-node deployment can
+    /// use `authkestra_engine::store::memory::MemoryStore`; a cluster needs
+    /// something shared, for the same reason `with_client_assertion_store`
+    /// does.
+    pub fn with_dpop_replay_store<P2: DpopReplayStore>(
+        self,
+        dpop_replays: P2,
+    ) -> CompositeOpStore<C, A, R, D, J, P2> {
+        CompositeOpStore {
+            clients: self.clients,
+            codes: self.codes,
+            refresh: self.refresh,
+            devices: self.devices,
+            assertions: self.assertions,
+            dpop_replays,
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<C: ClientStore, A: Send + Sync, R: Send + Sync, D: Send + Sync, J: Send + Sync> ClientStore
-    for CompositeOpStore<C, A, R, D, J>
+impl<
+        C: ClientStore,
+        A: Send + Sync,
+        R: Send + Sync,
+        D: Send + Sync,
+        J: Send + Sync,
+        P: Send + Sync,
+    > ClientStore for CompositeOpStore<C, A, R, D, J, P>
 {
     #[tracing::instrument(skip(self))]
     async fn find_client(
@@ -245,8 +313,14 @@ impl<C: ClientStore, A: Send + Sync, R: Send + Sync, D: Send + Sync, J: Send + S
 }
 
 #[async_trait::async_trait]
-impl<C: Send + Sync, A: AuthorizationCodeStore, R: Send + Sync, D: Send + Sync, J: Send + Sync>
-    AuthorizationCodeStore for CompositeOpStore<C, A, R, D, J>
+impl<
+        C: Send + Sync,
+        A: AuthorizationCodeStore,
+        R: Send + Sync,
+        D: Send + Sync,
+        J: Send + Sync,
+        P: Send + Sync,
+    > AuthorizationCodeStore for CompositeOpStore<C, A, R, D, J, P>
 {
     #[tracing::instrument(skip(self, code))]
     async fn store_code(
@@ -268,8 +342,14 @@ impl<C: Send + Sync, A: AuthorizationCodeStore, R: Send + Sync, D: Send + Sync, 
 }
 
 #[async_trait::async_trait]
-impl<C: Send + Sync, A: Send + Sync, R: RefreshTokenStore, D: Send + Sync, J: Send + Sync>
-    RefreshTokenStore for CompositeOpStore<C, A, R, D, J>
+impl<
+        C: Send + Sync,
+        A: Send + Sync,
+        R: RefreshTokenStore,
+        D: Send + Sync,
+        J: Send + Sync,
+        P: Send + Sync,
+    > RefreshTokenStore for CompositeOpStore<C, A, R, D, J, P>
 {
     #[tracing::instrument(skip(self, token))]
     async fn store_token(
@@ -306,8 +386,14 @@ impl<C: Send + Sync, A: Send + Sync, R: RefreshTokenStore, D: Send + Sync, J: Se
 }
 
 #[async_trait::async_trait]
-impl<C: Send + Sync, A: Send + Sync, R: Send + Sync, D: DeviceCodeStore, J: Send + Sync>
-    DeviceCodeStore for CompositeOpStore<C, A, R, D, J>
+impl<
+        C: Send + Sync,
+        A: Send + Sync,
+        R: Send + Sync,
+        D: DeviceCodeStore,
+        J: Send + Sync,
+        P: Send + Sync,
+    > DeviceCodeStore for CompositeOpStore<C, A, R, D, J, P>
 {
     #[tracing::instrument(skip(self, session))]
     async fn store_device_code(

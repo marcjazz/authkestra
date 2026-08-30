@@ -154,14 +154,16 @@ macro_rules! impl_opstore_sql {
         impl RefreshTokenStore for SqlxOpStore<$backend> {
             async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
                 let query = format!(
-                    "INSERT INTO {schema}oauth_refresh_tokens 
-                    (token, client_id, identity, scope, expires_at) 
+                    "INSERT INTO {schema}oauth_refresh_tokens
+                    (token, client_id, identity, scope, expires_at)
                     VALUES ({p1}, {p2}, {p3}, {p4}, {p5})",
                     schema = $schema_prefix,
                     p1 = $placeholder_fmt(1), p2 = $placeholder_fmt(2), p3 = $placeholder_fmt(3),
                     p4 = $placeholder_fmt(4), p5 = $placeholder_fmt(5)
                 );
 
+                // `token.jkt` is deliberately not bound here: see the
+                // matching comment on `jkt: None` below.
                 let identity_json = sqlx::types::Json(token.identity);
 
                 sqlx::query(&query)
@@ -181,8 +183,8 @@ macro_rules! impl_opstore_sql {
 
             async fn get_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
                 let query = format!(
-                    "SELECT token, client_id, identity, scope, expires_at 
-                    FROM {schema}oauth_refresh_tokens 
+                    "SELECT token, client_id, identity, scope, expires_at
+                    FROM {schema}oauth_refresh_tokens
                     WHERE token = {p1} AND revoked_at IS NULL AND expires_at > {p2}",
                     schema = $schema_prefix,
                     p1 = $placeholder_fmt(1),
@@ -209,6 +211,19 @@ macro_rules! impl_opstore_sql {
                         identity: identity.0,
                         scope: row.try_get("scope").map_err(|_| OpError::Storage)?,
                         expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                        // Not persisted yet: same reasoning as
+                        // `token_endpoint_auth_method`/`jwks` above — a
+                        // `jkt` column needs an ALTER-based migration, and
+                        // this store's `migrate` is CREATE TABLE IF NOT
+                        // EXISTS, so naming it in a SELECT/INSERT would
+                        // break every existing deployment whose table
+                        // predates this field. Until that lands, a
+                        // SqlxOpStore-backed refresh token is never
+                        // DPoP-bound (RFC 9449 §5 continuity is simply not
+                        // enforced for this backend), which is a strictly
+                        // weaker but not incorrect posture — the same gap
+                        // client-assertion auth already has here.
+                        jkt: None,
                     }))
                 } else {
                     Ok(None)
@@ -494,6 +509,9 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                // Not persisted yet — see the comment on `get_token`'s
+                // identical field above.
+                jkt: None,
             }))
         } else {
             Ok(None)
@@ -628,6 +646,9 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                // Not persisted yet — see the comment on `get_token`'s
+                // identical field above.
+                jkt: None,
             }))
         } else {
             Ok(None)
@@ -788,6 +809,9 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                // Not persisted yet — see the comment on `get_token`'s
+                // identical field above.
+                jkt: None,
             }))
         } else {
             tx.rollback().await.map_err(|_| OpError::Storage)?;

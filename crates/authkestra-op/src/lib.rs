@@ -34,6 +34,14 @@ pub use client_assertion::{
 pub mod code;
 pub use code::{AuthorizationCode, AuthorizationCodeStore};
 
+/// DPoP (RFC 9449) proof replay tracking for the `/token` endpoint. Proof
+/// verification itself lives in `authkestra_engine::token::dpop`, since it's
+/// needed by both this crate (issuance) and `authkestra-resource`
+/// (verification); this module is only the OP-side "was this jti already
+/// spent" guard.
+pub mod dpop;
+pub use dpop::{DpopJtiRecord, DpopReplayStore, NoDpopReplayStore, DPOP_PROOF_MAX_AGE_SECS};
+
 /// Device/service attestation issuance: the enrolment/re-issuance ceremony
 /// and `cnf.jkt`-bound attestation minting for the device-bound-signature
 /// authentication method. See `handlers::enrolment` for the request/
