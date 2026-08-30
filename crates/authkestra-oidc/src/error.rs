@@ -89,6 +89,11 @@ impl From<authkestra_resource::jwt::ValidationError> for OidcError {
             authkestra_resource::jwt::ValidationError::DpopReplayUnavailable(e) => {
                 OidcError::Internal(e)
             }
+            // `ValidationError` is `#[non_exhaustive]`: a variant added
+            // there after this match was written lands here instead of
+            // failing to compile — its `Display` text is preserved, just
+            // without a specific `OidcError` mapping of its own yet.
+            other => OidcError::ValidationError(other.to_string()),
         }
     }
 }

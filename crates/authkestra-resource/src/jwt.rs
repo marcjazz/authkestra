@@ -18,7 +18,16 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 
 /// Errors that can occur during offline validation.
+///
+/// `#[non_exhaustive]` for the same reason [`ValidationConfig`] is (see its
+/// doc comment): a new error condition — like [`ValidationError::
+/// DpopReplayUnavailable`], added after this enum first shipped without
+/// this attribute — must be addable without forcing every downstream
+/// exhaustive `match` to break. That break was demonstrated in-tree:
+/// adding that variant needed a new arm in `authkestra-oidc`'s own match
+/// over this enum, in the same crate this ships from.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ValidationError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
@@ -308,16 +317,36 @@ pub struct ValidationConfig {
     /// DPoP-bound and this check is a no-op for it, regardless of this
     /// setting. See [`JwtStrategy`] and issue #274.
     ///
-    /// Deliberately does **not** check `htm`/`htu`: unlike an authorization
-    /// server's single, statically-known `/token` endpoint, a resource
-    /// server protects many routes and commonly sits behind a reverse
-    /// proxy or load balancer, where the exact absolute URL a client used
-    /// isn't always reliably reconstructible from the request alone. Key
-    /// binding, `ath`, and `jti` replay tracking together still mean a
-    /// captured proof cannot be reused for a different token, or reused at
-    /// all — see `authkestra_engine::token::dpop::verify_dpop_proof`'s doc
-    /// comment on its `expected_htu: None` case for the full reasoning.
+    /// `htm` (the request's HTTP method) is always checked. `htu` — the
+    /// absolute URL the proof was minted for — is checked only when
+    /// [`dpop_resource_origin`](Self::dpop_resource_origin) is configured;
+    /// see that field for why it's opt-in rather than always-on. Without
+    /// it, key binding, `ath`, and `jti` replay tracking together still
+    /// mean a captured proof cannot be reused for a different token, or
+    /// reused at all — but a legitimate holder of a still-fresh proof
+    /// (a downstream service the request was forwarded to, say) could
+    /// present the same token+proof pair to a *different* resource server
+    /// within the proof's freshness window; `htu` is what closes that gap.
     pub require_dpop: bool,
+    /// This resource server's own origin (scheme + host, e.g.
+    /// `"https://api.example.com"` — no path, no trailing slash), used to
+    /// reconstruct the current request's absolute URL and check it against
+    /// a DPoP proof's `htu` claim (RFC 9449 §4.3 step 6).
+    ///
+    /// `None` (the default) skips the `htu` check entirely: unlike an
+    /// authorization server's single, statically-known `/token` endpoint,
+    /// a resource server protects many routes and commonly sits behind a
+    /// reverse proxy or load balancer, where the exact absolute URL a
+    /// client used isn't always reliably reconstructible from the request
+    /// alone (the scheme in particular depends on where TLS terminates,
+    /// which application code can't always see) — see
+    /// `authkestra_engine::token::dpop::verify_dpop_proof`'s doc comment on
+    /// its `expected_htu: None` case. A deployment that *can* state its own
+    /// origin reliably (no proxy, or one that's configured to preserve or
+    /// forward it accurately) should set this to close the cross-service
+    /// forwarding gap [`require_dpop`](Self::require_dpop) documents.
+    /// Only consulted when `require_dpop` is also `true`.
+    pub dpop_resource_origin: Option<String>,
     /// Trust map of `iss` -> JWKS endpoint, for a resource server that accepts
     /// tokens from several issuers. Empty by default, which keeps the
     /// single-issuer `jwks_url` path unchanged. When non-empty, an `iss` absent
@@ -345,6 +374,7 @@ pub struct ValidationConfigBuilder {
     require_kid: bool,
     require_cert_binding: bool,
     require_dpop: bool,
+    dpop_resource_origin: Option<String>,
     trusted_issuers: BTreeMap<String, String>,
 }
 
@@ -456,6 +486,15 @@ impl ValidationConfigBuilder {
         self
     }
 
+    /// Set [`ValidationConfig::dpop_resource_origin`], enabling the `htu`
+    /// half of the RFC 9449 DPoP check. `origin` is scheme + host only
+    /// (e.g. `"https://api.example.com"`) — no path, no trailing slash;
+    /// the request's own path is appended at check time.
+    pub fn dpop_resource_origin(mut self, origin: impl Into<String>) -> Self {
+        self.dpop_resource_origin = Some(origin.into());
+        self
+    }
+
     /// Build a `ValidationConfig`.
     ///
     /// # Panics
@@ -492,6 +531,7 @@ impl ValidationConfigBuilder {
             require_kid: self.require_kid,
             require_cert_binding: self.require_cert_binding,
             require_dpop: self.require_dpop,
+            dpop_resource_origin: self.dpop_resource_origin,
             trusted_issuers: self.trusted_issuers,
         }
     }
@@ -504,6 +544,7 @@ pub struct JwtStrategy<I> {
     validation: Validation,
     require_cert_binding: bool,
     require_dpop: bool,
+    dpop_resource_origin: Option<String>,
     dpop_replay_store: Arc<dyn crate::dpop::DpopReplayStore>,
     _marker: std::marker::PhantomData<I>,
 }
@@ -524,6 +565,7 @@ impl<I> JwtStrategy<I> {
             validation: build_validation(&config, !config.trusted_issuers.is_empty()),
             require_cert_binding: config.require_cert_binding,
             require_dpop: config.require_dpop,
+            dpop_resource_origin: config.dpop_resource_origin,
             dpop_replay_store: Arc::new(crate::dpop::NoDpopReplayStore),
             _marker: std::marker::PhantomData,
         }
@@ -547,6 +589,7 @@ impl<I> JwtStrategy<I> {
             validation: build_validation(&config, true),
             require_cert_binding: config.require_cert_binding,
             require_dpop: config.require_dpop,
+            dpop_resource_origin: config.dpop_resource_origin,
             dpop_replay_store: Arc::new(crate::dpop::NoDpopReplayStore),
             _marker: std::marker::PhantomData,
         }
@@ -726,27 +769,40 @@ where
                         }
 
                         if self.require_dpop {
-                            let is_dpop_bound = cnf_claim
-                                .cnf
-                                .as_ref()
-                                .and_then(|v| v.get("jkt"))
-                                .and_then(|v| v.as_str())
-                                .is_some();
+                            let is_dpop_bound = dpop_bound_jkt(cnf_claim.cnf.as_ref()).is_some();
 
-                            // RFC 9449 §7.1: a DPoP-bound token MUST be
+                            // RFC 9449 §7.1, both directions of the same
+                            // requirement: a DPoP-bound token MUST be
                             // presented via the `DPoP` auth-scheme, never
-                            // `Bearer` — checked independently of whether a
-                            // `DPoP` proof header also happens to be
-                            // present, since accepting either scheme for a
-                            // bound token would let a client (or attacker
-                            // holding a stolen token) simply choose the
-                            // scheme requiring no proof at all.
-                            if is_dpop_bound && !matches!(presented, PresentedToken::DPoP(_)) {
-                                tracing::warn!(
-                                    "token is DPoP-bound (cnf.jkt) but was presented via the \
-                                     Bearer scheme, not DPoP; rejecting"
-                                );
-                                return Ok(None);
+                            // `Bearer`, and a request presented via `DPoP`
+                            // MUST carry a token that actually has a
+                            // confirmation claim to check. The first is
+                            // checked independently of whether a `DPoP`
+                            // proof header also happens to be present,
+                            // since accepting either scheme for a bound
+                            // token would let a client (or attacker holding
+                            // a stolen token) simply choose the scheme
+                            // requiring no proof at all. Neither case falls
+                            // out of `verify_dpop_binding` on its own: an
+                            // absent `cnf.jkt` makes it a no-op by design
+                            // (mirroring `verify_cert_binding`), which is
+                            // correct for `Bearer` but not for `DPoP`.
+                            match (presented, is_dpop_bound) {
+                                (PresentedToken::Bearer(_), true) => {
+                                    tracing::warn!(
+                                        "token is DPoP-bound (cnf.jkt) but was presented via \
+                                         the Bearer scheme, not DPoP; rejecting"
+                                    );
+                                    return Ok(None);
+                                }
+                                (PresentedToken::DPoP(_), false) => {
+                                    tracing::warn!(
+                                        "request used the DPoP auth-scheme but the token \
+                                         carries no cnf.jkt confirmation claim; rejecting"
+                                    );
+                                    return Ok(None);
+                                }
+                                _ => {}
                             }
 
                             let dpop_header = match extract_dpop_header(&parts.headers) {
@@ -757,9 +813,15 @@ where
                                 }
                             };
 
+                            let htu = self
+                                .dpop_resource_origin
+                                .as_deref()
+                                .map(|origin| format!("{origin}{}", parts.uri.path()));
+
                             match verify_dpop_binding(
                                 dpop_header,
                                 parts.method.as_str(),
+                                htu.as_deref(),
                                 token,
                                 cnf_claim.cnf.as_ref(),
                                 self.dpop_replay_store.as_ref(),
@@ -863,6 +925,7 @@ pub fn verify_cert_binding(
 /// among a token's own claims says which scheme it *arrived* under, only
 /// [`JwtStrategy::authenticate`] observing the header directly can, and
 /// only if this type keeps the two apart.
+#[derive(Clone, Copy)]
 enum PresentedToken<'a> {
     Bearer(&'a str),
     DPoP(&'a str),
@@ -882,13 +945,28 @@ impl<'a> PresentedToken<'a> {
 /// in this workspace and has no reason to know about DPoP.
 fn extract_presented_token(headers: &http::HeaderMap) -> Option<PresentedToken<'_>> {
     let value = headers.get(http::header::AUTHORIZATION)?.to_str().ok()?;
-    if let Some(token) = value.strip_prefix("DPoP ") {
-        return Some(PresentedToken::DPoP(token.trim()));
+    if let Some(token) = strip_scheme_ci(value, "DPoP") {
+        return Some(PresentedToken::DPoP(token));
     }
-    if let Some(token) = value.strip_prefix("Bearer ") {
-        return Some(PresentedToken::Bearer(token.trim()));
+    if let Some(token) = strip_scheme_ci(value, "Bearer") {
+        return Some(PresentedToken::Bearer(token));
     }
     None
+}
+
+/// Strips an `Authorization` header's auth-scheme token and the single
+/// space after it, comparing the scheme case-insensitively per RFC 9110
+/// §11.1 ("the auth-scheme value is case-insensitive"). A plain
+/// `strip_prefix("DPoP ")` would silently reject `dpop <token>` — a
+/// case a real client sending a lowercase scheme would hit with no
+/// diagnostic at all, since a parse miss here just falls through to
+/// `Ok(None)` ("no credential presented").
+fn strip_scheme_ci<'a>(value: &'a str, scheme: &str) -> Option<&'a str> {
+    let (candidate, rest) = value.split_at_checked(scheme.len())?;
+    if !candidate.eq_ignore_ascii_case(scheme) {
+        return None;
+    }
+    rest.strip_prefix(' ').map(str::trim)
 }
 
 /// Reads the request's `DPoP` header (RFC 9449 §4.1: exactly one is
@@ -922,15 +1000,31 @@ fn compute_ath(access_token: &str) -> String {
     x5t_s256_thumbprint(access_token.as_bytes())
 }
 
+/// Reads `cnf.jkt` out of a decoded token's `cnf` claim, if present — the
+/// single "is this token DPoP-bound" predicate, shared by
+/// [`JwtStrategy::authenticate`] (which needs it to decide whether the
+/// `DPoP` auth-scheme is required) and [`verify_dpop_binding`] (which needs
+/// it to know what key a presented proof must match). Kept as one function
+/// so the two call sites can't drift apart on what "bound" means.
+fn dpop_bound_jkt(cnf: Option<&serde_json::Value>) -> Option<&str> {
+    cnf.and_then(|v| v.get("jkt")).and_then(|v| v.as_str())
+}
+
 /// Verifies RFC 9449 DPoP key binding for a decoded token's `cnf` claim.
 ///
 /// - If the token carries no `cnf.jkt` claim at all, it is not DPoP-bound;
 ///   this always succeeds (nothing to check) — mirrors
 ///   [`verify_cert_binding`]'s identical "absent means not bound" shape.
-/// - If it does, `dpop_header` must be present, and the proof it contains
-///   must: verify (signature, `typ`, freshness), bind to `access_token` via
-///   `ath`, and carry the same key as `cnf.jkt`. `htu` is deliberately not
-///   checked — see [`ValidationConfig::require_dpop`]'s doc comment.
+///   `JwtStrategy::authenticate` is responsible for rejecting the *other*
+///   mismatch this function can't see on its own — a request presented via
+///   the `DPoP` auth-scheme for a token that isn't actually bound.
+/// - If it is bound, `dpop_header` must be present, and the proof it
+///   contains must: verify (signature, `typ`, freshness), bind to
+///   `access_token` via `ath`, carry the same key as `cnf.jkt`, and — when
+///   `htu` is `Some` — have been minted for this exact URL. `htu` is
+///   `None` unless the caller configured
+///   [`ValidationConfig::dpop_resource_origin`]; see that field's doc
+///   comment for why it's opt-in.
 /// - Finally, the proof's `jti` is checked and recorded via
 ///   `replay_store`: a DPoP-bound token is **never** accepted with a reused
 ///   proof, and a proof that can't be recorded at all (e.g. no replay store
@@ -938,11 +1032,12 @@ fn compute_ath(access_token: &str) -> String {
 pub async fn verify_dpop_binding(
     dpop_header: Option<&str>,
     htm: &str,
+    htu: Option<&str>,
     access_token: &str,
     cnf: Option<&serde_json::Value>,
     replay_store: &dyn crate::dpop::DpopReplayStore,
 ) -> Result<(), ValidationError> {
-    let Some(expected_jkt) = cnf.and_then(|v| v.get("jkt")).and_then(|v| v.as_str()) else {
+    let Some(expected_jkt) = dpop_bound_jkt(cnf) else {
         return Ok(());
     };
 
@@ -956,7 +1051,7 @@ pub async fn verify_dpop_binding(
     let verified = authkestra_engine::token::dpop::verify_dpop_proof(
         proof,
         htm,
-        None,
+        htu,
         Some(&ath),
         chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS),
     )
@@ -1327,13 +1422,14 @@ mod tests {
             // wired — it must never be consulted for a token that isn't
             // DPoP-bound in the first place.
             assert!(
-                verify_dpop_binding(None, "GET", "token", None, &NoDpopReplayStore)
+                verify_dpop_binding(None, "GET", None, "token", None, &NoDpopReplayStore)
                     .await
                     .is_ok()
             );
             assert!(verify_dpop_binding(
                 Some("some-proof"),
                 "GET",
+                None,
                 "token",
                 Some(&serde_json::json!({ "x5t#S256": "unrelated" })),
                 &NoDpopReplayStore,
@@ -1353,6 +1449,7 @@ mod tests {
             verify_dpop_binding(
                 Some(&builder.build()),
                 "GET",
+                None,
                 access_token,
                 Some(&cnf),
                 &store,
@@ -1366,9 +1463,10 @@ mod tests {
             let builder = DpopProofBuilder::with_key_seed(11, "jti-2");
             let cnf = cnf_with_jkt(&builder.expected_jkt());
 
-            let err = verify_dpop_binding(None, "GET", "token", Some(&cnf), &NoDpopReplayStore)
-                .await
-                .expect_err("a DPoP-bound token presented with no proof must be refused");
+            let err =
+                verify_dpop_binding(None, "GET", None, "token", Some(&cnf), &NoDpopReplayStore)
+                    .await
+                    .expect_err("a DPoP-bound token presented with no proof must be refused");
             assert!(matches!(err, ValidationError::InvalidToken(_)));
         }
 
@@ -1387,6 +1485,7 @@ mod tests {
             let err = verify_dpop_binding(
                 Some(&presented.build()),
                 "GET",
+                None,
                 access_token,
                 Some(&cnf),
                 &store,
@@ -1406,6 +1505,7 @@ mod tests {
             let err = verify_dpop_binding(
                 Some(&builder.build()),
                 "GET",
+                None,
                 "the-actual-access-token",
                 Some(&cnf),
                 &store,
@@ -1424,13 +1524,14 @@ mod tests {
             let cnf = cnf_with_jkt(&builder.expected_jkt());
             let proof = builder.build();
 
-            verify_dpop_binding(Some(&proof), "GET", access_token, Some(&cnf), &store)
+            verify_dpop_binding(Some(&proof), "GET", None, access_token, Some(&cnf), &store)
                 .await
                 .expect("first presentation of a fresh proof must succeed");
 
-            let err = verify_dpop_binding(Some(&proof), "GET", access_token, Some(&cnf), &store)
-                .await
-                .expect_err("replaying the same proof must be refused");
+            let err =
+                verify_dpop_binding(Some(&proof), "GET", None, access_token, Some(&cnf), &store)
+                    .await
+                    .expect_err("replaying the same proof must be refused");
             assert!(matches!(err, ValidationError::InvalidToken(_)));
         }
 
@@ -1444,6 +1545,7 @@ mod tests {
             let err = verify_dpop_binding(
                 Some(&builder.build()),
                 "GET",
+                None,
                 access_token,
                 Some(&cnf),
                 &NoDpopReplayStore,
@@ -1465,6 +1567,7 @@ mod tests {
             let err = verify_dpop_binding(
                 Some(&builder.build()),
                 "POST",
+                None,
                 access_token,
                 Some(&cnf),
                 &store,
@@ -1515,6 +1618,75 @@ mod tests {
             let err =
                 extract_dpop_header(&headers).expect_err("a non-ASCII header must be refused");
             assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
+    }
+
+    mod presented_token_tests {
+        use super::{extract_presented_token, PresentedToken};
+
+        fn authorization_headers(value: &str) -> http::HeaderMap {
+            let mut headers = http::HeaderMap::new();
+            headers.insert(
+                http::header::AUTHORIZATION,
+                http::HeaderValue::from_str(value).unwrap(),
+            );
+            headers
+        }
+
+        #[test]
+        fn recognizes_bearer() {
+            let headers = authorization_headers("Bearer abc123");
+            assert!(matches!(
+                extract_presented_token(&headers),
+                Some(PresentedToken::Bearer("abc123"))
+            ));
+        }
+
+        #[test]
+        fn recognizes_dpop() {
+            let headers = authorization_headers("DPoP abc123");
+            assert!(matches!(
+                extract_presented_token(&headers),
+                Some(PresentedToken::DPoP("abc123"))
+            ));
+        }
+
+        /// RFC 9110 §11.1: the auth-scheme token is case-insensitive. A
+        /// client that lowercases (or otherwise re-cases) the scheme name
+        /// must still be recognized, not silently treated as "no
+        /// credential presented" — the DPoP scheme is new surface with no
+        /// prior real-world clients to have already shaken this out.
+        #[test]
+        fn scheme_matching_is_case_insensitive() {
+            for value in ["dpop abc123", "DPOP abc123", "DpoP abc123"] {
+                assert!(
+                    matches!(
+                        extract_presented_token(&authorization_headers(value)),
+                        Some(PresentedToken::DPoP("abc123"))
+                    ),
+                    "{value:?} must be recognized as the DPoP scheme"
+                );
+            }
+            for value in ["bearer abc123", "BEARER abc123"] {
+                assert!(
+                    matches!(
+                        extract_presented_token(&authorization_headers(value)),
+                        Some(PresentedToken::Bearer("abc123"))
+                    ),
+                    "{value:?} must be recognized as the Bearer scheme"
+                );
+            }
+        }
+
+        #[test]
+        fn unrecognized_scheme_is_none() {
+            let headers = authorization_headers("Basic dXNlcjpwYXNz");
+            assert!(extract_presented_token(&headers).is_none());
+        }
+
+        #[test]
+        fn no_authorization_header_is_none() {
+            assert!(extract_presented_token(&http::HeaderMap::new()).is_none());
         }
     }
 }
