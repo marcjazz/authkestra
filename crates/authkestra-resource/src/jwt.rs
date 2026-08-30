@@ -286,6 +286,28 @@ pub struct ValidationConfig {
     /// bearer token, same as before this option existed. See
     /// [`JwtStrategy`] and issue #224.
     pub require_cert_binding: bool,
+    /// When `true`, enforce RFC 9449 DPoP key binding: a token carrying a
+    /// `cnf.jkt` claim is only accepted if the request presents a `DPoP`
+    /// header whose proof verifies for the same key, binds (`ath`) to
+    /// *this* access token, and hasn't been seen before (tracked via
+    /// [`JwtStrategy::with_dpop_replay_store`]). Off by default for
+    /// backward compatibility — with this `false`, a DPoP-bound token is
+    /// still accepted as a plain bearer token, same as before this option
+    /// existed. Mirrors [`ValidationConfig::require_cert_binding`]'s
+    /// design exactly: a token that carries *no* `cnf.jkt` at all is not
+    /// DPoP-bound and this check is a no-op for it, regardless of this
+    /// setting. See [`JwtStrategy`] and issue #274.
+    ///
+    /// Deliberately does **not** check `htm`/`htu`: unlike an authorization
+    /// server's single, statically-known `/token` endpoint, a resource
+    /// server protects many routes and commonly sits behind a reverse
+    /// proxy or load balancer, where the exact absolute URL a client used
+    /// isn't always reliably reconstructible from the request alone. Key
+    /// binding, `ath`, and `jti` replay tracking together still mean a
+    /// captured proof cannot be reused for a different token, or reused at
+    /// all — see `authkestra_engine::token::dpop::verify_dpop_proof`'s doc
+    /// comment on its `expected_htu: None` case for the full reasoning.
+    pub require_dpop: bool,
     /// Trust map of `iss` -> JWKS endpoint, for a resource server that accepts
     /// tokens from several issuers. Empty by default, which keeps the
     /// single-issuer `jwks_url` path unchanged. When non-empty, an `iss` absent
@@ -312,6 +334,7 @@ pub struct ValidationConfigBuilder {
     algorithms: Vec<Algorithm>,
     require_kid: bool,
     require_cert_binding: bool,
+    require_dpop: bool,
     trusted_issuers: BTreeMap<String, String>,
 }
 
@@ -412,6 +435,17 @@ impl ValidationConfigBuilder {
         self
     }
 
+    /// When `true`, enforce RFC 9449 DPoP key binding. See
+    /// [`ValidationConfig::require_dpop`]. Off by default. A deployment
+    /// enabling this should also call
+    /// [`JwtStrategy::with_dpop_replay_store`] — without one, the
+    /// fail-closed [`crate::dpop::NoDpopReplayStore`] default refuses every
+    /// DPoP-bound token outright.
+    pub fn require_dpop(mut self, value: bool) -> Self {
+        self.require_dpop = value;
+        self
+    }
+
     /// Build a `ValidationConfig`.
     ///
     /// # Panics
@@ -447,6 +481,7 @@ impl ValidationConfigBuilder {
             },
             require_kid: self.require_kid,
             require_cert_binding: self.require_cert_binding,
+            require_dpop: self.require_dpop,
             trusted_issuers: self.trusted_issuers,
         }
     }
@@ -458,6 +493,8 @@ pub struct JwtStrategy<I> {
     resolver: Box<dyn JwksResolver>,
     validation: Validation,
     require_cert_binding: bool,
+    require_dpop: bool,
+    dpop_replay_store: Arc<dyn crate::dpop::DpopReplayStore>,
     _marker: std::marker::PhantomData<I>,
 }
 
@@ -476,6 +513,8 @@ impl<I> JwtStrategy<I> {
             resolver,
             validation: build_validation(&config, !config.trusted_issuers.is_empty()),
             require_cert_binding: config.require_cert_binding,
+            require_dpop: config.require_dpop,
+            dpop_replay_store: Arc::new(crate::dpop::NoDpopReplayStore),
             _marker: std::marker::PhantomData,
         }
     }
@@ -497,8 +536,22 @@ impl<I> JwtStrategy<I> {
             // multi-issuer case, whether or not a static trust map accompanies it.
             validation: build_validation(&config, true),
             require_cert_binding: config.require_cert_binding,
+            require_dpop: config.require_dpop,
+            dpop_replay_store: Arc::new(crate::dpop::NoDpopReplayStore),
             _marker: std::marker::PhantomData,
         }
+    }
+
+    /// Supplies the [`crate::dpop::DpopReplayStore`] this strategy checks
+    /// DPoP proof `jti`s against, replacing the fail-closed
+    /// [`crate::dpop::NoDpopReplayStore`] default.
+    ///
+    /// Only meaningful alongside [`ValidationConfig::require_dpop`] — without
+    /// it, no token ever reaches the DPoP check this store backs, so a
+    /// deployment that calls this but not `require_dpop` sees no effect.
+    pub fn with_dpop_replay_store(mut self, store: Arc<dyn crate::dpop::DpopReplayStore>) -> Self {
+        self.dpop_replay_store = store;
+        self
     }
 }
 
@@ -622,17 +675,19 @@ where
 
             match validate_jwt_generic::<I>(token, &cache, &self.validation).await {
                 Ok(claims) => {
-                    if self.require_cert_binding {
-                        // Re-decode as `CnfClaim` to read `cnf.x5t#S256`
-                        // regardless of what identity type `I` the caller
-                        // asked for — `I` is not required to expose `cnf`
-                        // itself, so this can't be read off of `claims`
-                        // above. The token was already fully verified by the
-                        // decode above; this second decode reuses the same
-                        // cache/validation and cannot itself fail
-                        // differently, short of key rotation racing between
-                        // the two calls, which is treated the same as any
-                        // other verification failure: reject.
+                    if self.require_cert_binding || self.require_dpop {
+                        // Re-decode as `CnfClaim` to read `cnf` regardless of
+                        // what identity type `I` the caller asked for — `I`
+                        // is not required to expose `cnf` itself, so this
+                        // can't be read off of `claims` above. The token was
+                        // already fully verified by the decode above; this
+                        // second decode reuses the same cache/validation and
+                        // cannot itself fail differently, short of key
+                        // rotation racing between the two calls, which is
+                        // treated the same as any other verification
+                        // failure: reject. Shared between both checks below
+                        // since a token can carry both `cnf.x5t#S256` and
+                        // `cnf.jkt` at once (RFC 9449 §6.1).
                         let cnf_claim = match validate_jwt_generic::<CnfClaim>(
                             token,
                             &cache,
@@ -642,19 +697,44 @@ where
                         {
                             Ok(c) => c,
                             Err(e) => {
-                                tracing::warn!(error = %e, "failed to re-decode token while checking RFC 8705 certificate binding");
+                                tracing::warn!(error = %e, "failed to re-decode token while checking cnf-based binding");
                                 return Ok(None);
                             }
                         };
 
-                        let cert_der = parts
-                            .extensions
-                            .get::<ClientCertificateDer>()
-                            .map(|c| c.0.as_slice());
+                        if self.require_cert_binding {
+                            let cert_der = parts
+                                .extensions
+                                .get::<ClientCertificateDer>()
+                                .map(|c| c.0.as_slice());
 
-                        if let Err(e) = verify_cert_binding(cert_der, cnf_claim.cnf.as_ref()) {
-                            tracing::warn!(error = %e, "RFC 8705 certificate-binding check failed; rejecting token");
-                            return Ok(None);
+                            if let Err(e) = verify_cert_binding(cert_der, cnf_claim.cnf.as_ref()) {
+                                tracing::warn!(error = %e, "RFC 8705 certificate-binding check failed; rejecting token");
+                                return Ok(None);
+                            }
+                        }
+
+                        if self.require_dpop {
+                            let dpop_header = match extract_dpop_header(&parts.headers) {
+                                Ok(h) => h,
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "malformed DPoP header; rejecting token");
+                                    return Ok(None);
+                                }
+                            };
+
+                            if let Err(e) = verify_dpop_binding(
+                                dpop_header,
+                                parts.method.as_str(),
+                                token,
+                                cnf_claim.cnf.as_ref(),
+                                self.dpop_replay_store.as_ref(),
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, "RFC 9449 DPoP binding check failed; rejecting token");
+                                return Ok(None);
+                            }
                         }
                     }
                     Ok(Some(claims))
@@ -711,6 +791,97 @@ pub fn verify_cert_binding(
                 .to_string(),
         )),
         (_, None) => Ok(()),
+    }
+}
+
+/// Reads the request's `DPoP` header (RFC 9449 §4.1: exactly one is
+/// expected). Returns `Ok(None)` if it's absent, `Ok(Some(value))` if
+/// exactly one occurrence is present and valid ASCII, or `Err` in two
+/// cases refused outright rather than tolerated: more than one occurrence
+/// (ambiguous which is authoritative — a proxy bug or smuggling attempt
+/// could produce this) and a value that isn't valid ASCII (treating it as
+/// "no header" would silently accept as a plain bearer token what the
+/// client believes is sender-constrained). Mirrors the identical helper in
+/// `authkestra-axum`/`authkestra-actix`'s `/token` handlers.
+fn extract_dpop_header(headers: &http::HeaderMap) -> Result<Option<&str>, ValidationError> {
+    let mut dpop_headers = headers.get_all("DPoP").iter();
+    match (dpop_headers.next(), dpop_headers.next()) {
+        (None, _) => Ok(None),
+        (Some(_), Some(_)) => Err(ValidationError::InvalidToken(
+            "multiple DPoP headers were presented".to_string(),
+        )),
+        (Some(v), None) => v.to_str().map(Some).map_err(|_| {
+            ValidationError::InvalidToken("DPoP header value is not valid ASCII".to_string())
+        }),
+    }
+}
+
+/// RFC 9449 §4.2's `ath` claim is `base64url(SHA256(access_token))` — the
+/// exact same computation `x5t_s256_thumbprint` already does, just over the
+/// access token's UTF-8 bytes instead of a certificate's DER bytes. Reusing
+/// it avoids a second three-line SHA-256-then-base64url helper for an
+/// identical operation.
+fn compute_ath(access_token: &str) -> String {
+    x5t_s256_thumbprint(access_token.as_bytes())
+}
+
+/// Verifies RFC 9449 DPoP key binding for a decoded token's `cnf` claim.
+///
+/// - If the token carries no `cnf.jkt` claim at all, it is not DPoP-bound;
+///   this always succeeds (nothing to check) — mirrors
+///   [`verify_cert_binding`]'s identical "absent means not bound" shape.
+/// - If it does, `dpop_header` must be present, and the proof it contains
+///   must: verify (signature, `typ`, freshness), bind to `access_token` via
+///   `ath`, and carry the same key as `cnf.jkt`. `htu` is deliberately not
+///   checked — see [`ValidationConfig::require_dpop`]'s doc comment.
+/// - Finally, the proof's `jti` is checked and recorded via
+///   `replay_store`: a DPoP-bound token is **never** accepted with a reused
+///   proof, and a proof that can't be recorded at all (e.g. no replay store
+///   configured) is refused rather than let through unchecked.
+pub async fn verify_dpop_binding(
+    dpop_header: Option<&str>,
+    htm: &str,
+    access_token: &str,
+    cnf: Option<&serde_json::Value>,
+    replay_store: &dyn crate::dpop::DpopReplayStore,
+) -> Result<(), ValidationError> {
+    let Some(expected_jkt) = cnf.and_then(|v| v.get("jkt")).and_then(|v| v.as_str()) else {
+        return Ok(());
+    };
+
+    let Some(proof) = dpop_header else {
+        return Err(ValidationError::InvalidToken(
+            "token is DPoP-bound (cnf.jkt) but no DPoP proof was presented".to_string(),
+        ));
+    };
+
+    let ath = compute_ath(access_token);
+    let verified = authkestra_engine::token::dpop::verify_dpop_proof(
+        proof,
+        htm,
+        None,
+        Some(&ath),
+        chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS),
+    )
+    .map_err(|e| ValidationError::InvalidToken(format!("invalid DPoP proof: {e}")))?;
+
+    if !constant_time_eq(&verified.jkt, expected_jkt) {
+        return Err(ValidationError::InvalidToken(
+            "DPoP proof key does not match the token's cnf.jkt".to_string(),
+        ));
+    }
+
+    let expires_at =
+        chrono::Utc::now() + chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS);
+    match replay_store
+        .check_and_record_dpop_jti(&verified.jti, expires_at)
+        .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(ValidationError::InvalidToken(
+            "DPoP proof has already been used".to_string(),
+        )),
+        Err(e) => Err(e),
     }
 }
 
@@ -961,5 +1132,282 @@ mod tests {
             map.resolve(None).await,
             Err(ValidationError::MissingIssuer)
         ));
+    }
+
+    // --- DPoP (RFC 9449) key binding — authkestra#274 Phase C ---
+
+    mod dpop_binding_tests {
+        use super::*;
+        use crate::dpop::{DpopJtiRecord, NoDpopReplayStore};
+        use authkestra_engine::store::memory::MemoryStore;
+        use ed25519_dalek::{Signer, SigningKey};
+
+        fn b64(bytes: &[u8]) -> String {
+            URL_SAFE_NO_PAD.encode(bytes)
+        }
+        fn b64_json(v: &serde_json::Value) -> String {
+            b64(serde_json::to_vec(v).unwrap().as_slice())
+        }
+
+        /// Builds a real, genuinely Ed25519-signed DPoP proof. Mirrors
+        /// `authkestra_engine::token::dpop`'s own (private) `ProofBuilder`
+        /// test helper — re-authored here since that one isn't reachable
+        /// across the crate boundary.
+        struct DpopProofBuilder {
+            signing_key: SigningKey,
+            jti: String,
+            ath: Option<String>,
+        }
+
+        impl DpopProofBuilder {
+            fn with_key_seed(seed: u8, jti: &str) -> Self {
+                Self {
+                    signing_key: SigningKey::from_bytes(&[seed; 32]),
+                    jti: jti.to_string(),
+                    ath: None,
+                }
+            }
+
+            fn with_ath(mut self, ath: &str) -> Self {
+                self.ath = Some(ath.to_string());
+                self
+            }
+
+            fn jwk(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": b64(self.signing_key.verifying_key().as_bytes()),
+                })
+            }
+
+            fn expected_jkt(&self) -> String {
+                authkestra_engine::token::dpop::compute_jwk_thumbprint(
+                    &serde_json::from_value(self.jwk()).unwrap(),
+                )
+                .unwrap()
+            }
+
+            fn build(&self) -> String {
+                let header = serde_json::json!({
+                    "typ": "dpop+jwt",
+                    "alg": "EdDSA",
+                    "jwk": self.jwk(),
+                });
+                let mut payload = serde_json::json!({
+                    "htm": "GET",
+                    "htu": "https://resource.example.com/protected",
+                    "iat": chrono::Utc::now().timestamp(),
+                    "jti": self.jti,
+                });
+                if let Some(ath) = &self.ath {
+                    payload["ath"] = serde_json::Value::String(ath.clone());
+                }
+                let signing_input = format!("{}.{}", b64_json(&header), b64_json(&payload));
+                let signature = self.signing_key.sign(signing_input.as_bytes());
+                format!("{signing_input}.{}", b64(&signature.to_bytes()))
+            }
+        }
+
+        fn cnf_with_jkt(jkt: &str) -> serde_json::Value {
+            serde_json::json!({ "jkt": jkt })
+        }
+
+        #[tokio::test]
+        async fn accepts_when_no_cnf_jkt_present() {
+            // Not a DPoP-bound token: nothing to check, with or without a
+            // presented proof, and even with the fail-closed default store
+            // wired — it must never be consulted for a token that isn't
+            // DPoP-bound in the first place.
+            assert!(
+                verify_dpop_binding(None, "GET", "token", None, &NoDpopReplayStore)
+                    .await
+                    .is_ok()
+            );
+            assert!(verify_dpop_binding(
+                Some("some-proof"),
+                "GET",
+                "token",
+                Some(&serde_json::json!({ "x5t#S256": "unrelated" })),
+                &NoDpopReplayStore,
+            )
+            .await
+            .is_ok());
+        }
+
+        #[tokio::test]
+        async fn accepts_a_valid_proof_bound_to_this_token() {
+            let store = MemoryStore::<DpopJtiRecord>::new();
+            let access_token = "the-access-token-string";
+            let builder = DpopProofBuilder::with_key_seed(11, "jti-1")
+                .with_ath(&x5t_s256_thumbprint(access_token.as_bytes()));
+            let cnf = cnf_with_jkt(&builder.expected_jkt());
+
+            verify_dpop_binding(
+                Some(&builder.build()),
+                "GET",
+                access_token,
+                Some(&cnf),
+                &store,
+            )
+            .await
+            .expect("a valid proof, bound to this token, for the cnf.jkt key must be accepted");
+        }
+
+        #[tokio::test]
+        async fn rejects_a_missing_dpop_header_for_a_bound_token() {
+            let builder = DpopProofBuilder::with_key_seed(11, "jti-2");
+            let cnf = cnf_with_jkt(&builder.expected_jkt());
+
+            let err = verify_dpop_binding(None, "GET", "token", Some(&cnf), &NoDpopReplayStore)
+                .await
+                .expect_err("a DPoP-bound token presented with no proof must be refused");
+            assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
+
+        #[tokio::test]
+        async fn rejects_a_proof_for_a_different_key_than_cnf_jkt() {
+            let store = MemoryStore::<DpopJtiRecord>::new();
+            let access_token = "the-access-token-string";
+            let ath = x5t_s256_thumbprint(access_token.as_bytes());
+
+            // `cnf.jkt` names the key from seed 11; the presented proof is
+            // genuinely signed, just by a different key (seed 22).
+            let bound = DpopProofBuilder::with_key_seed(11, "jti-3");
+            let presented = DpopProofBuilder::with_key_seed(22, "jti-3").with_ath(&ath);
+            let cnf = cnf_with_jkt(&bound.expected_jkt());
+
+            let err = verify_dpop_binding(
+                Some(&presented.build()),
+                "GET",
+                access_token,
+                Some(&cnf),
+                &store,
+            )
+            .await
+            .expect_err("a proof for a different key than cnf.jkt must be refused");
+            assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
+
+        #[tokio::test]
+        async fn rejects_a_proof_bound_to_a_different_access_token() {
+            let store = MemoryStore::<DpopJtiRecord>::new();
+            let builder = DpopProofBuilder::with_key_seed(11, "jti-4")
+                .with_ath(&x5t_s256_thumbprint(b"a-completely-different-token"));
+            let cnf = cnf_with_jkt(&builder.expected_jkt());
+
+            let err = verify_dpop_binding(
+                Some(&builder.build()),
+                "GET",
+                "the-actual-access-token",
+                Some(&cnf),
+                &store,
+            )
+            .await
+            .expect_err("a proof whose ath binds a different access token must be refused");
+            assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
+
+        #[tokio::test]
+        async fn rejects_a_replayed_proof() {
+            let store = MemoryStore::<DpopJtiRecord>::new();
+            let access_token = "the-access-token-string";
+            let builder = DpopProofBuilder::with_key_seed(11, "jti-5")
+                .with_ath(&x5t_s256_thumbprint(access_token.as_bytes()));
+            let cnf = cnf_with_jkt(&builder.expected_jkt());
+            let proof = builder.build();
+
+            verify_dpop_binding(Some(&proof), "GET", access_token, Some(&cnf), &store)
+                .await
+                .expect("first presentation of a fresh proof must succeed");
+
+            let err = verify_dpop_binding(Some(&proof), "GET", access_token, Some(&cnf), &store)
+                .await
+                .expect_err("replaying the same proof must be refused");
+            assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
+
+        #[tokio::test]
+        async fn fails_closed_without_a_replay_store_wired() {
+            let access_token = "the-access-token-string";
+            let builder = DpopProofBuilder::with_key_seed(11, "jti-6")
+                .with_ath(&x5t_s256_thumbprint(access_token.as_bytes()));
+            let cnf = cnf_with_jkt(&builder.expected_jkt());
+
+            let err = verify_dpop_binding(
+                Some(&builder.build()),
+                "GET",
+                access_token,
+                Some(&cnf),
+                &NoDpopReplayStore,
+            )
+            .await
+            .expect_err("no replay store is wired; an otherwise-valid proof must be refused");
+            assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
+
+        #[tokio::test]
+        async fn rejects_a_proof_for_the_wrong_method() {
+            let store = MemoryStore::<DpopJtiRecord>::new();
+            let access_token = "the-access-token-string";
+            // `DpopProofBuilder::build` always signs "GET" as `htm`.
+            let builder = DpopProofBuilder::with_key_seed(11, "jti-7")
+                .with_ath(&x5t_s256_thumbprint(access_token.as_bytes()));
+            let cnf = cnf_with_jkt(&builder.expected_jkt());
+
+            let err = verify_dpop_binding(
+                Some(&builder.build()),
+                "POST",
+                access_token,
+                Some(&cnf),
+                &store,
+            )
+            .await
+            .expect_err("a proof signed for a different HTTP method must be refused");
+            assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
+    }
+
+    mod dpop_header_tests {
+        use super::{extract_dpop_header, ValidationError};
+
+        #[test]
+        fn no_header_is_none() {
+            let headers = http::HeaderMap::new();
+            assert_eq!(extract_dpop_header(&headers).unwrap(), None);
+        }
+
+        #[test]
+        fn exactly_one_header_is_returned() {
+            let mut headers = http::HeaderMap::new();
+            headers.insert("DPoP", http::HeaderValue::from_static("proof-value"));
+            assert_eq!(extract_dpop_header(&headers).unwrap(), Some("proof-value"));
+        }
+
+        /// RFC 9449 §4.1 expects exactly one `DPoP` header; a duplicate is
+        /// refused outright rather than silently resolved by picking one.
+        #[test]
+        fn two_headers_are_rejected() {
+            let mut headers = http::HeaderMap::new();
+            headers.append("DPoP", http::HeaderValue::from_static("first"));
+            headers.append("DPoP", http::HeaderValue::from_static("second"));
+            let err =
+                extract_dpop_header(&headers).expect_err("a duplicate header must be refused");
+            assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
+
+        /// A header value that isn't valid ASCII must be refused, not
+        /// silently treated as "no header present".
+        #[test]
+        fn non_ascii_header_is_rejected() {
+            let mut headers = http::HeaderMap::new();
+            headers.insert(
+                "DPoP",
+                http::HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+            );
+            let err =
+                extract_dpop_header(&headers).expect_err("a non-ASCII header must be refused");
+            assert!(matches!(err, ValidationError::InvalidToken(_)));
+        }
     }
 }

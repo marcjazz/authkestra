@@ -129,10 +129,23 @@ struct DpopClaims {
 /// Verifies a DPoP proof JWT (RFC 9449 §4.3).
 ///
 /// `expected_htm` is compared case-insensitively (§4.2: "the value of the
-/// HTTP method"). `expected_htu` and the proof's own `htu` are both
-/// stripped of query and fragment before comparison, per §4.3 step 6, using
-/// `url::Url` for canonicalization — pass in the request's URI as received,
-/// not pre-stripped.
+/// HTTP method") and always checked — a caller always knows the current
+/// request's method unambiguously, so there's no case where skipping it
+/// would be appropriate.
+///
+/// `expected_htu`, when `Some`, is compared against the proof's own `htu`
+/// with both sides stripped of query and fragment first, per §4.3 step 6,
+/// using `url::Url` for canonicalization — pass in the request's URI as
+/// received, not pre-stripped. `None` skips the `htu` check entirely: a
+/// resource server protecting many routes behind a reverse proxy or load
+/// balancer often cannot reliably reconstruct the exact absolute URL the
+/// client used (scheme and authority depend on the TLS-termination point,
+/// which isn't always visible to application code), unlike an
+/// authorization server's `/token` endpoint, which has exactly one, known,
+/// statically configured absolute URL. Skipping `htu` still leaves `jti`
+/// replay tracking and (when the caller supplies it) `ath` binding to
+/// prevent a captured proof from being reused — see the caller's own
+/// threat-model notes for what's traded away by not also checking `htu`.
 ///
 /// `expected_ath` should be `Some(base64url(SHA256(access_token)))` when
 /// verifying a proof presented alongside an access token (the resource
@@ -149,7 +162,7 @@ struct DpopClaims {
 pub fn verify_dpop_proof(
     compact_jws: &str,
     expected_htm: &str,
-    expected_htu: &str,
+    expected_htu: Option<&str>,
     expected_ath: Option<&str>,
     max_age: chrono::Duration,
 ) -> Result<VerifiedDpopProof, DpopError> {
@@ -258,8 +271,10 @@ pub fn verify_dpop_proof(
     if !claims.htm.eq_ignore_ascii_case(expected_htm) {
         return Err(DpopError::WrongHtm);
     }
-    if canonicalize_htu(&claims.htu) != canonicalize_htu(expected_htu) {
-        return Err(DpopError::WrongHtu);
+    if let Some(expected_htu) = expected_htu {
+        if canonicalize_htu(&claims.htu) != canonicalize_htu(expected_htu) {
+            return Err(DpopError::WrongHtu);
+        }
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -431,7 +446,7 @@ mod tests {
         let verified = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -447,7 +462,7 @@ mod tests {
         verify_dpop_proof(
             &proof,
             "post",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -460,7 +475,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "GET",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -474,7 +489,7 @@ mod tests {
         verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token?foo=bar#frag",
+            Some("https://as.example.com/token?foo=bar#frag"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -487,12 +502,24 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/other-path",
+            Some("https://as.example.com/other-path"),
             None,
             chrono::Duration::seconds(60),
         )
         .expect_err("a mismatched htu must be refused");
         assert!(matches!(err, DpopError::WrongHtu));
+    }
+
+    /// A resource server protecting many routes behind a proxy or load
+    /// balancer often can't reliably reconstruct the exact absolute URL a
+    /// client used — `expected_htu: None` lets such a caller skip this one
+    /// check while still getting every other one (`htm`, freshness, and
+    /// whatever `ath`/replay checks it layers on top itself).
+    #[test]
+    fn expected_htu_none_skips_the_check_entirely() {
+        let proof = ProofBuilder::new().build();
+        verify_dpop_proof(&proof, "POST", None, None, chrono::Duration::seconds(60))
+            .expect("None must skip the htu check regardless of the proof's own htu");
     }
 
     #[test]
@@ -504,7 +531,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -521,7 +548,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -548,7 +575,7 @@ mod tests {
             let err = verify_dpop_proof(
                 proof,
                 "POST",
-                "https://as.example.com/token",
+                Some("https://as.example.com/token"),
                 None,
                 chrono::Duration::seconds(60),
             )
@@ -569,7 +596,7 @@ mod tests {
         let err = verify_dpop_proof(
             proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -584,7 +611,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -601,7 +628,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -624,7 +651,7 @@ mod tests {
             let err = verify_dpop_proof(
                 &proof,
                 "POST",
-                "https://as.example.com/token",
+                Some("https://as.example.com/token"),
                 None,
                 chrono::Duration::seconds(60),
             )
@@ -645,7 +672,7 @@ mod tests {
         verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             Some("correct-ath"),
             chrono::Duration::seconds(60),
         )
@@ -654,7 +681,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             Some("wrong-ath"),
             chrono::Duration::seconds(60),
         )
@@ -668,7 +695,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             Some("expected-ath"),
             chrono::Duration::seconds(60),
         )
@@ -709,7 +736,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -743,7 +770,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -771,7 +798,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -817,7 +844,7 @@ mod tests {
         let verified = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -838,7 +865,7 @@ mod tests {
         let err = verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
@@ -855,7 +882,7 @@ mod tests {
         verify_dpop_proof(
             &proof,
             "POST",
-            "https://as.example.com/token",
+            Some("https://as.example.com/token"),
             None,
             chrono::Duration::seconds(60),
         )
