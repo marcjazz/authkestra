@@ -4,6 +4,12 @@ use http::request::Parts;
 
 pub mod jwt;
 
+/// DPoP (RFC 9449) proof replay tracking for [`jwt::JwtStrategy`]. See the
+/// module doc for why this is independent of `authkestra-op`'s own replay
+/// guard.
+pub mod dpop;
+pub use dpop::{DpopJtiRecord, DpopReplayStore, NoDpopReplayStore, DPOP_PROOF_MAX_AGE_SECS};
+
 /// Policy for controlling the behavior of chained authentication strategies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AuthPolicy {

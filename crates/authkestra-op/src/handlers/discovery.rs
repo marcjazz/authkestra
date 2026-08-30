@@ -149,22 +149,19 @@ impl OidcDiscovery {
     /// is — see this field's doc comment. Call alongside
     /// `CompositeOpStore::with_dpop_replay_store` once that's wired.
     ///
-    /// **Resource-server caveat (authkestra#274, tracked for a later
-    /// phase):** this OP will correctly verify a DPoP proof and stamp
-    /// `cnf.jkt` onto the access tokens it issues, but the *bundled*
-    /// `authkestra-resource` `JwtStrategy` does not yet check `cnf.jkt` on
-    /// the resource-server side — it only verifies RFC 8705's
-    /// `cnf.x5t#S256` (mTLS certificate binding). A client that sees this
-    /// advertised will reasonably assume its access tokens are
-    /// sender-constrained end-to-end; against the bundled resource server,
-    /// they currently are not — a DPoP-bound access token is accepted
-    /// there as an ordinary bearer token, with no proof-of-possession
-    /// check at all, if it's presented without also being certificate-bound.
-    /// Calling this is still correct and useful today for any resource
-    /// server that *does* implement its own `cnf.jkt` check (or the
-    /// planned Phase C addition to this crate's own `JwtStrategy`), but a
-    /// deployment relying solely on the bundled resource server should not
-    /// call this yet believing it closes token-theft risk there.
+    /// **Resource-server note (authkestra#274 Phase C):** the bundled
+    /// `authkestra-resource` `JwtStrategy` can check `cnf.jkt` too, but it
+    /// is its own opt-in —
+    /// `ValidationConfig::require_dpop`/`ValidationConfigBuilder::require_dpop`
+    /// on that crate's side, off by default for the same backward-
+    /// compatibility reason this method is. Calling `with_dpop_support`
+    /// here only affects what this OP *advertises*; a deployment must
+    /// separately enable `require_dpop` (and wire a
+    /// `JwtStrategy::with_dpop_replay_store`) on the resource-server side
+    /// for a DPoP-bound access token to actually be rejected there when
+    /// presented without a matching proof. A client that sees DPoP
+    /// advertised should not assume every resource server behind it has
+    /// necessarily turned that check on.
     pub fn with_dpop_support(mut self) -> Self {
         self.dpop_signing_alg_values_supported = Some(vec![
             "ES256".to_string(),

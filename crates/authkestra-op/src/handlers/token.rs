@@ -282,7 +282,7 @@ pub async fn handle_token_with_client_cert(
         let verified = match authkestra_engine::token::dpop::verify_dpop_proof(
             proof,
             "POST",
-            &config.token_endpoint(),
+            Some(&config.token_endpoint()),
             None,
             chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS),
         ) {
