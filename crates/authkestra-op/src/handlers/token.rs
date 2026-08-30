@@ -1200,17 +1200,32 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         }
     };
 
-    let old_rt = match op_store.consume_token(refresh_token_str).await {
+    // Looked up first, *not* consumed yet: every check below (client_id,
+    // expiry, DPoP continuity) runs against this non-destructive read.
+    // Consumption — the actual single-use, atomic revoke-and-return — only
+    // happens once every check has passed. Doing it in the other order
+    // (consume first, validate after, as this function used to) means any
+    // one of these checks failing after consumption permanently destroys a
+    // refresh token that was otherwise still valid. For the DPoP check in
+    // particular, that inverts the feature's own threat model: an attacker
+    // holding nothing but a leaked token *string* (no key at all) could
+    // send one request with no `DPoP` header and permanently log the
+    // legitimate holder out — turning a leaked-but-otherwise-useless token
+    // into a working denial-of-service weapon. The same trap would catch a
+    // legitimate client behind a proxy that strips the header. Validating
+    // first means a request that fails never has a side effect on a token
+    // it had no right to consume.
+    let candidate = match op_store.get_token(refresh_token_str).await {
         Ok(Some(rt)) => rt,
         Ok(None) => {
-            tracing::warn!("Invalid refresh token (possibly replayed)");
+            tracing::warn!("Invalid refresh token (unknown, revoked, or expired)");
             return Err(TokenErrorResponse {
                 error: "invalid_grant".to_string(),
                 error_description: "Invalid refresh token".to_string(),
             });
         }
         Err(e) => {
-            tracing::error!(error = ?e, "Failed to consume refresh token");
+            tracing::error!(error = ?e, "Failed to look up refresh token");
             return Err(TokenErrorResponse {
                 error: "server_error".to_string(),
                 error_description: "Internal server error".to_string(),
@@ -1218,7 +1233,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         }
     };
 
-    if old_rt.client_id != client_id {
+    if candidate.client_id != client_id {
         tracing::warn!("Refresh token issued to a different client");
         return Err(TokenErrorResponse {
             error: "invalid_grant".to_string(),
@@ -1226,7 +1241,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         });
     }
 
-    if chrono::Utc::now() > old_rt.expires_at {
+    if chrono::Utc::now() > candidate.expires_at {
         tracing::warn!("Refresh token expired");
         return Err(TokenErrorResponse {
             error: "invalid_grant".to_string(),
@@ -1242,10 +1257,10 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     // presenter happens to hold. Without this, an exfiltrated DPoP-bound
     // refresh token could be redeemed with the attacker's own key (or no
     // proof at all), which is exactly the theft scenario DPoP exists to
-    // close for public clients (authkestra#274). An `old_rt.jkt` of `None`
-    // means this refresh token was never DPoP-bound — that behavior is
-    // unchanged from before this feature existed.
-    if let Some(expected_jkt) = &old_rt.jkt {
+    // close for public clients (authkestra#274). A `candidate.jkt` of
+    // `None` means this refresh token was never DPoP-bound — that behavior
+    // is unchanged from before this feature existed.
+    if let Some(expected_jkt) = &candidate.jkt {
         if req.dpop_jkt.as_deref() != Some(expected_jkt.as_str()) {
             tracing::warn!(
                 client_id = %client_id,
@@ -1259,13 +1274,37 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         }
     }
     // Carries the rotated token's binding forward. Deliberately reads from
-    // `old_rt.jkt` rather than `req.dpop_jkt` when the token was already
+    // `candidate.jkt` rather than `req.dpop_jkt` when the token was already
     // bound (the branch above already proved they're equal) — the stored,
     // trusted value is preferred over re-deriving it from client input.
-    // When `old_rt.jkt` is `None`, this is the first time the client has
+    // When `candidate.jkt` is `None`, this is the first time the client has
     // presented a DPoP proof for this token lineage, so `req.dpop_jkt`
     // (possibly still `None`) begins the binding going forward.
-    let jkt = old_rt.jkt.clone().or_else(|| req.dpop_jkt.clone());
+    let jkt = candidate.jkt.clone().or_else(|| req.dpop_jkt.clone());
+
+    // All checks passed — now, and only now, perform the actual single-use
+    // consumption. `consume_token`'s atomicity is still what prevents two
+    // concurrent requests presenting the same token from both succeeding:
+    // if a concurrent request already won that race between the `get_token`
+    // above and this call, this returns `Ok(None)` and the loser (this
+    // request) is correctly refused, with no destructive effect of its own.
+    let old_rt = match op_store.consume_token(refresh_token_str).await {
+        Ok(Some(rt)) => rt,
+        Ok(None) => {
+            tracing::warn!("Refresh token was consumed by a concurrent request");
+            return Err(TokenErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Invalid refresh token".to_string(),
+            });
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to consume refresh token");
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Internal server error".to_string(),
+            });
+        }
+    };
 
     let new_refresh_val = uuid::Uuid::new_v4().to_string();
     let new_rt = RefreshToken {
@@ -5284,6 +5323,75 @@ mod tests {
             .expect_err("omitting DPoP on a bound refresh token must be refused");
 
             assert_eq!(err.error, "invalid_dpop_proof");
+        }
+
+        /// A failed DPoP continuity check (wrong key, or no proof at all)
+        /// must NOT consume the refresh token. Validation runs before
+        /// `consume_token`, specifically so a request that has no right to
+        /// redeem the token can't destroy it as a side effect of trying —
+        /// otherwise a bare stolen token *string* (no key needed at all)
+        /// would let an attacker permanently log the legitimate holder out
+        /// with a single throwaway request, and a legitimate client behind
+        /// a header-stripping proxy would lose its session irrecoverably
+        /// the first time it forgot to attach DPoP. This proves the token
+        /// survives a failed attempt and a correct retry still succeeds.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_survives_a_failed_dpop_attempt_and_a_correct_retry_still_succeeds() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issue_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-issue-4",
+            );
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&issue_proof.build()),
+            )
+            .await
+            .expect("issuing the code grant with a DPoP proof must succeed");
+            let refresh_token = issued.refresh_token.unwrap();
+
+            // First: an attacker holding only the token string, no key.
+            let attacker_attempt = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .expect_err("a missing proof must be refused");
+            assert_eq!(attacker_attempt.error, "invalid_dpop_proof");
+
+            // Then: the legitimate client, presenting the correct key,
+            // using that exact same still-unconsumed refresh token.
+            let retry_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-retry-after-failed-attempt",
+            );
+            let retried = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&retry_proof.build()),
+            )
+            .await
+            .expect("the refresh token must still be valid after a failed attempt by someone else");
+            assert_eq!(retried.token_type, "DPoP");
         }
 
         /// Companion regression: a refresh token minted *without* DPoP
