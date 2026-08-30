@@ -8,7 +8,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use sqlx::Database;
 use std::time::Duration;
 
-use crate::store::{AtomicInsert, KvStore, StoreError};
+use crate::store::{ttl_ceil_secs, AtomicInsert, KvStore, StoreError};
 
 #[derive(Clone, Debug)]
 #[deprecated(
@@ -446,7 +446,8 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
             StoreError::Serialization(format!("Serialization error: {e}"))
         })?;
         let now = chrono::Utc::now();
-        let expires_at = now + chrono::Duration::seconds(ttl.as_secs() as i64);
+        // See `ttl_ceil_secs` for why this must round up, not truncate.
+        let expires_at = now + chrono::Duration::seconds(ttl_ceil_secs(ttl) as i64);
 
         let result = sqlx::query(&query)
             .bind(key)
@@ -493,7 +494,8 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
             StoreError::Serialization(format!("Serialization error: {e}"))
         })?;
         let now = chrono::Utc::now();
-        let expires_at = now + chrono::Duration::seconds(ttl.as_secs() as i64);
+        // See `ttl_ceil_secs` for why this must round up, not truncate.
+        let expires_at = now + chrono::Duration::seconds(ttl_ceil_secs(ttl) as i64);
 
         let result = sqlx::query(&query)
             .bind(key)
@@ -557,7 +559,8 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T>
             StoreError::Serialization(format!("Serialization error: {e}"))
         })?;
         let now = chrono::Utc::now();
-        let expires_at = now + chrono::Duration::seconds(ttl.as_secs() as i64);
+        // See `ttl_ceil_secs` for why this must round up, not truncate.
+        let expires_at = now + chrono::Duration::seconds(ttl_ceil_secs(ttl) as i64);
 
         let insert_query = format!(
             "INSERT IGNORE INTO {} (`key`, value, expires_at) VALUES (?, ?, ?)",
@@ -684,16 +687,17 @@ mod tests {
     async fn test_sqlite_insert_if_absent_reclaims_an_expired_key() {
         let store = setup_db().await;
 
-        // A TTL under one second truncates to `expires_at == now` at
-        // insert time (`ttl.as_secs()` rounds down to 0), so this row is
-        // already expired by the time the sleep below elapses.
+        // A sub-second TTL rounds *up* to 1 whole second (see
+        // `test_sqlite_insert_if_absent_rounds_a_fractional_ttl_up` below),
+        // so the sleep here must clear a full second, not a few
+        // milliseconds, for this row to actually be expired.
         let inserted = store
             .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(1))
             .await
             .unwrap();
         assert!(inserted);
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
 
         let reclaimed = store
             .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
@@ -706,6 +710,34 @@ mod tests {
 
         let val: Option<String> = store.get("key1").await.unwrap();
         assert_eq!(val, Some("value2".to_string()));
+    }
+
+    /// Regression test: `ttl.as_secs()` alone truncates — a 1.5s TTL must
+    /// round *up* to 2s, not down to 1s. Verified behaviorally rather than
+    /// by inspecting the stored `expires_at`: at 1.2s elapsed (past the
+    /// wrong, truncated 1s bound but before the correct 2s one), the key
+    /// must still be live and block a second `insert_if_absent` as a
+    /// replay, not report it reclaimable.
+    #[tokio::test]
+    async fn test_sqlite_insert_if_absent_rounds_a_fractional_ttl_up() {
+        let store = setup_db().await;
+
+        store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(1500))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+
+        let still_blocked = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(
+            !still_blocked,
+            "a 1.5s TTL truncated to 1s would already look expired at 1.2s elapsed; \
+             rounded up to 2s it must still be live"
+        );
     }
 
     /// authkestra#277 review: the SQL layer's `insert_if_absent` has now
@@ -851,7 +883,8 @@ mod postgres_tests {
 
     /// Regression test: an expired existing row must be reclaimable rather
     /// than permanently blocking that key. See the Sqlite version of this
-    /// test for why a sub-second TTL is used.
+    /// test for why the sleep clears a full second, not a few
+    /// milliseconds — a sub-second TTL rounds up to 1s.
     #[tokio::test]
     async fn test_postgres_insert_if_absent_reclaims_an_expired_key() {
         let (store, _c) = setup_db().await;
@@ -862,7 +895,7 @@ mod postgres_tests {
             .unwrap();
         assert!(inserted);
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
 
         let reclaimed = store
             .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
@@ -875,6 +908,30 @@ mod postgres_tests {
 
         let val: Option<String> = store.get("key1").await.unwrap();
         assert_eq!(val, Some("value2".to_string()));
+    }
+
+    /// See the Sqlite version of this test for why it exists: a 1.5s TTL
+    /// must round up to 2s, not truncate to 1s.
+    #[tokio::test]
+    async fn test_postgres_insert_if_absent_rounds_a_fractional_ttl_up() {
+        let (store, _c) = setup_db().await;
+
+        store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(1500))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+
+        let still_blocked = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(
+            !still_blocked,
+            "a 1.5s TTL truncated to 1s would already look expired at 1.2s elapsed; \
+             rounded up to 2s it must still be live"
+        );
     }
 
     /// See the Sqlite version of this test for why it exists: this
@@ -1028,15 +1085,21 @@ mod mysql_tests {
             .unwrap();
         assert!(inserted);
 
-        // MySQL's `TIMESTAMP` column (no fractional-second precision in
-        // this migration) *rounds* a sub-second value to the nearest whole
-        // second rather than truncating it, so a 1ms TTL's stored
-        // `expires_at` can land up to a full second after the actual
-        // insert instant — a 50ms sleep was flaky (~1 run in 3) for exactly
-        // that reason. Sleeping past that worst case removes the flake
-        // without needing a schema change that would affect every
-        // consumer of this migration, not just this test.
-        tokio::time::sleep(Duration::from_millis(1100)).await;
+        // Two layers of rounding stack here, both pushing the same way.
+        // `ttl_ceil_secs` (authkestra#274 review: a sub-second TTL must
+        // never truncate to `expires_at == now`, since that would let a
+        // caller's replay guard silently disable itself) rounds this 1ms
+        // TTL *up* to a full 1-second minimum. Then MySQL's `TIMESTAMP`
+        // column (no fractional-second precision in this migration)
+        // *rounds* that already-whole-second value's fractional
+        // `chrono::Utc::now()` origin to the nearest whole second, which
+        // can add up to another full second on top. Worst case the row
+        // isn't actually expired until ~2s after the insert instant — a
+        // shorter sleep here was flaky for exactly that reason once the
+        // TTL rounding was fixed. Sleeping past that worst case removes
+        // the flake without needing a schema change that would affect
+        // every consumer of this migration, not just this test.
+        tokio::time::sleep(Duration::from_millis(2100)).await;
 
         let reclaimed = store
             .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))

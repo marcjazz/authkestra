@@ -127,7 +127,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Red
     }
 }
 
-use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore};
+use crate::store::{ttl_ceil_secs, AtomicConsume, AtomicInsert, IndexedKvStore};
 
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T> for RedisStore {
@@ -153,24 +153,9 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T> fo
             StoreError::Serialization(format!("Serialization error: {e}"))
         })?;
 
-        // Unlike `set`, a sub-second `ttl` must never be treated as "skip
-        // the write" here: `insert_if_absent`'s return value is a
-        // security-critical replay signal, not a best-effort cache write,
-        // and reporting `Ok(true)` without actually storing anything means
-        // every subsequent call with the same key *also* sees no existing
-        // entry and *also* reports "fresh" — silently disabling the replay
-        // guard entirely for any caller using a sub-second TTL (e.g. a
-        // DPoP freshness window configured in milliseconds). Redis' `EX`
-        // only accepts whole seconds, so round *up* on any fractional
-        // remainder (not just when the whole-second part is zero) — a
-        // plain `.as_secs().max(1)` still truncates, say, 1.9s down to 1s,
-        // silently shortening the replay window below what the caller
-        // asked for on every call with a sub-second remainder, not only
-        // the exact-zero case.
-        let ttl_secs = ttl
-            .as_secs()
-            .saturating_add(u64::from(ttl.subsec_nanos() > 0))
-            .max(1);
+        // Redis' `EX` only accepts whole seconds — see `ttl_ceil_secs` for
+        // why this must round up, not truncate.
+        let ttl_secs = ttl_ceil_secs(ttl);
 
         // `SET key value NX EX ttl` — a single atomic Redis command. Redis
         // replies `+OK` (parsed by this crate as `Value::Okay`, which

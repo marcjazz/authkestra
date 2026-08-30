@@ -148,6 +148,23 @@ impl OidcDiscovery {
     /// Opt-in for the same reason [`OidcDiscovery::with_private_key_jwt`]
     /// is — see this field's doc comment. Call alongside
     /// `CompositeOpStore::with_dpop_replay_store` once that's wired.
+    ///
+    /// **Resource-server caveat (authkestra#274, tracked for a later
+    /// phase):** this OP will correctly verify a DPoP proof and stamp
+    /// `cnf.jkt` onto the access tokens it issues, but the *bundled*
+    /// `authkestra-resource` `JwtStrategy` does not yet check `cnf.jkt` on
+    /// the resource-server side — it only verifies RFC 8705's
+    /// `cnf.x5t#S256` (mTLS certificate binding). A client that sees this
+    /// advertised will reasonably assume its access tokens are
+    /// sender-constrained end-to-end; against the bundled resource server,
+    /// they currently are not — a DPoP-bound access token is accepted
+    /// there as an ordinary bearer token, with no proof-of-possession
+    /// check at all, if it's presented without also being certificate-bound.
+    /// Calling this is still correct and useful today for any resource
+    /// server that *does* implement its own `cnf.jkt` check (or the
+    /// planned Phase C addition to this crate's own `JwtStrategy`), but a
+    /// deployment relying solely on the bundled resource server should not
+    /// call this yet believing it closes token-theft risk there.
     pub fn with_dpop_support(mut self) -> Self {
         self.dpop_signing_alg_values_supported = Some(vec![
             "ES256".to_string(),

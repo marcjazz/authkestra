@@ -15,7 +15,7 @@ use authkestra_op::{
             CompleteChallengeRequest, EnrolStartRequest, ReissueStartRequest,
         },
         jwks::JwksResponse,
-        token::{handle_token_with_client_cert, TokenRequest},
+        token::{handle_token_with_client_cert, TokenErrorResponse, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
     OpError,
@@ -106,6 +106,40 @@ pub async fn actix_device_authorization_handler(
     }
 }
 
+/// Reads the request's `DPoP` header (RFC 9449 §4.1: exactly one is
+/// expected). Returns `Ok(None)` if it's absent, `Ok(Some(value))` if
+/// exactly one occurrence is present and valid ASCII, or `Err` in two
+/// cases that are refused outright rather than tolerated:
+///
+/// - **More than one occurrence.** Which one would be authoritative is
+///   ambiguous, and a duplicate is exactly the kind of situation a
+///   proxy bug or request-smuggling attempt could produce — a
+///   sender-constraining mechanism shouldn't guess which header to
+///   trust.
+/// - **A value that isn't valid ASCII.** Treating this as "no header"
+///   would silently issue a plain Bearer token while the client
+///   believes (because it sent one) that it's getting a
+///   sender-constrained one — a mangled header should fail loudly, not
+///   downgrade silently.
+fn extract_dpop_header(
+    headers: &actix_web::http::header::HeaderMap,
+) -> Result<Option<&str>, TokenErrorResponse> {
+    let mut dpop_headers = headers.get_all("DPoP");
+    match (dpop_headers.next(), dpop_headers.next()) {
+        (None, _) => Ok(None),
+        (Some(_), Some(_)) => Err(TokenErrorResponse::new(
+            "invalid_dpop_proof".to_string(),
+            "Multiple DPoP headers were presented".to_string(),
+        )),
+        (Some(v), None) => v.to_str().map(Some).map_err(|_| {
+            TokenErrorResponse::new(
+                "invalid_dpop_proof".to_string(),
+                "DPoP header value is not valid ASCII".to_string(),
+            )
+        }),
+    }
+}
+
 /// Handler for the token endpoint.
 ///
 /// Certificate binding (RFC 8705, issue #224): this crate does not
@@ -135,8 +169,13 @@ pub async fn actix_token_handler(
 
     // RFC 9449 — an ordinary header, unlike the mTLS certificate above:
     // `http_req` already gives access to the whole header map, no
-    // extension-based plumbing needed.
-    let dpop_header = http_req.headers().get("DPoP").and_then(|h| h.to_str().ok());
+    // extension-based plumbing needed. See `extract_dpop_header` for why
+    // more than one occurrence, or one that isn't valid ASCII, is refused
+    // outright rather than tolerated.
+    let dpop_header = match extract_dpop_header(http_req.headers()) {
+        Ok(h) => h,
+        Err(err) => return HttpResponse::BadRequest().json(err),
+    };
 
     match handle_token_with_client_cert(
         req.into_inner(),
@@ -392,5 +431,54 @@ impl OpActixExt for &mut web::ServiceConfig {
             self.app_data(web::Data::new(provider));
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod dpop_header_tests {
+    use super::extract_dpop_header;
+    use actix_web::http::header::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn no_header_is_none() {
+        let headers = HeaderMap::new();
+        assert_eq!(extract_dpop_header(&headers).unwrap(), None);
+    }
+
+    #[test]
+    fn exactly_one_header_is_returned() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            actix_web::http::header::HeaderName::from_static("dpop"),
+            HeaderValue::from_static("proof-value"),
+        );
+        assert_eq!(extract_dpop_header(&headers).unwrap(), Some("proof-value"));
+    }
+
+    /// RFC 9449 §4.1 expects exactly one `DPoP` header; a duplicate is
+    /// refused outright rather than silently resolved by picking one.
+    #[test]
+    fn two_headers_are_rejected() {
+        let mut headers = HeaderMap::new();
+        let name = actix_web::http::header::HeaderName::from_static("dpop");
+        headers.append(name.clone(), HeaderValue::from_static("first"));
+        headers.append(name, HeaderValue::from_static("second"));
+        let err = extract_dpop_header(&headers).expect_err("a duplicate header must be refused");
+        assert_eq!(err.error, "invalid_dpop_proof");
+    }
+
+    /// A header value that isn't valid ASCII must be refused, not silently
+    /// treated as "no header present" (which would issue a plain Bearer
+    /// token while the client believes it asked for — and thinks it got —
+    /// a sender-constrained one).
+    #[test]
+    fn non_ascii_header_is_rejected() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            actix_web::http::header::HeaderName::from_static("dpop"),
+            HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+        );
+        let err = extract_dpop_header(&headers).expect_err("a non-ASCII header must be refused");
+        assert_eq!(err.error, "invalid_dpop_proof");
     }
 }

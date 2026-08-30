@@ -18,7 +18,7 @@ pub use device_authorization::{
 
 /// Token endpoint handler (`/token`).
 pub mod token;
-pub use token::{handle_token, TokenErrorResponse, TokenRequest, TokenResponse};
+pub use token::{handle_token, merge_dpop_cnf, TokenErrorResponse, TokenRequest, TokenResponse};
 
 /// UserInfo endpoint handler (`/userinfo`).
 pub mod userinfo;

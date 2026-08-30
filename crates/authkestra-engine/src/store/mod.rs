@@ -51,6 +51,28 @@ pub trait AtomicInsert<T>: KvStore<T> {
     ) -> Result<bool, StoreError>;
 }
 
+/// Rounds a [`Duration`] up to the nearest whole second, flooring at 1.
+///
+/// Every [`AtomicInsert`] backend whose storage only expresses TTL in
+/// whole seconds (Redis's `EX`, and the `expires_at` column every SQL
+/// backend uses) needs this same conversion, and needs it to round up:
+/// `insert_if_absent`'s return value is a security-critical replay
+/// signal, not a best-effort cache write. Truncating instead (a plain
+/// `.as_secs()`, or `.as_secs().max(1)`) would silently disable the
+/// replay guard for any caller using a sub-second TTL (e.g. a DPoP
+/// freshness window configured in milliseconds) — a 1ms TTL would
+/// truncate to `expires_at == now`, meaning the row is already expired by
+/// the time anyone could observe it, and every subsequent call with the
+/// same key would also see no live entry and also report "fresh". This
+/// bug was found and fixed for the Redis backend first (authkestra#277
+/// review) and, having no shared definition to fall to, was independently
+/// re-introduced in each SQL backend rather than caught by one fix.
+pub fn ttl_ceil_secs(ttl: Duration) -> u64 {
+    ttl.as_secs()
+        .saturating_add(u64::from(ttl.subsec_nanos() > 0))
+        .max(1)
+}
+
 /// Backends that can atomically write a value under a primary key while
 /// also maintaining a secondary lookup key implement this.
 #[async_trait]

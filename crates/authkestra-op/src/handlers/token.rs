@@ -107,6 +107,22 @@ impl TokenRequest {
             dpop_jkt: None,
         }
     }
+
+    /// The RFC 7638 thumbprint of the verified DPoP proof's embedded key
+    /// this request was presented with, or `None` if it wasn't
+    /// DPoP-bound. `None` both before `handle_token_with_client_cert` has
+    /// verified a proof and for a request with no `DPoP` header at all.
+    ///
+    /// Read-only: the field itself stays `pub(crate)` so a client can
+    /// never set it directly (see its doc comment for why that's
+    /// forgery-proof), but an `OpStore::handle_*_grant` override outside
+    /// this crate that delegates to a `default_handle_*` free function and
+    /// post-processes the result still needs to be able to tell whether
+    /// the request it just handled was DPoP-bound — e.g. to stamp its own
+    /// additional claims alongside `cnf.jkt` via [`merge_dpop_cnf`].
+    pub fn dpop_jkt(&self) -> Option<&str> {
+        self.dpop_jkt.as_deref()
+    }
 }
 
 /// Success response for the token endpoint.
@@ -747,8 +763,18 @@ async fn handle_device_code(
                         // can enforce continuity on every future rotation.
                         jkt: req.dpop_jkt.clone(),
                     };
-                    if op_store.store_token(rt).await.is_ok() {
-                        issued_refresh_token = Some(refresh_val);
+                    match store_refresh_token_verifying_dpop_binding(op_store, rt).await {
+                        RefreshTokenStoreOutcome::Stored => {
+                            issued_refresh_token = Some(refresh_val)
+                        }
+                        RefreshTokenStoreOutcome::NonFatalStorageFailure => {}
+                        RefreshTokenStoreOutcome::DpopBindingFailed => {
+                            return Err(TokenErrorResponse {
+                                error: "server_error".to_string(),
+                                error_description: "Failed to persist DPoP token binding"
+                                    .to_string(),
+                            });
+                        }
                     }
                 }
 
@@ -977,11 +1003,15 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
             // RFC 9449 §5: see the identical comment in `handle_device_code`.
             jkt: req.dpop_jkt.clone(),
         };
-        if let Err(e) = op_store.store_token(rt_model.clone()).await {
-            tracing::error!(error = ?e, "Failed to store refresh token");
-            // Non-fatal, just don't return a refresh token
-        } else {
-            issued_refresh_token = Some(refresh_val);
+        match store_refresh_token_verifying_dpop_binding(op_store, rt_model).await {
+            RefreshTokenStoreOutcome::Stored => issued_refresh_token = Some(refresh_val),
+            RefreshTokenStoreOutcome::NonFatalStorageFailure => {}
+            RefreshTokenStoreOutcome::DpopBindingFailed => {
+                return Err(TokenErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: "Failed to persist DPoP token binding".to_string(),
+                });
+            }
         }
     }
 
@@ -1013,7 +1043,15 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
 /// mTLS-bound and DPoP-bound — the spec requires both confirmation members
 /// to coexist in one `cnf` object, not overwrite each other. A no-op when
 /// `dpop_jkt` is `None`, so every call site can call this unconditionally.
-fn merge_dpop_cnf(extra: &mut HashMap<String, serde_json::Value>, dpop_jkt: Option<&str>) {
+///
+/// `pub`, not `pub(crate)`: an `OpStore::handle_*_grant` override outside
+/// this crate that delegates to a `default_handle_*` free function and
+/// then stamps its own additional claims onto the result needs this same
+/// merge — otherwise it would have to hand-roll the `cnf` merge itself and
+/// risk reintroducing the exact clobber this function exists to prevent.
+/// [`TokenRequest::dpop_jkt`] is the read-only accessor such an override
+/// reads the key from.
+pub fn merge_dpop_cnf(extra: &mut HashMap<String, serde_json::Value>, dpop_jkt: Option<&str>) {
     let Some(jkt) = dpop_jkt else {
         return;
     };
@@ -1025,6 +1063,83 @@ fn merge_dpop_cnf(extra: &mut HashMap<String, serde_json::Value>, dpop_jkt: Opti
             "jkt".to_string(),
             serde_json::Value::String(jkt.to_string()),
         );
+    }
+}
+
+/// What happened when [`store_refresh_token_verifying_dpop_binding`] tried
+/// to persist a freshly minted refresh token.
+enum RefreshTokenStoreOutcome {
+    /// Stored, and — if it was meant to be DPoP-bound — confirmed bound.
+    Stored,
+    /// The store call itself failed and the token was never meant to be
+    /// DPoP-bound. Every call site already tolerates this exactly as it
+    /// did before this feature existed: log it, omit `refresh_token` from
+    /// the response, and otherwise succeed.
+    NonFatalStorageFailure,
+    /// The token was meant to be DPoP-bound (`jkt: Some(_)`) but that
+    /// binding cannot be confirmed to have persisted — never tolerated,
+    /// unlike the case above, because silently issuing a refresh token
+    /// whose RFC 9449 §5 continuity guarantee doesn't actually exist is
+    /// exactly the silent security gap this check exists to catch.
+    DpopBindingFailed,
+}
+
+/// Stores a freshly minted refresh token, then — only when it's meant to
+/// be DPoP-bound — reads it back and confirms the binding actually
+/// persisted.
+///
+/// A backend can silently drop `jkt` on write without `store_token`
+/// itself ever returning an error: exactly the case `sqlx_store.rs`'s
+/// `RefreshTokenStore` impl is in right now (its schema has no `jkt`
+/// column yet, so it accepts a token with `jkt: Some(_)` and simply
+/// never persists that field — see the comment on its `get_token`). If
+/// nothing ever checked, that token's RFC 9449 §5 continuity guarantee
+/// would quietly not exist: `default_handle_refresh_token` would see
+/// `jkt: None` on redemption and treat it as though it never asked for a
+/// DPoP-bound refresh token in the first place, while the client's
+/// response here claimed `token_type: "DPoP"` and a `cnf.jkt`-bound
+/// access token. Reading the write back and refusing loudly is what turns
+/// that silent security gap into a visible failure — the same principle
+/// this crate already applies to every other silent-degradation risk in
+/// this feature (`NoDpopReplayStore` failing closed rather than accepting
+/// an unverifiable proof, the consume-before-validate ordering fix, and
+/// so on).
+async fn store_refresh_token_verifying_dpop_binding<S: OpStore + ?Sized>(
+    op_store: &S,
+    rt: RefreshToken,
+) -> RefreshTokenStoreOutcome {
+    let token = rt.token.clone();
+    let expected_jkt = rt.jkt.clone();
+    let dpop_bound = expected_jkt.is_some();
+
+    if let Err(e) = op_store.store_token(rt).await {
+        tracing::error!(error = ?e, "Failed to store refresh token");
+        return if dpop_bound {
+            RefreshTokenStoreOutcome::DpopBindingFailed
+        } else {
+            RefreshTokenStoreOutcome::NonFatalStorageFailure
+        };
+    }
+
+    if !dpop_bound {
+        return RefreshTokenStoreOutcome::Stored;
+    }
+
+    match op_store.get_token(&token).await {
+        Ok(Some(stored)) if stored.jkt == expected_jkt => RefreshTokenStoreOutcome::Stored,
+        Ok(_) => {
+            tracing::error!(
+                "refresh token's DPoP binding did not survive storage — the configured \
+                 RefreshTokenStore silently dropped `jkt`, which would let this token be \
+                 redeemed without RFC 9449 §5 continuity enforcement; refusing rather than \
+                 handing back a token whose response claims a binding storage doesn't have"
+            );
+            RefreshTokenStoreOutcome::DpopBindingFailed
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to verify refresh token's DPoP binding");
+            RefreshTokenStoreOutcome::DpopBindingFailed
+        }
     }
 }
 
@@ -1316,8 +1431,19 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         jkt: jkt.clone(),
     };
 
-    if let Err(e) = op_store.store_token(new_rt).await {
-        tracing::error!(error = ?e, "Failed to store new refresh token");
+    match store_refresh_token_verifying_dpop_binding(op_store, new_rt).await {
+        RefreshTokenStoreOutcome::Stored => {}
+        // Pre-existing behavior for this grant, unrelated to DPoP: a plain
+        // storage failure here is logged but doesn't fail the request —
+        // the client still gets a `refresh_token` in the response even
+        // though it wasn't actually persisted. Not this fix's concern.
+        RefreshTokenStoreOutcome::NonFatalStorageFailure => {}
+        RefreshTokenStoreOutcome::DpopBindingFailed => {
+            return Err(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: "Failed to persist DPoP token binding".to_string(),
+            });
+        }
     }
 
     let expires_in = config.access_token_ttl_secs;
@@ -5430,6 +5556,148 @@ mod tests {
             .await
             .expect("rotating an unbound refresh token with no DPoP proof must still succeed");
             assert_eq!(rotated.token_type, "Bearer");
+        }
+
+        // --- Fail-closed guard against a backend that silently drops `jkt` ---
+
+        /// Wraps any `OpStore` but strips `jkt` on every `store_token`
+        /// call before delegating — simulating exactly what
+        /// `sqlx_store.rs`'s `RefreshTokenStore` impl does today (accepts
+        /// a DPoP-bound `RefreshToken`, reports success, never persists
+        /// the binding). Everything else forwards unchanged, including
+        /// `check_and_record_dpop_jti`, which must still reach the inner
+        /// store's real replay guard for a DPoP proof to verify at all.
+        struct JktDroppingRefreshStore<Inner> {
+            inner: Inner,
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::client::ClientStore for JktDroppingRefreshStore<Inner> {
+            async fn find_client(
+                &self,
+                client_id: &str,
+            ) -> Result<Option<ClientRegistration>, OpError> {
+                self.inner.find_client(client_id).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::code::AuthorizationCodeStore for JktDroppingRefreshStore<Inner> {
+            async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+                self.inner.store_code(code).await
+            }
+
+            async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
+                self.inner.consume_code(code).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> RefreshTokenStore for JktDroppingRefreshStore<Inner> {
+            async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+                let mut stripped = token;
+                stripped.jkt = None;
+                self.inner.store_token(stripped).await
+            }
+
+            async fn get_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+                self.inner.get_token(token).await
+            }
+
+            async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+                self.inner.revoke_token(token).await
+            }
+
+            async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+                self.inner.consume_token(token).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::device::DeviceCodeStore for JktDroppingRefreshStore<Inner> {
+            async fn store_device_code(
+                &self,
+                session: crate::device::DeviceCodeSession,
+            ) -> Result<(), OpError> {
+                self.inner.store_device_code(session).await
+            }
+
+            async fn get_device_code(
+                &self,
+                device_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.get_device_code(device_code).await
+            }
+
+            async fn get_by_user_code(
+                &self,
+                user_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.get_by_user_code(user_code).await
+            }
+
+            async fn update_device_code(
+                &self,
+                session: crate::device::DeviceCodeSession,
+            ) -> Result<(), OpError> {
+                self.inner.update_device_code(session).await
+            }
+
+            async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+                self.inner.delete_device_code(device_code).await
+            }
+
+            async fn consume_device_code(
+                &self,
+                device_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.consume_device_code(device_code).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> OpStore for JktDroppingRefreshStore<Inner> {
+            async fn check_and_record_dpop_jti(
+                &self,
+                jti: &str,
+                expires_at: chrono::DateTime<Utc>,
+            ) -> Result<bool, OpError> {
+                self.inner.check_and_record_dpop_jti(jti, expires_at).await
+            }
+        }
+
+        /// The regression test for the exact silent gap this whole round
+        /// of fixes is about: a `RefreshTokenStore` that reports
+        /// `store_token` success but doesn't actually persist `jkt` must
+        /// not result in a response that claims `token_type: "DPoP"` while
+        /// the stored token has no binding at all. `default_handle_
+        /// authorization_code` must catch this and fail loudly instead.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn a_backend_that_silently_drops_jkt_fails_the_request_instead_of_lying() {
+            let (inner, verifier) = dpop_refresh_continuity_store().await;
+            let store = JktDroppingRefreshStore { inner };
+            let tokens = test_tokens();
+
+            let proof =
+                DpopProofBuilder::new("https://auth.example.com/token", "jti-drop-1").build();
+
+            let err = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect_err(
+                "a store that silently drops the DPoP binding must fail the request, not \
+                 succeed as though the binding was persisted",
+            );
+
+            assert_eq!(err.error, "server_error");
         }
     }
 }
