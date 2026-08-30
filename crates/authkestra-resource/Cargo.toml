@@ -29,6 +29,11 @@ http = "1"
 base64 = "0.22.1"
 tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+# Validating `ValidationConfig::dpop_resource_origin`'s shape properly
+# (scheme present, no query/fragment) instead of by hand-rolled string
+# checks — the same crate `authkestra_engine::token::dpop` already uses for
+# `htu` canonicalization, so parsing here agrees with parsing there.
+url = { workspace = true }
 
 [features]
 default = ["rustls-aws-lc-rs"]

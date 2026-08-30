@@ -507,19 +507,16 @@ impl ValidationConfigBuilder {
     /// single-issuer endpoint".
     ///
     /// Also panics if [`dpop_resource_origin`](Self::dpop_resource_origin)
-    /// was set to a value with no scheme, or with a trailing slash. Both
-    /// shapes are easy typos (`"api.example.com"` instead of
-    /// `"https://api.example.com"`; `"https://api.example.com/"` instead of
-    /// without the trailing `/`) that would otherwise silently break every
-    /// DPoP request once `require_dpop` is on: the request's own path
-    /// (which always starts with `/`) is joined directly onto this value at
-    /// check time, so a trailing slash produces a doubled `//` that will
-    /// never match any proof's genuine `htu`, and a missing scheme produces
-    /// a string `url::Url` can't parse as absolute, falling back to an
-    /// exact-string comparison that also never matches. Either mistake
-    /// fails every single request with only a `tracing::warn!`,
-    /// indistinguishable from an actual attack — checking the shape here,
-    /// once, at startup, is cheaper than debugging that in production.
+    /// isn't a bare `scheme://host` with no path, query, or fragment.
+    /// Every one of those shapes is an easy typo
+    /// (`"api.example.com"` with no scheme; `"https://api.example.com/"`
+    /// with a trailing slash; `"https://api.example.com?x=1"` with a
+    /// query) that would otherwise silently break *every* DPoP request
+    /// once `require_dpop` is on, with nothing but a `tracing::warn!` per
+    /// request to show for it — indistinguishable from an actual attack.
+    /// Checking the shape here, once, at startup, is cheaper than
+    /// debugging that in production. See the panicking checks themselves
+    /// for exactly which failure mode each one closes.
     pub fn build(self) -> ValidationConfig {
         let jwks_url = match self.jwks_url {
             Some(jwks_url) => jwks_url,
@@ -533,11 +530,44 @@ impl ValidationConfigBuilder {
         };
 
         if let Some(origin) = &self.dpop_resource_origin {
+            let parsed = url::Url::parse(origin).unwrap_or_else(|e| {
+                panic!(
+                    "ValidationConfigBuilder::dpop_resource_origin must be a valid absolute \
+                     URL (e.g. \"https://api.example.com\"), got {origin:?}: {e}"
+                )
+            });
+            // `Url::parse` requires a scheme to succeed at all, and
+            // normalizes it to lowercase — so this is naturally
+            // case-insensitive, matching `strip_scheme_ci`'s treatment of
+            // the `Authorization` header's own scheme elsewhere in this
+            // file, and rejects non-HTTP schemes a resource server could
+            // never actually be reached on.
             assert!(
-                origin.starts_with("http://") || origin.starts_with("https://"),
-                "ValidationConfigBuilder::dpop_resource_origin must include a scheme \
-                 (e.g. \"https://api.example.com\"), got {origin:?}"
+                parsed.scheme() == "http" || parsed.scheme() == "https",
+                "ValidationConfigBuilder::dpop_resource_origin must use http or https, got \
+                 {origin:?}"
             );
+            assert!(
+                parsed.host().is_some(),
+                "ValidationConfigBuilder::dpop_resource_origin must include a host, got \
+                 {origin:?}"
+            );
+            // `htu` canonicalization (on the request side) strips query and
+            // fragment before comparing, so either one here could never
+            // survive into a match against a genuine proof — same
+            // always-fails-every-request class as the other checks here.
+            assert!(
+                parsed.query().is_none() && parsed.fragment().is_none(),
+                "ValidationConfigBuilder::dpop_resource_origin must not include a query or \
+                 fragment, got {origin:?}"
+            );
+            // Checked on the raw string, not `parsed`: `Url::parse` treats
+            // "https://api.example.com" and "https://api.example.com/" as
+            // the same path ("/"), but the runtime check concatenates
+            // this *string* directly with the request's own leading-`/`
+            // path, so a trailing slash here still produces a `//` that a
+            // genuine proof's `htu` never has, regardless of how `Url`
+            // would normalize it.
             assert!(
                 !origin.ends_with('/'),
                 "ValidationConfigBuilder::dpop_resource_origin must not end with a trailing \
@@ -1740,7 +1770,7 @@ mod tests {
         /// falling back to an exact-string comparison against the proof's
         /// genuine (scheme-carrying) `htu`, which can never match.
         #[test]
-        #[should_panic(expected = "must include a scheme")]
+        #[should_panic(expected = "must be a valid absolute URL")]
         fn a_scheme_less_origin_panics() {
             ValidationConfig::builder()
                 .jwks_url("https://issuer.example.com/.well-known/jwks.json")
@@ -1757,6 +1787,50 @@ mod tests {
             ValidationConfig::builder()
                 .jwks_url("https://issuer.example.com/.well-known/jwks.json")
                 .dpop_resource_origin("https://api.example.com/")
+                .build();
+        }
+
+        /// A query or fragment on the origin never survives `htu`
+        /// canonicalization on the request side, so it could never match
+        /// a genuine proof either — the same always-fails-every-request
+        /// class as a missing scheme or a trailing slash.
+        #[test]
+        #[should_panic(expected = "query or fragment")]
+        fn an_origin_with_a_query_panics() {
+            ValidationConfig::builder()
+                .jwks_url("https://issuer.example.com/.well-known/jwks.json")
+                .dpop_resource_origin("https://api.example.com?x=1")
+                .build();
+        }
+
+        #[test]
+        #[should_panic(expected = "query or fragment")]
+        fn an_origin_with_a_fragment_panics() {
+            ValidationConfig::builder()
+                .jwks_url("https://issuer.example.com/.well-known/jwks.json")
+                .dpop_resource_origin("https://api.example.com#section")
+                .build();
+        }
+
+        /// RFC 9110 §11.1's case-insensitive scheme applies just as much
+        /// to this URL's own scheme as it does to the `Authorization`
+        /// header's auth-scheme (`strip_scheme_ci`, elsewhere in this
+        /// file) — `url::Url::parse` already normalizes it, so this must
+        /// not panic.
+        #[test]
+        fn an_uppercase_scheme_is_accepted() {
+            ValidationConfig::builder()
+                .jwks_url("https://issuer.example.com/.well-known/jwks.json")
+                .dpop_resource_origin("HTTPS://api.example.com")
+                .build();
+        }
+
+        #[test]
+        #[should_panic(expected = "must use http or https")]
+        fn a_non_http_scheme_panics() {
+            ValidationConfig::builder()
+                .jwks_url("https://issuer.example.com/.well-known/jwks.json")
+                .dpop_resource_origin("ftp://api.example.com")
                 .build();
         }
     }
