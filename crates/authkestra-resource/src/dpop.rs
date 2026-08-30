@@ -72,8 +72,8 @@ impl DpopReplayStore for NoDpopReplayStore {
              DpopReplayStore is wired into this JwtStrategy; refusing it rather than accepting \
              a proof that could be replayed"
         );
-        Err(ValidationError::InvalidToken(
-            "DPoP replay protection is not configured".to_string(),
+        Err(ValidationError::DpopReplayUnavailable(
+            "no DpopReplayStore is configured".to_string(),
         ))
     }
 }
@@ -127,7 +127,9 @@ where
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "failed to record dpop proof jti");
-                ValidationError::InvalidToken(format!("failed to record dpop proof jti: {e}"))
+                ValidationError::DpopReplayUnavailable(format!(
+                    "failed to record dpop proof jti: {e}"
+                ))
             })
     }
 }
@@ -190,6 +192,6 @@ mod tests {
             .check_and_record_dpop_jti("jti-1", Utc::now())
             .await
             .expect_err("the fail-closed default must refuse every proof");
-        assert!(matches!(err, ValidationError::InvalidToken(_)));
+        assert!(matches!(err, ValidationError::DpopReplayUnavailable(_)));
     }
 }

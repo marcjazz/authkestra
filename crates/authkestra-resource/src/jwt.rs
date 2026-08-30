@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use authkestra_engine::{
     error::AuthError,
-    strategy::{utils, AuthenticationStrategy},
+    strategy::AuthenticationStrategy,
     token::{
         cert_binding::{constant_time_eq, x5t_s256_thumbprint, ClientCertificateDer},
         Claims,
@@ -46,6 +46,16 @@ pub enum ValidationError {
     Discovery(#[from] AuthError),
     #[error("Validation error: {0}")]
     Validation(String),
+    /// A DPoP proof's `jti` could not be checked for replay — the
+    /// configured `DpopReplayStore` errored, or none is configured at all
+    /// (the fail-closed `NoDpopReplayStore` default). Deliberately a
+    /// distinct variant from `InvalidToken`: this is never "the credential
+    /// is bad", it's "we could not determine whether it is", which
+    /// `JwtStrategy::authenticate` must propagate as a hard `AuthError`
+    /// rather than `Ok(None)` — see that method for why the distinction
+    /// matters under `AuthPolicy::FirstSuccess`.
+    #[error("DPoP replay protection could not be checked: {0}")]
+    DpopReplayUnavailable(String),
 }
 
 pub use authkestra_engine::token::jwk::Jwk;
@@ -652,7 +662,8 @@ where
     I: for<'de> Deserialize<'de> + Send + Sync + 'static,
 {
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
-        if let Some(token) = utils::extract_bearer_token(&parts.headers) {
+        if let Some(presented) = extract_presented_token(&parts.headers) {
+            let token = presented.token();
             // Resolve once and reuse the same cache below: which JWKS applies is
             // a property of the token, so re-resolving for the `cnf` re-decode
             // could only introduce a discrepancy.
@@ -715,6 +726,29 @@ where
                         }
 
                         if self.require_dpop {
+                            let is_dpop_bound = cnf_claim
+                                .cnf
+                                .as_ref()
+                                .and_then(|v| v.get("jkt"))
+                                .and_then(|v| v.as_str())
+                                .is_some();
+
+                            // RFC 9449 §7.1: a DPoP-bound token MUST be
+                            // presented via the `DPoP` auth-scheme, never
+                            // `Bearer` — checked independently of whether a
+                            // `DPoP` proof header also happens to be
+                            // present, since accepting either scheme for a
+                            // bound token would let a client (or attacker
+                            // holding a stolen token) simply choose the
+                            // scheme requiring no proof at all.
+                            if is_dpop_bound && !matches!(presented, PresentedToken::DPoP(_)) {
+                                tracing::warn!(
+                                    "token is DPoP-bound (cnf.jkt) but was presented via the \
+                                     Bearer scheme, not DPoP; rejecting"
+                                );
+                                return Ok(None);
+                            }
+
                             let dpop_header = match extract_dpop_header(&parts.headers) {
                                 Ok(h) => h,
                                 Err(e) => {
@@ -723,7 +757,7 @@ where
                                 }
                             };
 
-                            if let Err(e) = verify_dpop_binding(
+                            match verify_dpop_binding(
                                 dpop_header,
                                 parts.method.as_str(),
                                 token,
@@ -732,8 +766,31 @@ where
                             )
                             .await
                             {
-                                tracing::warn!(error = %e, "RFC 9449 DPoP binding check failed; rejecting token");
-                                return Ok(None);
+                                Ok(()) => {}
+                                // The credential itself is bad (missing/malformed
+                                // proof, wrong key, wrong ath, already-used jti,
+                                // wrong method) — decline this strategy, same as
+                                // every other "invalid token" outcome above.
+                                Err(e @ ValidationError::InvalidToken(_)) => {
+                                    tracing::warn!(error = %e, "RFC 9449 DPoP binding check failed; rejecting token");
+                                    return Ok(None);
+                                }
+                                // Replay protection could not be *checked* at
+                                // all (store errored, or none is configured) —
+                                // this is not "the token is invalid", it's "we
+                                // don't know", and must not be reported as
+                                // `Ok(None)`: under `AuthPolicy::FirstSuccess` a
+                                // `Guard` chain would treat that as "this
+                                // strategy declined, try the next one", letting
+                                // a replay-store outage silently authenticate
+                                // the request with the DPoP check skipped
+                                // entirely. Propagating `Err` here matches how
+                                // the JWKS-resolution failure above is already
+                                // handled, for the identical reason.
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "could not verify DPoP replay protection; rejecting request");
+                                    return Err(AuthError::Token(e.to_string()));
+                                }
                             }
                         }
                     }
@@ -792,6 +849,46 @@ pub fn verify_cert_binding(
         )),
         (_, None) => Ok(()),
     }
+}
+
+/// The credential carried by a request's `Authorization` header, tagged by
+/// which auth-scheme carried it.
+///
+/// RFC 9449 §7.1 requires a DPoP-bound access token be presented as
+/// `Authorization: DPoP <token>`, never `Bearer <token>` — the two schemes
+/// are not interchangeable spellings of "here is a token". A resource
+/// server that pulled the token out without recording which scheme it
+/// arrived under (as `authkestra_engine::strategy::utils::extract_bearer_token` alone does — it only
+/// recognizes `Bearer`) could never enforce that distinction: nothing
+/// among a token's own claims says which scheme it *arrived* under, only
+/// [`JwtStrategy::authenticate`] observing the header directly can, and
+/// only if this type keeps the two apart.
+enum PresentedToken<'a> {
+    Bearer(&'a str),
+    DPoP(&'a str),
+}
+
+impl<'a> PresentedToken<'a> {
+    fn token(&self) -> &'a str {
+        match self {
+            PresentedToken::Bearer(t) | PresentedToken::DPoP(t) => t,
+        }
+    }
+}
+
+/// Reads the request's `Authorization` header, recognizing both the
+/// `Bearer` and `DPoP` schemes (RFC 9449 §7.1) — unlike
+/// `authkestra_engine::strategy::utils::extract_bearer_token`, which exists for every other strategy
+/// in this workspace and has no reason to know about DPoP.
+fn extract_presented_token(headers: &http::HeaderMap) -> Option<PresentedToken<'_>> {
+    let value = headers.get(http::header::AUTHORIZATION)?.to_str().ok()?;
+    if let Some(token) = value.strip_prefix("DPoP ") {
+        return Some(PresentedToken::DPoP(token.trim()));
+    }
+    if let Some(token) = value.strip_prefix("Bearer ") {
+        return Some(PresentedToken::Bearer(token.trim()));
+    }
+    None
 }
 
 /// Reads the request's `DPoP` header (RFC 9449 §4.1: exactly one is
@@ -871,8 +968,18 @@ pub async fn verify_dpop_binding(
         ));
     }
 
-    let expires_at =
-        chrono::Utc::now() + chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS);
+    // Anchored to the proof's own `iat`, not the current time — see the
+    // identical comment on the OP-side `/token` DPoP check
+    // (`authkestra_op::handlers::token::handle_token_with_client_cert`)
+    // for the full reasoning: anchoring to `Utc::now()` instead would let
+    // the replay record expire before the proof's own freshness boundary
+    // (`iat + max_age`) whenever this request is processed even slightly
+    // after `iat`, opening a real, if narrow, replay window. The extra
+    // second guards the exact boundary instant itself.
+    let expires_at = chrono::DateTime::<chrono::Utc>::from_timestamp(verified.iat, 0)
+        .unwrap_or_else(chrono::Utc::now)
+        + chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS)
+        + chrono::Duration::seconds(1);
     match replay_store
         .check_and_record_dpop_jti(&verified.jti, expires_at)
         .await
@@ -1343,7 +1450,7 @@ mod tests {
             )
             .await
             .expect_err("no replay store is wired; an otherwise-valid proof must be refused");
-            assert!(matches!(err, ValidationError::InvalidToken(_)));
+            assert!(matches!(err, ValidationError::DpopReplayUnavailable(_)));
         }
 
         #[tokio::test]

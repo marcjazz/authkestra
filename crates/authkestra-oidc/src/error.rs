@@ -82,6 +82,13 @@ impl From<authkestra_resource::jwt::ValidationError> for OidcError {
             authkestra_resource::jwt::ValidationError::Validation(e) => {
                 OidcError::ValidationError(e)
             }
+            // Not "the token is invalid" — "we could not determine whether
+            // it is" (no DpopReplayStore configured, or it errored). See
+            // that variant's doc comment for why `authkestra-resource`
+            // itself treats this as distinct from `InvalidToken`.
+            authkestra_resource::jwt::ValidationError::DpopReplayUnavailable(e) => {
+                OidcError::Internal(e)
+            }
         }
     }
 }
