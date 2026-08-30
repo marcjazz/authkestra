@@ -280,8 +280,21 @@ pub async fn handle_token_with_client_cert(
             }
         };
 
-        let expires_at =
-            Utc::now() + chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS);
+        // Anchored to the proof's own `iat`, not the current time: a proof
+        // remains fresh (and so, re-presentable) up to `iat + max_age`
+        // regardless of how long after `iat` it happens to first arrive
+        // here. Anchoring to `Utc::now()` instead would let the replay
+        // record expire before that fixed freshness boundary whenever this
+        // request is processed even slightly after `iat` (network delay,
+        // queuing, or a fresh `iat` up to `CLOCK_SKEW_ALLOWANCE_SECS` in
+        // this server's future) — a real, if narrow, window in which the
+        // same jti could be replayed after its record expired but before
+        // `verify_dpop_proof` would independently reject it as stale. The
+        // extra second guards the exact boundary instant itself.
+        let expires_at = chrono::DateTime::<Utc>::from_timestamp(verified.iat, 0)
+            .unwrap_or_else(Utc::now)
+            + chrono::Duration::seconds(crate::dpop::DPOP_PROOF_MAX_AGE_SECS)
+            + chrono::Duration::seconds(1);
         match op_store
             .check_and_record_dpop_jti(&verified.jti, expires_at)
             .await
@@ -728,6 +741,11 @@ async fn handle_device_code(
                         identity,
                         scope: session.scope,
                         expires_at: Utc::now() + chrono::Duration::days(30),
+                        // RFC 9449 §5: a refresh token minted alongside a
+                        // DPoP-bound access token must itself be bound to
+                        // the same key, so `default_handle_refresh_token`
+                        // can enforce continuity on every future rotation.
+                        jkt: req.dpop_jkt.clone(),
                     };
                     if op_store.store_token(rt).await.is_ok() {
                         issued_refresh_token = Some(refresh_val);
@@ -956,6 +974,8 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
             identity: auth_code.identity.clone(),
             scope: auth_code.scope.clone(),
             expires_at: Utc::now() + chrono::Duration::days(30),
+            // RFC 9449 §5: see the identical comment in `handle_device_code`.
+            jkt: req.dpop_jkt.clone(),
         };
         if let Err(e) = op_store.store_token(rt_model.clone()).await {
             tracing::error!(error = ?e, "Failed to store refresh token");
@@ -1214,6 +1234,39 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         });
     }
 
+    // RFC 9449 §5: a refresh token that was bound to a DPoP key when issued
+    // MUST continue to be redeemed with a proof for that *same* key on
+    // every rotation — a request that omits DPoP entirely, or presents a
+    // proof for a different key, is refused rather than silently falling
+    // back to a plain bearer token or re-binding to whatever key the
+    // presenter happens to hold. Without this, an exfiltrated DPoP-bound
+    // refresh token could be redeemed with the attacker's own key (or no
+    // proof at all), which is exactly the theft scenario DPoP exists to
+    // close for public clients (authkestra#274). An `old_rt.jkt` of `None`
+    // means this refresh token was never DPoP-bound — that behavior is
+    // unchanged from before this feature existed.
+    if let Some(expected_jkt) = &old_rt.jkt {
+        if req.dpop_jkt.as_deref() != Some(expected_jkt.as_str()) {
+            tracing::warn!(
+                client_id = %client_id,
+                "Refresh token is DPoP-bound but the request's proof key does not match"
+            );
+            return Err(TokenErrorResponse {
+                error: "invalid_dpop_proof".to_string(),
+                error_description: "This refresh token is bound to a different DPoP key"
+                    .to_string(),
+            });
+        }
+    }
+    // Carries the rotated token's binding forward. Deliberately reads from
+    // `old_rt.jkt` rather than `req.dpop_jkt` when the token was already
+    // bound (the branch above already proved they're equal) — the stored,
+    // trusted value is preferred over re-deriving it from client input.
+    // When `old_rt.jkt` is `None`, this is the first time the client has
+    // presented a DPoP proof for this token lineage, so `req.dpop_jkt`
+    // (possibly still `None`) begins the binding going forward.
+    let jkt = old_rt.jkt.clone().or_else(|| req.dpop_jkt.clone());
+
     let new_refresh_val = uuid::Uuid::new_v4().to_string();
     let new_rt = RefreshToken {
         token: new_refresh_val.clone(),
@@ -1221,6 +1274,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
         identity: old_rt.identity.clone(),
         scope: old_rt.scope.clone(),
         expires_at: chrono::Utc::now() + chrono::Duration::days(30),
+        jkt: jkt.clone(),
     };
 
     if let Err(e) = op_store.store_token(new_rt).await {
@@ -1235,7 +1289,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     };
 
     let mut extra = HashMap::new();
-    merge_dpop_cnf(&mut extra, req.dpop_jkt.as_deref());
+    merge_dpop_cnf(&mut extra, jkt.as_deref());
 
     let access_token = match tokens.issue_user_token_with_extra(
         old_rt.identity.clone(),
@@ -1283,7 +1337,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
 
     Ok(TokenResponse {
         access_token,
-        token_type: if req.dpop_jkt.is_some() {
+        token_type: if jkt.is_some() {
             "DPoP".to_string()
         } else {
             "Bearer".to_string()
@@ -2842,6 +2896,7 @@ mod tests {
                 identity: test_identity(),
                 scope: "openid".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -3108,6 +3163,7 @@ mod tests {
                 // teaches it to issue one for the `openid` scope.
                 scope: "profile".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -3196,6 +3252,7 @@ mod tests {
                     identity: test_identity(),
                     scope: "profile".to_string(),
                     expires_at: Utc::now() - Duration::minutes(1),
+                    jkt: None,
                 },
                 std::time::Duration::from_secs(60),
             )
@@ -3242,6 +3299,7 @@ mod tests {
                 identity: test_identity(),
                 scope: "profile".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -3299,6 +3357,7 @@ mod tests {
                 identity: test_identity(),
                 scope: "openid profile".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -3346,6 +3405,7 @@ mod tests {
                 identity: test_identity(),
                 scope: "profile".to_string(),
                 expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
             })
             .await
             .unwrap();
@@ -4611,8 +4671,16 @@ mod tests {
 
         impl DpopProofBuilder {
             fn new(htu: &str, jti: &str) -> Self {
+                Self::with_key_seed(9, htu, jti)
+            }
+
+            /// As [`Self::new`], but lets the caller pick which fixed key
+            /// this proof is signed with — needed by tests that must prove
+            /// two proofs are bound to the *same* key (reuse a seed) or
+            /// deliberately different ones (use distinct seeds).
+            fn with_key_seed(seed: u8, htu: &str, jti: &str) -> Self {
                 Self {
-                    signing_key: SigningKey::from_bytes(&[9u8; 32]),
+                    signing_key: SigningKey::from_bytes(&[seed; 32]),
                     htu: htu.to_string(),
                     jti: jti.to_string(),
                 }
@@ -4939,6 +5007,321 @@ mod tests {
                     .and_then(|v| v.as_str()),
                 Some(proof_builder.expected_jkt().as_str()),
             );
+        }
+
+        // --- Refresh token DPoP key continuity (RFC 9449 §5) ---
+
+        /// Registers a client authorized for `authorization_code` +
+        /// `refresh_token` with `offline_access` allowed, and stores one
+        /// ready-to-redeem PKCE-protected authorization code for it. Every
+        /// continuity test below starts from this same fixture, then
+        /// exercises a different combination of DPoP proofs across the
+        /// initial grant and the subsequent refresh.
+        async fn dpop_refresh_continuity_store() -> (
+            crate::store::CompositeOpStore<
+                authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
+                authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
+                authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>,
+                authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
+                crate::client_assertion::NoClientAssertionStore,
+                authkestra_engine::store::memory::MemoryStore<DpopJtiRecord>,
+            >,
+            String,
+        ) {
+            let clients = authkestra_engine::store::memory::MemoryStore::<
+                crate::client::ClientRegistration,
+            >::new();
+            clients
+                .set(
+                    "client1",
+                    ClientRegistration {
+                        client_id: "client1".to_string(),
+                        client_secret_hash: None,
+                        redirect_uris: vec!["https://cb".to_string()],
+                        grant_types: vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
+                        scopes: vec!["openid".to_string(), "offline_access".to_string()],
+                        require_pkce: true,
+                        allowed_audiences: vec![],
+                        token_endpoint_auth_method: None,
+                        jwks: None,
+                    },
+                    std::time::Duration::from_secs(31536000),
+                )
+                .await
+                .unwrap();
+
+            let verifier = "test_verifier".to_string();
+            let mut hasher = sha2::Sha256::new();
+            sha2::Digest::update(&mut hasher, verifier.as_bytes());
+            let challenge =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+            let codes = authkestra_engine::store::memory::MemoryStore::<
+                crate::code::AuthorizationCode,
+            >::new();
+            codes
+                .store_code(AuthorizationCode {
+                    code: "code1".to_string(),
+                    client_id: "client1".to_string(),
+                    redirect_uri: "https://cb".to_string(),
+                    identity: test_identity(),
+                    scope: "openid offline_access".to_string(),
+                    nonce: None,
+                    expires_at: Utc::now() + Duration::minutes(5),
+                    code_challenge: Some(challenge),
+                    code_challenge_method: Some("S256".to_string()),
+                    used: false,
+                })
+                .await
+                .unwrap();
+
+            let store = crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+                ),
+            )
+            .with_dpop_replay_store(authkestra_engine::store::memory::MemoryStore::<
+                DpopJtiRecord,
+            >::new());
+
+            (store, verifier)
+        }
+
+        fn dpop_refresh_continuity_code_req(verifier: &str) -> TokenRequest {
+            TokenRequest {
+                grant_type: "authorization_code".to_string(),
+                code: Some("code1".to_string()),
+                redirect_uri: Some("https://cb".to_string()),
+                client_id: Some("client1".to_string()),
+                client_secret: None,
+                code_verifier: Some(verifier.to_string()),
+                scope: None,
+                refresh_token: None,
+                subject_token: None,
+                subject_token_type: None,
+                device_code: None,
+                actor_token: None,
+                actor_token_type: None,
+                requested_token_type: None,
+                audience: None,
+                client_assertion: None,
+                client_assertion_type: None,
+                dpop_jkt: None,
+            }
+        }
+
+        fn dpop_refresh_continuity_refresh_req(refresh_token: &str) -> TokenRequest {
+            TokenRequest {
+                grant_type: "refresh_token".to_string(),
+                code: None,
+                redirect_uri: None,
+                client_id: Some("client1".to_string()),
+                client_secret: None,
+                code_verifier: None,
+                scope: None,
+                refresh_token: Some(refresh_token.to_string()),
+                subject_token: None,
+                subject_token_type: None,
+                device_code: None,
+                actor_token: None,
+                actor_token_type: None,
+                requested_token_type: None,
+                audience: None,
+                client_assertion: None,
+                client_assertion_type: None,
+                dpop_jkt: None,
+            }
+        }
+
+        /// A refresh token minted alongside a DPoP-bound access token must
+        /// itself be bound: redeeming it with a fresh proof for the *same*
+        /// key must succeed, keep binding the rotated access token to that
+        /// key, and hand back a rotated refresh token that still carries
+        /// the binding forward.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_rotation_succeeds_with_the_same_dpop_key() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issue_proof =
+                DpopProofBuilder::with_key_seed(11, "https://auth.example.com/token", "jti-issue");
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&issue_proof.build()),
+            )
+            .await
+            .expect("issuing the code grant with a DPoP proof must succeed");
+            let refresh_token = issued
+                .refresh_token
+                .expect("offline_access must yield a refresh token");
+            assert_eq!(issued.token_type, "DPoP");
+
+            let rotate_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-rotate-same-key",
+            );
+            let rotated = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&rotate_proof.build()),
+            )
+            .await
+            .expect("rotating with a proof for the same key must succeed");
+
+            assert_eq!(rotated.token_type, "DPoP");
+            let claims = tokens
+                .validate_token(&rotated.access_token, Some("client1"))
+                .unwrap();
+            assert_eq!(
+                claims
+                    .extra
+                    .get("cnf")
+                    .and_then(|c| c.get("jkt"))
+                    .and_then(|v| v.as_str()),
+                Some(issue_proof.expected_jkt().as_str()),
+                "the rotated access token must stay bound to the refresh token's original key"
+            );
+        }
+
+        /// RFC 9449 §5: redeeming a DPoP-bound refresh token with a proof
+        /// for a *different* key must be refused — otherwise an exfiltrated
+        /// refresh token could simply be re-keyed by whoever stole it.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_rotation_rejects_a_different_dpop_key() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issue_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-issue-2",
+            );
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&issue_proof.build()),
+            )
+            .await
+            .expect("issuing the code grant with a DPoP proof must succeed");
+            let refresh_token = issued.refresh_token.unwrap();
+
+            let attacker_proof = DpopProofBuilder::with_key_seed(
+                22,
+                "https://auth.example.com/token",
+                "jti-rotate-wrong-key",
+            );
+            let err = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&attacker_proof.build()),
+            )
+            .await
+            .expect_err("a proof for a different key must be refused");
+
+            assert_eq!(err.error, "invalid_dpop_proof");
+        }
+
+        /// RFC 9449 §5, the other half of the same requirement: omitting
+        /// DPoP entirely on a bound refresh token must not silently fall
+        /// back to issuing a plain bearer token.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_rotation_rejects_a_missing_dpop_proof() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issue_proof = DpopProofBuilder::with_key_seed(
+                11,
+                "https://auth.example.com/token",
+                "jti-issue-3",
+            );
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&issue_proof.build()),
+            )
+            .await
+            .expect("issuing the code grant with a DPoP proof must succeed");
+            let refresh_token = issued.refresh_token.unwrap();
+
+            let err = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .expect_err("omitting DPoP on a bound refresh token must be refused");
+
+            assert_eq!(err.error, "invalid_dpop_proof");
+        }
+
+        /// Companion regression: a refresh token minted *without* DPoP
+        /// (no proof presented on the original grant) stays an ordinary
+        /// bearer token — rotating it with no DPoP header keeps working
+        /// exactly as it did before this feature existed.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn refresh_token_rotation_without_prior_binding_is_unaffected() {
+            let (store, verifier) = dpop_refresh_continuity_store().await;
+            let tokens = test_tokens();
+
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .expect("issuing the code grant with no DPoP proof must still succeed");
+            assert_eq!(issued.token_type, "Bearer");
+            let refresh_token = issued.refresh_token.unwrap();
+
+            let rotated = handle_token_with_client_cert(
+                dpop_refresh_continuity_refresh_req(&refresh_token),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                None,
+            )
+            .await
+            .expect("rotating an unbound refresh token with no DPoP proof must still succeed");
+            assert_eq!(rotated.token_type, "Bearer");
         }
     }
 }

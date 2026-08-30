@@ -47,6 +47,17 @@ impl<T> MemoryStore<T> {
     }
 }
 
+#[cfg(test)]
+impl<T> MemoryStore<T> {
+    /// Test-only introspection: the number of entries currently held,
+    /// expired or not. Used to prove `insert_if_absent`'s opportunistic
+    /// sweep actually shrinks the map, not just that expired entries are
+    /// unreachable through the public API.
+    fn len(&self) -> usize {
+        self.data.lock().unwrap().len()
+    }
+}
+
 #[async_trait]
 impl<T: Clone + Send + Sync + 'static> KvStore<T> for MemoryStore<T> {
     #[tracing::instrument(skip(self))]
@@ -112,10 +123,19 @@ impl<T: Clone + Send + Sync + 'static> AtomicInsert<T> for MemoryStore<T> {
         // makes the operation atomic, exactly like `consume`'s single
         // `remove` call above.
         let mut data = self.data.lock().unwrap();
-        if let Some(entry) = data.get(key) {
-            if !entry.is_expired() {
-                return Ok(false);
-            }
+        // `get`/`consume` each self-heal by removing an expired entry the
+        // next time *that same key* is looked up — but `insert_if_absent`
+        // is also used for insert-only key spaces (a DPoP proof's `jti`,
+        // unique per proof) where no later call ever revisits the same
+        // key. Without this sweep, such an entry would sit expired-but-
+        // present forever: nothing else would ever touch its key to
+        // trigger the removal, leaking one entry per call for the life of
+        // the process. Piggybacking the sweep on every insert instead
+        // bounds this store's size by roughly the insert rate over one
+        // TTL window, not by total inserts ever made.
+        data.retain(|_, entry| !entry.is_expired());
+        if data.contains_key(key) {
+            return Ok(false);
         }
         data.insert(
             key.to_string(),
@@ -279,6 +299,46 @@ mod tests {
             .unwrap();
         assert!(inserted_again);
         assert_eq!(store.get("key1").await.unwrap(), Some("value2".to_string()));
+    }
+
+    /// `insert_if_absent` is the only primitive an insert-only key space
+    /// (e.g. a DPoP proof's `jti`, unique per proof) ever calls — nothing
+    /// ever revisits the same key the way `get`/`consume` are revisited for
+    /// server-issued values. Without an opportunistic sweep, an expired
+    /// entry under a never-repeated key would sit in the map forever,
+    /// leaking one entry per call for the life of the process. This proves
+    /// the map's size actually shrinks, not just that expired entries are
+    /// unreachable through `get`.
+    #[tokio::test]
+    async fn test_insert_if_absent_reclaims_expired_entries_under_other_keys() {
+        let store = MemoryStore::<String>::new();
+
+        for i in 0..50 {
+            store
+                .insert_if_absent(
+                    &format!("jti-{i}"),
+                    "spent".to_string(),
+                    Duration::from_millis(10),
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.len(), 50);
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // A single insert under a brand-new key must sweep every expired
+        // entry from the previous batch, even though none of their keys
+        // are ever looked up again.
+        store
+            .insert_if_absent("jti-new", "spent".to_string(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.len(),
+            1,
+            "expired insert-only entries under other keys must be swept, not retained forever"
+        );
     }
 
     /// The property the whole replay-guard feature depends on: under real

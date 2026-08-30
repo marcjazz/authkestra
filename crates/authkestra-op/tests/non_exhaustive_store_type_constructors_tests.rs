@@ -76,6 +76,7 @@ fn refresh_token_is_constructible() {
         test_identity(),
         "openid".to_string(),
         expires_at,
+        None,
     );
     assert_eq!(refresh.token, "refresh-1");
 }

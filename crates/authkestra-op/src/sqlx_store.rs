@@ -154,12 +154,12 @@ macro_rules! impl_opstore_sql {
         impl RefreshTokenStore for SqlxOpStore<$backend> {
             async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
                 let query = format!(
-                    "INSERT INTO {schema}oauth_refresh_tokens 
-                    (token, client_id, identity, scope, expires_at) 
-                    VALUES ({p1}, {p2}, {p3}, {p4}, {p5})",
+                    "INSERT INTO {schema}oauth_refresh_tokens
+                    (token, client_id, identity, scope, expires_at, jkt)
+                    VALUES ({p1}, {p2}, {p3}, {p4}, {p5}, {p6})",
                     schema = $schema_prefix,
                     p1 = $placeholder_fmt(1), p2 = $placeholder_fmt(2), p3 = $placeholder_fmt(3),
-                    p4 = $placeholder_fmt(4), p5 = $placeholder_fmt(5)
+                    p4 = $placeholder_fmt(4), p5 = $placeholder_fmt(5), p6 = $placeholder_fmt(6)
                 );
 
                 let identity_json = sqlx::types::Json(token.identity);
@@ -170,6 +170,7 @@ macro_rules! impl_opstore_sql {
                     .bind(identity_json)
                     .bind(token.scope)
                     .bind(token.expires_at)
+                    .bind(token.jkt)
                     .execute(&self.pool)
                     .await
                     .map_err(|e| {
@@ -181,8 +182,8 @@ macro_rules! impl_opstore_sql {
 
             async fn get_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
                 let query = format!(
-                    "SELECT token, client_id, identity, scope, expires_at 
-                    FROM {schema}oauth_refresh_tokens 
+                    "SELECT token, client_id, identity, scope, expires_at, jkt
+                    FROM {schema}oauth_refresh_tokens
                     WHERE token = {p1} AND revoked_at IS NULL AND expires_at > {p2}",
                     schema = $schema_prefix,
                     p1 = $placeholder_fmt(1),
@@ -209,6 +210,7 @@ macro_rules! impl_opstore_sql {
                         identity: identity.0,
                         scope: row.try_get("scope").map_err(|_| OpError::Storage)?,
                         expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                        jkt: row.try_get("jkt").ok(),
                     }))
                 } else {
                     Ok(None)
@@ -432,7 +434,8 @@ impl_opstore_sql! {
                 identity JSONB NOT NULL,
                 scope TEXT NOT NULL,
                 expires_at TIMESTAMPTZ NOT NULL,
-                revoked_at TIMESTAMPTZ
+                revoked_at TIMESTAMPTZ,
+                jkt VARCHAR(255)
             );
 
             CREATE TABLE IF NOT EXISTS authkestra.oauth_device_codes (
@@ -494,6 +497,7 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                jkt: row.try_get("jkt").ok(),
             }))
         } else {
             Ok(None)
@@ -566,7 +570,8 @@ impl_opstore_sql! {
                 identity TEXT NOT NULL,
                 scope TEXT NOT NULL,
                 expires_at DATETIME NOT NULL,
-                revoked_at DATETIME
+                revoked_at DATETIME,
+                jkt TEXT
             );
 
             CREATE TABLE IF NOT EXISTS authkestra_oauth_device_codes (
@@ -628,6 +633,7 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                jkt: row.try_get("jkt").ok(),
             }))
         } else {
             Ok(None)
@@ -702,6 +708,7 @@ impl_opstore_sql! {
                 scope TEXT NOT NULL,
                 expires_at DATETIME NOT NULL,
                 revoked_at DATETIME,
+                jkt VARCHAR(255),
                 FOREIGN KEY (client_id) REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE
             );
 
@@ -788,6 +795,7 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                jkt: row.try_get("jkt").ok(),
             }))
         } else {
             tx.rollback().await.map_err(|_| OpError::Storage)?;
