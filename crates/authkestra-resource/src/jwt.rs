@@ -489,7 +489,8 @@ impl ValidationConfigBuilder {
     /// Set [`ValidationConfig::dpop_resource_origin`], enabling the `htu`
     /// half of the RFC 9449 DPoP check. `origin` is scheme + host only
     /// (e.g. `"https://api.example.com"`) — no path, no trailing slash;
-    /// the request's own path is appended at check time.
+    /// the request's own path is appended at check time. [`Self::build`]
+    /// panics if `origin` is missing a scheme or ends with `/`.
     pub fn dpop_resource_origin(mut self, origin: impl Into<String>) -> Self {
         self.dpop_resource_origin = Some(origin.into());
         self
@@ -504,6 +505,21 @@ impl ValidationConfigBuilder {
     /// be no key material at all. A trust-map-only config leaves `jwks_url`
     /// empty; an empty `jwks_url` is never fetched from, it just means "no
     /// single-issuer endpoint".
+    ///
+    /// Also panics if [`dpop_resource_origin`](Self::dpop_resource_origin)
+    /// was set to a value with no scheme, or with a trailing slash. Both
+    /// shapes are easy typos (`"api.example.com"` instead of
+    /// `"https://api.example.com"`; `"https://api.example.com/"` instead of
+    /// without the trailing `/`) that would otherwise silently break every
+    /// DPoP request once `require_dpop` is on: the request's own path
+    /// (which always starts with `/`) is joined directly onto this value at
+    /// check time, so a trailing slash produces a doubled `//` that will
+    /// never match any proof's genuine `htu`, and a missing scheme produces
+    /// a string `url::Url` can't parse as absolute, falling back to an
+    /// exact-string comparison that also never matches. Either mistake
+    /// fails every single request with only a `tracing::warn!`,
+    /// indistinguishable from an actual attack — checking the shape here,
+    /// once, at startup, is cheaper than debugging that in production.
     pub fn build(self) -> ValidationConfig {
         let jwks_url = match self.jwks_url {
             Some(jwks_url) => jwks_url,
@@ -515,6 +531,20 @@ impl ValidationConfigBuilder {
                 String::new()
             }
         };
+
+        if let Some(origin) = &self.dpop_resource_origin {
+            assert!(
+                origin.starts_with("http://") || origin.starts_with("https://"),
+                "ValidationConfigBuilder::dpop_resource_origin must include a scheme \
+                 (e.g. \"https://api.example.com\"), got {origin:?}"
+            );
+            assert!(
+                !origin.ends_with('/'),
+                "ValidationConfigBuilder::dpop_resource_origin must not end with a trailing \
+                 slash — it's joined directly with the request's own path, which always \
+                 starts with one — got {origin:?}"
+            );
+        }
 
         ValidationConfig {
             jwks_url,
@@ -1687,6 +1717,47 @@ mod tests {
         #[test]
         fn no_authorization_header_is_none() {
             assert!(extract_presented_token(&http::HeaderMap::new()).is_none());
+        }
+    }
+
+    mod dpop_resource_origin_validation_tests {
+        use super::ValidationConfig;
+
+        #[test]
+        fn a_well_formed_origin_is_accepted() {
+            let config = ValidationConfig::builder()
+                .jwks_url("https://issuer.example.com/.well-known/jwks.json")
+                .dpop_resource_origin("https://api.example.com")
+                .build();
+            assert_eq!(
+                config.dpop_resource_origin.as_deref(),
+                Some("https://api.example.com")
+            );
+        }
+
+        /// A missing scheme would make every DPoP request fail: the
+        /// reconstructed `htu` couldn't be parsed as an absolute URL,
+        /// falling back to an exact-string comparison against the proof's
+        /// genuine (scheme-carrying) `htu`, which can never match.
+        #[test]
+        #[should_panic(expected = "must include a scheme")]
+        fn a_scheme_less_origin_panics() {
+            ValidationConfig::builder()
+                .jwks_url("https://issuer.example.com/.well-known/jwks.json")
+                .dpop_resource_origin("api.example.com")
+                .build();
+        }
+
+        /// A trailing slash would double up with the request's own
+        /// leading `/`, producing a `//` the genuine proof's `htu` never
+        /// has — also failing every request.
+        #[test]
+        #[should_panic(expected = "trailing slash")]
+        fn a_trailing_slash_origin_panics() {
+            ValidationConfig::builder()
+                .jwks_url("https://issuer.example.com/.well-known/jwks.json")
+                .dpop_resource_origin("https://api.example.com/")
+                .build();
         }
     }
 }
