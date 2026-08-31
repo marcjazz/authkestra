@@ -58,7 +58,6 @@ impl<T> MemoryStore<T> {
     }
 }
 
-#[cfg(test)]
 impl<T> MemoryStore<T> {
     /// Test-only introspection: the number of entries currently held,
     /// expired or not. Used to prove `insert_if_absent`'s opportunistic
@@ -266,7 +265,6 @@ impl<T: Clone + Send + Sync + 'static> IndexedKvStore<T> for MemoryStore<T> {
     }
 }
 
-#[cfg(test)]
 mod tests {
 
     use super::*;
@@ -563,3 +561,4 @@ mod tests {
         assert_eq!(store.get_by_index("sk1").await.unwrap(), None);
     }
 }
+

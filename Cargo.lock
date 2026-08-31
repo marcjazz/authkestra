@@ -562,6 +562,7 @@ dependencies = [
  "aes-gcm",
  "async-trait",
  "authkestra-crypto-util",
+ "authkestra-store-testsuite",
  "base64 0.22.1",
  "chrono",
  "dotenvy",
@@ -688,6 +689,17 @@ dependencies = [
  "tracing",
  "url",
  "wiremock",
+]
+
+[[package]]
+name = "authkestra-store-testsuite"
+version = "0.6.2"
+dependencies = [
+ "async-trait",
+ "authkestra-engine",
+ "authkestra-op",
+ "authkestra-resource",
+ "tokio",
 ]
 
 [[package]]

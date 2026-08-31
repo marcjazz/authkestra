@@ -11,7 +11,7 @@ members = [
     "crates/authkestra",
 
     "crates/authkestra-op",
-    "crates/authkestra-devsig", "crates/authkestra-crypto-util",
+    "crates/authkestra-devsig", "crates/authkestra-crypto-util", "crates/authkestra-store-testsuite",
 ]
 
 [workspace.package]
