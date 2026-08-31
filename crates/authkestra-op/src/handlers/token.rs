@@ -1071,10 +1071,23 @@ pub fn merge_dpop_cnf(extra: &mut HashMap<String, serde_json::Value>, dpop_jkt: 
 enum RefreshTokenStoreOutcome {
     /// Stored, and — if it was meant to be DPoP-bound — confirmed bound.
     Stored,
-    /// The store call itself failed and the token was never meant to be
-    /// DPoP-bound. Every call site already tolerates this exactly as it
-    /// did before this feature existed: log it, omit `refresh_token` from
-    /// the response, and otherwise succeed.
+    /// Persistence could not be confirmed, but nothing positively
+    /// disproves it either. Two cases: the store call itself failed for a
+    /// token that was never meant to be DPoP-bound, or — since
+    /// authkestra#290's review — the DPoP read-back probe could not be
+    /// completed at all (it errored, or found no row yet). Every call site
+    /// already tolerates this exactly as it did before this feature
+    /// existed: log it, omit `refresh_token` from the response, and
+    /// otherwise succeed.
+    ///
+    /// That "omit" is the whole reason the inconclusive cases land here
+    /// rather than on `Stored`: at the two pre-consumption call sites
+    /// nothing has been spent yet, so declining to *advertise* a binding
+    /// no read has confirmed costs at most a re-authentication. At
+    /// `default_handle_refresh_token`'s rotation site this arm and
+    /// `Stored` have identical bodies and the response returns the rotated
+    /// token either way, so an unconfirmable probe there cannot destroy
+    /// the session of a predecessor token that has already been consumed.
     NonFatalStorageFailure,
     /// The token was meant to be DPoP-bound (`jkt: Some(_)`) but the
     /// read-back *positively* found a different (or absent) `jkt` on the
@@ -1094,11 +1107,16 @@ enum RefreshTokenStoreOutcome {
 /// persisted.
 ///
 /// A backend can silently drop `jkt` on write without `store_token`
-/// itself ever returning an error: exactly the case `sqlx_store.rs`'s
-/// `RefreshTokenStore` impl is in right now (its schema has no `jkt`
-/// column yet, so it accepts a token with `jkt: Some(_)` and simply
-/// never persists that field — see the comment on its `get_token`). If
-/// nothing ever checked, that token's RFC 9449 §5 continuity guarantee
+/// itself ever returning an error — accepting a token with
+/// `jkt: Some(_)` and simply never persisting that field.
+/// `sqlx_store.rs` was exactly that case when this check was written
+/// (authkestra#286): its schema had no `jkt` column. authkestra#287 has
+/// since given it one and wired `store_token`/`get_token`/`consume_token`
+/// to it, so that in-tree example no longer applies — but any
+/// out-of-crate `RefreshTokenStore` written against the pre-0.7
+/// `RefreshToken`, or any hand-managed SQL schema that skipped the 0.7
+/// `ALTER`s, still behaves exactly this way. If nothing ever checked,
+/// that token's RFC 9449 §5 continuity guarantee
 /// would quietly not exist: `default_handle_refresh_token` would see
 /// `jkt: None` on redemption and treat it as though it never asked for a
 /// DPoP-bound refresh token in the first place, while the client's
@@ -1110,19 +1128,27 @@ enum RefreshTokenStoreOutcome {
 /// an unverifiable proof, the consume-before-validate ordering fix, and
 /// so on).
 ///
-/// Only a read-back that actually returns a row with the *wrong* `jkt`
-/// counts as a confirmed drop. A read-back that errors, or that (unlike
-/// the write moments earlier) finds no row at all, is inconclusive rather
-/// than a confirmed failure — most plausibly a transient read issue (a
-/// pool blip, or a read served by a lagging replica that the just-completed
-/// write hasn't reached yet), not evidence the write didn't happen. By the
-/// time this probe runs, `store_token` has already returned `Ok`, so the
-/// write itself is not in question; treating an inconclusive *read* the
-/// same as a *positive* mismatch matters most for
-/// `default_handle_refresh_token`'s rotation path, which calls this only
-/// after already consuming the single-use predecessor token — failing the
-/// request here on a transient read hiccup would destroy that already-spent
-/// token's session for a write that in fact succeeded.
+/// Three outcomes, not two. Only a read-back that actually returns a row
+/// with the *wrong* `jkt` counts as a confirmed drop and yields
+/// [`RefreshTokenStoreOutcome::DpopBindingFailed`]. A read-back that
+/// errors, or that (unlike the write moments earlier) finds no row at all,
+/// is inconclusive — most plausibly a transient read issue, a pool blip,
+/// or a read served by a lagging replica the just-completed write hasn't
+/// reached — and yields
+/// [`RefreshTokenStoreOutcome::NonFatalStorageFailure`].
+///
+/// Inconclusive is deliberately neither of the other two (authkestra#290
+/// review). Reporting it as `DpopBindingFailed` would fail
+/// `default_handle_refresh_token`'s rotation path *after* it has already
+/// consumed the single-use predecessor token, destroying a live session
+/// over a read hiccup. But reporting it as `Stored` is wrong in the other
+/// direction: `store_token` returning `Ok` proves a write happened, not
+/// that `jkt` survived it — and a store that silently drops `jkt` is the
+/// exact failure this probe exists to catch, so an unreadable probe
+/// against such a store must not be read as confirmation. Routing it to
+/// `NonFatalStorageFailure` gives each call site the right answer without
+/// a parameter: the pre-consumption sites omit the unconfirmed token, and
+/// the rotation site (where that arm is a no-op) is unaffected.
 async fn store_refresh_token_verifying_dpop_binding<S: OpStore + ?Sized>(
     op_store: &S,
     rt: RefreshToken,
@@ -1158,25 +1184,33 @@ async fn store_refresh_token_verifying_dpop_binding<S: OpStore + ?Sized>(
             RefreshTokenStoreOutcome::DpopBindingFailed
         }
         Ok(None) => {
-            // The write already succeeded — this is a confirmation gap,
-            // not evidence the binding was dropped. Most plausibly a
-            // lagging read replica hasn't caught up to the write yet.
-            // Trust the write rather than fail a request that has already
-            // consumed a predecessor token.
+            // Inconclusive, not a confirmed drop: `store_token` already
+            // returned `Ok`, so this is most plausibly a lagging read
+            // replica. But it is equally the shape of a store that simply
+            // didn't persist, so don't *advertise* a binding nothing has
+            // confirmed — `NonFatalStorageFailure` omits the refresh token
+            // at the pre-consumption call sites while leaving the rotation
+            // path (which treats it identically to `Stored`) untouched.
             tracing::warn!(
                 "could not confirm refresh token's DPoP binding: the token was not found on \
                  read-back immediately after a successful write (possible replica lag); \
-                 trusting the write rather than failing an already-committed rotation"
+                 omitting the unconfirmed refresh token rather than advertising a binding \
+                 no read has confirmed"
             );
-            RefreshTokenStoreOutcome::Stored
+            RefreshTokenStoreOutcome::NonFatalStorageFailure
         }
         Err(e) => {
+            // Same reasoning as `Ok(None)` above. Notably *not* treated as
+            // proof the write is fine: a store whose `store_token` drops
+            // `jkt` is exactly what this probe hunts for, and its
+            // `get_token` erroring tells us nothing either way.
             tracing::warn!(
                 error = ?e,
                 "could not confirm refresh token's DPoP binding after a successful write; \
-                 trusting the write rather than failing an already-committed rotation"
+                 omitting the unconfirmed refresh token rather than advertising a binding \
+                 no read has confirmed"
             );
-            RefreshTokenStoreOutcome::Stored
+            RefreshTokenStoreOutcome::NonFatalStorageFailure
         }
     }
 }
@@ -5738,6 +5772,168 @@ mod tests {
             assert_eq!(err.error, "server_error");
         }
 
+        // --- An unconfirmable read-back is neither a confirmed failure nor
+        // a confirmation (authkestra#290 review, findings #2 and #3) ---
+
+        /// Wraps any `OpStore`, persisting `store_token` faithfully (so
+        /// the binding really *is* stored) but answering every `get_token`
+        /// with `Ok(None)` — the shape a read served by a lagging replica
+        /// produces immediately after a write lands on the primary, and
+        /// equally the shape of a store that quietly persisted nothing.
+        ///
+        /// Only the authorization-code path is exercised with this, and
+        /// that path calls `get_token` exactly once (the confirmation
+        /// probe), so blanketing the method is unambiguous here in a way
+        /// it would not be on the rotation path, which also uses
+        /// `get_token` for its pre-consumption candidate lookup.
+        struct UnreadableProbeStore<Inner> {
+            inner: Inner,
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::client::ClientStore for UnreadableProbeStore<Inner> {
+            async fn find_client(
+                &self,
+                client_id: &str,
+            ) -> Result<Option<ClientRegistration>, OpError> {
+                self.inner.find_client(client_id).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::code::AuthorizationCodeStore for UnreadableProbeStore<Inner> {
+            async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+                self.inner.store_code(code).await
+            }
+
+            async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
+                self.inner.consume_code(code).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> RefreshTokenStore for UnreadableProbeStore<Inner> {
+            async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+                self.inner.store_token(token).await
+            }
+
+            async fn get_token(&self, _token: &str) -> Result<Option<RefreshToken>, OpError> {
+                Ok(None)
+            }
+
+            async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+                self.inner.revoke_token(token).await
+            }
+
+            async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+                self.inner.consume_token(token).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> crate::device::DeviceCodeStore for UnreadableProbeStore<Inner> {
+            async fn store_device_code(
+                &self,
+                session: crate::device::DeviceCodeSession,
+            ) -> Result<(), OpError> {
+                self.inner.store_device_code(session).await
+            }
+
+            async fn get_device_code(
+                &self,
+                device_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.get_device_code(device_code).await
+            }
+
+            async fn get_by_user_code(
+                &self,
+                user_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.get_by_user_code(user_code).await
+            }
+
+            async fn update_device_code(
+                &self,
+                session: crate::device::DeviceCodeSession,
+            ) -> Result<(), OpError> {
+                self.inner.update_device_code(session).await
+            }
+
+            async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+                self.inner.delete_device_code(device_code).await
+            }
+
+            async fn consume_device_code(
+                &self,
+                device_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                self.inner.consume_device_code(device_code).await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl<Inner: OpStore> OpStore for UnreadableProbeStore<Inner> {
+            async fn check_and_record_dpop_jti(
+                &self,
+                jti: &str,
+                expires_at: chrono::DateTime<Utc>,
+            ) -> Result<bool, OpError> {
+                self.inner.check_and_record_dpop_jti(jti, expires_at).await
+            }
+        }
+
+        /// The call-site half of findings #2 and #3, which the helper-level
+        /// tests below cannot see: what the *client* actually receives.
+        ///
+        /// An authorization-code exchange requesting `offline_access` with
+        /// a valid DPoP proof, against a store whose confirmation read-back
+        /// comes back empty, must return a successful response that simply
+        /// omits `refresh_token` — not a token whose advertised binding no
+        /// read has confirmed, and not a `server_error` either.
+        ///
+        /// This pins the fix in both directions at once. Route the
+        /// inconclusive arm back to `Stored` and the `refresh_token`
+        /// assertion fails on `Some(_)`; route it to `DpopBindingFailed`
+        /// (the pre-authkestra#290 behaviour) and the `expect` fails on
+        /// `server_error`.
+        #[tokio::test]
+        #[allow(deprecated)]
+        async fn an_unconfirmable_read_back_omits_the_refresh_token_instead_of_advertising_it() {
+            let (inner, verifier) = dpop_refresh_continuity_store().await;
+            let store = UnreadableProbeStore { inner };
+            let tokens = test_tokens();
+
+            let proof =
+                DpopProofBuilder::new("https://auth.example.com/token", "jti-unreadable-1").build();
+
+            let issued = handle_token_with_client_cert(
+                dpop_refresh_continuity_code_req(&verifier),
+                None,
+                &test_config(false),
+                &store,
+                &tokens,
+                None,
+                Some(&proof),
+            )
+            .await
+            .expect(
+                "an unconfirmable read-back must not fail a request whose write succeeded — \
+                 that is the session-destroying behaviour authkestra#290 finding #1 removed",
+            );
+
+            assert_eq!(
+                issued.token_type, "DPoP",
+                "the access token is still DPoP-bound; only the refresh token is in doubt"
+            );
+            assert!(
+                issued.refresh_token.is_none(),
+                "a refresh token whose DPoP binding no read has confirmed must be omitted, \
+                 not advertised: got {:?}",
+                issued.refresh_token
+            );
+        }
+
         // --- The read-back confirmation probe itself failing must not be
         // treated as a confirmed dropped binding (PR #290 review) ---
 
@@ -5886,9 +6082,11 @@ mod tests {
                     .await;
 
             assert!(
-                matches!(outcome, RefreshTokenStoreOutcome::Stored),
+                matches!(outcome, RefreshTokenStoreOutcome::NonFatalStorageFailure),
                 "a transient read error confirming a binding that was already \
-                 successfully written must not be treated as a confirmed failure"
+                 successfully written is inconclusive: neither a confirmed failure \
+                 (which would destroy an already-rotated session) nor a confirmation \
+                 (which would advertise a binding no read has seen)"
             );
         }
 
@@ -5908,9 +6106,9 @@ mod tests {
                     .await;
 
             assert!(
-                matches!(outcome, RefreshTokenStoreOutcome::Stored),
+                matches!(outcome, RefreshTokenStoreOutcome::NonFatalStorageFailure),
                 "a confirmation read that simply hasn't caught up to an already-successful \
-                 write must not be treated as a confirmed failure"
+                 write is inconclusive: neither a confirmed failure nor a confirmation"
             );
         }
     }

@@ -98,9 +98,39 @@ ALTER TABLE authkestra_oauth_clients ADD COLUMN token_endpoint_auth_method JSON;
 ALTER TABLE authkestra_oauth_clients ADD COLUMN jwks JSON;
 ```
 
-All three are nullable and additive: existing rows simply have `NULL` in them, read back as
-`jkt: None` / `token_endpoint_auth_method: None` / `jwks: None`, exactly as if the client or
+All three columns are nullable and additive: existing rows simply have `NULL` in them, read back
+as `jkt: None` / `token_endpoint_auth_method: None` / `jwks: None`, exactly as if the client or
 refresh token predates this release.
+
+**`token_endpoint_auth_method` and `jwks` hold JSON, not bare text.** `find_client` decodes both
+through `sqlx`'s `Json` type and — deliberately — returns a storage error rather than silently
+falling back to `None` when a non-`NULL` value fails to decode, because `None` means "no client
+authentication configured". On Postgres and MySQL the `JSONB`/`JSON` column type rejects a
+malformed value at `INSERT` time; on SQLite the column is plain `TEXT` and will accept anything,
+so the mistake only surfaces later, as a `500` on every authorize and token request for that
+client.
+
+`token_endpoint_auth_method` is a JSON **string**, so it must carry its quotes, and its value is
+one of `"client_secret_basic"`, `"client_secret_post"`, `"private_key_jwt"`, or `"none"`:
+
+```sql
+-- correct
+UPDATE authkestra_oauth_clients SET token_endpoint_auth_method = '"private_key_jwt"' WHERE client_id = 'my-client';
+-- WRONG: not valid JSON — every lookup of this client now fails with a storage error
+UPDATE authkestra_oauth_clients SET token_endpoint_auth_method = 'private_key_jwt' WHERE client_id = 'my-client';
+-- WRONG: valid JSON, but not a method this release models — also a storage error, by design
+UPDATE authkestra_oauth_clients SET token_endpoint_auth_method = '"client_secret_jwt"' WHERE client_id = 'my-client';
+```
+
+`jwks` is the client's JWK Set **object**, exactly as RFC 7517 §5 defines it — `{"keys": [ ... ]}`,
+not a bare array and not a URL:
+
+```sql
+-- correct
+UPDATE authkestra_oauth_clients SET jwks = '{"keys":[{"kty":"EC","crv":"P-256","x":"...","y":"...","kid":"k1"}]}' WHERE client_id = 'my-client';
+-- WRONG: bare array, missing the "keys" wrapper
+UPDATE authkestra_oauth_clients SET jwks = '[{"kty":"EC","crv":"P-256","x":"...","y":"..."}]' WHERE client_id = 'my-client';
+```
 
 ### Initialization & Migration
 
