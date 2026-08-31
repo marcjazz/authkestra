@@ -203,27 +203,72 @@ pub async fn actix_userinfo_handler(
     http_req: HttpRequest,
     config: web::Data<OpConfig>,
     tokens: web::Data<Arc<TokenManager>>,
+    // `/userinfo` is a protected resource, so a DPoP-bound token presented
+    // here needs the same replay guard `/token` uses (RFC 9449 §11.1).
+    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
 ) -> impl Responder {
     tracing::debug!("Handling OP userinfo request (actix)");
+
+    let unauthorized = |scheme: &str, desc: &str| {
+        HttpResponse::Unauthorized()
+            .insert_header(("WWW-Authenticate", scheme.to_string()))
+            .json(UserInfoErrorResponse::new(
+                "invalid_request".to_string(),
+                desc.to_string(),
+            ))
+    };
+
+    // RFC 9110 §11.1 makes the auth-scheme token case-insensitive, and
+    // RFC 9449 §7.1 requires a DPoP-bound token to arrive under the `DPoP`
+    // scheme rather than `Bearer`. Which scheme was used is passed through
+    // to the handler, which refuses the two mismatches.
     let auth_header = match http_req
         .headers()
         .get(actix_web::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
     {
-        Some(h) if h.starts_with("Bearer ") => h,
-        _ => {
-            return HttpResponse::Unauthorized()
-                .insert_header(("WWW-Authenticate", "Bearer"))
-                .json(UserInfoErrorResponse::new(
-                    "invalid_request".to_string(),
-                    "Missing or invalid Authorization header".to_string(),
-                ));
-        }
+        Some(h) => h,
+        None => return unauthorized("Bearer", "Missing or invalid Authorization header"),
+    };
+    let (token, presented_as_dpop) = match auth_header.split_once(' ') {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("bearer") => (rest.trim(), false),
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("dpop") => (rest.trim(), true),
+        _ => return unauthorized("Bearer", "Missing or invalid Authorization header"),
+    };
+    if token.is_empty() {
+        return unauthorized("Bearer", "Missing or invalid Authorization header");
+    }
+
+    let req = if presented_as_dpop {
+        let proof = match extract_dpop_header(http_req.headers()) {
+            Ok(p) => p.map(|p| p.to_string()),
+            Err(e) => {
+                return HttpResponse::Unauthorized()
+                    .insert_header(("WWW-Authenticate", "DPoP"))
+                    .json(UserInfoErrorResponse::new(e.error, e.error_description));
+            }
+        };
+        // `htu` is left `None`: behind a reverse proxy this handler cannot
+        // reconstruct the absolute URL the client signed. See
+        // `UserInfoRequest::htu`.
+        UserInfoRequest::new_dpop(
+            token.to_string(),
+            proof,
+            Some(http_req.method().as_str().to_string()),
+            None,
+        )
+    } else {
+        UserInfoRequest::new(token.to_string())
     };
 
-    let req = UserInfoRequest::new(auth_header[7..].to_string());
-
-    match handle_userinfo(req, config.get_ref(), tokens.get_ref().as_ref()).await {
+    match handle_userinfo(
+        req,
+        config.get_ref(),
+        tokens.get_ref().as_ref(),
+        op_store.get_ref().as_ref(),
+    )
+    .await
+    {
         Ok(resp) => HttpResponse::Ok().json(resp),
         Err(err) => {
             let status = match err.error.as_str() {
