@@ -3,7 +3,9 @@ use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore, StoreError};
+use crate::store::{
+    ttl_ceil_secs, AtomicConsume, AtomicInsert, IndexedKvStore, KvStore, StoreError,
+};
 use async_trait::async_trait;
 
 struct StoreEntry<T> {
@@ -183,6 +185,25 @@ impl<T: Clone + Send + Sync + 'static> AtomicInsert<T> for MemoryStore<T> {
             }
         }
 
+        // A sub-second (or zero/negative-effective) `ttl` must not shrink
+        // to nothing: `insert_if_absent`'s `Ok`/`Err` is a security-critical
+        // replay signal (see `ttl_ceil_secs`'s own doc comment — this is
+        // the same bug, independently reachable here since this backend
+        // never called it before). Concretely: a `jti`/`expires_at` pair
+        // whose duration-until-expiry rounds to zero (e.g.
+        // `check_and_record_dpop_jti` clamping an already-elapsed or
+        // exactly-now `expires_at` to `Duration::ZERO`) would insert an
+        // entry that is already expired the instant it's checked; the very
+        // next presentation of the *same* key would then have this
+        // opportunistic sweep reclaim it as stale before the "already
+        // present" check below ever runs, and be accepted as fresh —
+        // silently defeating the replay guard for exactly the proofs
+        // closest to their own freshness-window boundary. Flooring to
+        // whole seconds costs nothing here (this store already only
+        // guarantees second-scale scheduling via `Instant`), and keeps
+        // this backend's floor identical to every other `AtomicInsert`
+        // backend's.
+        let ttl = Duration::from_secs(ttl_ceil_secs(ttl));
         let expires_at = now + ttl;
         data.insert(
             key.to_string(),
@@ -330,16 +351,71 @@ mod tests {
         assert_eq!(store.get("key1").await.unwrap(), Some("value1".to_string()));
     }
 
+    /// A sub-second TTL must still block a same-key replay presented
+    /// immediately after — same property `redis.rs`'s identically named
+    /// test checks. Unlike Redis, this alone does not regression-test the
+    /// floor fix for *this* backend: two `insert_if_absent` calls back to
+    /// back in-process complete well within 10ms regardless, so the second
+    /// call finds the first entry still live either way. The
+    /// `_with_zero_ttl_` test below is what actually exercises the fixed
+    /// code path — `Duration::ZERO` guarantees the entry is already
+    /// (barely) past its own `expires_at` by the time the very next call
+    /// checks it, sub-millisecond timing or not.
+    #[tokio::test]
+    async fn test_insert_if_absent_with_sub_second_ttl_still_blocks_a_replay() {
+        let store = MemoryStore::<String>::new();
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(10))
+            .await
+            .unwrap();
+        assert!(inserted, "the first insert must succeed");
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::from_millis(10))
+            .await
+            .unwrap();
+        assert!(
+            !inserted_again,
+            "a second insert under the same key, even with a sub-second TTL, is a replay and must be rejected"
+        );
+    }
+
+    /// Same property at exactly `Duration::ZERO`, the most extreme case of
+    /// the same bug — and the case `check_and_record_dpop_jti` actually
+    /// reaches when its `expires_at` has already elapsed by the time it
+    /// computes a TTL from it.
+    #[tokio::test]
+    async fn test_insert_if_absent_with_zero_ttl_still_blocks_a_replay() {
+        let store = MemoryStore::<String>::new();
+
+        let inserted = store
+            .insert_if_absent("key1", "value1".to_string(), Duration::ZERO)
+            .await
+            .unwrap();
+        assert!(inserted, "the first insert must succeed");
+
+        let inserted_again = store
+            .insert_if_absent("key1", "value2".to_string(), Duration::ZERO)
+            .await
+            .unwrap();
+        assert!(!inserted_again, "a zero-TTL replay must still be rejected");
+    }
+
     #[tokio::test]
     async fn test_insert_if_absent_allows_reuse_after_expiry() {
         let store = MemoryStore::<String>::new();
 
+        // A whole second, not a sub-second value: `ttl_ceil_secs` floors
+        // any sub-second TTL up to a full second (see the regression tests
+        // below), so a shorter requested TTL would not actually have
+        // expired yet by the time this test's sleep is over.
         store
-            .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(10))
+            .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(1))
             .await
             .unwrap();
 
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
 
         let inserted_again = store
             .insert_if_absent("key1", "value2".to_string(), Duration::from_secs(10))
@@ -366,14 +442,17 @@ mod tests {
                 .insert_if_absent(
                     &format!("jti-{i}"),
                     "spent".to_string(),
-                    Duration::from_millis(10),
+                    // A whole second, not a sub-second value — see
+                    // `test_insert_if_absent_allows_reuse_after_expiry`'s
+                    // comment on why `ttl_ceil_secs` makes that necessary.
+                    Duration::from_secs(1),
                 )
                 .await
                 .unwrap();
         }
         assert_eq!(store.len(), 50);
 
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
 
         // A single insert under a brand-new key must sweep every expired
         // entry from the previous batch, even though none of their keys
@@ -401,10 +480,13 @@ mod tests {
         let store = MemoryStore::<String>::new();
 
         store
-            .insert_if_absent("key1", "first".to_string(), Duration::from_millis(10))
+            // A whole second, not a sub-second value — see
+            // `test_insert_if_absent_allows_reuse_after_expiry`'s comment
+            // on why `ttl_ceil_secs` makes that necessary.
+            .insert_if_absent("key1", "first".to_string(), Duration::from_secs(1))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
 
         // Reuses "key1" with a long TTL — this pushes a second, newer
         // queue entry for the same key; the first (now-expired) one is

@@ -1076,11 +1076,16 @@ enum RefreshTokenStoreOutcome {
     /// did before this feature existed: log it, omit `refresh_token` from
     /// the response, and otherwise succeed.
     NonFatalStorageFailure,
-    /// The token was meant to be DPoP-bound (`jkt: Some(_)`) but that
-    /// binding cannot be confirmed to have persisted — never tolerated,
-    /// unlike the case above, because silently issuing a refresh token
-    /// whose RFC 9449 §5 continuity guarantee doesn't actually exist is
-    /// exactly the silent security gap this check exists to catch.
+    /// The token was meant to be DPoP-bound (`jkt: Some(_)`) but the
+    /// read-back *positively* found a different (or absent) `jkt` on the
+    /// stored row — never tolerated, unlike the case above, because
+    /// silently issuing a refresh token whose RFC 9449 §5 continuity
+    /// guarantee doesn't actually exist is exactly the silent security gap
+    /// this check exists to catch. Deliberately distinct from a read-back
+    /// that simply couldn't be completed (see `store_refresh_token_
+    /// verifying_dpop_binding`'s doc comment): only a row that was actually
+    /// read, and actually disagrees with what was written, proves the
+    /// binding didn't persist.
     DpopBindingFailed,
 }
 
@@ -1104,6 +1109,20 @@ enum RefreshTokenStoreOutcome {
 /// this feature (`NoDpopReplayStore` failing closed rather than accepting
 /// an unverifiable proof, the consume-before-validate ordering fix, and
 /// so on).
+///
+/// Only a read-back that actually returns a row with the *wrong* `jkt`
+/// counts as a confirmed drop. A read-back that errors, or that (unlike
+/// the write moments earlier) finds no row at all, is inconclusive rather
+/// than a confirmed failure — most plausibly a transient read issue (a
+/// pool blip, or a read served by a lagging replica that the just-completed
+/// write hasn't reached yet), not evidence the write didn't happen. By the
+/// time this probe runs, `store_token` has already returned `Ok`, so the
+/// write itself is not in question; treating an inconclusive *read* the
+/// same as a *positive* mismatch matters most for
+/// `default_handle_refresh_token`'s rotation path, which calls this only
+/// after already consuming the single-use predecessor token — failing the
+/// request here on a transient read hiccup would destroy that already-spent
+/// token's session for a write that in fact succeeded.
 async fn store_refresh_token_verifying_dpop_binding<S: OpStore + ?Sized>(
     op_store: &S,
     rt: RefreshToken,
@@ -1127,8 +1146,10 @@ async fn store_refresh_token_verifying_dpop_binding<S: OpStore + ?Sized>(
 
     match op_store.get_token(&token).await {
         Ok(Some(stored)) if stored.jkt == expected_jkt => RefreshTokenStoreOutcome::Stored,
-        Ok(_) => {
+        Ok(Some(stored)) => {
             tracing::error!(
+                expected_jkt = ?expected_jkt,
+                stored_jkt = ?stored.jkt,
                 "refresh token's DPoP binding did not survive storage — the configured \
                  RefreshTokenStore silently dropped `jkt`, which would let this token be \
                  redeemed without RFC 9449 §5 continuity enforcement; refusing rather than \
@@ -1136,9 +1157,26 @@ async fn store_refresh_token_verifying_dpop_binding<S: OpStore + ?Sized>(
             );
             RefreshTokenStoreOutcome::DpopBindingFailed
         }
+        Ok(None) => {
+            // The write already succeeded — this is a confirmation gap,
+            // not evidence the binding was dropped. Most plausibly a
+            // lagging read replica hasn't caught up to the write yet.
+            // Trust the write rather than fail a request that has already
+            // consumed a predecessor token.
+            tracing::warn!(
+                "could not confirm refresh token's DPoP binding: the token was not found on \
+                 read-back immediately after a successful write (possible replica lag); \
+                 trusting the write rather than failing an already-committed rotation"
+            );
+            RefreshTokenStoreOutcome::Stored
+        }
         Err(e) => {
-            tracing::error!(error = ?e, "Failed to verify refresh token's DPoP binding");
-            RefreshTokenStoreOutcome::DpopBindingFailed
+            tracing::warn!(
+                error = ?e,
+                "could not confirm refresh token's DPoP binding after a successful write; \
+                 trusting the write rather than failing an already-committed rotation"
+            );
+            RefreshTokenStoreOutcome::Stored
         }
     }
 }
@@ -5698,6 +5736,182 @@ mod tests {
             );
 
             assert_eq!(err.error, "server_error");
+        }
+
+        // --- The read-back confirmation probe itself failing must not be
+        // treated as a confirmed dropped binding (PR #290 review) ---
+
+        /// What `get_token` should hand back when used as a canned
+        /// confirmation-probe result below.
+        enum ProbeOutcome {
+            TransientError,
+            NotFoundYet,
+        }
+
+        /// A minimal `OpStore` whose `store_token` always succeeds and
+        /// whose `get_token` always returns one canned, configurable
+        /// result. Used to unit test `store_refresh_token_verifying_
+        /// dpop_binding` directly rather than through the full
+        /// token-endpoint flow: the two probe outcomes under test (a
+        /// transient error, and "not found yet") are specifically about
+        /// the read-back call that happens *after* a successful write, and
+        /// reproducing that ordering through a real store would require
+        /// distinguishing it from the *other* `get_token` call rotation
+        /// already makes (the candidate lookup, before consuming) — this
+        /// mock sidesteps that by testing the function in isolation.
+        struct CannedGetTokenStore {
+            probe: ProbeOutcome,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::client::ClientStore for CannedGetTokenStore {
+            async fn find_client(
+                &self,
+                _client_id: &str,
+            ) -> Result<Option<ClientRegistration>, OpError> {
+                unimplemented!("not exercised by this test")
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl crate::code::AuthorizationCodeStore for CannedGetTokenStore {
+            async fn store_code(&self, _code: AuthorizationCode) -> Result<(), OpError> {
+                unimplemented!("not exercised by this test")
+            }
+
+            async fn consume_code(
+                &self,
+                _code: &str,
+            ) -> Result<Option<AuthorizationCode>, OpError> {
+                unimplemented!("not exercised by this test")
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl RefreshTokenStore for CannedGetTokenStore {
+            async fn store_token(&self, _token: RefreshToken) -> Result<(), OpError> {
+                Ok(())
+            }
+
+            async fn get_token(&self, _token: &str) -> Result<Option<RefreshToken>, OpError> {
+                match self.probe {
+                    ProbeOutcome::TransientError => Err(OpError::Storage),
+                    ProbeOutcome::NotFoundYet => Ok(None),
+                }
+            }
+
+            async fn revoke_token(&self, _token: &str) -> Result<(), OpError> {
+                unimplemented!("not exercised by this test")
+            }
+
+            async fn consume_token(&self, _token: &str) -> Result<Option<RefreshToken>, OpError> {
+                unimplemented!("not exercised by this test")
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl crate::device::DeviceCodeStore for CannedGetTokenStore {
+            async fn store_device_code(
+                &self,
+                _session: crate::device::DeviceCodeSession,
+            ) -> Result<(), OpError> {
+                unimplemented!("not exercised by this test")
+            }
+
+            async fn get_device_code(
+                &self,
+                _device_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                unimplemented!("not exercised by this test")
+            }
+
+            async fn get_by_user_code(
+                &self,
+                _user_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                unimplemented!("not exercised by this test")
+            }
+
+            async fn update_device_code(
+                &self,
+                _session: crate::device::DeviceCodeSession,
+            ) -> Result<(), OpError> {
+                unimplemented!("not exercised by this test")
+            }
+
+            async fn delete_device_code(&self, _device_code: &str) -> Result<(), OpError> {
+                unimplemented!("not exercised by this test")
+            }
+
+            async fn consume_device_code(
+                &self,
+                _device_code: &str,
+            ) -> Result<Option<crate::device::DeviceCodeSession>, OpError> {
+                unimplemented!("not exercised by this test")
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl OpStore for CannedGetTokenStore {}
+
+        fn dpop_bound_refresh_token() -> RefreshToken {
+            RefreshToken {
+                token: "rt-1".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                scope: "openid offline_access".to_string(),
+                expires_at: Utc::now() + Duration::days(30),
+                jkt: Some("expected-jkt".to_string()),
+            }
+        }
+
+        /// The write already succeeded (`store_token` returned `Ok`) by
+        /// the time this probe runs; an error reading it back — a pool
+        /// blip, say — is not evidence the binding was dropped and must
+        /// not be reported as `DpopBindingFailed`. This is the exact
+        /// regression flagged in PR #290's review: the prior version of
+        /// this function mapped *any* `Err` from the probe to
+        /// `DpopBindingFailed`, which for `default_handle_refresh_token`'s
+        /// rotation path — which calls this only after already consuming
+        /// the single-use predecessor token — would destroy a session on a
+        /// transient read failure despite the write having succeeded.
+        #[tokio::test]
+        async fn a_transient_error_on_the_confirmation_read_does_not_fail_the_binding() {
+            let store = CannedGetTokenStore {
+                probe: ProbeOutcome::TransientError,
+            };
+
+            let outcome =
+                store_refresh_token_verifying_dpop_binding(&store, dpop_bound_refresh_token())
+                    .await;
+
+            assert!(
+                matches!(outcome, RefreshTokenStoreOutcome::Stored),
+                "a transient read error confirming a binding that was already \
+                 successfully written must not be treated as a confirmed failure"
+            );
+        }
+
+        /// As above, but the probe read finds no row at all rather than
+        /// erroring outright — the shape a lagging read replica produces
+        /// immediately after a write lands on the primary. Same fix, same
+        /// reasoning: the write already succeeded, so this is inconclusive,
+        /// not a positive signal the binding was dropped.
+        #[tokio::test]
+        async fn a_confirmation_read_that_finds_nothing_yet_does_not_fail_the_binding() {
+            let store = CannedGetTokenStore {
+                probe: ProbeOutcome::NotFoundYet,
+            };
+
+            let outcome =
+                store_refresh_token_verifying_dpop_binding(&store, dpop_bound_refresh_token())
+                    .await;
+
+            assert!(
+                matches!(outcome, RefreshTokenStoreOutcome::Stored),
+                "a confirmation read that simply hasn't caught up to an already-successful \
+                 write must not be treated as a confirmed failure"
+            );
         }
     }
 }
