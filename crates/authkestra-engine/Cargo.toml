@@ -111,3 +111,4 @@ actix-files = "0.6"
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["mysql", "postgres", "redis"] }
 wiremock = "0.6.5"
+authkestra-store-testsuite = { path = "../authkestra-store-testsuite" }

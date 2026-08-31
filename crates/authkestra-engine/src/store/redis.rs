@@ -312,6 +312,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> IndexedKvStore<T> 
 }
 
 #[cfg(all(test, feature = "redis"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::store::{AtomicConsume, IndexedKvStore, KvStore};

@@ -150,6 +150,9 @@ impl MemoryClientAssertionStore {
 impl ClientAssertionStore for MemoryClientAssertionStore {
     async fn record_jti(&self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, OpError> {
         let now = Utc::now();
+        if expires_at <= now {
+            return Ok(false);
+        }
         let mut seen = self.seen.lock().map_err(|_| {
             // A poisoned mutex means a previous holder panicked mid-update, so
             // the map's contents can no longer be trusted to be complete —

@@ -63,6 +63,7 @@ impl<T> MemoryStore<T> {
     /// expired or not. Used to prove `insert_if_absent`'s opportunistic
     /// sweep actually shrinks the map, not just that expired entries are
     /// unreachable through the public API.
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.data.lock().unwrap().len()
     }
@@ -265,6 +266,7 @@ impl<T: Clone + Send + Sync + 'static> IndexedKvStore<T> for MemoryStore<T> {
     }
 }
 
+#[cfg(test)]
 mod tests {
 
     use super::*;

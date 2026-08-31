@@ -699,6 +699,8 @@ dependencies = [
  "authkestra-engine",
  "authkestra-op",
  "authkestra-resource",
+ "testcontainers",
+ "testcontainers-modules",
  "tokio",
 ]
 

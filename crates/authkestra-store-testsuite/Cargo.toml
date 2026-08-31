@@ -10,8 +10,12 @@ readme.workspace = true
 exclude.workspace = true
 
 [dependencies]
-authkestra-engine = { path = "../authkestra-engine" }
-authkestra-op = { path = "../authkestra-op" }
+authkestra-engine = { path = "../authkestra-engine", features = ["redis"] }
+authkestra-op = { path = "../authkestra-op", features = ["redis"] }
 authkestra-resource = { path = "../authkestra-resource" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
+
+[dev-dependencies]
+testcontainers = "0.27.3"
+testcontainers-modules = { version = "0.15.0", features = ["redis", "postgres", "mysql"] }

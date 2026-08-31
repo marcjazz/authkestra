@@ -1,5 +1,5 @@
 use authkestra_engine::store::KvStore;
-use std::fmt::Debug;
+
 use std::time::Duration;
 
 pub async fn run_kv_tests<S>(store_factory: impl Fn() -> S)
@@ -50,4 +50,20 @@ async fn test_atomic_consume<S: KvStore<String> + authkestra_engine::store::Atom
 
     let value2 = store.consume("key1").await.unwrap();
     assert_eq!(value2, None);
+}
+
+pub async fn run_indexed_store_tests<S: KvStore<String> + authkestra_engine::store::AtomicConsume<String> + authkestra_engine::store::IndexedKvStore<String>>(store_factory: impl Fn() -> S) {
+    let store = store_factory();
+
+    store
+        .set_indexed("pk1", "sk1", "value1".to_string(), Duration::from_secs(10))
+        .await
+        .unwrap();
+
+    assert_eq!(store.get("pk1").await.unwrap(), Some("value1".to_string()));
+    assert_eq!(store.get_by_index("sk1").await.unwrap(), Some("value1".to_string()));
+
+    store.consume("pk1").await.unwrap();
+
+    assert_eq!(store.get_by_index("sk1").await.unwrap(), None);
 }
