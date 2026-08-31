@@ -51,6 +51,7 @@ sqlx = { version = "0.8.2", optional = true }
 webauthn-rs = { version = "0.5.0", optional = true, features = ["danger-allow-state-serialisation"] }
 totp-rs = { version = "5.7", features = ["gen_secret", "otpauth"], optional = true }
 authkestra-crypto-util.workspace = true
+argon2 = { version = "0.6.0", features = ["password-hash"] }
 
 [features]
 default = ["token", "rustls-aws-lc-rs"]

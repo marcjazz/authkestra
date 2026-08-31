@@ -10,7 +10,9 @@ where
     // Add other generic tests as needed
 }
 
-async fn test_insert_if_absent_first_call_succeeds<S: AtomicInsert<String> + KvStore<String>>(store: S) {
+async fn test_insert_if_absent_first_call_succeeds<S: AtomicInsert<String> + KvStore<String>>(
+    store: S,
+) {
     let inserted = store
         .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
         .await
@@ -19,7 +21,9 @@ async fn test_insert_if_absent_first_call_succeeds<S: AtomicInsert<String> + KvS
     assert_eq!(store.get("key1").await.unwrap(), Some("value1".to_string()));
 }
 
-async fn test_insert_if_absent_second_call_fails<S: AtomicInsert<String> + KvStore<String>>(store: S) {
+async fn test_insert_if_absent_second_call_fails<S: AtomicInsert<String> + KvStore<String>>(
+    store: S,
+) {
     assert!(store
         .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(10))
         .await
@@ -42,7 +46,7 @@ where
     test_insert_if_absent_with_sub_second_ttl_still_blocks_a_replay(store_factory()).await;
     test_insert_if_absent_with_zero_ttl_still_blocks_a_replay(store_factory()).await;
     test_insert_if_absent_allows_reuse_after_expiry(store_factory()).await;
-    
+
     // Note: reclaims_expired_entries_under_other_keys uses store.len(), which isn't in the generic trait.
     // It's a backend-specific MemoryStore detail so we won't port it to the generic suite.
 
@@ -50,7 +54,11 @@ where
     test_insert_if_absent_is_atomic_under_concurrency(&store_factory).await;
 }
 
-async fn test_insert_if_absent_with_sub_second_ttl_still_blocks_a_replay<S: AtomicInsert<String> + KvStore<String>>(store: S) {
+async fn test_insert_if_absent_with_sub_second_ttl_still_blocks_a_replay<
+    S: AtomicInsert<String> + KvStore<String>,
+>(
+    store: S,
+) {
     let inserted = store
         .insert_if_absent("key1", "value1".to_string(), Duration::from_millis(10))
         .await
@@ -67,7 +75,11 @@ async fn test_insert_if_absent_with_sub_second_ttl_still_blocks_a_replay<S: Atom
     );
 }
 
-async fn test_insert_if_absent_with_zero_ttl_still_blocks_a_replay<S: AtomicInsert<String> + KvStore<String>>(store: S) {
+async fn test_insert_if_absent_with_zero_ttl_still_blocks_a_replay<
+    S: AtomicInsert<String> + KvStore<String>,
+>(
+    store: S,
+) {
     let inserted = store
         .insert_if_absent("key1", "value1".to_string(), Duration::ZERO)
         .await
@@ -81,7 +93,11 @@ async fn test_insert_if_absent_with_zero_ttl_still_blocks_a_replay<S: AtomicInse
     assert!(!inserted_again, "a zero-TTL replay must still be rejected");
 }
 
-async fn test_insert_if_absent_allows_reuse_after_expiry<S: AtomicInsert<String> + KvStore<String>>(store: S) {
+async fn test_insert_if_absent_allows_reuse_after_expiry<
+    S: AtomicInsert<String> + KvStore<String>,
+>(
+    store: S,
+) {
     store
         .insert_if_absent("key1", "value1".to_string(), Duration::from_secs(1))
         .await
@@ -97,7 +113,11 @@ async fn test_insert_if_absent_allows_reuse_after_expiry<S: AtomicInsert<String>
     assert_eq!(store.get("key1").await.unwrap(), Some("value2".to_string()));
 }
 
-async fn test_insert_if_absent_sweep_ignores_a_stale_queue_entry_for_a_reused_key<S: AtomicInsert<String> + KvStore<String>>(store: S) {
+async fn test_insert_if_absent_sweep_ignores_a_stale_queue_entry_for_a_reused_key<
+    S: AtomicInsert<String> + KvStore<String>,
+>(
+    store: S,
+) {
     store
         .insert_if_absent("key1", "first".to_string(), Duration::from_secs(1))
         .await
@@ -121,7 +141,11 @@ async fn test_insert_if_absent_sweep_ignores_a_stale_queue_entry_for_a_reused_ke
     );
 }
 
-async fn test_insert_if_absent_is_atomic_under_concurrency<S: AtomicInsert<String> + KvStore<String> + Clone + 'static>(store_factory: &impl Fn() -> S) {
+async fn test_insert_if_absent_is_atomic_under_concurrency<
+    S: AtomicInsert<String> + KvStore<String> + Clone + 'static,
+>(
+    store_factory: &impl Fn() -> S,
+) {
     let store = store_factory();
     let mut handles = Vec::new();
     for i in 0..50 {

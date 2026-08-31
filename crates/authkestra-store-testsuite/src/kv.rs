@@ -11,7 +11,11 @@ where
     test_atomic_consume(store_factory()).await;
 }
 
-async fn test_get_set_delete<S: KvStore<String> + authkestra_engine::store::AtomicConsume<String>>(store: S) {
+async fn test_get_set_delete<
+    S: KvStore<String> + authkestra_engine::store::AtomicConsume<String>,
+>(
+    store: S,
+) {
     assert_eq!(store.get("key1").await.unwrap(), None);
 
     store
@@ -24,10 +28,13 @@ async fn test_get_set_delete<S: KvStore<String> + authkestra_engine::store::Atom
     assert_eq!(store.get("key1").await.unwrap(), None);
 }
 
-async fn test_ttl_expiry<S: KvStore<String> + authkestra_engine::store::AtomicConsume<String>>(store: S) {
-    // We use a small whole second here if fractional ones are floored, 
-    // but the original test used 10ms. Let's use 1s and sleep for 1.1s.
-    // wait, we should check what the original test does.
+async fn test_ttl_expiry<S: KvStore<String> + authkestra_engine::store::AtomicConsume<String>>(
+    store: S,
+) {
+    // A whole second, not the original per-backend tests' 10ms: `KvStore::set`
+    // on Redis stores TTL via `EX`, which only accepts whole seconds, so a
+    // sub-second value here would be backend-dependent rather than a fair
+    // generic test.
     store
         .set("key1", "value1".to_string(), Duration::from_secs(1))
         .await
@@ -39,7 +46,11 @@ async fn test_ttl_expiry<S: KvStore<String> + authkestra_engine::store::AtomicCo
     assert_eq!(store.get("key1").await.unwrap(), None);
 }
 
-async fn test_atomic_consume<S: KvStore<String> + authkestra_engine::store::AtomicConsume<String>>(store: S) {
+async fn test_atomic_consume<
+    S: KvStore<String> + authkestra_engine::store::AtomicConsume<String>,
+>(
+    store: S,
+) {
     store
         .set("key1", "value1".to_string(), Duration::from_secs(10))
         .await
@@ -52,7 +63,13 @@ async fn test_atomic_consume<S: KvStore<String> + authkestra_engine::store::Atom
     assert_eq!(value2, None);
 }
 
-pub async fn run_indexed_store_tests<S: KvStore<String> + authkestra_engine::store::AtomicConsume<String> + authkestra_engine::store::IndexedKvStore<String>>(store_factory: impl Fn() -> S) {
+pub async fn run_indexed_store_tests<
+    S: KvStore<String>
+        + authkestra_engine::store::AtomicConsume<String>
+        + authkestra_engine::store::IndexedKvStore<String>,
+>(
+    store_factory: impl Fn() -> S,
+) {
     let store = store_factory();
 
     store
@@ -61,7 +78,10 @@ pub async fn run_indexed_store_tests<S: KvStore<String> + authkestra_engine::sto
         .unwrap();
 
     assert_eq!(store.get("pk1").await.unwrap(), Some("value1".to_string()));
-    assert_eq!(store.get_by_index("sk1").await.unwrap(), Some("value1".to_string()));
+    assert_eq!(
+        store.get_by_index("sk1").await.unwrap(),
+        Some("value1".to_string())
+    );
 
     store.consume("pk1").await.unwrap();
 
