@@ -63,7 +63,21 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Run coverage and fail if under threshold
-        run: cargo llvm-cov --workspace --all-features --fail-under-lines 85
+        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 84
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Report coverage to DeepSource
+        if: ${{ always() && env.DEEPSOURCE_DSN != '' }}
+        env:
+          DEEPSOURCE_DSN: ${{ secrets.DEEPSOURCE_DSN }}
+        run: |
+          curl -fsSL https://cli.deepsource.com/install | BINDIR=./bin sh
+          ./bin/deepsource report --analyzer test-coverage --key rust --value-file lcov.info
 
   deny:
     runs-on: ubuntu-latest

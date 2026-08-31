@@ -140,3 +140,43 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use authkestra_engine::store::memory::MemoryStore;
+
+    #[tokio::test]
+    async fn test_authorization_code_store() {
+        let store = MemoryStore::default();
+        let code = AuthorizationCode::new(
+            "code1".into(),
+            "client1".into(),
+            "http://cb".into(),
+            "openid".into(),
+            Identity {
+                provider_id: "local".into(),
+                external_id: "user1".into(),
+                email: Some("user1@example.com".to_string()),
+                username: None,
+                attributes: Default::default(),
+            },
+            Utc::now() + chrono::Duration::seconds(60),
+            false,
+        );
+
+        // test store
+        store.store_code(code.clone()).await.unwrap();
+
+        // test consume
+        let consumed = store.consume_code("code1").await.unwrap().unwrap();
+        assert_eq!(consumed.client_id, "client1");
+
+        // second consume should fail
+        assert!(store.consume_code("code1").await.unwrap().is_none());
+
+        // test is_expired
+        assert!(!code.is_expired(Utc::now()));
+        assert!(code.is_expired(Utc::now() + chrono::Duration::seconds(120)));
+    }
+}

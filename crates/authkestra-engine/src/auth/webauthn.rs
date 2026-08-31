@@ -1,7 +1,6 @@
 use crate::auth::{error::AuthError, state::Identity, AuthInput, AuthMethod, CredentialStore};
 use async_trait::async_trait;
 use std::sync::Arc;
-    use crate::auth::WebAuthnStarter;
 use webauthn_rs::prelude::*;
 
 /// WebAuthn Passkeys authentication method.
@@ -200,18 +199,36 @@ impl<S: CredentialStore + 'static> AuthMethod for WebAuthnAuthMethod<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    use std::sync::Arc;
-    use crate::auth::WebAuthnStarter;
-    use webauthn_rs::prelude::*;
 
+    use crate::auth::WebAuthnStarter;
+    use std::sync::Arc;
+    use webauthn_rs::prelude::*;
 
     struct DummyCredentialStore;
     #[async_trait]
     impl CredentialStore for DummyCredentialStore {
-        async fn save_credential(&self, _user: &str, _type: &str, _cred: serde_json::Value) -> Result<(), AuthError> { Ok(()) }
-        async fn get_credentials(&self, _user: &str, _type: &str) -> Result<Vec<serde_json::Value>, AuthError> { Ok(vec![]) }
-        async fn update_credential(&self, _id: &str, _cred: serde_json::Value) -> Result<(), AuthError> { Ok(()) }
+        async fn save_credential(
+            &self,
+            _user: &str,
+            _type: &str,
+            _cred: serde_json::Value,
+        ) -> Result<(), AuthError> {
+            Ok(())
+        }
+        async fn get_credentials(
+            &self,
+            _user: &str,
+            _type: &str,
+        ) -> Result<Vec<serde_json::Value>, AuthError> {
+            Ok(vec![])
+        }
+        async fn update_credential(
+            &self,
+            _id: &str,
+            _cred: serde_json::Value,
+        ) -> Result<(), AuthError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -226,19 +243,21 @@ mod tests {
         assert_eq!(method.name(), "webauthn");
         assert!(method.is_mfa_equivalent());
         assert!(method.as_webauthn_starter().is_some());
-        
+
         let enrolled = method.has_enrolled("user-1").await.unwrap();
         assert!(!enrolled);
 
         let (challenge, passkey_reg) = method.start_register("user-1", "user-1").unwrap();
         assert_eq!(challenge.public_key.rp.id, "localhost");
-        
+
         let _ = method.start_authentication(&[]).unwrap();
-        
-        let invalid_input = method.authenticate(AuthInput::Password {
-            identifier: "a".into(),
-            password: "b".into(),
-        }).await;
+
+        let invalid_input = method
+            .authenticate(AuthInput::Password {
+                identifier: "a".into(),
+                password: "b".into(),
+            })
+            .await;
         assert!(matches!(invalid_input, Err(AuthError::InvalidInput)));
     }
 }

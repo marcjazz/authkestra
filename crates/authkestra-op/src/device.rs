@@ -180,3 +180,51 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use authkestra_engine::store::memory::MemoryStore;
+
+    #[tokio::test]
+    async fn test_device_store_blanket_impl() {
+        let store = MemoryStore::default();
+        let session = DeviceCodeSession::new(
+            "device1".into(),
+            "user1".into(),
+            "client1".into(),
+            "scope1".into(),
+            Utc::now() + chrono::Duration::seconds(60),
+            DeviceCodeStatus::Pending,
+        );
+
+        // test store
+        store.store_device_code(session.clone()).await.unwrap();
+
+        // test get
+        let retrieved = store.get_device_code("device1").await.unwrap().unwrap();
+        assert_eq!(retrieved.client_id, "client1");
+
+        // test get_by_user_code
+        let by_user = store.get_by_user_code("user1").await.unwrap().unwrap();
+        assert_eq!(by_user.client_id, "client1");
+
+        // test update
+        let mut session2 = session.clone();
+        session2.status = DeviceCodeStatus::Denied;
+        store.update_device_code(session2).await.unwrap();
+
+        // test consume
+        let consumed = store.consume_device_code("device1").await.unwrap().unwrap();
+        assert!(matches!(consumed.status, DeviceCodeStatus::Denied));
+
+        // test delete
+        store.store_device_code(session.clone()).await.unwrap();
+        store.delete_device_code("device1").await.unwrap();
+        assert!(store.get_device_code("device1").await.unwrap().is_none());
+
+        // test is_expired
+        assert!(!session.is_expired(Utc::now()));
+        assert!(session.is_expired(Utc::now() + chrono::Duration::seconds(120)));
+    }
+}

@@ -121,3 +121,47 @@ where
             .map_err(|_| crate::error::OpError::Storage)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use authkestra_engine::store::memory::MemoryStore;
+
+    #[tokio::test]
+    async fn test_refresh_token_store() {
+        let store = MemoryStore::default();
+        let code = RefreshToken::new(
+            "code1".into(),
+            "client1".into(),
+            Identity {
+                provider_id: "local".into(),
+                external_id: "user1".into(),
+                email: Some("user1@example.com".to_string()),
+                username: None,
+                attributes: Default::default(),
+            },
+            "openid".into(),
+            Utc::now() + chrono::Duration::seconds(60),
+            None,
+        );
+
+        // test store
+        store.store_token(code.clone()).await.unwrap();
+
+        // test get
+        let retrieved = store.get_token("code1").await.unwrap().unwrap();
+        assert_eq!(retrieved.client_id, "client1");
+
+        // test consume
+        let consumed = store.consume_token("code1").await.unwrap().unwrap();
+        assert_eq!(consumed.client_id, "client1");
+
+        // second consume should fail
+        assert!(store.consume_token("code1").await.unwrap().is_none());
+
+        // test revoke
+        store.store_token(code.clone()).await.unwrap();
+        store.revoke_token("code1").await.unwrap();
+        assert!(store.get_token("code1").await.unwrap().is_none());
+    }
+}

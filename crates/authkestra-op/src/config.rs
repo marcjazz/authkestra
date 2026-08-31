@@ -73,3 +73,43 @@ impl OpConfig {
         format!("{}/device", self.issuer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_urls() {
+        let config = OpConfig {
+            issuer: "http://example.com".into(),
+            scopes_supported: vec![],
+            response_types_supported: vec![],
+            grant_types_supported: vec![],
+            id_token_signing_alg: "RS256".into(),
+            authorization_code_ttl_secs: 60,
+            access_token_ttl_secs: 3600,
+            device_code_ttl_secs: 300,
+            token_exchange_enabled: false,
+        };
+
+        assert_eq!(
+            config.discovery_url(),
+            "http://example.com/.well-known/openid-configuration"
+        );
+        assert_eq!(config.jwks_url(), "http://example.com/jwks.json");
+        assert_eq!(
+            config.authorization_endpoint(),
+            "http://example.com/authorize"
+        );
+        assert_eq!(config.token_endpoint(), "http://example.com/token");
+        assert_eq!(config.userinfo_endpoint(), "http://example.com/userinfo");
+        assert_eq!(
+            config.device_authorization_endpoint(),
+            "http://example.com/device_authorization"
+        );
+        assert_eq!(
+            config.device_verification_uri(),
+            "http://example.com/device"
+        );
+    }
+}
