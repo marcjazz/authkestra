@@ -36,7 +36,9 @@ queries against them and does not track a migration version of its own.
 ### Upgrading a hand-managed schema to `authkestra-op` 0.7
 
 0.7 added RFC 9449 DPoP refresh-token continuity and RFC 7523 `private_key_jwt` client
-authentication, which need three new, nullable columns. `SqlxOpStore`'s `find_client` and
+authentication, which need three new, nullable columns **and one new table** (`oauth_dpop_jti`,
+which backs DPoP proof replay tracking per RFC 9449 §11.1 — without it every DPoP request is
+refused). `SqlxOpStore`'s `find_client` and
 `store_token` reference these columns unconditionally — **not** only when you call `migrate()` —
 so if you provision the schema yourself, upgrading to 0.7 without adding them breaks every
 token request against your existing tables. If you call `migrate()`, it adds them for you
@@ -56,6 +58,38 @@ ALTER TABLE authkestra_oauth_refresh_tokens ADD COLUMN jkt TEXT;
 ALTER TABLE authkestra_oauth_clients ADD COLUMN token_endpoint_auth_method TEXT;
 ALTER TABLE authkestra_oauth_clients ADD COLUMN jwks TEXT;
 ```
+
+The replay table has no foreign key to `oauth_clients`: a DPoP `jti` is client-generated and
+checked before the grant is dispatched, so it is not owned by a client row and must not be
+cascade-deleted with one.
+
+```sql
+-- Postgres
+CREATE TABLE IF NOT EXISTS authkestra.oauth_dpop_jti (
+    jti VARCHAR(255) PRIMARY KEY,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+-- SQLite
+CREATE TABLE IF NOT EXISTS authkestra_oauth_dpop_jti (
+    jti TEXT PRIMARY KEY,
+    expires_at DATETIME NOT NULL
+);
+
+-- MySQL: DATETIME(3), not DATETIME. MySQL rounds a plain DATETIME to whole
+-- seconds, which would both hold a jti past its window and make the
+-- expired-row reclaim compare against a rounded value.
+CREATE TABLE IF NOT EXISTS authkestra_oauth_dpop_jti (
+    jti VARCHAR(255) PRIMARY KEY,
+    expires_at DATETIME(3) NOT NULL
+);
+```
+
+Rows are self-expiring in the logical sense — a `jti` whose `expires_at` has passed is reclaimed
+in place by the next proof that happens to reuse it — but nothing sweeps the table, so a busy OP
+accumulates one row per distinct proof. Prune it on whatever schedule suits you:
+`DELETE FROM ... WHERE expires_at <= now()`. Deleting a not-yet-expired row re-opens the replay
+window for that proof's remaining lifetime.
 
 ```sql
 -- MySQL (no ADD COLUMN IF NOT EXISTS across commonly-deployed versions — same caveat as SQLite)

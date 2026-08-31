@@ -81,7 +81,8 @@ macro_rules! impl_opstore_sql {
         $migrate_impl:item,
         $consume_code_impl:item,
         $consume_token_impl:item,
-        $consume_device_impl:item
+        $consume_device_impl:item,
+        $dpop_jti_impl:item
     ) => {
         #[cfg(feature = $feature)]
         impl SqlxOpStore<$backend> {
@@ -94,7 +95,10 @@ macro_rules! impl_opstore_sql {
         }
 
         #[cfg(feature = $feature)]
-        impl crate::store::OpStore for SqlxOpStore<$backend> {}
+        #[async_trait]
+        impl crate::store::OpStore for SqlxOpStore<$backend> {
+            $dpop_jti_impl
+        }
 
         #[cfg(feature = $feature)]
         #[async_trait]
@@ -541,6 +545,16 @@ impl_opstore_sql! {
                 last_polled_at TIMESTAMPTZ
             );
 
+            -- authkestra#291: RFC 9449 §11.1 DPoP proof replay tracking.
+            -- No foreign key to oauth_clients: a `jti` is client-generated
+            -- and checked before the grant is dispatched, so it is not
+            -- owned by a client row and must not be cascade-deleted with
+            -- one.
+            CREATE TABLE IF NOT EXISTS authkestra.oauth_dpop_jti (
+                jti VARCHAR(255) PRIMARY KEY,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
+
             -- authkestra#287: additive columns for RFC 9449 DPoP
             -- refresh-token key continuity and RFC 7523 private_key_jwt.
             -- `IF NOT EXISTS` makes this safe to run on every startup,
@@ -630,6 +644,44 @@ impl_opstore_sql! {
         } else {
             Ok(None)
         }
+    },
+    /// Atomically claim a DPoP proof's `jti` (RFC 9449 §11.1).
+    ///
+    /// Without this override `SqlxOpStore` inherited `OpStore`'s
+    /// fail-closed default, which refuses *every* proof — so a
+    /// SqlxOpStore-backed OP returned `invalid_dpop_proof` for every
+    /// DPoP request, and the `jkt` column authkestra#287 added to
+    /// `oauth_refresh_tokens` was unreachable through the token endpoint.
+    ///
+    /// A single statement, not `SELECT`-then-`INSERT`: the TOCTOU window in
+    /// a two-call check is exactly the replay this exists to prevent, since
+    /// two concurrent presentations of one captured proof would both
+    /// observe "not yet seen".
+    ///
+    /// An already-expired row is *reclaimable*: a `jti` past its window can
+    /// no longer be usefully replayed, because `verify_dpop_proof` fails it
+    /// on freshness first.
+    async fn check_and_record_dpop_jti(
+        &self,
+        jti: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, OpError> {
+        // The qualified `oauth_dpop_jti.expires_at` in the WHERE clause
+        // reads the *pre-update* row, so this claims the `jti` only when it
+        // is absent (the INSERT wins) or already expired.
+        let res = sqlx::query(
+            "INSERT INTO authkestra.oauth_dpop_jti (jti, expires_at) VALUES ($1, $2) \
+             ON CONFLICT (jti) DO UPDATE SET expires_at = $2 \
+             WHERE oauth_dpop_jti.expires_at <= $3",
+        )
+        .bind(jti)
+        .bind(expires_at)
+        .bind(chrono::Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(|_| OpError::Storage)?;
+
+        Ok(res.rows_affected() > 0)
     }
 }
 
@@ -689,6 +741,13 @@ impl_opstore_sql! {
                 status TEXT NOT NULL,
                 expires_at DATETIME NOT NULL,
                 last_polled_at DATETIME
+            );
+
+            -- authkestra#291: RFC 9449 §11.1 DPoP proof replay tracking.
+            -- See the Postgres migration for why there is no client_id FK.
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_dpop_jti (
+                jti TEXT PRIMARY KEY,
+                expires_at DATETIME NOT NULL
             );
             "#
         ).await?;
@@ -779,6 +838,43 @@ impl_opstore_sql! {
         } else {
             Ok(None)
         }
+    },
+    /// Atomically claim a DPoP proof's `jti` (RFC 9449 §11.1).
+    ///
+    /// Without this override `SqlxOpStore` inherited `OpStore`'s
+    /// fail-closed default, which refuses *every* proof — so a
+    /// SqlxOpStore-backed OP returned `invalid_dpop_proof` for every
+    /// DPoP request, and the `jkt` column authkestra#287 added to
+    /// `oauth_refresh_tokens` was unreachable through the token endpoint.
+    ///
+    /// A single statement, not `SELECT`-then-`INSERT`: the TOCTOU window in
+    /// a two-call check is exactly the replay this exists to prevent, since
+    /// two concurrent presentations of one captured proof would both
+    /// observe "not yet seen".
+    ///
+    /// An already-expired row is *reclaimable*: a `jti` past its window can
+    /// no longer be usefully replayed, because `verify_dpop_proof` fails it
+    /// on freshness first.
+    async fn check_and_record_dpop_jti(
+        &self,
+        jti: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, OpError> {
+        // See the Postgres implementation; SQLite's upsert has the same
+        // pre-update read semantics for the qualified column.
+        let res = sqlx::query(
+            "INSERT INTO authkestra_oauth_dpop_jti (jti, expires_at) VALUES (?1, ?2) \
+             ON CONFLICT (jti) DO UPDATE SET expires_at = ?2 \
+             WHERE authkestra_oauth_dpop_jti.expires_at <= ?3",
+        )
+        .bind(jti)
+        .bind(expires_at)
+        .bind(chrono::Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(|_| OpError::Storage)?;
+
+        Ok(res.rows_affected() > 0)
     }
 }
 
@@ -842,6 +938,17 @@ impl_opstore_sql! {
                 expires_at DATETIME NOT NULL,
                 last_polled_at DATETIME,
                 FOREIGN KEY (client_id) REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE
+            );
+
+            -- authkestra#291: RFC 9449 §11.1 DPoP proof replay tracking.
+            -- See the Postgres migration for why there is no client_id FK.
+            -- DATETIME(3) rather than DATETIME: MySQL rounds a DATETIME to
+            -- whole seconds, which would let a `jti` stay blocked up to ~1s
+            -- past its window and, worse, make the expired-row reclaim
+            -- below compare against a rounded value.
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_dpop_jti (
+                jti VARCHAR(255) PRIMARY KEY,
+                expires_at DATETIME(3) NOT NULL
             );
             "#
         ).await?;
@@ -968,6 +1075,65 @@ impl_opstore_sql! {
             tx.rollback().await.map_err(|_| OpError::Storage)?;
             Ok(None)
         }
+    },
+    /// Atomically claim a DPoP proof's `jti` (RFC 9449 §11.1).
+    ///
+    /// Without this override `SqlxOpStore` inherited `OpStore`'s
+    /// fail-closed default, which refuses *every* proof — so a
+    /// SqlxOpStore-backed OP returned `invalid_dpop_proof` for every
+    /// DPoP request, and the `jkt` column authkestra#287 added to
+    /// `oauth_refresh_tokens` was unreachable through the token endpoint.
+    ///
+    /// A single statement, not `SELECT`-then-`INSERT`: the TOCTOU window in
+    /// a two-call check is exactly the replay this exists to prevent, since
+    /// two concurrent presentations of one captured proof would both
+    /// observe "not yet seen".
+    ///
+    /// An already-expired row is *reclaimable*: a `jti` past its window can
+    /// no longer be usefully replayed, because `verify_dpop_proof` fails it
+    /// on freshness first.
+    ///
+    /// Two statements rather than one, and deliberately **not** wrapped in a
+    /// transaction with `SELECT ... FOR UPDATE`: on a row that does not yet
+    /// exist that pattern takes a gap lock, and two concurrent claims of the
+    /// same `jti` then deadlock under MySQL's default REPEATABLE READ
+    /// (authkestra#277 hit exactly this). Each statement below is
+    /// individually atomic, so no transaction is needed.
+    async fn check_and_record_dpop_jti(
+        &self,
+        jti: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, OpError> {
+        let inserted = sqlx::query(
+            "INSERT IGNORE INTO authkestra_oauth_dpop_jti (jti, expires_at) VALUES (?, ?)",
+        )
+        .bind(jti)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| OpError::Storage)?;
+
+        if inserted.rows_affected() == 1 {
+            return Ok(true);
+        }
+
+        // The `jti` is present. Reclaim it only if its window has passed.
+        // `rows_affected` counts *changed* rows on MySQL (sqlx does not set
+        // CLIENT_FOUND_ROWS), which is safe here only because the new
+        // `expires_at` is always later than the expired one it replaces —
+        // so a matching row always changes.
+        let reclaimed = sqlx::query(
+            "UPDATE authkestra_oauth_dpop_jti SET expires_at = ? \
+             WHERE jti = ? AND expires_at <= ?",
+        )
+        .bind(expires_at)
+        .bind(jti)
+        .bind(chrono::Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(|_| OpError::Storage)?;
+
+        Ok(reclaimed.rows_affected() > 0)
     }
 }
 
@@ -1317,6 +1483,76 @@ mod postgres_tests {
             .unwrap()
             .expect("token must be found");
         assert_eq!(fetched.jkt, Some("post-upgrade-jkt".to_string()));
+    }
+
+    /// authkestra#291: `SqlxOpStore` used to inherit the fail-closed
+    /// `NoDpopReplayStore` default, refusing every DPoP proof.
+    #[tokio::test]
+    async fn test_postgres_dpop_jti_is_claimed_once_and_replay_is_refused() {
+        use crate::store::OpStore;
+        let (store, _c) = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-291", expires_at)
+            .await
+            .unwrap());
+        assert!(
+            !store
+                .check_and_record_dpop_jti("jti-291", expires_at)
+                .await
+                .unwrap(),
+            "replaying a still-fresh jti must be refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_postgres_dpop_jti_is_reclaimable_once_expired() {
+        use crate::store::OpStore;
+        let (store, _c) = setup_db().await;
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-expired", Utc::now() - Duration::seconds(5))
+            .await
+            .unwrap());
+        assert!(
+            store
+                .check_and_record_dpop_jti("jti-expired", Utc::now() + Duration::seconds(60))
+                .await
+                .unwrap(),
+            "an expired jti must be reclaimable"
+        );
+    }
+
+    /// Guards both the TOCTOU window and, on MySQL, the gap-lock deadlock
+    /// that a `SELECT ... FOR UPDATE` transaction would hit on a
+    /// not-yet-existing row under the default REPEATABLE READ.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_postgres_dpop_jti_claim_is_atomic_under_concurrency() {
+        use crate::store::OpStore;
+        use std::sync::Arc;
+        let (store, _c) = setup_db().await;
+        let store = Arc::new(store);
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let store = Arc::clone(&store);
+            set.spawn(async move {
+                store
+                    .check_and_record_dpop_jti("jti-race", expires_at)
+                    .await
+                    .expect("a concurrent claim must not error — a deadlock here would")
+            });
+        }
+
+        let mut winners = 0;
+        while let Some(res) = set.join_next().await {
+            if res.unwrap() {
+                winners += 1;
+            }
+        }
+        assert_eq!(winners, 1, "exactly one concurrent claim may win");
     }
 }
 
@@ -1755,6 +1991,87 @@ mod sqlite_tests {
             "an undecodable token_endpoint_auth_method must fail closed as a storage error, not silently decode to None: got {result:?}"
         );
     }
+
+    /// The point of authkestra#291: before this, `SqlxOpStore` carried an
+    /// empty `impl OpStore`, so it inherited the fail-closed
+    /// `NoDpopReplayStore` default and refused *every* DPoP proof. A first
+    /// claim must now succeed and an immediate replay must be refused.
+    #[tokio::test]
+    async fn test_sqlite_dpop_jti_is_claimed_once_and_replay_is_refused() {
+        use crate::store::OpStore;
+        let store = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        assert!(
+            store
+                .check_and_record_dpop_jti("jti-291", expires_at)
+                .await
+                .unwrap(),
+            "a fresh jti must be claimable — a false here is the fail-closed \
+             default this override exists to replace"
+        );
+        assert!(
+            !store
+                .check_and_record_dpop_jti("jti-291", expires_at)
+                .await
+                .unwrap(),
+            "replaying a still-fresh jti must be refused"
+        );
+    }
+
+    /// A `jti` past its window is reclaimable: `verify_dpop_proof` rejects
+    /// such a proof on freshness first, so keeping the row would only grow
+    /// the table forever.
+    #[tokio::test]
+    async fn test_sqlite_dpop_jti_is_reclaimable_once_expired() {
+        use crate::store::OpStore;
+        let store = setup_db().await;
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-expired", Utc::now() - Duration::seconds(1))
+            .await
+            .unwrap());
+        assert!(
+            store
+                .check_and_record_dpop_jti("jti-expired", Utc::now() + Duration::seconds(60))
+                .await
+                .unwrap(),
+            "an expired jti must be reclaimable"
+        );
+    }
+
+    /// The guarantee the single-statement upsert exists for. A
+    /// `SELECT`-then-`INSERT` implementation passes both tests above and
+    /// fails this one, because its TOCTOU window is the replay itself.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_sqlite_dpop_jti_claim_is_atomic_under_concurrency() {
+        use crate::store::OpStore;
+        use std::sync::Arc;
+        let store = Arc::new(setup_db().await);
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let store = Arc::clone(&store);
+            set.spawn(async move {
+                store
+                    .check_and_record_dpop_jti("jti-race", expires_at)
+                    .await
+                    .unwrap()
+            });
+        }
+
+        let mut winners = 0;
+        while let Some(res) = set.join_next().await {
+            if res.unwrap() {
+                winners += 1;
+            }
+        }
+        assert_eq!(
+            winners, 1,
+            "exactly one concurrent claim of the same jti may win"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "sqlx-mysql"))]
@@ -2104,5 +2421,75 @@ mod mysql_tests {
             .unwrap()
             .expect("token must be found");
         assert_eq!(fetched.jkt, Some("post-upgrade-jkt".to_string()));
+    }
+
+    /// authkestra#291: `SqlxOpStore` used to inherit the fail-closed
+    /// `NoDpopReplayStore` default, refusing every DPoP proof.
+    #[tokio::test]
+    async fn test_mysql_dpop_jti_is_claimed_once_and_replay_is_refused() {
+        use crate::store::OpStore;
+        let (store, _c) = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-291", expires_at)
+            .await
+            .unwrap());
+        assert!(
+            !store
+                .check_and_record_dpop_jti("jti-291", expires_at)
+                .await
+                .unwrap(),
+            "replaying a still-fresh jti must be refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mysql_dpop_jti_is_reclaimable_once_expired() {
+        use crate::store::OpStore;
+        let (store, _c) = setup_db().await;
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-expired", Utc::now() - Duration::seconds(5))
+            .await
+            .unwrap());
+        assert!(
+            store
+                .check_and_record_dpop_jti("jti-expired", Utc::now() + Duration::seconds(60))
+                .await
+                .unwrap(),
+            "an expired jti must be reclaimable"
+        );
+    }
+
+    /// Guards both the TOCTOU window and, on MySQL, the gap-lock deadlock
+    /// that a `SELECT ... FOR UPDATE` transaction would hit on a
+    /// not-yet-existing row under the default REPEATABLE READ.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_mysql_dpop_jti_claim_is_atomic_under_concurrency() {
+        use crate::store::OpStore;
+        use std::sync::Arc;
+        let (store, _c) = setup_db().await;
+        let store = Arc::new(store);
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let store = Arc::clone(&store);
+            set.spawn(async move {
+                store
+                    .check_and_record_dpop_jti("jti-race", expires_at)
+                    .await
+                    .expect("a concurrent claim must not error — a deadlock here would")
+            });
+        }
+
+        let mut winners = 0;
+        while let Some(res) = set.join_next().await {
+            if res.unwrap() {
+                winners += 1;
+            }
+        }
+        assert_eq!(winners, 1, "exactly one concurrent claim may win");
     }
 }
