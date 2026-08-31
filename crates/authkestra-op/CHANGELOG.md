@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.6.3...authkestra-op-v0.7.0) - 2026-08-31
+
+### Other
+
+- add coverage for auth strategies and flow orchestration ([#297](https://github.com/marcjazz/authkestra/pull/297)) ([#298](https://github.com/marcjazz/authkestra/pull/298))
+- Merge next into main (DPoP, migrations, and fixes) ([#292](https://github.com/marcjazz/authkestra/pull/292))
+
 ## [0.6.3](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.6.2...authkestra-op-v0.6.3) - 2026-08-28
 
 ### Fixed
