@@ -266,10 +266,12 @@ where
 /// Handler for the userinfo endpoint.
 pub async fn axum_userinfo_handler<AppState>(
     State(state): State<AppState>,
+    method: axum::http::Method,
     headers: HeaderMap,
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
+    Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>: FromRef<AppState>,
     Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
@@ -278,40 +280,88 @@ where
         Ok(t) => t,
         Err(e) => return e.into_response(),
     };
+    // `/userinfo` is a protected resource, so a DPoP-bound token presented
+    // here needs the same replay guard `/token` uses (RFC 9449 §11.1).
+    let op_store =
+        match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(
+            &state,
+        ) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
 
+    let unauthorized = |scheme: &str, desc: &str| {
+        (
+            StatusCode::UNAUTHORIZED,
+            [("WWW-Authenticate", scheme.to_string())],
+            Json(UserInfoErrorResponse::new(
+                "invalid_request".to_string(),
+                desc.to_string(),
+            )),
+        )
+            .into_response()
+    };
+
+    // RFC 9110 §11.1 makes the auth-scheme token case-insensitive, and
+    // RFC 9449 §7.1 requires a DPoP-bound token to arrive under the `DPoP`
+    // scheme rather than `Bearer`. Which scheme was used is passed through
+    // to the handler, which refuses the two mismatches.
     let auth_header = match headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
     {
-        Some(h) if h.starts_with("Bearer ") => h,
-        _ => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                [("WWW-Authenticate", "Bearer")],
-                Json(UserInfoErrorResponse::new(
-                    "invalid_request".to_string(),
-                    "Missing or invalid Authorization header".to_string(),
-                )),
-            )
-                .into_response();
-        }
+        Some(h) => h,
+        None => return unauthorized("Bearer", "Missing or invalid Authorization header"),
     };
+    let (token, presented_as_dpop) = match auth_header.split_once(' ') {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("bearer") => (rest.trim(), false),
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("dpop") => (rest.trim(), true),
+        _ => return unauthorized("Bearer", "Missing or invalid Authorization header"),
+    };
+    if token.is_empty() {
+        return unauthorized("Bearer", "Missing or invalid Authorization header");
+    }
 
-    let req = UserInfoRequest::new(auth_header[7..].to_string());
+    let req = if presented_as_dpop {
+        let proof = match extract_dpop_header(&headers) {
+            Ok(p) => p.map(|p| p.to_string()),
+            Err(e) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    [("WWW-Authenticate", "DPoP")],
+                    Json(UserInfoErrorResponse::new(e.error, e.error_description)),
+                )
+                    .into_response();
+            }
+        };
+        // `htu` is left `None`: behind a reverse proxy this handler cannot
+        // reconstruct the absolute URL the client signed. See
+        // `UserInfoRequest::htu`.
+        UserInfoRequest::new_dpop(
+            token.to_string(),
+            proof,
+            Some(method.as_str().to_string()),
+            None,
+        )
+    } else {
+        UserInfoRequest::new(token.to_string())
+    };
 
     let config = OpConfig::from_ref(&state);
 
-    match handle_userinfo(req, &config, tokens.as_ref()).await {
-        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
-        Err(err) => {
-            let status = match err.error.as_str() {
-                "invalid_token" => StatusCode::UNAUTHORIZED,
-                "insufficient_scope" => StatusCode::FORBIDDEN,
-                _ => StatusCode::BAD_REQUEST,
-            };
-            (status, Json(err)).into_response()
-        }
-    }
+    let response =
+        match handle_userinfo(req, &config, tokens.as_ref(), &mut *op_store.lock().await).await {
+            Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+            Err(err) => {
+                let status = match err.error.as_str() {
+                    "invalid_token" => StatusCode::UNAUTHORIZED,
+                    "insufficient_scope" => StatusCode::FORBIDDEN,
+                    _ => StatusCode::BAD_REQUEST,
+                };
+                (status, Json(err)).into_response()
+            }
+        };
+    response
 }
 
 /// Handler for the device verify endpoint.

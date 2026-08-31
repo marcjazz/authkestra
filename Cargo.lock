@@ -696,6 +696,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "testcontainers",
+ "testcontainers-modules",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

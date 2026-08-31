@@ -39,6 +39,77 @@ impl<DB: sqlx::Database> Clone for SqlxOpStore<DB> {
     }
 }
 
+/// Add `column` to `table` (in the `authkestra` schema) if it isn't
+/// already there.
+///
+/// Postgres *does* support `ADD COLUMN IF NOT EXISTS`, but it still takes
+/// an ACCESS EXCLUSIVE lock on the relation before discovering there is
+/// nothing to do — and because Postgres lock requests are FIFO, an ALTER
+/// that queues behind a long-running transaction blocks every subsequent
+/// read of that table until the blocker clears. `migrate()` runs at every
+/// startup, so probing the catalog first keeps the steady state lock-free.
+/// The `IF NOT EXISTS` is retained *inside* the guard so a concurrently
+/// starting replica racing the same ALTER is still handled by Postgres
+/// itself, under the lock — which is why this backend needs no equivalent
+/// of `is_sqlite_duplicate_column`/`is_mysql_duplicate_column`.
+///
+/// `table_schema` is not optional here: `information_schema.columns` spans
+/// every schema the role can see, so an unqualified probe would be
+/// satisfied by a host application's own same-named table in `public` and
+/// would skip an ALTER that `authkestra`'s table still needs.
+#[cfg(feature = "postgres")]
+async fn ensure_postgres_column(
+    pool: &sqlx::PgPool,
+    table: &str,
+    column: &str,
+    add_column_ddl: &str,
+) -> Result<(), sqlx::Error> {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = 'authkestra' AND table_name = $1 AND column_name = $2",
+    )
+    .bind(table)
+    .bind(column)
+    .fetch_one(pool)
+    .await?;
+    if exists == 0 {
+        sqlx::query(&format!(
+            "ALTER TABLE authkestra.{table} ADD COLUMN IF NOT EXISTS {add_column_ddl}"
+        ))
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+/// True only for "the column is already there" — the exact error the loser
+/// of a check-then-ALTER race gets when another process added the column
+/// between our `pragma_table_info` probe and our `ALTER`.
+///
+/// SQLite reports this as plain `SQLITE_ERROR` (1), the same extended
+/// result code as a syntax error or a missing table, so `code()` cannot
+/// discriminate it. The message is the only reliable signal, and its text
+/// is fixed in SQLite's `alter.c` as `duplicate column name: <name>`.
+#[cfg(feature = "sqlite")]
+fn is_sqlite_duplicate_column(e: &sqlx::Error) -> bool {
+    // `message()` resolves through the `dyn DatabaseError` object itself, so
+    // no trait import is needed here (nor in the MySQL classifier below).
+    e.as_database_error()
+        .is_some_and(|db| db.message().starts_with("duplicate column name:"))
+}
+
+/// True only for MySQL `ER_DUP_FIELDNAME` (1060, SQLSTATE 42S21) — see the
+/// SQLite equivalent above for why this narrow tolerance exists.
+///
+/// Matched on the error *number*, not the message or SQLSTATE: a missing
+/// table (1146) or a bad column type (1064) stays fatal.
+#[cfg(feature = "mysql")]
+fn is_mysql_duplicate_column(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|db| db.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
+        .is_some_and(|db| db.number() == 1060)
+}
+
 /// Add `column` to `table` if it isn't already there.
 ///
 /// SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (unlike
@@ -59,9 +130,18 @@ async fn ensure_sqlite_column(
     .fetch_one(pool)
     .await?;
     if exists == 0 {
-        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {add_column_ddl}"))
+        // A concurrently-starting replica may have added the column between
+        // the probe above and here; that is the *intended* end state, so it
+        // is success, not a failed migration. Nothing else is tolerated —
+        // see `is_sqlite_duplicate_column`.
+        if let Err(e) = sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {add_column_ddl}"))
             .execute(pool)
-            .await?;
+            .await
+        {
+            if !is_sqlite_duplicate_column(&e) {
+                return Err(e);
+            }
+        }
     }
     Ok(())
 }
@@ -89,9 +169,16 @@ async fn ensure_mysql_column(
     .fetch_one(pool)
     .await?;
     if exists == 0 {
-        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {add_column_ddl}"))
+        // See `ensure_sqlite_column`'s identical comment: only the losing
+        // side of a check-then-ALTER race is tolerated here.
+        if let Err(e) = sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {add_column_ddl}"))
             .execute(pool)
-            .await?;
+            .await
+        {
+            if !is_mysql_duplicate_column(&e) {
+                return Err(e);
+            }
+        }
     }
     Ok(())
 }
@@ -105,7 +192,8 @@ macro_rules! impl_opstore_sql {
         $migrate_impl:item,
         $consume_code_impl:item,
         $consume_token_impl:item,
-        $consume_device_impl:item
+        $consume_device_impl:item,
+        $dpop_jti_impl:item
     ) => {
         #[cfg(feature = $feature)]
         impl SqlxOpStore<$backend> {
@@ -118,7 +206,10 @@ macro_rules! impl_opstore_sql {
         }
 
         #[cfg(feature = $feature)]
-        impl authkestra_op::store::OpStore for SqlxOpStore<$backend> {}
+        #[async_trait]
+        impl authkestra_op::store::OpStore for SqlxOpStore<$backend> {
+            $dpop_jti_impl
+        }
 
         #[cfg(feature = $feature)]
         #[async_trait]
@@ -564,18 +655,28 @@ impl_opstore_sql! {
                 expires_at TIMESTAMPTZ NOT NULL,
                 last_polled_at TIMESTAMPTZ
             );
-
-            -- authkestra#287: additive columns for RFC 9449 DPoP
-            -- refresh-token key continuity and RFC 7523 private_key_jwt.
-            -- `IF NOT EXISTS` makes this safe to run on every startup,
-            -- against both a fresh install (just created above) and an
-            -- existing deployment upgrading from before these columns
-            -- existed.
-            ALTER TABLE authkestra.oauth_refresh_tokens ADD COLUMN IF NOT EXISTS jkt VARCHAR(255);
-            ALTER TABLE authkestra.oauth_clients ADD COLUMN IF NOT EXISTS token_endpoint_auth_method JSONB;
-            ALTER TABLE authkestra.oauth_clients ADD COLUMN IF NOT EXISTS jwks JSONB;
+            -- authkestra#291: RFC 9449 §11.1 DPoP proof replay tracking.
+            -- No foreign key to oauth_clients: a `jti` is client-generated
+            -- and checked before the grant is dispatched, so it is not
+            -- owned by a client row and must not be cascade-deleted with
+            -- one.
+            CREATE TABLE IF NOT EXISTS authkestra.oauth_dpop_jti (
+                jti VARCHAR(255) PRIMARY KEY,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
             "#
         ).await?;
+
+        // authkestra#287: additive columns for RFC 9449 DPoP refresh-token
+        // key continuity and RFC 7523 private_key_jwt. Safe to run on every
+        // startup, against both a fresh install (just created above) and an
+        // existing deployment upgrading from before these columns existed —
+        // and catalog-guarded so the steady-state startup takes no ACCESS
+        // EXCLUSIVE lock on either table. See `ensure_postgres_column`.
+        ensure_postgres_column(&self.pool, "oauth_refresh_tokens", "jkt", "jkt VARCHAR(255)").await?;
+        ensure_postgres_column(&self.pool, "oauth_clients", "token_endpoint_auth_method", "token_endpoint_auth_method JSONB").await?;
+        ensure_postgres_column(&self.pool, "oauth_clients", "jwks", "jwks JSONB").await?;
+
         Ok(())
     },
     // consume_code (Postgres specific)
@@ -654,6 +755,44 @@ impl_opstore_sql! {
         } else {
             Ok(None)
         }
+    },
+    /// Atomically claim a DPoP proof's `jti` (RFC 9449 §11.1).
+    ///
+    /// Without this override `SqlxOpStore` inherited `OpStore`'s
+    /// fail-closed default, which refuses *every* proof — so a
+    /// SqlxOpStore-backed OP returned `invalid_dpop_proof` for every
+    /// DPoP request, and the `jkt` column authkestra#287 added to
+    /// `oauth_refresh_tokens` was unreachable through the token endpoint.
+    ///
+    /// A single statement, not `SELECT`-then-`INSERT`: the TOCTOU window in
+    /// a two-call check is exactly the replay this exists to prevent, since
+    /// two concurrent presentations of one captured proof would both
+    /// observe "not yet seen".
+    ///
+    /// An already-expired row is *reclaimable*: a `jti` past its window can
+    /// no longer be usefully replayed, because `verify_dpop_proof` fails it
+    /// on freshness first.
+    async fn check_and_record_dpop_jti(
+        &mut self,
+        jti: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
+        // The qualified `oauth_dpop_jti.expires_at` in the WHERE clause
+        // reads the *pre-update* row, so this claims the `jti` only when it
+        // is absent (the INSERT wins) or already expired.
+        let res = sqlx::query(
+            "INSERT INTO authkestra.oauth_dpop_jti (jti, expires_at) VALUES ($1, $2) \
+             ON CONFLICT (jti) DO UPDATE SET expires_at = $2 \
+             WHERE oauth_dpop_jti.expires_at <= $3",
+        )
+        .bind(jti)
+        .bind(expires_at)
+        .bind(chrono::Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+
+        Ok(res.rows_affected() > 0)
     }
 }
 
@@ -713,6 +852,13 @@ impl_opstore_sql! {
                 status TEXT NOT NULL,
                 expires_at DATETIME NOT NULL,
                 last_polled_at DATETIME
+            );
+
+            -- authkestra#291: RFC 9449 §11.1 DPoP proof replay tracking.
+            -- See the Postgres migration for why there is no client_id FK.
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_dpop_jti (
+                jti TEXT PRIMARY KEY,
+                expires_at DATETIME NOT NULL
             );
             "#
         ).await?;
@@ -803,6 +949,43 @@ impl_opstore_sql! {
         } else {
             Ok(None)
         }
+    },
+    /// Atomically claim a DPoP proof's `jti` (RFC 9449 §11.1).
+    ///
+    /// Without this override `SqlxOpStore` inherited `OpStore`'s
+    /// fail-closed default, which refuses *every* proof — so a
+    /// SqlxOpStore-backed OP returned `invalid_dpop_proof` for every
+    /// DPoP request, and the `jkt` column authkestra#287 added to
+    /// `oauth_refresh_tokens` was unreachable through the token endpoint.
+    ///
+    /// A single statement, not `SELECT`-then-`INSERT`: the TOCTOU window in
+    /// a two-call check is exactly the replay this exists to prevent, since
+    /// two concurrent presentations of one captured proof would both
+    /// observe "not yet seen".
+    ///
+    /// An already-expired row is *reclaimable*: a `jti` past its window can
+    /// no longer be usefully replayed, because `verify_dpop_proof` fails it
+    /// on freshness first.
+    async fn check_and_record_dpop_jti(
+        &mut self,
+        jti: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
+        // See the Postgres implementation; SQLite's upsert has the same
+        // pre-update read semantics for the qualified column.
+        let res = sqlx::query(
+            "INSERT INTO authkestra_oauth_dpop_jti (jti, expires_at) VALUES (?1, ?2) \
+             ON CONFLICT (jti) DO UPDATE SET expires_at = ?2 \
+             WHERE authkestra_oauth_dpop_jti.expires_at <= ?3",
+        )
+        .bind(jti)
+        .bind(expires_at)
+        .bind(chrono::Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+
+        Ok(res.rows_affected() > 0)
     }
 }
 
@@ -866,6 +1049,17 @@ impl_opstore_sql! {
                 expires_at DATETIME NOT NULL,
                 last_polled_at DATETIME,
                 FOREIGN KEY (client_id) REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE
+            );
+
+            -- authkestra#291: RFC 9449 §11.1 DPoP proof replay tracking.
+            -- See the Postgres migration for why there is no client_id FK.
+            -- DATETIME(3) rather than DATETIME: MySQL rounds a DATETIME to
+            -- whole seconds, which would let a `jti` stay blocked up to ~1s
+            -- past its window and, worse, make the expired-row reclaim
+            -- below compare against a rounded value.
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_dpop_jti (
+                jti VARCHAR(255) PRIMARY KEY,
+                expires_at DATETIME(3) NOT NULL
             );
             "#
         ).await?;
@@ -992,6 +1186,65 @@ impl_opstore_sql! {
             tx.rollback().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(None)
         }
+    },
+    /// Atomically claim a DPoP proof's `jti` (RFC 9449 §11.1).
+    ///
+    /// Without this override `SqlxOpStore` inherited `OpStore`'s
+    /// fail-closed default, which refuses *every* proof — so a
+    /// SqlxOpStore-backed OP returned `invalid_dpop_proof` for every
+    /// DPoP request, and the `jkt` column authkestra#287 added to
+    /// `oauth_refresh_tokens` was unreachable through the token endpoint.
+    ///
+    /// A single statement, not `SELECT`-then-`INSERT`: the TOCTOU window in
+    /// a two-call check is exactly the replay this exists to prevent, since
+    /// two concurrent presentations of one captured proof would both
+    /// observe "not yet seen".
+    ///
+    /// An already-expired row is *reclaimable*: a `jti` past its window can
+    /// no longer be usefully replayed, because `verify_dpop_proof` fails it
+    /// on freshness first.
+    ///
+    /// Two statements rather than one, and deliberately **not** wrapped in a
+    /// transaction with `SELECT ... FOR UPDATE`: on a row that does not yet
+    /// exist that pattern takes a gap lock, and two concurrent claims of the
+    /// same `jti` then deadlock under MySQL's default REPEATABLE READ
+    /// (authkestra#277 hit exactly this). Each statement below is
+    /// individually atomic, so no transaction is needed.
+    async fn check_and_record_dpop_jti(
+        &mut self,
+        jti: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
+        let inserted = sqlx::query(
+            "INSERT IGNORE INTO authkestra_oauth_dpop_jti (jti, expires_at) VALUES (?, ?)",
+        )
+        .bind(jti)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+
+        if inserted.rows_affected() == 1 {
+            return Ok(true);
+        }
+
+        // The `jti` is present. Reclaim it only if its window has passed.
+        // `rows_affected` counts *changed* rows on MySQL (sqlx does not set
+        // CLIENT_FOUND_ROWS), which is safe here only because the new
+        // `expires_at` is always later than the expired one it replaces —
+        // so a matching row always changes.
+        let reclaimed = sqlx::query(
+            "UPDATE authkestra_oauth_dpop_jti SET expires_at = ? \
+             WHERE jti = ? AND expires_at <= ?",
+        )
+        .bind(expires_at)
+        .bind(jti)
+        .bind(chrono::Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+
+        Ok(reclaimed.rows_affected() > 0)
     }
 }
 
@@ -1341,6 +1594,161 @@ mod postgres_tests {
             .unwrap()
             .expect("token must be found");
         assert_eq!(fetched.jkt, Some("post-upgrade-jkt".to_string()));
+    }
+
+    /// authkestra#291: `SqlxOpStore` used to inherit the fail-closed
+    /// `NoDpopReplayStore` default, refusing every DPoP proof.
+    #[tokio::test]
+    async fn test_postgres_dpop_jti_is_claimed_once_and_replay_is_refused() {
+        use authkestra_op::store::OpStore;
+        let (mut store, _c) = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-291", expires_at)
+            .await
+            .unwrap());
+        assert!(
+            !store
+                .check_and_record_dpop_jti("jti-291", expires_at)
+                .await
+                .unwrap(),
+            "replaying a still-fresh jti must be refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_postgres_dpop_jti_is_reclaimable_once_expired() {
+        use authkestra_op::store::OpStore;
+        let (mut store, _c) = setup_db().await;
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-expired", Utc::now() - Duration::seconds(5))
+            .await
+            .unwrap());
+        assert!(
+            store
+                .check_and_record_dpop_jti("jti-expired", Utc::now() + Duration::seconds(60))
+                .await
+                .unwrap(),
+            "an expired jti must be reclaimable"
+        );
+    }
+
+    /// Guards both the TOCTOU window and, on MySQL, the gap-lock deadlock
+    /// that a `SELECT ... FOR UPDATE` transaction would hit on a
+    /// not-yet-existing row under the default REPEATABLE READ.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_postgres_dpop_jti_claim_is_atomic_under_concurrency() {
+        use authkestra_op::store::OpStore;
+        let (store, _c) = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let mut store = store.clone();
+            set.spawn(async move {
+                store
+                    .check_and_record_dpop_jti("jti-race", expires_at)
+                    .await
+                    .expect("a concurrent claim must not error — a deadlock here would")
+            });
+        }
+
+        let mut winners = 0;
+        while let Some(res) = set.join_next().await {
+            if res.unwrap() {
+                winners += 1;
+            }
+        }
+        assert_eq!(winners, 1, "exactly one concurrent claim may win");
+    }
+
+    /// authkestra#290 (PR review, finding #4): `ensure_postgres_column`
+    /// probes `information_schema.columns`, which spans every schema the
+    /// role can see. Without the `table_schema = 'authkestra'` predicate a
+    /// host application's own `public.oauth_clients` satisfies the probe
+    /// and the ALTER that `authkestra.oauth_clients` still needs is
+    /// skipped — silently, with the breakage surfacing later as a storage
+    /// error on every `find_client`.
+    ///
+    /// Drop the qualifier from the probe and this test fails on
+    /// `find_client`, not on `migrate()`, which is exactly what makes the
+    /// unqualified version dangerous.
+    #[tokio::test]
+    async fn test_postgres_migration_is_not_confused_by_a_same_named_table_in_public() {
+        let container = Postgres::default()
+            .with_env_var("POSTGRES_PASSWORD", "postgres")
+            .with_env_var("POSTGRES_USER", "postgres")
+            .with_env_var("POSTGRES_DB", "postgres")
+            .start()
+            .await
+            .unwrap();
+        let port = container.get_host_port_ipv4(5432).await.unwrap();
+        let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await
+            .unwrap();
+
+        // The pre-#287 authkestra schema (no new columns), plus an
+        // unrelated host-app table of the same name in `public` that
+        // *does* already have a `jwks` column.
+        use sqlx::Executor;
+        pool.execute(
+            "CREATE SCHEMA IF NOT EXISTS authkestra;
+             CREATE TABLE authkestra.oauth_clients (
+                client_id VARCHAR(255) PRIMARY KEY,
+                client_secret_hash VARCHAR(255),
+                require_pkce BOOLEAN NOT NULL DEFAULT TRUE,
+                redirect_uris JSONB NOT NULL,
+                grant_types JSONB NOT NULL,
+                scopes JSONB NOT NULL,
+                allowed_audiences JSONB NOT NULL
+            );
+            CREATE TABLE authkestra.oauth_refresh_tokens (
+                token VARCHAR(255) PRIMARY KEY,
+                client_id VARCHAR(255) NOT NULL REFERENCES authkestra.oauth_clients(client_id) ON DELETE CASCADE,
+                identity JSONB NOT NULL,
+                scope TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                revoked_at TIMESTAMPTZ
+            );
+            CREATE TABLE public.oauth_clients (
+                client_id VARCHAR(255) PRIMARY KEY,
+                jwks JSONB
+            );",
+        )
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO authkestra.oauth_clients
+             (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
+        )
+        .bind("shadowed_client")
+        .bind("hash")
+        .bind(true)
+        .bind(sqlx::types::Json(vec!["http://localhost/cb"]))
+        .bind(sqlx::types::Json(vec!["authorization_code"]))
+        .bind(sqlx::types::Json(vec!["openid"]))
+        .bind(sqlx::types::Json(vec!["aud"]))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut store = SqlxOpStore::<sqlx::Postgres>::new(pool);
+        store.migrate().await.expect("migrate must succeed");
+
+        let client = store
+            .find_client("shadowed_client")
+            .await
+            .expect("find_client must not fail: the ALTER must have been applied to authkestra.oauth_clients, not skipped because public.oauth_clients happened to have a jwks column")
+            .expect("the client must be found");
+        assert_eq!(client.jwks, None);
+        assert_eq!(client.token_endpoint_auth_method, None);
     }
 }
 
@@ -1779,6 +2187,126 @@ mod sqlite_tests {
             "an undecodable token_endpoint_auth_method must fail closed as a storage error, not silently decode to None: got {result:?}"
         );
     }
+
+    /// The point of authkestra#291: before this, `SqlxOpStore` carried an
+    /// empty `impl OpStore`, so it inherited the fail-closed
+    /// `NoDpopReplayStore` default and refused *every* DPoP proof. A first
+    /// claim must now succeed and an immediate replay must be refused.
+    #[tokio::test]
+    async fn test_sqlite_dpop_jti_is_claimed_once_and_replay_is_refused() {
+        use authkestra_op::store::OpStore;
+        let mut store = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        assert!(
+            store
+                .check_and_record_dpop_jti("jti-291", expires_at)
+                .await
+                .unwrap(),
+            "a fresh jti must be claimable — a false here is the fail-closed \
+             default this override exists to replace"
+        );
+        assert!(
+            !store
+                .check_and_record_dpop_jti("jti-291", expires_at)
+                .await
+                .unwrap(),
+            "replaying a still-fresh jti must be refused"
+        );
+    }
+
+    /// A `jti` past its window is reclaimable: `verify_dpop_proof` rejects
+    /// such a proof on freshness first, so keeping the row would only grow
+    /// the table forever.
+    #[tokio::test]
+    async fn test_sqlite_dpop_jti_is_reclaimable_once_expired() {
+        use authkestra_op::store::OpStore;
+        let mut store = setup_db().await;
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-expired", Utc::now() - Duration::seconds(1))
+            .await
+            .unwrap());
+        assert!(
+            store
+                .check_and_record_dpop_jti("jti-expired", Utc::now() + Duration::seconds(60))
+                .await
+                .unwrap(),
+            "an expired jti must be reclaimable"
+        );
+    }
+
+    /// The guarantee the single-statement upsert exists for. A
+    /// `SELECT`-then-`INSERT` implementation passes both tests above and
+    /// fails this one, because its TOCTOU window is the replay itself.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_sqlite_dpop_jti_claim_is_atomic_under_concurrency() {
+        use authkestra_op::store::OpStore;
+        let store = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let mut store = store.clone();
+            set.spawn(async move {
+                store
+                    .check_and_record_dpop_jti("jti-race", expires_at)
+                    .await
+                    .unwrap()
+            });
+        }
+
+        let mut winners = 0;
+        while let Some(res) = set.join_next().await {
+            if res.unwrap() {
+                winners += 1;
+            }
+        }
+        assert_eq!(
+            winners, 1,
+            "exactly one concurrent claim of the same jti may win"
+        );
+    }
+
+    /// authkestra#290 (PR review, finding #1): `ensure_sqlite_column`'s
+    /// probe-then-ALTER is not atomic. Two replicas calling `migrate()` at
+    /// the same time both see the column as absent and both issue the
+    /// `ALTER`; the loser must treat "it's already there" as the intended
+    /// end state, not as a failed migration that aborts startup.
+    ///
+    /// Driven deterministically rather than by racing two tasks: the probe
+    /// is asked about a name that genuinely doesn't exist while the DDL
+    /// names one that does, which produces byte-for-byte the error the
+    /// losing replica receives.
+    #[tokio::test]
+    async fn test_sqlite_ensure_column_tolerates_a_concurrent_duplicate_add() {
+        let store = setup_db().await;
+
+        ensure_sqlite_column(
+            &store.pool,
+            "authkestra_oauth_clients",
+            "not_a_real_column",
+            "client_id TEXT",
+        )
+        .await
+        .expect("a duplicate-column ALTER must be treated as already-migrated");
+    }
+
+    /// The other half of the finding #1 fix, and the reason it can't be a
+    /// blanket `.ok()`: everything that is *not* a duplicate column must
+    /// still abort the migration.
+    #[tokio::test]
+    async fn test_sqlite_ensure_column_still_propagates_unrelated_alter_failures() {
+        let store = setup_db().await;
+
+        let err = ensure_sqlite_column(&store.pool, "no_such_table", "c", "c TEXT")
+            .await
+            .expect_err("a missing table must stay fatal");
+        assert!(
+            !is_sqlite_duplicate_column(&err),
+            "a missing table must not be classified as a duplicate column: {err:?}"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "mysql"))]
@@ -2128,5 +2656,106 @@ mod mysql_tests {
             .unwrap()
             .expect("token must be found");
         assert_eq!(fetched.jkt, Some("post-upgrade-jkt".to_string()));
+    }
+
+    /// authkestra#291: `SqlxOpStore` used to inherit the fail-closed
+    /// `NoDpopReplayStore` default, refusing every DPoP proof.
+    #[tokio::test]
+    async fn test_mysql_dpop_jti_is_claimed_once_and_replay_is_refused() {
+        use authkestra_op::store::OpStore;
+        let (mut store, _c) = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-291", expires_at)
+            .await
+            .unwrap());
+        assert!(
+            !store
+                .check_and_record_dpop_jti("jti-291", expires_at)
+                .await
+                .unwrap(),
+            "replaying a still-fresh jti must be refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mysql_dpop_jti_is_reclaimable_once_expired() {
+        use authkestra_op::store::OpStore;
+        let (mut store, _c) = setup_db().await;
+
+        assert!(store
+            .check_and_record_dpop_jti("jti-expired", Utc::now() - Duration::seconds(5))
+            .await
+            .unwrap());
+        assert!(
+            store
+                .check_and_record_dpop_jti("jti-expired", Utc::now() + Duration::seconds(60))
+                .await
+                .unwrap(),
+            "an expired jti must be reclaimable"
+        );
+    }
+
+    /// Guards both the TOCTOU window and, on MySQL, the gap-lock deadlock
+    /// that a `SELECT ... FOR UPDATE` transaction would hit on a
+    /// not-yet-existing row under the default REPEATABLE READ.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_mysql_dpop_jti_claim_is_atomic_under_concurrency() {
+        use authkestra_op::store::OpStore;
+        let (store, _c) = setup_db().await;
+        let expires_at = Utc::now() + Duration::seconds(60);
+
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let mut store = store.clone();
+            set.spawn(async move {
+                store
+                    .check_and_record_dpop_jti("jti-race", expires_at)
+                    .await
+                    .expect("a concurrent claim must not error — a deadlock here would")
+            });
+        }
+
+        let mut winners = 0;
+        while let Some(res) = set.join_next().await {
+            if res.unwrap() {
+                winners += 1;
+            }
+        }
+        assert_eq!(winners, 1, "exactly one concurrent claim may win");
+    }
+
+    /// authkestra#290 (PR review, finding #1) — the MySQL half. See
+    /// `sqlite_tests`'s identically named test for the reasoning and for
+    /// why the race is driven deterministically instead of with two tasks.
+    /// MySQL reports this as `ER_DUP_FIELDNAME` (1060, SQLSTATE 42S21).
+    #[tokio::test]
+    async fn test_mysql_ensure_column_tolerates_a_concurrent_duplicate_add() {
+        let (store, _c) = setup_db().await;
+
+        ensure_mysql_column(
+            &store.pool,
+            "authkestra_oauth_clients",
+            "not_a_real_column",
+            "client_id VARCHAR(255)",
+        )
+        .await
+        .expect("a duplicate-column ALTER must be treated as already-migrated");
+    }
+
+    /// The other half of the finding #1 fix: a missing table is MySQL 1146,
+    /// not 1060, and must still abort the migration.
+    #[tokio::test]
+    async fn test_mysql_ensure_column_still_propagates_unrelated_alter_failures() {
+        let (store, _c) = setup_db().await;
+
+        let err = ensure_mysql_column(&store.pool, "no_such_table", "c", "c VARCHAR(255)")
+            .await
+            .expect_err("a missing table must stay fatal");
+        assert!(
+            !is_mysql_duplicate_column(&err),
+            "a missing table must not be classified as a duplicate column: {err:?}"
+        );
     }
 }

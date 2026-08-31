@@ -41,7 +41,7 @@ impl RedisClientAssertionStore {
         Self { conn, prefix }
     }
 
-    fn key(&mut self, jti: &str) -> String {
+    fn key(&self, jti: &str) -> String {
         format!("{prefix}:{jti}", prefix = self.prefix)
     }
 }
@@ -76,5 +76,48 @@ impl ClientAssertionStore for RedisClientAssertionStore {
 
         // If res is Some("OK"), it means SET NX succeeded (the JTI is new).
         Ok(res.is_some())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use testcontainers::runners::AsyncRunner;
+    use testcontainers_modules::redis::REDIS_PORT;
+
+    #[tokio::test]
+    async fn test_redis_client_assertion_store_replay_protection() {
+        let node = testcontainers_modules::redis::Redis::default()
+            .start()
+            .await
+            .unwrap();
+        let host_port = node.get_host_port_ipv4(REDIS_PORT).await.unwrap();
+        let redis_url = format!("redis://127.0.0.1:{host_port}");
+
+        let mut store = RedisClientAssertionStore::new(&redis_url, "test_jti".to_string())
+            .await
+            .unwrap();
+
+        let exp = Utc::now() + chrono::Duration::seconds(60);
+
+        // 1. First record_jti succeeds (returns true)
+        let first = store.record_jti("unique-jti-1", exp).await.unwrap();
+        assert!(first, "First presentation of JTI must succeed");
+
+        // 2. Second record_jti before expiration fails (returns false - replay prevented)
+        let second = store.record_jti("unique-jti-1", exp).await.unwrap();
+        assert!(!second, "Replay of same JTI must be rejected");
+
+        // 3. Different JTI succeeds
+        let another = store.record_jti("unique-jti-2", exp).await.unwrap();
+        assert!(another, "Different JTI must succeed");
+
+        // 4. Expired timestamp returns false immediately
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let expired = store.record_jti("unique-jti-3", past).await.unwrap();
+        assert!(
+            !expired,
+            "Already-expired assertion must be rejected immediately"
+        );
     }
 }
