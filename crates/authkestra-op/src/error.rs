@@ -136,3 +136,10 @@ pub enum OpError {
     #[error("principal is revoked or inactive")]
     PrincipalRevoked,
 }
+
+impl From<authkestra_engine::store::StoreError> for OpError {
+    fn from(err: authkestra_engine::store::StoreError) -> Self {
+        tracing::error!("StoreError: {}", err);
+        OpError::Storage
+    }
+}

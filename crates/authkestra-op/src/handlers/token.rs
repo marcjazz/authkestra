@@ -183,7 +183,7 @@ pub async fn handle_token(
     req: TokenRequest,
     auth_header: Option<&str>,
     config: &OpConfig,
-    op_store: &dyn OpStore,
+    op_store: &mut dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     handle_token_with_client_cert(req, auth_header, config, op_store, tokens, None, None).await
@@ -215,7 +215,7 @@ pub async fn handle_token_with_client_cert(
     mut req: TokenRequest,
     auth_header: Option<&str>,
     config: &OpConfig,
-    op_store: &dyn OpStore,
+    op_store: &mut dyn OpStore,
     tokens: &TokenManager,
     client_cert_der: Option<&[u8]>,
     dpop_header: Option<&str>,
@@ -540,8 +540,8 @@ pub(crate) async fn authenticate_client(
     client: &ClientRegistration,
     credential: &PresentedCredential,
     config: &OpConfig,
-    op_store: &dyn OpStore,
-) -> Result<(), OpError> {
+    op_store: &mut dyn OpStore,
+) -> Result<(), authkestra_engine::store::StoreError> {
     use PresentedCredential as Cred;
     use TokenEndpointAuthMethod as Method;
 
@@ -620,7 +620,7 @@ async fn handle_device_code(
     client_id: String,
     client: ClientRegistration,
     config: &OpConfig,
-    op_store: &dyn OpStore,
+    op_store: &mut dyn OpStore,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     use crate::device::DeviceCodeStatus;
@@ -822,7 +822,7 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
     client_id: String,
     client: ClientRegistration,
     config: &OpConfig,
-    op_store: &S,
+    op_store: &mut S,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     if !client.allows_grant_type(&GrantType::AuthorizationCode) {
@@ -1124,7 +1124,7 @@ enum RefreshTokenStoreOutcome {
 /// request here on a transient read hiccup would destroy that already-spent
 /// token's session for a write that in fact succeeded.
 async fn store_refresh_token_verifying_dpop_binding<S: OpStore + ?Sized>(
-    op_store: &S,
+    op_store: &mut S,
     rt: RefreshToken,
 ) -> RefreshTokenStoreOutcome {
     let token = rt.token.clone();
@@ -1330,7 +1330,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     client_id: String,
     client: ClientRegistration,
     config: &OpConfig,
-    op_store: &S,
+    op_store: &mut S,
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     if !client.allows_grant_type(&GrantType::RefreshToken) {
@@ -1945,16 +1945,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
-        let refresh =
+        let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
 
         let res = handle_token(
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 refresh.clone(),
@@ -2015,16 +2015,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
-        let refresh =
+        let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
 
         let res = handle_token(
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 refresh.clone(),
@@ -2070,7 +2070,7 @@ mod tests {
         sha2::Digest::update(&mut hasher, verifier.as_bytes());
         let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
 
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
@@ -2113,7 +2113,7 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -2151,7 +2151,7 @@ mod tests {
     impl<Inner: OpStore> crate::code::AuthorizationCodeStore
         for OverridingAuthorizationCodeStore<Inner>
     {
-        async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+        async fn store_code(&self, code: AuthorizationCode) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_code(code).await
         }
 
@@ -2162,7 +2162,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl<Inner: OpStore> RefreshTokenStore for OverridingAuthorizationCodeStore<Inner> {
-        async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+        async fn store_token(&self, token: RefreshToken) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_token(token).await
         }
 
@@ -2170,7 +2170,7 @@ mod tests {
             self.inner.get_token(token).await
         }
 
-        async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+        async fn revoke_token(&self, token: &str) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.revoke_token(token).await
         }
 
@@ -2184,7 +2184,7 @@ mod tests {
         async fn store_device_code(
             &self,
             session: crate::device::DeviceCodeSession,
-        ) -> Result<(), OpError> {
+        ) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_device_code(session).await
         }
 
@@ -2205,11 +2205,11 @@ mod tests {
         async fn update_device_code(
             &self,
             session: crate::device::DeviceCodeSession,
-        ) -> Result<(), OpError> {
+        ) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.update_device_code(session).await
         }
 
-        async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+        async fn delete_device_code(&self, device_code: &str) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.delete_device_code(device_code).await
         }
 
@@ -2292,7 +2292,7 @@ mod tests {
             .await
             .unwrap();
 
-        let store =
+        let mut store =
             OverridingAuthorizationCodeStore {
                 inner:
                     crate::store::CompositeOpStore::new(
@@ -2310,7 +2310,7 @@ mod tests {
         // would fail closed with `invalid_grant`, not succeed.
         let req = auth_code_test_req("no-such-code");
 
-        let res = handle_token(req, None, &test_config(false), &store, &test_tokens()).await;
+        let res = handle_token(req, None, &test_config(false), &mut store, &test_tokens()).await;
 
         let resp =
             res.expect("the override should have been invoked instead of the built-in handler");
@@ -2346,7 +2346,7 @@ mod tests {
         sha2::Digest::update(&mut hasher, verifier.as_bytes());
         let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
 
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
@@ -2374,7 +2374,7 @@ mod tests {
             },
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -2415,7 +2415,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
@@ -2457,7 +2457,7 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -2493,7 +2493,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
@@ -2535,7 +2535,7 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -2571,7 +2571,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
@@ -2613,7 +2613,7 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -2654,7 +2654,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code(AuthorizationCode {
@@ -2696,7 +2696,7 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -2763,7 +2763,7 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -2884,7 +2884,7 @@ mod tests {
     /// of certificate presentation ever produced a `cnf` claim.
     #[tokio::test]
     async fn test_client_credentials_stamps_cnf_x5t_s256_when_certificate_presented() {
-        let store = client_credentials_store("client1").await;
+        let mut store = client_credentials_store("client1").await;
 
         let cert_der = b"a fake DER-encoded mTLS client certificate for testing";
         let expected_thumbprint =
@@ -2895,7 +2895,7 @@ mod tests {
             client_credentials_request("client1"),
             None,
             &test_config(false),
-            &store,
+            &mut store,
             &tokens,
             Some(cert_der),
             None,
@@ -2924,14 +2924,14 @@ mod tests {
     /// force certificate binding onto every deployment.
     #[tokio::test]
     async fn test_client_credentials_omits_cnf_when_no_certificate_presented() {
-        let store = client_credentials_store("client1").await;
+        let mut store = client_credentials_store("client1").await;
 
         let tokens = test_tokens();
         let resp = handle_token_with_client_cert(
             client_credentials_request("client1"),
             None,
             &test_config(false),
-            &store,
+            &mut store,
             &tokens,
             None,
             None,
@@ -2953,14 +2953,14 @@ mod tests {
     /// `handle_token_with_client_cert` — no `cnf` claim, ever.
     #[tokio::test]
     async fn test_handle_token_without_cert_param_never_stamps_cnf() {
-        let store = client_credentials_store("client1").await;
+        let mut store = client_credentials_store("client1").await;
 
         let tokens = test_tokens();
         let resp = handle_token(
             client_credentials_request("client1"),
             None,
             &test_config(false),
-            &store,
+            &mut store,
             &tokens,
         )
         .await
@@ -2978,14 +2978,14 @@ mod tests {
     /// `default_handle_token_exchange`'s equivalent check.
     #[tokio::test]
     async fn test_client_credentials_rejects_disallowed_audience() {
-        let store =
+        let mut store =
             client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
 
         let res = handle_token(
             client_credentials_request_with_audience("client1", Some("serviceB")),
             None,
             &test_config(false),
-            &store,
+            &mut store,
             &test_tokens(),
         )
         .await;
@@ -2999,7 +2999,7 @@ mod tests {
     /// caller's own `client_id`.
     #[tokio::test]
     async fn test_client_credentials_allowed_audience_lands_in_aud() {
-        let store =
+        let mut store =
             client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
 
         let tokens = test_tokens();
@@ -3007,7 +3007,7 @@ mod tests {
             client_credentials_request_with_audience("client1", Some("serviceA")),
             None,
             &test_config(false),
-            &store,
+            &mut store,
             &tokens,
         )
         .await;
@@ -3028,7 +3028,7 @@ mod tests {
     /// fine while silently dropping the other feature.
     #[tokio::test]
     async fn test_client_credentials_stamps_cnf_and_honors_audience_together() {
-        let store =
+        let mut store =
             client_credentials_store_with_audiences("client1", vec!["serviceA".to_string()]).await;
 
         let cert_der = b"a fake DER-encoded mTLS client certificate for testing";
@@ -3040,7 +3040,7 @@ mod tests {
             client_credentials_request_with_audience("client1", Some("serviceA")),
             None,
             &test_config(false),
-            &store,
+            &mut store,
             &tokens,
             Some(cert_der),
             None,
@@ -3090,7 +3090,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let refresh =
+        let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
             .store_token(RefreshToken {
@@ -3128,7 +3128,7 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 refresh.clone(),
@@ -3171,7 +3171,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl<Inner: OpStore> crate::code::AuthorizationCodeStore for OverridingRefreshStore<Inner> {
-        async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+        async fn store_code(&self, code: AuthorizationCode) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_code(code).await
         }
 
@@ -3182,7 +3182,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl<Inner: OpStore> RefreshTokenStore for OverridingRefreshStore<Inner> {
-        async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+        async fn store_token(&self, token: RefreshToken) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_token(token).await
         }
 
@@ -3190,7 +3190,7 @@ mod tests {
             self.inner.get_token(token).await
         }
 
-        async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+        async fn revoke_token(&self, token: &str) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.revoke_token(token).await
         }
 
@@ -3204,7 +3204,7 @@ mod tests {
         async fn store_device_code(
             &self,
             session: crate::device::DeviceCodeSession,
-        ) -> Result<(), OpError> {
+        ) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_device_code(session).await
         }
 
@@ -3225,11 +3225,11 @@ mod tests {
         async fn update_device_code(
             &self,
             session: crate::device::DeviceCodeSession,
-        ) -> Result<(), OpError> {
+        ) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.update_device_code(session).await
         }
 
-        async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+        async fn delete_device_code(&self, device_code: &str) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.delete_device_code(device_code).await
         }
 
@@ -3312,7 +3312,7 @@ mod tests {
             .await
             .unwrap();
 
-        let store =
+        let mut store =
             OverridingRefreshStore {
                 inner:
                     crate::store::CompositeOpStore::new(
@@ -3330,7 +3330,7 @@ mod tests {
         // would fail closed with `invalid_grant`, not succeed.
         let req = refresh_test_req("no-such-token");
 
-        let res = handle_token(req, None, &test_config(false), &store, &test_tokens()).await;
+        let res = handle_token(req, None, &test_config(false), &mut store, &test_tokens()).await;
 
         let resp =
             res.expect("the override should have been invoked instead of the built-in handler");
@@ -3354,7 +3354,7 @@ mod tests {
             .await
             .unwrap();
 
-        let refresh =
+        let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
             .store_token(RefreshToken {
@@ -3378,7 +3378,7 @@ mod tests {
             refresh_test_req("rt-default"),
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
                 refresh.clone(),
@@ -3412,7 +3412,7 @@ mod tests {
             refresh_test_req("does-not-exist"),
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients,
                 authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<RefreshToken>::new(),
@@ -3437,7 +3437,7 @@ mod tests {
             .await
             .unwrap();
 
-        let refresh =
+        let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         // `store_token` derives the underlying KV TTL from `expires_at`, so
         // an already-past `expires_at` would get evicted at the storage
@@ -3466,7 +3466,7 @@ mod tests {
             refresh_test_req("rt-expired"),
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients,
                 authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
                 refresh,
@@ -3493,7 +3493,7 @@ mod tests {
             .await
             .unwrap();
 
-        let refresh =
+        let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
             .store_token(RefreshToken {
@@ -3507,7 +3507,7 @@ mod tests {
             .await
             .unwrap();
 
-        let store = crate::store::CompositeOpStore::new(
+        let mut store = crate::store::CompositeOpStore::new(
             clients,
             authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
             refresh,
@@ -3520,7 +3520,7 @@ mod tests {
             refresh_test_req("rt-once"),
             None,
             &test_config(false),
-            &store,
+            &mut store,
             &tokens,
         )
         .await;
@@ -3532,7 +3532,7 @@ mod tests {
             refresh_test_req("rt-once"),
             None,
             &test_config(false),
-            &store,
+            &mut store,
             &tokens,
         )
         .await;
@@ -3551,7 +3551,7 @@ mod tests {
             .await
             .unwrap();
 
-        let refresh =
+        let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
             .store_token(RefreshToken {
@@ -3569,7 +3569,7 @@ mod tests {
             refresh_test_req("rt-openid"),
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients,
                 authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
                 refresh,
@@ -3599,7 +3599,7 @@ mod tests {
             .await
             .unwrap();
 
-        let refresh =
+        let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
             .store_token(RefreshToken {
@@ -3617,7 +3617,7 @@ mod tests {
             refresh_test_req("rt-no-openid"),
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients,
                 authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
                 refresh,
@@ -3657,7 +3657,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl<Inner: OpStore> crate::code::AuthorizationCodeStore for OverridingTokenExchangeStore<Inner> {
-        async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+        async fn store_code(&self, code: AuthorizationCode) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_code(code).await
         }
 
@@ -3668,7 +3668,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl<Inner: OpStore> RefreshTokenStore for OverridingTokenExchangeStore<Inner> {
-        async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+        async fn store_token(&self, token: RefreshToken) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_token(token).await
         }
 
@@ -3676,7 +3676,7 @@ mod tests {
             self.inner.get_token(token).await
         }
 
-        async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+        async fn revoke_token(&self, token: &str) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.revoke_token(token).await
         }
 
@@ -3690,7 +3690,7 @@ mod tests {
         async fn store_device_code(
             &self,
             session: crate::device::DeviceCodeSession,
-        ) -> Result<(), OpError> {
+        ) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.store_device_code(session).await
         }
 
@@ -3711,11 +3711,11 @@ mod tests {
         async fn update_device_code(
             &self,
             session: crate::device::DeviceCodeSession,
-        ) -> Result<(), OpError> {
+        ) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.update_device_code(session).await
         }
 
-        async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+        async fn delete_device_code(&self, device_code: &str) -> Result<(), authkestra_engine::store::StoreError> {
             self.inner.delete_device_code(device_code).await
         }
 
@@ -3781,7 +3781,7 @@ mod tests {
             .await
             .unwrap();
 
-        let store =
+        let mut store =
             OverridingTokenExchangeStore {
                 inner:
                     crate::store::CompositeOpStore::new(
@@ -3802,7 +3802,7 @@ mod tests {
             // else, so a success proves the override intercepted the call
             // before that built-in check ever ran.
             &test_config(false),
-            &store,
+            &mut store,
             &tokens,
         )
         .await;
@@ -3849,7 +3849,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients,
                 authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<RefreshToken>::new(),
@@ -3897,7 +3897,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients,
                 authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<RefreshToken>::new(),
@@ -3978,7 +3978,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4026,7 +4026,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4077,7 +4077,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4124,7 +4124,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4172,7 +4172,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4217,7 +4217,7 @@ mod tests {
             req,
             None,
             &test_config(false),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4263,7 +4263,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4309,7 +4309,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4355,7 +4355,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4401,7 +4401,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4451,7 +4451,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4497,7 +4497,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4552,7 +4552,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4598,7 +4598,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4649,7 +4649,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4700,7 +4700,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4769,7 +4769,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4833,7 +4833,7 @@ mod tests {
             req,
             None,
             &test_config(true),
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -4948,7 +4948,7 @@ mod tests {
         /// `token_type` to `"DPoP"`.
         #[tokio::test]
         async fn client_credentials_stamps_cnf_jkt_and_dpop_token_type() {
-            let store = client_credentials_store_with_dpop_replay("client1").await;
+            let mut store = client_credentials_store_with_dpop_replay("client1").await;
             let tokens = test_tokens();
             let proof_builder = DpopProofBuilder::new("https://auth.example.com/token", "jti-1");
             let proof = proof_builder.build();
@@ -4957,7 +4957,7 @@ mod tests {
                 client_credentials_request("client1"),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&proof),
@@ -4985,14 +4985,14 @@ mod tests {
         /// feature is additive.
         #[tokio::test]
         async fn client_credentials_without_dpop_header_stays_bearer() {
-            let store = client_credentials_store_with_dpop_replay("client1").await;
+            let mut store = client_credentials_store_with_dpop_replay("client1").await;
             let tokens = test_tokens();
 
             let resp = handle_token_with_client_cert(
                 client_credentials_request("client1"),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 None,
@@ -5011,7 +5011,7 @@ mod tests {
         /// accepted a second time.
         #[tokio::test]
         async fn a_replayed_dpop_proof_jti_is_rejected() {
-            let store = client_credentials_store_with_dpop_replay("client1").await;
+            let mut store = client_credentials_store_with_dpop_replay("client1").await;
             let tokens = test_tokens();
             let proof =
                 DpopProofBuilder::new("https://auth.example.com/token", "jti-replay").build();
@@ -5020,7 +5020,7 @@ mod tests {
                 client_credentials_request("client1"),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&proof),
@@ -5032,7 +5032,7 @@ mod tests {
                 client_credentials_request("client1"),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&proof),
@@ -5051,7 +5051,7 @@ mod tests {
             // Deliberately the plain `client_credentials_store`, not the
             // `_with_dpop_replay` variant — this store's `P` generic
             // parameter defaults to `NoDpopReplayStore`.
-            let store = client_credentials_store("client1").await;
+            let mut store = client_credentials_store("client1").await;
             let tokens = test_tokens();
             let proof = DpopProofBuilder::new("https://auth.example.com/token", "jti-1").build();
 
@@ -5059,7 +5059,7 @@ mod tests {
                 client_credentials_request("client1"),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&proof),
@@ -5075,7 +5075,7 @@ mod tests {
         /// `config.token_endpoint()`, not hardcoded or ignored.
         #[tokio::test]
         async fn a_proof_for_the_wrong_endpoint_is_rejected() {
-            let store = client_credentials_store_with_dpop_replay("client1").await;
+            let mut store = client_credentials_store_with_dpop_replay("client1").await;
             let tokens = test_tokens();
             let proof =
                 DpopProofBuilder::new("https://not-this-server.example.com/token", "jti-1").build();
@@ -5084,7 +5084,7 @@ mod tests {
                 client_credentials_request("client1"),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&proof),
@@ -5130,7 +5130,7 @@ mod tests {
             let challenge =
                 base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
 
-            let codes = authkestra_engine::store::memory::MemoryStore::<
+            let mut codes = authkestra_engine::store::memory::MemoryStore::<
                 crate::code::AuthorizationCode,
             >::new();
             codes
@@ -5149,7 +5149,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let store = crate::store::CompositeOpStore::new(
+            let mut store = crate::store::CompositeOpStore::new(
                 clients,
                 codes,
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
@@ -5190,7 +5190,7 @@ mod tests {
                 req,
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&proof),
@@ -5259,7 +5259,7 @@ mod tests {
             let challenge =
                 base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
 
-            let codes = authkestra_engine::store::memory::MemoryStore::<
+            let mut codes = authkestra_engine::store::memory::MemoryStore::<
                 crate::code::AuthorizationCode,
             >::new();
             codes
@@ -5278,7 +5278,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let store = crate::store::CompositeOpStore::new(
+            let mut store = crate::store::CompositeOpStore::new(
                 clients,
                 codes,
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
@@ -5356,7 +5356,7 @@ mod tests {
                 dpop_refresh_continuity_code_req(&verifier),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&issue_proof.build()),
@@ -5377,7 +5377,7 @@ mod tests {
                 dpop_refresh_continuity_refresh_req(&refresh_token),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&rotate_proof.build()),
@@ -5418,7 +5418,7 @@ mod tests {
                 dpop_refresh_continuity_code_req(&verifier),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&issue_proof.build()),
@@ -5436,7 +5436,7 @@ mod tests {
                 dpop_refresh_continuity_refresh_req(&refresh_token),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&attacker_proof.build()),
@@ -5465,7 +5465,7 @@ mod tests {
                 dpop_refresh_continuity_code_req(&verifier),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&issue_proof.build()),
@@ -5478,7 +5478,7 @@ mod tests {
                 dpop_refresh_continuity_refresh_req(&refresh_token),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 None,
@@ -5514,7 +5514,7 @@ mod tests {
                 dpop_refresh_continuity_code_req(&verifier),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&issue_proof.build()),
@@ -5528,7 +5528,7 @@ mod tests {
                 dpop_refresh_continuity_refresh_req(&refresh_token),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 None,
@@ -5548,7 +5548,7 @@ mod tests {
                 dpop_refresh_continuity_refresh_req(&refresh_token),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&retry_proof.build()),
@@ -5572,7 +5572,7 @@ mod tests {
                 dpop_refresh_continuity_code_req(&verifier),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 None,
@@ -5586,7 +5586,7 @@ mod tests {
                 dpop_refresh_continuity_refresh_req(&refresh_token),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 None,
@@ -5621,7 +5621,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl<Inner: OpStore> crate::code::AuthorizationCodeStore for JktDroppingRefreshStore<Inner> {
-            async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+            async fn store_code(&self, code: AuthorizationCode) -> Result<(), authkestra_engine::store::StoreError> {
                 self.inner.store_code(code).await
             }
 
@@ -5632,7 +5632,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl<Inner: OpStore> RefreshTokenStore for JktDroppingRefreshStore<Inner> {
-            async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+            async fn store_token(&self, token: RefreshToken) -> Result<(), authkestra_engine::store::StoreError> {
                 let mut stripped = token;
                 stripped.jkt = None;
                 self.inner.store_token(stripped).await
@@ -5642,7 +5642,7 @@ mod tests {
                 self.inner.get_token(token).await
             }
 
-            async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+            async fn revoke_token(&self, token: &str) -> Result<(), authkestra_engine::store::StoreError> {
                 self.inner.revoke_token(token).await
             }
 
@@ -5656,7 +5656,7 @@ mod tests {
             async fn store_device_code(
                 &self,
                 session: crate::device::DeviceCodeSession,
-            ) -> Result<(), OpError> {
+            ) -> Result<(), authkestra_engine::store::StoreError> {
                 self.inner.store_device_code(session).await
             }
 
@@ -5677,11 +5677,11 @@ mod tests {
             async fn update_device_code(
                 &self,
                 session: crate::device::DeviceCodeSession,
-            ) -> Result<(), OpError> {
+            ) -> Result<(), authkestra_engine::store::StoreError> {
                 self.inner.update_device_code(session).await
             }
 
-            async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+            async fn delete_device_code(&self, device_code: &str) -> Result<(), authkestra_engine::store::StoreError> {
                 self.inner.delete_device_code(device_code).await
             }
 
@@ -5699,7 +5699,7 @@ mod tests {
                 &self,
                 jti: &str,
                 expires_at: chrono::DateTime<Utc>,
-            ) -> Result<bool, OpError> {
+            ) -> Result<bool, authkestra_engine::store::StoreError> {
                 self.inner.check_and_record_dpop_jti(jti, expires_at).await
             }
         }
@@ -5714,7 +5714,7 @@ mod tests {
         #[allow(deprecated)]
         async fn a_backend_that_silently_drops_jkt_fails_the_request_instead_of_lying() {
             let (inner, verifier) = dpop_refresh_continuity_store().await;
-            let store = JktDroppingRefreshStore { inner };
+            let mut store = JktDroppingRefreshStore { inner };
             let tokens = test_tokens();
 
             let proof =
@@ -5724,7 +5724,7 @@ mod tests {
                 dpop_refresh_continuity_code_req(&verifier),
                 None,
                 &test_config(false),
-                &store,
+                &mut store,
                 &tokens,
                 None,
                 Some(&proof),
@@ -5775,7 +5775,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl crate::code::AuthorizationCodeStore for CannedGetTokenStore {
-            async fn store_code(&self, _code: AuthorizationCode) -> Result<(), OpError> {
+            async fn store_code(&self, _code: AuthorizationCode) -> Result<(), authkestra_engine::store::StoreError> {
                 unimplemented!("not exercised by this test")
             }
 
@@ -5789,7 +5789,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl RefreshTokenStore for CannedGetTokenStore {
-            async fn store_token(&self, _token: RefreshToken) -> Result<(), OpError> {
+            async fn store_token(&self, _token: RefreshToken) -> Result<(), authkestra_engine::store::StoreError> {
                 Ok(())
             }
 
@@ -5800,7 +5800,7 @@ mod tests {
                 }
             }
 
-            async fn revoke_token(&self, _token: &str) -> Result<(), OpError> {
+            async fn revoke_token(&self, _token: &str) -> Result<(), authkestra_engine::store::StoreError> {
                 unimplemented!("not exercised by this test")
             }
 
@@ -5814,7 +5814,7 @@ mod tests {
             async fn store_device_code(
                 &self,
                 _session: crate::device::DeviceCodeSession,
-            ) -> Result<(), OpError> {
+            ) -> Result<(), authkestra_engine::store::StoreError> {
                 unimplemented!("not exercised by this test")
             }
 
@@ -5835,11 +5835,11 @@ mod tests {
             async fn update_device_code(
                 &self,
                 _session: crate::device::DeviceCodeSession,
-            ) -> Result<(), OpError> {
+            ) -> Result<(), authkestra_engine::store::StoreError> {
                 unimplemented!("not exercised by this test")
             }
 
-            async fn delete_device_code(&self, _device_code: &str) -> Result<(), OpError> {
+            async fn delete_device_code(&self, _device_code: &str) -> Result<(), authkestra_engine::store::StoreError> {
                 unimplemented!("not exercised by this test")
             }
 
@@ -5877,12 +5877,12 @@ mod tests {
         /// transient read failure despite the write having succeeded.
         #[tokio::test]
         async fn a_transient_error_on_the_confirmation_read_does_not_fail_the_binding() {
-            let store = CannedGetTokenStore {
+            let mut store = CannedGetTokenStore {
                 probe: ProbeOutcome::TransientError,
             };
 
             let outcome =
-                store_refresh_token_verifying_dpop_binding(&store, dpop_bound_refresh_token())
+                store_refresh_token_verifying_dpop_binding(&mut store, dpop_bound_refresh_token())
                     .await;
 
             assert!(
@@ -5899,12 +5899,12 @@ mod tests {
         /// not a positive signal the binding was dropped.
         #[tokio::test]
         async fn a_confirmation_read_that_finds_nothing_yet_does_not_fail_the_binding() {
-            let store = CannedGetTokenStore {
+            let mut store = CannedGetTokenStore {
                 probe: ProbeOutcome::NotFoundYet,
             };
 
             let outcome =
-                store_refresh_token_verifying_dpop_binding(&store, dpop_bound_refresh_token())
+                store_refresh_token_verifying_dpop_binding(&mut store, dpop_bound_refresh_token())
                     .await;
 
             assert!(

@@ -100,7 +100,7 @@ macro_rules! impl_opstore_sql {
         #[async_trait]
         impl ClientStore for SqlxOpStore<$backend> {
             #[allow(deprecated)] // `require_pkce` (authkestra#273) — still round-tripped for wire/storage compatibility
-            async fn find_client(&self, client_id: &str) -> Result<Option<ClientRegistration>, OpError> {
+            async fn find_client(&mut self, client_id: &str) -> Result<Option<ClientRegistration>, authkestra_engine::store::StoreError> {
                 let query = format!(
                     "SELECT
                         client_id,
@@ -124,7 +124,7 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx find_client error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
 
                 if let Some(row) = row {
@@ -138,10 +138,10 @@ macro_rules! impl_opstore_sql {
                     // For now, we'll assume we can get it as a string or fallback. We will use `try_get` as string.
                     // Since sqlx::types::Json is cross-platform, we can use that!
 
-                    let redirect_uris: sqlx::types::Json<Vec<String>> = row.try_get("redirect_uris").map_err(|_| OpError::Storage)?;
-                    let grant_types: sqlx::types::Json<Vec<crate::client::GrantType>> = row.try_get("grant_types").map_err(|_| OpError::Storage)?;
-                    let scopes: sqlx::types::Json<Vec<String>> = row.try_get("scopes").map_err(|_| OpError::Storage)?;
-                    let allowed_audiences: sqlx::types::Json<Vec<String>> = row.try_get("allowed_audiences").map_err(|_| OpError::Storage)?;
+                    let redirect_uris: sqlx::types::Json<Vec<String>> = row.try_get("redirect_uris").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+                    let grant_types: sqlx::types::Json<Vec<crate::client::GrantType>> = row.try_get("grant_types").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+                    let scopes: sqlx::types::Json<Vec<String>> = row.try_get("scopes").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+                    let allowed_audiences: sqlx::types::Json<Vec<String>> = row.try_get("allowed_audiences").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
                     // Nullable: a client registered before authkestra#287's
                     // migration added these columns simply has no value in
                     // them yet, same as any other pre-existing row and a
@@ -157,11 +157,11 @@ macro_rules! impl_opstore_sql {
                     // client. Propagate the decode error instead.
                     let token_endpoint_auth_method: Option<TokenEndpointAuthMethod> = row
                         .try_get::<Option<sqlx::types::Json<TokenEndpointAuthMethod>>, _>("token_endpoint_auth_method")
-                        .map_err(|_| OpError::Storage)?
+                        .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?
                         .map(|j| j.0);
                     let jwks: Option<serde_json::Value> = row
                         .try_get::<Option<sqlx::types::Json<serde_json::Value>>, _>("jwks")
-                        .map_err(|_| OpError::Storage)?
+                        .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?
                         .map(|j| j.0);
 
                     Ok(Some(ClientRegistration {
@@ -184,7 +184,7 @@ macro_rules! impl_opstore_sql {
         #[cfg(feature = $feature)]
         #[async_trait]
         impl AuthorizationCodeStore for SqlxOpStore<$backend> {
-            async fn store_code(&self, code: AuthorizationCode) -> Result<(), OpError> {
+            async fn store_code(&mut self, code: AuthorizationCode) -> Result<(), authkestra_engine::store::StoreError> {
                 let query = format!(
                     "INSERT INTO {schema}oauth_codes 
                     (code, client_id, redirect_uri, scope, code_challenge, code_challenge_method, nonce, identity, expires_at, used) 
@@ -213,7 +213,7 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx store_code error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
                 Ok(())
             }
@@ -224,7 +224,7 @@ macro_rules! impl_opstore_sql {
         #[cfg(feature = $feature)]
         #[async_trait]
         impl RefreshTokenStore for SqlxOpStore<$backend> {
-            async fn store_token(&self, token: RefreshToken) -> Result<(), OpError> {
+            async fn store_token(&mut self, token: RefreshToken) -> Result<(), authkestra_engine::store::StoreError> {
                 let query = format!(
                     "INSERT INTO {schema}oauth_refresh_tokens
                     (token, client_id, identity, scope, expires_at, jkt)
@@ -247,12 +247,12 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx store_token error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
                 Ok(())
             }
 
-            async fn get_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+            async fn get_token(&mut self, token: &str) -> Result<Option<RefreshToken>, authkestra_engine::store::StoreError> {
                 let query = format!(
                     "SELECT token, client_id, identity, scope, expires_at, jkt
                     FROM {schema}oauth_refresh_tokens
@@ -269,33 +269,33 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx get_token error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
 
                 if let Some(row) = row {
                     use sqlx::Row;
-                    let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
+                    let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
                     Ok(Some(RefreshToken {
-                        token: row.try_get("token").map_err(|_| OpError::Storage)?,
-                        client_id: row.try_get("client_id").map_err(|_| OpError::Storage)?,
+                        token: row.try_get("token").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        client_id: row.try_get("client_id").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                         identity: identity.0,
-                        scope: row.try_get("scope").map_err(|_| OpError::Storage)?,
-                        expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                        scope: row.try_get("scope").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                         // NULL (a pre-authkestra#287 row, or a token never
                         // bound to a DPoP proof) is a legitimate `None`; a
                         // decode error on a non-NULL value is propagated
                         // rather than silently discarded, since that would
                         // undo the RFC 9449 §5 continuity check this column
                         // exists to enforce.
-                        jkt: row.try_get("jkt").map_err(|_| OpError::Storage)?,
+                        jkt: row.try_get("jkt").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                     }))
                 } else {
                     Ok(None)
                 }
             }
 
-            async fn revoke_token(&self, token: &str) -> Result<(), OpError> {
+            async fn revoke_token(&mut self, token: &str) -> Result<(), authkestra_engine::store::StoreError> {
                 let query = format!(
                     "UPDATE {schema}oauth_refresh_tokens SET revoked_at = {p1} WHERE token = {p2}",
                     schema = $schema_prefix,
@@ -310,7 +310,7 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx revoke_token error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
                 Ok(())
             }
@@ -321,7 +321,7 @@ macro_rules! impl_opstore_sql {
         #[cfg(feature = $feature)]
         #[async_trait]
         impl DeviceCodeStore for SqlxOpStore<$backend> {
-            async fn store_device_code(&self, session: DeviceCodeSession) -> Result<(), OpError> {
+            async fn store_device_code(&mut self, session: DeviceCodeSession) -> Result<(), authkestra_engine::store::StoreError> {
                 let query = format!(
                     "INSERT INTO {schema}oauth_device_codes 
                     (device_code, user_code, client_id, scope, expires_at, status, last_polled_at) 
@@ -346,12 +346,12 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx store_device_code error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
                 Ok(())
             }
 
-            async fn get_device_code(&self, device_code: &str) -> Result<Option<DeviceCodeSession>, OpError> {
+            async fn get_device_code(&mut self, device_code: &str) -> Result<Option<DeviceCodeSession>, authkestra_engine::store::StoreError> {
                 let query = format!(
                     "SELECT device_code, user_code, client_id, scope, expires_at, status, last_polled_at 
                     FROM {schema}oauth_device_codes 
@@ -366,19 +366,19 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx get_device_code error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
 
                 if let Some(row) = row {
                     use sqlx::Row;
-                    let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| OpError::Storage)?;
+                    let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
                     Ok(Some(DeviceCodeSession {
-                        device_code: row.try_get("device_code").map_err(|_| OpError::Storage)?,
-                        user_code: row.try_get("user_code").map_err(|_| OpError::Storage)?,
-                        client_id: row.try_get("client_id").map_err(|_| OpError::Storage)?,
-                        scope: row.try_get("scope").map_err(|_| OpError::Storage)?,
-                        expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                        device_code: row.try_get("device_code").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        user_code: row.try_get("user_code").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        client_id: row.try_get("client_id").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        scope: row.try_get("scope").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                         status: status.0,
                         last_polled_at: row.try_get("last_polled_at").ok(),
                     }))
@@ -387,7 +387,7 @@ macro_rules! impl_opstore_sql {
                 }
             }
 
-            async fn get_by_user_code(&self, user_code: &str) -> Result<Option<DeviceCodeSession>, OpError> {
+            async fn get_by_user_code(&mut self, user_code: &str) -> Result<Option<DeviceCodeSession>, authkestra_engine::store::StoreError> {
                 let query = format!(
                     "SELECT device_code, user_code, client_id, scope, expires_at, status, last_polled_at 
                     FROM {schema}oauth_device_codes 
@@ -402,19 +402,19 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx get_by_user_code error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
 
                 if let Some(row) = row {
                     use sqlx::Row;
-                    let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| OpError::Storage)?;
+                    let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
                     Ok(Some(DeviceCodeSession {
-                        device_code: row.try_get("device_code").map_err(|_| OpError::Storage)?,
-                        user_code: row.try_get("user_code").map_err(|_| OpError::Storage)?,
-                        client_id: row.try_get("client_id").map_err(|_| OpError::Storage)?,
-                        scope: row.try_get("scope").map_err(|_| OpError::Storage)?,
-                        expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                        device_code: row.try_get("device_code").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        user_code: row.try_get("user_code").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        client_id: row.try_get("client_id").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        scope: row.try_get("scope").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                        expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                         status: status.0,
                         last_polled_at: row.try_get("last_polled_at").ok(),
                     }))
@@ -423,7 +423,7 @@ macro_rules! impl_opstore_sql {
                 }
             }
 
-            async fn update_device_code(&self, session: DeviceCodeSession) -> Result<(), OpError> {
+            async fn update_device_code(&mut self, session: DeviceCodeSession) -> Result<(), authkestra_engine::store::StoreError> {
                 let query = format!(
                     "UPDATE {schema}oauth_device_codes 
                     SET status = {p1}, last_polled_at = {p2} 
@@ -442,12 +442,12 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx update_device_code error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
                 Ok(())
             }
 
-            async fn delete_device_code(&self, device_code: &str) -> Result<(), OpError> {
+            async fn delete_device_code(&mut self, device_code: &str) -> Result<(), authkestra_engine::store::StoreError> {
                 let query = format!(
                     "DELETE FROM {schema}oauth_device_codes WHERE device_code = {p1}",
                     schema = $schema_prefix,
@@ -460,7 +460,7 @@ macro_rules! impl_opstore_sql {
                     .await
                     .map_err(|e| {
                         tracing::error!(error = %e, "sqlx delete_device_code error");
-                        OpError::Storage
+                        authkestra_engine::store::StoreError::Internal("db".into())
                     })?;
                 Ok(())
             }
@@ -555,17 +555,17 @@ impl_opstore_sql! {
         Ok(())
     },
     // consume_code (Postgres specific)
-    async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
+    async fn consume_code(&mut self, code: &str) -> Result<Option<AuthorizationCode>, authkestra_engine::store::StoreError> {
         let query = "UPDATE authkestra.oauth_codes SET used = TRUE WHERE code = $1 AND used = FALSE RETURNING *";
         let row = sqlx::query(query)
             .bind(code)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             use sqlx::Row;
-            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
+            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(AuthorizationCode {
                 code: row.try_get("code").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
@@ -575,7 +575,7 @@ impl_opstore_sql! {
                 code_challenge_method: row.try_get("code_challenge_method").ok(),
                 nonce: row.try_get("nonce").ok(),
                 identity: identity.0,
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                 used: row.try_get("used").unwrap_or(true),
             }))
         } else {
@@ -583,48 +583,48 @@ impl_opstore_sql! {
         }
     },
     // consume_token (Postgres specific)
-    async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+    async fn consume_token(&mut self, token: &str) -> Result<Option<RefreshToken>, authkestra_engine::store::StoreError> {
         let query = "DELETE FROM authkestra.oauth_refresh_tokens WHERE token = $1 AND revoked_at IS NULL RETURNING *";
         let row = sqlx::query(query)
             .bind(token)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             use sqlx::Row;
-            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
+            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(RefreshToken {
                 token: row.try_get("token").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
-                jkt: row.try_get("jkt").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                jkt: row.try_get("jkt").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
             }))
         } else {
             Ok(None)
         }
     },
     // consume_device_impl (Postgres specific)
-    async fn consume_device_code(&self, device_code: &str) -> Result<Option<DeviceCodeSession>, OpError> {
+    async fn consume_device_code(&mut self, device_code: &str) -> Result<Option<DeviceCodeSession>, authkestra_engine::store::StoreError> {
         let query = "DELETE FROM authkestra.oauth_device_codes WHERE device_code = $1 RETURNING *";
         let row = sqlx::query(query)
             .bind(device_code)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             use sqlx::Row;
-            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| OpError::Storage)?;
+            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(DeviceCodeSession {
                 device_code: row.try_get("device_code").unwrap_or_default(),
                 user_code: row.try_get("user_code").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
                 scope: row.try_get("scope").unwrap_or_default(),
                 status: status.0,
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                 last_polled_at: row.try_get("last_polled_at").ok(),
             }))
         } else {
@@ -704,17 +704,17 @@ impl_opstore_sql! {
         Ok(())
     },
     // consume_code (SQLite specific)
-    async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
+    async fn consume_code(&mut self, code: &str) -> Result<Option<AuthorizationCode>, authkestra_engine::store::StoreError> {
         let query = "UPDATE authkestra_oauth_codes SET used = TRUE WHERE code = ? AND used = FALSE RETURNING *";
         let row = sqlx::query(query)
             .bind(code)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             use sqlx::Row;
-            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
+            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(AuthorizationCode {
                 code: row.try_get("code").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
@@ -724,7 +724,7 @@ impl_opstore_sql! {
                 code_challenge_method: row.try_get("code_challenge_method").ok(),
                 nonce: row.try_get("nonce").ok(),
                 identity: identity.0,
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                 used: row.try_get("used").unwrap_or(true),
             }))
         } else {
@@ -732,48 +732,48 @@ impl_opstore_sql! {
         }
     },
     // consume_token (SQLite specific)
-    async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
+    async fn consume_token(&mut self, token: &str) -> Result<Option<RefreshToken>, authkestra_engine::store::StoreError> {
         let query = "DELETE FROM authkestra_oauth_refresh_tokens WHERE token = ? AND revoked_at IS NULL RETURNING *";
         let row = sqlx::query(query)
             .bind(token)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             use sqlx::Row;
-            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
+            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(RefreshToken {
                 token: row.try_get("token").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
-                jkt: row.try_get("jkt").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                jkt: row.try_get("jkt").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
             }))
         } else {
             Ok(None)
         }
     },
     // consume_device_impl (SQLite specific)
-    async fn consume_device_code(&self, device_code: &str) -> Result<Option<DeviceCodeSession>, OpError> {
+    async fn consume_device_code(&mut self, device_code: &str) -> Result<Option<DeviceCodeSession>, authkestra_engine::store::StoreError> {
         let query = "DELETE FROM authkestra_oauth_device_codes WHERE device_code = ? RETURNING *";
         let row = sqlx::query(query)
             .bind(device_code)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             use sqlx::Row;
-            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| OpError::Storage)?;
+            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(DeviceCodeSession {
                 device_code: row.try_get("device_code").unwrap_or_default(),
                 user_code: row.try_get("user_code").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
                 scope: row.try_get("scope").unwrap_or_default(),
                 status: status.0,
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                 last_polled_at: row.try_get("last_polled_at").ok(),
             }))
         } else {
@@ -857,15 +857,15 @@ impl_opstore_sql! {
         Ok(())
     },
     // consume_code (MySQL specific - needs transaction and FOR UPDATE since no RETURNING)
-    async fn consume_code(&self, code: &str) -> Result<Option<AuthorizationCode>, OpError> {
-        let mut tx = self.pool.begin().await.map_err(|_| OpError::Storage)?;
+    async fn consume_code(&mut self, code: &str) -> Result<Option<AuthorizationCode>, authkestra_engine::store::StoreError> {
+        let mut tx = self.pool.begin().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         let select_query = "SELECT * FROM authkestra_oauth_codes WHERE code = ? AND used = FALSE FOR UPDATE";
         let row = sqlx::query(select_query)
             .bind(code)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             let update_query = "UPDATE authkestra_oauth_codes SET used = TRUE WHERE code = ?";
@@ -873,12 +873,12 @@ impl_opstore_sql! {
                 .bind(code)
                 .execute(&mut *tx)
                 .await
-                .map_err(|_| OpError::Storage)?;
+                .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
-            tx.commit().await.map_err(|_| OpError::Storage)?;
+            tx.commit().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
             use sqlx::Row;
-            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
+            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(AuthorizationCode {
                 code: row.try_get("code").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
@@ -888,24 +888,24 @@ impl_opstore_sql! {
                 code_challenge_method: row.try_get("code_challenge_method").ok(),
                 nonce: row.try_get("nonce").ok(),
                 identity: identity.0,
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                 used: row.try_get("used").unwrap_or(true),
             }))
         } else {
-            tx.rollback().await.map_err(|_| OpError::Storage)?;
+            tx.rollback().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(None)
         }
     },
     // consume_token (MySQL specific)
-    async fn consume_token(&self, token: &str) -> Result<Option<RefreshToken>, OpError> {
-        let mut tx = self.pool.begin().await.map_err(|_| OpError::Storage)?;
+    async fn consume_token(&mut self, token: &str) -> Result<Option<RefreshToken>, authkestra_engine::store::StoreError> {
+        let mut tx = self.pool.begin().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         let select_query = "SELECT * FROM authkestra_oauth_refresh_tokens WHERE token = ? AND revoked_at IS NULL FOR UPDATE";
         let row = sqlx::query(select_query)
             .bind(token)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             let delete_query = "DELETE FROM authkestra_oauth_refresh_tokens WHERE token = ?";
@@ -913,35 +913,35 @@ impl_opstore_sql! {
                 .bind(token)
                 .execute(&mut *tx)
                 .await
-                .map_err(|_| OpError::Storage)?;
+                .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
-            tx.commit().await.map_err(|_| OpError::Storage)?;
+            tx.commit().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
             use sqlx::Row;
-            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| OpError::Storage)?;
+            let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(RefreshToken {
                 token: row.try_get("token").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
-                jkt: row.try_get("jkt").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
+                jkt: row.try_get("jkt").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
             }))
         } else {
-            tx.rollback().await.map_err(|_| OpError::Storage)?;
+            tx.rollback().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(None)
         }
     },
     // consume_device_impl (MySQL specific)
-    async fn consume_device_code(&self, device_code: &str) -> Result<Option<DeviceCodeSession>, OpError> {
-        let mut tx = self.pool.begin().await.map_err(|_| OpError::Storage)?;
+    async fn consume_device_code(&mut self, device_code: &str) -> Result<Option<DeviceCodeSession>, authkestra_engine::store::StoreError> {
+        let mut tx = self.pool.begin().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         let select_query = "SELECT * FROM authkestra_oauth_device_codes WHERE device_code = ? FOR UPDATE";
         let row = sqlx::query(select_query)
             .bind(device_code)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|_| OpError::Storage)?;
+            .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
         if let Some(row) = row {
             let delete_query = "DELETE FROM authkestra_oauth_device_codes WHERE device_code = ?";
@@ -949,23 +949,23 @@ impl_opstore_sql! {
                 .bind(device_code)
                 .execute(&mut *tx)
                 .await
-                .map_err(|_| OpError::Storage)?;
+                .map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
-            tx.commit().await.map_err(|_| OpError::Storage)?;
+            tx.commit().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
             use sqlx::Row;
-            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| OpError::Storage)?;
+            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(DeviceCodeSession {
                 device_code: row.try_get("device_code").unwrap_or_default(),
                 user_code: row.try_get("user_code").unwrap_or_default(),
                 client_id: row.try_get("client_id").unwrap_or_default(),
                 scope: row.try_get("scope").unwrap_or_default(),
                 status: status.0,
-                expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
+                expires_at: row.try_get("expires_at").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
                 last_polled_at: row.try_get("last_polled_at").ok(),
             }))
         } else {
-            tx.rollback().await.map_err(|_| OpError::Storage)?;
+            tx.rollback().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(None)
         }
     }
@@ -997,7 +997,7 @@ mod postgres_tests {
             .await
             .unwrap();
 
-        let store = SqlxOpStore::<sqlx::Postgres>::new(pool);
+        let mut store = SqlxOpStore::<sqlx::Postgres>::new(pool);
         store.migrate().await.unwrap();
 
         (store, container)
@@ -1005,7 +1005,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_authorization_code_cascading_delete() {
-        let (store, _c) = setup_db().await;
+        let (mut store, _c) = setup_db().await;
 
         // Manually insert a client
         sqlx::query(
@@ -1076,7 +1076,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_concurrency() {
-        let (store, _c) = setup_db().await;
+        let (mut store, _c) = setup_db().await;
 
         sqlx::query(
             "INSERT INTO authkestra.oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
@@ -1114,7 +1114,7 @@ mod postgres_tests {
         store.store_code(code.clone()).await.unwrap();
 
         let mut handles = vec![];
-        let store_arc = std::sync::Arc::new(store);
+        let store_arc = std::sync::store.clone();
 
         // Spawn 10 simultaneous consumers
         for _ in 0..10 {
@@ -1155,7 +1155,7 @@ mod postgres_tests {
     /// columns nothing reads or writes.
     #[tokio::test]
     async fn test_postgres_fresh_install_persists_jkt_and_client_auth_fields() {
-        let (store, _c) = setup_db().await;
+        let (mut store, _c) = setup_db().await;
 
         sqlx::query(
             "INSERT INTO authkestra.oauth_clients
@@ -1284,7 +1284,7 @@ mod postgres_tests {
         .await
         .unwrap();
 
-        let store = SqlxOpStore::<sqlx::Postgres>::new(pool);
+        let mut store = SqlxOpStore::<sqlx::Postgres>::new(pool);
 
         store
             .migrate()
@@ -1333,7 +1333,7 @@ mod sqlite_tests {
             .await
             .unwrap();
 
-        let store = SqlxOpStore::<sqlx::Sqlite>::new(pool);
+        let mut store = SqlxOpStore::<sqlx::Sqlite>::new(pool);
         store.migrate().await.unwrap();
 
         // Enable foreign keys in SQLite for this connection
@@ -1347,7 +1347,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_cascading_delete() {
-        let store = setup_db().await;
+        let mut store = setup_db().await;
 
         // Manually insert a client
         sqlx::query(
@@ -1417,7 +1417,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_concurrency() {
-        let store = setup_db().await;
+        let mut store = setup_db().await;
 
         sqlx::query(
             "INSERT INTO authkestra_oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
@@ -1455,7 +1455,7 @@ mod sqlite_tests {
         store.store_code(code.clone()).await.unwrap();
 
         let mut handles = vec![];
-        let store_arc = std::sync::Arc::new(store);
+        let store_arc = std::sync::store.clone();
 
         // Spawn 10 simultaneous consumers
         for _ in 0..10 {
@@ -1496,7 +1496,7 @@ mod sqlite_tests {
     /// columns nothing reads or writes.
     #[tokio::test]
     async fn test_sqlite_fresh_install_persists_jkt_and_client_auth_fields() {
-        let store = setup_db().await;
+        let mut store = setup_db().await;
 
         sqlx::query(
             "INSERT INTO authkestra_oauth_clients
@@ -1614,7 +1614,7 @@ mod sqlite_tests {
         .await
         .unwrap();
 
-        let store = SqlxOpStore::<sqlx::Sqlite>::new(pool);
+        let mut store = SqlxOpStore::<sqlx::Sqlite>::new(pool);
 
         store
             .migrate()
@@ -1678,7 +1678,7 @@ mod sqlite_tests {
                 .await
                 .expect("the host app's own migrator must succeed");
 
-            let store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
+            let mut store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
             store
                 .migrate()
                 .await
@@ -1706,7 +1706,7 @@ mod sqlite_tests {
                 .await
                 .unwrap();
 
-            let store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
+            let mut store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
             store.migrate().await.unwrap();
 
             sqlx::migrate!("./tests/fixture_migrations/host_app")
@@ -1731,7 +1731,7 @@ mod sqlite_tests {
     /// credentials.
     #[tokio::test]
     async fn test_sqlite_find_client_rejects_an_undecodable_token_endpoint_auth_method() {
-        let store = setup_db().await;
+        let mut store = setup_db().await;
 
         sqlx::query(
             "INSERT INTO authkestra_oauth_clients
@@ -1751,7 +1751,7 @@ mod sqlite_tests {
 
         let result = store.find_client("malformed_client").await;
         assert!(
-            matches!(result, Err(OpError::Storage)),
+            matches!(result, Err(authkestra_engine::store::StoreError::Internal("db".into()))),
             "an undecodable token_endpoint_auth_method must fail closed as a storage error, not silently decode to None: got {result:?}"
         );
     }
@@ -1782,7 +1782,7 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let store = SqlxOpStore::<sqlx::MySql>::new(pool);
+        let mut store = SqlxOpStore::<sqlx::MySql>::new(pool);
         store.migrate().await.unwrap();
 
         (store, container)
@@ -1790,7 +1790,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_cascading_delete() {
-        let (store, _c) = setup_db().await;
+        let (mut store, _c) = setup_db().await;
 
         // Manually insert a client
         sqlx::query(
@@ -1860,7 +1860,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_concurrency() {
-        let (store, _c) = setup_db().await;
+        let (mut store, _c) = setup_db().await;
 
         sqlx::query(
             "INSERT INTO authkestra_oauth_clients (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences) 
@@ -1898,7 +1898,7 @@ mod mysql_tests {
         store.store_code(code.clone()).await.unwrap();
 
         let mut handles = vec![];
-        let store_arc = std::sync::Arc::new(store);
+        let store_arc = std::sync::store.clone();
 
         // Spawn 10 simultaneous consumers
         for _ in 0..10 {
@@ -1939,7 +1939,7 @@ mod mysql_tests {
     /// columns nothing reads or writes.
     #[tokio::test]
     async fn test_mysql_fresh_install_persists_jkt_and_client_auth_fields() {
-        let (store, _c) = setup_db().await;
+        let (mut store, _c) = setup_db().await;
 
         sqlx::query(
             "INSERT INTO authkestra_oauth_clients
@@ -2071,7 +2071,7 @@ mod mysql_tests {
         .await
         .unwrap();
 
-        let store = SqlxOpStore::<sqlx::MySql>::new(pool);
+        let mut store = SqlxOpStore::<sqlx::MySql>::new(pool);
 
         store
             .migrate()

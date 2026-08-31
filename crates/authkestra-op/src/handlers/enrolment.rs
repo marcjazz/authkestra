@@ -425,7 +425,7 @@ mod tests {
         let signing_key = SigningKey::random(&mut OsRng);
         let public_key: PublicKey<p256::NistP256> = signing_key.verifying_key().into();
         let jwk_ec_key = JwkEcKey::from(&public_key);
-        let public_jwk = serde_json::to_value(&jwk_ec_key).unwrap();
+        let mut public_jwk = serde_json::to_value(&jwk_ec_key).unwrap();
         let pkcs8_der = signing_key.to_pkcs8_der().unwrap();
 
         TestKey {
@@ -696,7 +696,7 @@ mod tests {
         let config = test_config();
 
         let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
-        let public_jwk = serde_json::json!({
+        let mut public_jwk = serde_json::json!({
             "kty": "OKP",
             "crv": "Ed25519",
             "x": b64(signing.verifying_key().as_bytes()),
@@ -748,7 +748,7 @@ mod tests {
         assert_eq!(claims.sub, "user-ed");
         assert_eq!(claims.extra.get("did").unwrap(), "device-ed");
 
-        let expected_jkt = compute_cnf_jkt(&parse_public_jwk(&public_jwk).unwrap()).unwrap();
+        let expected_jkt = compute_cnf_jkt(&parse_public_jwk(&mut public_jwk).unwrap()).unwrap();
         assert_eq!(claims.extra.get("cnf").unwrap()["jkt"], expected_jkt);
     }
 

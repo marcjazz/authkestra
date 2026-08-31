@@ -68,13 +68,13 @@ pub async fn axum_authorize_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>: FromRef<AppState>,
     Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
     authkestra_engine::SessionConfig: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(client_id = %req.client_id, "Handling OP authorize request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+    let op_store = match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
     };
@@ -96,7 +96,7 @@ where
         }
     };
 
-    match handle_authorize(req, identity, &config, op_store.as_ref()).await {
+    match handle_authorize(req, identity, &config, \op_store.as_ref()mut *op_store.lock().await).await {
         authkestra_op::handlers::authorize::AuthorizeOutcome::Redirect(url) => {
             Redirect::to(&url).into_response()
         }
@@ -119,11 +119,11 @@ pub async fn axum_device_authorization_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device authorization request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+    let op_store = match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
     };
@@ -133,7 +133,7 @@ where
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
 
-    match handle_device_authorization(req, auth_header, &config, op_store.as_ref()).await {
+    match handle_device_authorization(req, auth_header, &config, \op_store.as_ref()mut *op_store.lock().await).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(err) => {
             let status = match err.error.as_str() {
@@ -194,12 +194,12 @@ pub async fn axum_token_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>: FromRef<AppState>,
     Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+    let op_store = match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
     };
@@ -229,7 +229,7 @@ where
         req,
         auth_header,
         &config,
-        op_store.as_ref(),
+        \op_store.as_ref()mut *op_store.lock().await,
         tokens.as_ref(),
         client_cert_der.as_deref(),
         dpop_header,
@@ -306,12 +306,12 @@ pub async fn axum_device_verify_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>: FromRef<AppState>,
     Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
     authkestra_engine::SessionConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device verify request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+    let op_store = match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(&state) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
     };
@@ -335,7 +335,7 @@ where
     match authkestra_op::handlers::device_verify::handle_device_verify(
         req,
         identity,
-        op_store.as_ref(),
+        \op_store.as_ref()mut *op_store.lock().await,
     )
     .await
     {
@@ -484,7 +484,7 @@ pub trait OpExt {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>: FromRef<AppState>,
         Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
         Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
@@ -524,7 +524,7 @@ impl<T> OpExt for T {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>: FromRef<AppState>,
         Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
         Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
@@ -576,14 +576,14 @@ impl<T> OpExt for T {
 use authkestra_engine::{Configured, Engine};
 pub type CompleteOp = authkestra_op::Op<
     Engine<Configured<Arc<dyn crate::SessionStore>>, Configured<Arc<TokenManager>>>,
-    Arc<dyn authkestra_op::OpStore>,
+    Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>,
 >;
 
 /// A newtype wrapper around `CompleteOp` to implement `axum::extract::FromRef` and bypass orphan rules.
 #[derive(Clone)]
 pub struct OpState(pub CompleteOp);
 
-impl FromRef<OpState> for Result<Arc<dyn authkestra_op::OpStore>, AxumError> {
+impl FromRef<OpState> for Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError> {
     fn from_ref(state: &OpState) -> Self {
         Ok(state.0.store.clone())
     }

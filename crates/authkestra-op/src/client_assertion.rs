@@ -28,6 +28,7 @@
 //! algorithms are refused before the key is even loaded, and a `jti` may be
 //! spent only once ([`ClientAssertionStore`]).
 
+pub use authkestra_engine::store::traits::ClientAssertionStore;
 use crate::attestation::parse_public_jwk;
 use crate::client::ClientRegistration;
 use crate::error::OpError;
@@ -92,37 +93,6 @@ pub struct VerifiedClientAssertion {
 /// same captured assertion would both observe "not yet seen". Same
 /// requirement, and the same reasoning, as
 /// `AuthorizationCodeStore::consume_code`.
-#[async_trait]
-pub trait ClientAssertionStore: Send + Sync {
-    /// Atomically records `jti` as spent until `expires_at`.
-    ///
-    /// Returns `Ok(true)` if this is its first use (accept the assertion) and
-    /// `Ok(false)` if it was already recorded (a replay — reject).
-    async fn record_jti(&self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, OpError>;
-}
-
-/// The fail-closed default: refuses every assertion.
-///
-/// A deployment that has not wired replay tracking cannot provide the
-/// single-use guarantee RFC 7523 §3 requires, and accepting assertions
-/// without it would be strictly worse than not supporting the method —
-/// clients would believe they had proof-of-possession authentication while a
-/// captured assertion stayed replayable for its whole lifetime. So the
-/// default refuses rather than silently degrades.
-#[derive(Debug, Clone, Copy, Default)]
-#[non_exhaustive]
-pub struct NoClientAssertionStore;
-
-#[async_trait]
-impl ClientAssertionStore for NoClientAssertionStore {
-    async fn record_jti(&self, _jti: &str, _expires_at: DateTime<Utc>) -> Result<bool, OpError> {
-        tracing::error!(
-            "a private_key_jwt assertion was presented but no ClientAssertionStore is wired; \
-             refusing it rather than accepting an assertion that could be replayed"
-        );
-        Err(OpError::ReplayProtectionUnavailable)
-    }
-}
 
 /// Single-process, in-memory replay tracking.
 ///
@@ -147,8 +117,8 @@ impl MemoryClientAssertionStore {
 }
 
 #[async_trait]
-impl ClientAssertionStore for MemoryClientAssertionStore {
-    async fn record_jti(&self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, OpError> {
+impl authkestra_engine::store::traits::ClientAssertionStore for MemoryClientAssertionStore {
+    async fn record_jti(&mut self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, authkestra_engine::store::StoreError> {
         let now = Utc::now();
         if expires_at <= now {
             return Ok(false);
@@ -159,7 +129,7 @@ impl ClientAssertionStore for MemoryClientAssertionStore {
             // and an incomplete replay set is indistinguishable from no
             // replay protection. Refuse rather than guess.
             tracing::error!("client assertion replay map is poisoned; refusing the assertion");
-            OpError::Storage
+            authkestra_engine::store::StoreError::Internal("poisoned".into())
         })?;
 
         // Expired entries can never cause a rejection again (the assertion
@@ -711,11 +681,11 @@ pub(crate) mod tests {
         let key = generate_test_key(None);
         let client = test_client(Some(jwks_of(&[&key])));
 
-        let public_key_bytes = serde_json::to_vec(&key.public_jwk).unwrap();
+        let mut public_key_bytes = serde_json::to_vec(&key.public_jwk).unwrap();
         let forged = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
             &good_claims(),
-            &EncodingKey::from_secret(&public_key_bytes),
+            &EncodingKey::from_secret(&mut public_key_bytes),
         )
         .unwrap();
 
@@ -927,7 +897,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn memory_store_spends_a_jti_exactly_once() {
-        let store = MemoryClientAssertionStore::new();
+        let mut store = MemoryClientAssertionStore::new();
         let exp = Utc::now() + chrono::Duration::seconds(60);
 
         assert!(store.record_jti("jti-1", exp).await.unwrap());
@@ -937,7 +907,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn no_store_refuses_rather_than_permitting_replay() {
-        let store = NoClientAssertionStore;
+        let mut store = NoClientAssertionStore;
         let exp = Utc::now() + chrono::Duration::seconds(60);
         assert!(matches!(
             store.record_jti("jti-1", exp).await,

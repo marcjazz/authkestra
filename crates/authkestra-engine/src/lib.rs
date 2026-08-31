@@ -29,3 +29,4 @@ pub use captcha::{CaptchaProvider, CaptchaVerifier};
 
 #[cfg(test)]
 mod tests;
+pub mod oauth2;

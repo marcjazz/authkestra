@@ -35,7 +35,7 @@ pub async fn actix_discovery_handler(config: web::Data<OpConfig>) -> impl Respon
 }
 
 pub async fn actix_authorize_handler(
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>>,
     config: web::Data<OpConfig>,
     auth_session: Option<crate::AuthSession>,
     req: web::Query<AuthorizeRequest>,
@@ -75,7 +75,7 @@ pub async fn actix_authorize_handler(
 pub async fn actix_device_authorization_handler(
     http_req: HttpRequest,
     req: web::Form<DeviceAuthorizationRequest>,
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
     tracing::debug!("Handling OP device authorization request (actix)");
@@ -151,7 +151,7 @@ fn extract_dpop_header(
 pub async fn actix_token_handler(
     http_req: HttpRequest,
     req: web::Form<TokenRequest>,
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>>,
     tokens: web::Data<Arc<TokenManager>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
@@ -238,7 +238,7 @@ pub async fn actix_userinfo_handler(
 
 pub async fn actix_device_verify_handler(
     req: web::Form<authkestra_op::handlers::device_verify::DeviceVerifyRequest>,
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>>,
     auth_session: Option<crate::AuthSession>,
 ) -> actix_web::HttpResponse {
     tracing::debug!("Handling OP device verify request (actix)");
@@ -403,7 +403,7 @@ impl<T> OpExt for T {
 use authkestra_engine::{Configured, Engine};
 type CompleteOp = authkestra_op::Op<
     Engine<Configured<Arc<dyn crate::SessionStore>>, Configured<Arc<TokenManager>>>,
-    Arc<dyn authkestra_op::OpStore>,
+    Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>,
 >;
 
 pub trait OpActixExt {

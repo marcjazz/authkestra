@@ -1,9 +1,9 @@
 use crate::client::ClientStore;
-use crate::client_assertion::{ClientAssertionStore, NoClientAssertionStore};
+use authkestra_engine::store::traits::{ClientAssertionStore, NoClientAssertionStore};
 use crate::code::AuthorizationCodeStore;
 use crate::device::DeviceCodeStore;
 use crate::dpop::{DpopReplayStore, NoDpopReplayStore};
-use crate::error::OpError;
+use authkestra_engine::store::StoreError;
 use crate::refresh::RefreshTokenStore;
 use chrono::{DateTime, Utc};
 
@@ -31,11 +31,11 @@ pub trait OpStore:
     /// impossible to reach by accident. See
     /// `CompositeOpStore::with_client_assertion_store` for how to wire one.
     async fn record_client_assertion_jti(
-        &self,
+        &mut self,
         jti: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<bool, OpError> {
-        NoClientAssertionStore.record_jti(jti, expires_at).await
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
+        NoClientAssertionStore.record_jti(jti, expires_at).await.map_err(Into::into)
     }
 
     /// Atomically records the `jti` of a presented DPoP proof, returning
@@ -50,20 +50,20 @@ pub trait OpStore:
     /// is the only safe default here too. See
     /// `CompositeOpStore::with_dpop_replay_store` for how to wire one.
     async fn check_and_record_dpop_jti(
-        &self,
+        &mut self,
         jti: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<bool, OpError> {
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
         NoDpopReplayStore
             .check_and_record_dpop_jti(jti, expires_at)
-            .await
+            .await.map_err(Into::into)
     }
 
     /// Handle a custom grant type request during token exchange.
     ///
     /// By default, this returns an `unsupported_grant_type` error.
     async fn handle_custom_grant(
-        &self,
+        &mut self,
         _grant_type: &str,
         _req: crate::handlers::token::TokenRequest,
         _client_id: String,
@@ -99,7 +99,7 @@ pub trait OpStore:
     /// that behavior automatically; nothing about the trait or dispatch
     /// changes for it.
     async fn handle_authorization_code_grant(
-        &self,
+        &mut self,
         req: crate::handlers::token::TokenRequest,
         client_id: String,
         client: crate::client::ClientRegistration,
@@ -110,7 +110,7 @@ pub trait OpStore:
         crate::handlers::token::default_handle_authorization_code(
             req, client_id, client, config, self, tokens,
         )
-        .await
+        .await.map_err(Into::into)
     }
 
     /// Handle a `refresh_token` grant request during token exchange.
@@ -132,7 +132,7 @@ pub trait OpStore:
     /// Any `OpStore` that does not override this method gets that behavior
     /// automatically; nothing about the trait or dispatch changes for it.
     async fn handle_refresh_token(
-        &self,
+        &mut self,
         req: crate::handlers::token::TokenRequest,
         client_id: String,
         client: crate::client::ClientRegistration,
@@ -143,7 +143,7 @@ pub trait OpStore:
         crate::handlers::token::default_handle_refresh_token(
             req, client_id, client, config, self, tokens,
         )
-        .await
+        .await.map_err(Into::into)
     }
 
     /// Handle a `urn:ietf:params:oauth:grant-type:token-exchange` (RFC 8693)
@@ -162,7 +162,7 @@ pub trait OpStore:
     /// method gets that behavior automatically; nothing about the trait or
     /// dispatch changes for it.
     async fn handle_token_exchange(
-        &self,
+        &mut self,
         req: crate::handlers::token::TokenRequest,
         client_id: String,
         client: crate::client::ClientRegistration,
@@ -173,7 +173,7 @@ pub trait OpStore:
         crate::handlers::token::default_handle_token_exchange(
             req, client_id, client, config, tokens,
         )
-        .await
+        .await.map_err(Into::into)
     }
 }
 
@@ -209,21 +209,21 @@ where
     Self: Send + Sync,
 {
     async fn record_client_assertion_jti(
-        &self,
+        &mut self,
         jti: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<bool, OpError> {
-        self.assertions.record_jti(jti, expires_at).await
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
+        self.assertions.record_jti(jti, expires_at).await.map_err(Into::into)
     }
 
     async fn check_and_record_dpop_jti(
-        &self,
+        &mut self,
         jti: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<bool, OpError> {
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
         self.dpop_replays
             .check_and_record_dpop_jti(jti, expires_at)
-            .await
+            .await.map_err(Into::into)
     }
 }
 
@@ -304,11 +304,11 @@ impl<
 {
     #[tracing::instrument(skip(self))]
     async fn find_client(
-        &self,
+        &mut self,
         client_id: &str,
-    ) -> Result<Option<crate::client::ClientRegistration>, crate::error::OpError> {
+    ) -> Result<Option<crate::client::ClientRegistration>, authkestra_engine::store::StoreError> {
         tracing::debug!(client_id = %client_id, "CompositeOpStore: finding client");
-        self.clients.find_client(client_id).await
+        self.clients.find_client(client_id).await.map_err(Into::into)
     }
 }
 
@@ -324,20 +324,20 @@ impl<
 {
     #[tracing::instrument(skip(self, code))]
     async fn store_code(
-        &self,
+        &mut self,
         code: crate::code::AuthorizationCode,
-    ) -> Result<(), crate::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing authorization code");
-        self.codes.store_code(code).await
+        self.codes.store_code(code).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self))]
     async fn consume_code(
-        &self,
+        &mut self,
         code: &str,
-    ) -> Result<Option<crate::code::AuthorizationCode>, crate::error::OpError> {
+    ) -> Result<Option<crate::code::AuthorizationCode>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: consuming authorization code");
-        self.codes.consume_code(code).await
+        self.codes.consume_code(code).await.map_err(Into::into)
     }
 }
 
@@ -353,35 +353,35 @@ impl<
 {
     #[tracing::instrument(skip(self, token))]
     async fn store_token(
-        &self,
+        &mut self,
         token: crate::refresh::RefreshToken,
-    ) -> Result<(), crate::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing refresh token");
-        self.refresh.store_token(token).await
+        self.refresh.store_token(token).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self))]
     async fn consume_token(
-        &self,
+        &mut self,
         token: &str,
-    ) -> Result<Option<crate::refresh::RefreshToken>, crate::error::OpError> {
+    ) -> Result<Option<crate::refresh::RefreshToken>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: consuming refresh token");
-        self.refresh.consume_token(token).await
+        self.refresh.consume_token(token).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_token(
-        &self,
+        &mut self,
         token: &str,
-    ) -> Result<Option<crate::refresh::RefreshToken>, crate::error::OpError> {
+    ) -> Result<Option<crate::refresh::RefreshToken>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: getting refresh token");
-        self.refresh.get_token(token).await
+        self.refresh.get_token(token).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self))]
-    async fn revoke_token(&self, token: &str) -> Result<(), crate::error::OpError> {
+    async fn revoke_token(&mut self, token: &str) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: revoking refresh token");
-        self.refresh.revoke_token(token).await
+        self.refresh.revoke_token(token).await.map_err(Into::into)
     }
 }
 
@@ -397,52 +397,52 @@ impl<
 {
     #[tracing::instrument(skip(self, session))]
     async fn store_device_code(
-        &self,
+        &mut self,
         session: crate::device::DeviceCodeSession,
-    ) -> Result<(), crate::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing device code");
-        self.devices.store_device_code(session).await
+        self.devices.store_device_code(session).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_device_code(
-        &self,
+        &mut self,
         device_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, crate::error::OpError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError> {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: getting device code");
-        self.devices.get_device_code(device_code).await
+        self.devices.get_device_code(device_code).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_by_user_code(
-        &self,
+        &mut self,
         user_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, crate::error::OpError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError> {
         tracing::debug!(user_code = %user_code, "CompositeOpStore: getting by user code");
-        self.devices.get_by_user_code(user_code).await
+        self.devices.get_by_user_code(user_code).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self, session))]
     async fn update_device_code(
-        &self,
+        &mut self,
         session: crate::device::DeviceCodeSession,
-    ) -> Result<(), crate::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: updating device code");
-        self.devices.update_device_code(session).await
+        self.devices.update_device_code(session).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self))]
-    async fn delete_device_code(&self, device_code: &str) -> Result<(), crate::error::OpError> {
+    async fn delete_device_code(&mut self, device_code: &str) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: deleting device code");
-        self.devices.delete_device_code(device_code).await
+        self.devices.delete_device_code(device_code).await.map_err(Into::into)
     }
 
     #[tracing::instrument(skip(self))]
     async fn consume_device_code(
-        &self,
+        &mut self,
         device_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, crate::error::OpError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError> {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: consuming device code");
-        self.devices.consume_device_code(device_code).await
+        self.devices.consume_device_code(device_code).await.map_err(Into::into)
     }
 }

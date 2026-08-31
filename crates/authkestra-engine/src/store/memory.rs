@@ -563,4 +563,3 @@ mod tests {
         assert_eq!(store.get_by_index("sk1").await.unwrap(), None);
     }
 }
-

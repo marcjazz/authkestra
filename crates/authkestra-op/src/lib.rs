@@ -25,7 +25,7 @@ pub use client::{ClientRegistration, ClientStore, GrantType, TokenEndpointAuthMe
 /// assertion verification and the replay tracking it depends on.
 pub mod client_assertion;
 pub use client_assertion::{
-    ClientAssertionStore, MemoryClientAssertionStore, NoClientAssertionStore,
+    MemoryClientAssertionStore,
     CLIENT_ASSERTION_TYPE_JWT_BEARER,
 };
 
