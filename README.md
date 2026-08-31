@@ -1,5 +1,10 @@
 # Authkestra
 
+[![CI](https://github.com/marcjazz/authkestra/actions/workflows/ci.yml/badge.svg)](https://github.com/marcjazz/authkestra/actions)
+[![Coverage](https://codecov.io/gh/marcjazz/authkestra/branch/main/graph/badge.svg)](https://codecov.io/gh/marcjazz/authkestra)
+[![Crates.io](https://img.shields.io/crates/v/authkestra.svg)](https://crates.io/crates/authkestra)
+[![Docs](https://docs.rs/authkestra/badge.svg)](https://docs.rs/authkestra)
+
 `authkestra` is a modular, framework-agnostic authentication orchestration system designed to be idiomatic to Rust, emphasizing **explicit control flow, strong typing, and composability** over dynamic middleware strategies common in other ecosystems.
 
 ## 📦 Getting Started
