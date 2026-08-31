@@ -237,6 +237,46 @@ mod tests {
         }
     }
 
+    struct DummyChallengeStore;
+    #[async_trait::async_trait]
+    impl crate::EnrolmentChallengeStore for DummyChallengeStore {
+        async fn store_challenge(&self, _: crate::EnrolmentChallenge) -> Result<(), OpError> {
+            Ok(())
+        }
+        async fn consume_challenge(
+            &self,
+            _: &str,
+        ) -> Result<Option<crate::EnrolmentChallenge>, OpError> {
+            Ok(None)
+        }
+    }
+
+    struct DummySecondFactor;
+    #[async_trait::async_trait]
+    impl crate::SecondFactorVerifier for DummySecondFactor {
+        async fn verify(
+            &self,
+            _: &str,
+            _: crate::PrincipalType,
+            _: &crate::SecondFactorProof,
+        ) -> Result<(), OpError> {
+            Ok(())
+        }
+    }
+
+    struct DummyStatusProvider;
+    #[async_trait::async_trait]
+    impl crate::AttestationStatusProvider for DummyStatusProvider {
+        async fn current_attributes(
+            &self,
+            _: &str,
+            _: &str,
+            _: crate::PrincipalType,
+        ) -> Result<Option<serde_json::Value>, OpError> {
+            Ok(None)
+        }
+    }
+
     #[test]
     fn test_op_builder_flow() {
         let store: Arc<dyn OpStore> = Arc::new(DummyOpStore);
@@ -264,8 +304,18 @@ mod tests {
             token_exchange_enabled: false,
         };
 
+        let att_config = crate::AttestationConfig {
+            attestation_ttl_secs: 300,
+            attestation_reissue_after_secs: 150,
+            challenge_ttl_secs: 60,
+        };
+
         let op = Op::builder()
             .config(config)
+            .attestation_config(att_config)
+            .challenge_store(Arc::new(DummyChallengeStore))
+            .second_factor_verifier(Arc::new(DummySecondFactor))
+            .status_provider(Arc::new(DummyStatusProvider))
             .engine(engine)
             .store(store)
             .build();

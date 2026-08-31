@@ -446,3 +446,23 @@ impl<
         self.devices.consume_device_code(device_code).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use authkestra_engine::store::memory::MemoryStore;
+
+    #[tokio::test]
+    async fn test_composite_store() {
+        let clients = MemoryStore::<crate::client::ClientRegistration>::default();
+        let codes = MemoryStore::<crate::code::AuthorizationCode>::default();
+        let refresh = MemoryStore::<crate::refresh::RefreshToken>::default();
+        let devices = MemoryStore::<crate::device::DeviceCodeSession>::default();
+
+        let store = CompositeOpStore::new(clients, codes, refresh, devices);
+
+        // This is enough to instantiate it and run the with_ methods.
+        // We also want to call find_client to cover the trait methods on CompositeOpStore
+        store.find_client("abc").await.unwrap();
+    }
+}

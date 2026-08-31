@@ -227,3 +227,157 @@ pub mod utils {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::{
+        header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, COOKIE},
+        Request,
+    };
+
+    #[derive(Debug, PartialEq)]
+    struct DummyIdentity(String);
+
+    struct DummyBasic;
+    #[async_trait]
+    impl BasicAuthenticator for DummyBasic {
+        type Identity = DummyIdentity;
+        async fn authenticate(
+            &self,
+            u: &str,
+            p: &str,
+        ) -> Result<Option<Self::Identity>, AuthError> {
+            if u == "user" && p == "pass" {
+                Ok(Some(DummyIdentity(u.to_string())))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    struct DummyToken;
+    #[async_trait]
+    impl TokenValidator for DummyToken {
+        type Identity = DummyIdentity;
+        async fn validate(&self, t: &str) -> Result<Option<Self::Identity>, AuthError> {
+            if t == "valid_token" {
+                Ok(Some(DummyIdentity("user".to_string())))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    struct DummySession;
+    #[async_trait]
+    impl SessionProvider for DummySession {
+        type Identity = DummyIdentity;
+        async fn load_session(&self, sid: &str) -> Result<Option<Self::Identity>, AuthError> {
+            if sid == "valid_sid" {
+                Ok(Some(DummyIdentity("user".to_string())))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_basic_strategy() {
+        let strategy = BasicStrategy::new(DummyBasic);
+        let mut req = Request::builder().uri("/").body(()).unwrap();
+
+        let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
+        assert_eq!(res, None);
+
+        let mut req2 = Request::builder()
+            .uri("/")
+            .header(AUTHORIZATION, "Basic dXNlcjpwYXNz")
+            .body(())
+            .unwrap();
+        let res2 = strategy.authenticate(&req2.into_parts().0).await.unwrap();
+        assert_eq!(res2.unwrap(), DummyIdentity("user".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_token_strategy() {
+        let strategy = TokenStrategy::new(DummyToken);
+        let mut req = Request::builder().uri("/").body(()).unwrap();
+
+        let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
+        assert_eq!(res, None);
+
+        let mut req2 = Request::builder()
+            .uri("/")
+            .header(AUTHORIZATION, "Bearer valid_token")
+            .body(())
+            .unwrap();
+        let res2 = strategy.authenticate(&req2.into_parts().0).await.unwrap();
+        assert_eq!(res2.unwrap(), DummyIdentity("user".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_header_strategy() {
+        let strategy = HeaderStrategy::new(
+            HeaderName::from_static("x-api-key"),
+            |key: String| async move {
+                if key == "secret" {
+                    Ok(Some(DummyIdentity("user".to_string())))
+                } else {
+                    Ok(None)
+                }
+            },
+        );
+        let mut req = Request::builder().uri("/").body(()).unwrap();
+
+        let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
+        assert_eq!(res, None);
+
+        let mut req2 = Request::builder()
+            .uri("/")
+            .header("x-api-key", "secret")
+            .body(())
+            .unwrap();
+        let res2 = strategy.authenticate(&req2.into_parts().0).await.unwrap();
+        assert_eq!(res2.unwrap(), DummyIdentity("user".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_session_strategy() {
+        let strategy = SessionStrategy::new(DummySession, "sid");
+        let mut req = Request::builder().uri("/").body(()).unwrap();
+
+        let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
+        assert_eq!(res, None);
+
+        let mut req2 = Request::builder()
+            .uri("/")
+            .header(COOKIE, "sid=valid_sid")
+            .body(())
+            .unwrap();
+        let res2 = strategy.authenticate(&req2.into_parts().0).await.unwrap();
+        assert_eq!(res2.unwrap(), DummyIdentity("user".to_string()));
+    }
+
+    #[test]
+    fn test_utils_extractors() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(utils::extract_bearer_token(&headers), None);
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer token"));
+        assert_eq!(utils::extract_bearer_token(&headers), Some("token"));
+
+        let mut headers2 = HeaderMap::new();
+        headers2.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Basic dXNlcjpwYXNz"),
+        );
+        assert_eq!(
+            utils::extract_basic_credentials(&headers2),
+            Some(("user".to_string(), "pass".to_string()))
+        );
+
+        let mut headers3 = HeaderMap::new();
+        headers3.insert(COOKIE, HeaderValue::from_static("foo=bar; sid=123"));
+        assert_eq!(utils::extract_cookie(&headers3, "sid"), Some("123"));
+    }
+}
