@@ -65,32 +65,51 @@ pass:
 
 ## Phase C — Extract SQL storage into `authkestra-store-sqlx`
 
-**Status: Not started.**
+**Status: Done** (the `SqlKvStore` half is explicitly deferred — see below).
 
-Move `SqlxOpStore` (`authkestra-op/src/sqlx_store.rs`) and, if it still
-makes sense once isolated, the deprecated generic `SqlKvStore` in
-`authkestra-engine`, into a new satellite workspace crate
-`authkestra-store-sqlx`. Goal: `authkestra-op` and `authkestra-engine` end
-up with zero `sqlx` dependency — `sql-postgres`/`sql-mysql`/`sql-sqlite`
-features and the `sqlx` optional dependency move to the new crate entirely.
-The reference SQL implementation stays maintained, versioned, and
-CI-tested; this is an extraction, not a deletion in favor of docs.
+Moved `SqlxOpStore` out of `authkestra-op/src/sqlx_store.rs` into a new
+satellite workspace crate, `crates/authkestra-store-sqlx`. `authkestra-op`
+now has zero `sqlx` dependency (`cargo tree -p authkestra-op -i sqlx`
+matches nothing) — the `sqlx` optional dependency and its
+`sqlx`/`sqlx-postgres`/`sqlx-sqlite`/`sqlx-mysql` features, plus the
+`testcontainers`/`testcontainers-modules` dev-dependencies they needed,
+moved to the new crate entirely, renamed to plain `postgres`/`sqlite`/
+`mysql` features (the crate name itself now carries the "sqlx" part, so the
+prefix would have stuttered). `sqlx` is a required, non-optional dependency
+of the new crate — its whole reason to exist is being the sqlx-backed
+implementation, so there's no reason to gate the base dependency behind a
+feature the way `authkestra-op` had to when `sqlx` was one option among
+several backends in the same crate.
 
-Rough steps:
+What moved, mechanically: the file itself (`git mv` preserved history),
+its three `#[cfg(test)]` backend test modules (14 tests, including the real
+Postgres/MySQL/SQLite testcontainers integration tests and the
+`sqlx::migrate!` collision regression test), and the
+`tests/fixture_migrations/host_app/` fixture that regression test depends
+on (`sqlx::migrate!`'s path is resolved relative to `CARGO_MANIFEST_DIR`,
+so it has to live in the crate that now owns the test). Internal `crate::`
+references became `authkestra_op::`/`authkestra_engine::` (both are now
+direct dependencies of the new crate, needed regardless of the `use crate::`
+rewrite since Rust doesn't let you reach a transitive dependency's items
+without your own `Cargo.toml` entry for it); `authkestra-engine`'s
+`SqlKvStore` deprecation notice and a couple of doc-comment mentions
+elsewhere were updated to the new import path.
 
-1. Scaffold `crates/authkestra-store-sqlx` as a new workspace member.
-2. Move `sqlx_store.rs` (and its `#[cfg(test)]` module, and the
-   `sqlx-postgres`/`sqlx-sqlite`/`sqlx-mysql` Cargo features) there,
-   implementing the (now `&mut self`) `OpStore`-family traits against the
-   lifted `authkestra-engine` models.
-3. Drop the `sqlx` optional dependency and its features from
-   `authkestra-op`'s `Cargo.toml`; same for any remaining `sql-*` plumbing
-   in `authkestra-engine` if `SqlKvStore` moves too.
-4. Update `crates/authkestra/examples/{axum,actix}_op_server_sqlx.rs` and
-   `website/src/content/docs/storage/sql-store.md` to import from the new
-   crate path.
-5. Run `authkestra-store-testsuite`'s conformance suite against the moved
-   `SqlxOpStore` to confirm nothing about the extraction changed behavior.
+Examples (`crates/authkestra/examples/{axum,actix}_op_server_sqlx.rs`) and
+`website/src/content/docs/storage/sql-store.md` updated to the new crate
+path and feature names. `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-features --all-targets -- -D warnings`, and
+`cargo test --workspace --all-features` all pass — `authkestra-store-sqlx`
+carries the 14 tests that used to be `authkestra-op`'s (168 + 14 = the
+182 `authkestra-op` had before the move).
+
+**Deferred, not done**: the deprecated generic `SqlKvStore` in
+`authkestra-engine` (`crates/authkestra-engine/src/store/sql/`) did **not**
+move — the epic issue itself treats this as optional ("if it still makes
+sense once isolated"), and `authkestra-engine` still carries its own
+`sql-postgres`/`sql-mysql`/`sql-sqlite` features and optional `sqlx`
+dependency for it. Revisit if/when `SqlKvStore` itself gets touched again;
+not blocking the rest of this epic.
 
 ## Phase D — Real, compiled ORM example crates
 
@@ -105,7 +124,9 @@ rot the way the epic's motivating problem describes.
 
 ## DoD (Definition of Done, whole epic)
 
-- `authkestra-op`/`authkestra-engine` have zero `sqlx` dependency (Phase C).
+- `authkestra-op` has zero `sqlx` dependency (Phase C, done).
+  `authkestra-engine` still carries one for the deferred `SqlKvStore` move —
+  see Phase C's "Deferred, not done" note.
 - `authkestra-store-testsuite` is the documented, canonical way a
   third-party backend proves conformance (Phase A, done).
 - At least one real compiled ORM example (SeaORM or Diesel) builds and runs

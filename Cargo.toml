@@ -12,6 +12,7 @@ members = [
 
     "crates/authkestra-op",
     "crates/authkestra-devsig", "crates/authkestra-crypto-util", "crates/authkestra-store-testsuite",
+    "crates/authkestra-store-sqlx",
 ]
 
 [workspace.package]
@@ -51,6 +52,7 @@ authkestra-actix = { version = "0.6.2", path = "crates/authkestra-actix", defaul
 authkestra-resource = { version = "0.6.2", path = "crates/authkestra-resource", default-features = false }
 
 authkestra-op = { version = "0.6.2", path = "crates/authkestra-op", default-features = false }
+authkestra-store-sqlx = { version = "0.6.2", path = "crates/authkestra-store-sqlx", default-features = false }
 authkestra-devsig = { version = "0.6.2", path = "crates/authkestra-devsig", default-features = false }
 authkestra-crypto-util = { version = "0.6.2", path = "crates/authkestra-crypto-util", default-features = false }
 rand = "0.9.2"

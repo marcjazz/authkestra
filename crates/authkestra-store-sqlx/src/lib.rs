@@ -1,8 +1,20 @@
-use crate::client::{ClientRegistration, ClientStore, TokenEndpointAuthMethod};
-use crate::code::{AuthorizationCode, AuthorizationCodeStore};
-use crate::device::{DeviceCodeSession, DeviceCodeStore};
-use crate::refresh::{RefreshToken, RefreshTokenStore};
+//! Native, batteries-included SQL storage for `authkestra-op`'s `OpStore`,
+//! via [`sqlx`]. Split out of `authkestra-op` itself (authkestra#289) so
+//! that core has zero `sqlx` dependency — anyone wanting SQL-backed storage
+//! adds this satellite crate explicitly, selecting one or more of the
+//! `postgres`/`mysql`/`sqlite` features for the backend(s) they need.
+//!
+//! While a generic `KvStore` exists in `authkestra-engine` for JSON blob
+//! persistence across the framework, the OpenID Provider's [`SqlxOpStore`]
+//! is deliberately opinionated instead: highly normalized SQL tables with
+//! proper relational foreign keys, `ON DELETE CASCADE` constraints, and
+//! strictly defined columns (`client_id`, `scopes`, `expires_at`, ...).
+
 use async_trait::async_trait;
+use authkestra_op::client::{ClientRegistration, ClientStore, TokenEndpointAuthMethod};
+use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
+use authkestra_op::device::{DeviceCodeSession, DeviceCodeStore};
+use authkestra_op::refresh::{RefreshToken, RefreshTokenStore};
 
 // Model for database rows, using sqlx::FromRow would require fields to match perfectly.
 // Since we are mapping JSON strings back into structs, we will map rows manually.
@@ -33,7 +45,7 @@ impl<DB: sqlx::Database> Clone for SqlxOpStore<DB> {
 /// Postgres 9.6+), so this introspects via `pragma_table_info` first. Used
 /// by [`SqlxOpStore::<sqlx::Sqlite>::migrate`] instead of `sqlx::migrate!` —
 /// see that function's doc comment for why.
-#[cfg(feature = "sqlx-sqlite")]
+#[cfg(feature = "sqlite")]
 async fn ensure_sqlite_column(
     pool: &sqlx::SqlitePool,
     table: &str,
@@ -61,7 +73,7 @@ async fn ensure_sqlite_column(
 /// `information_schema.columns` first. Used by
 /// [`SqlxOpStore::<sqlx::MySql>::migrate`] instead of `sqlx::migrate!` —
 /// see the Postgres impl's doc comment for why.
-#[cfg(feature = "sqlx-mysql")]
+#[cfg(feature = "mysql")]
 async fn ensure_mysql_column(
     pool: &sqlx::MySqlPool,
     table: &str,
@@ -106,7 +118,7 @@ macro_rules! impl_opstore_sql {
         }
 
         #[cfg(feature = $feature)]
-        impl crate::store::OpStore for SqlxOpStore<$backend> {}
+        impl authkestra_op::store::OpStore for SqlxOpStore<$backend> {}
 
         #[cfg(feature = $feature)]
         #[async_trait]
@@ -151,7 +163,7 @@ macro_rules! impl_opstore_sql {
                     // Since sqlx::types::Json is cross-platform, we can use that!
 
                     let redirect_uris: sqlx::types::Json<Vec<String>> = row.try_get("redirect_uris").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
-                    let grant_types: sqlx::types::Json<Vec<crate::client::GrantType>> = row.try_get("grant_types").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+                    let grant_types: sqlx::types::Json<Vec<authkestra_op::client::GrantType>> = row.try_get("grant_types").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
                     let scopes: sqlx::types::Json<Vec<String>> = row.try_get("scopes").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
                     let allowed_audiences: sqlx::types::Json<Vec<String>> = row.try_get("allowed_audiences").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
                     // Nullable: a client registered before authkestra#287's
@@ -383,7 +395,7 @@ macro_rules! impl_opstore_sql {
 
                 if let Some(row) = row {
                     use sqlx::Row;
-                    let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+                    let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
                     Ok(Some(DeviceCodeSession {
                         device_code: row.try_get("device_code").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
@@ -419,7 +431,7 @@ macro_rules! impl_opstore_sql {
 
                 if let Some(row) = row {
                     use sqlx::Row;
-                    let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+                    let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
                     Ok(Some(DeviceCodeSession {
                         device_code: row.try_get("device_code").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?,
@@ -485,7 +497,7 @@ macro_rules! impl_opstore_sql {
 // Generate the Postgres implementation
 impl_opstore_sql! {
     sqlx::Postgres,
-    "sqlx-postgres",
+    "postgres",
     |i| format!("${}", i),
     "authkestra.",
     /// Run necessary database migrations to set up schema and tables.
@@ -629,7 +641,7 @@ impl_opstore_sql! {
 
         if let Some(row) = row {
             use sqlx::Row;
-            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+            let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(DeviceCodeSession {
                 device_code: row.try_get("device_code").unwrap_or_default(),
                 user_code: row.try_get("user_code").unwrap_or_default(),
@@ -648,7 +660,7 @@ impl_opstore_sql! {
 // Generate the SQLite implementation
 impl_opstore_sql! {
     sqlx::Sqlite,
-    "sqlx-sqlite",
+    "sqlite",
     |_| "?".to_string(),
     "authkestra_",
     /// Run necessary database migrations to set up schema and tables.
@@ -778,7 +790,7 @@ impl_opstore_sql! {
 
         if let Some(row) = row {
             use sqlx::Row;
-            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+            let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(DeviceCodeSession {
                 device_code: row.try_get("device_code").unwrap_or_default(),
                 user_code: row.try_get("user_code").unwrap_or_default(),
@@ -797,7 +809,7 @@ impl_opstore_sql! {
 // Generate the MySQL implementation
 impl_opstore_sql! {
     sqlx::MySql,
-    "sqlx-mysql",
+    "mysql",
     |_| "?".to_string(),
     "authkestra_",
     /// Run necessary database migrations to set up schema and tables.
@@ -966,7 +978,7 @@ impl_opstore_sql! {
             tx.commit().await.map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
 
             use sqlx::Row;
-            let status: sqlx::types::Json<crate::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
+            let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|_| authkestra_engine::store::StoreError::Internal("db".into()))?;
             Ok(Some(DeviceCodeSession {
                 device_code: row.try_get("device_code").unwrap_or_default(),
                 user_code: row.try_get("user_code").unwrap_or_default(),
@@ -983,10 +995,10 @@ impl_opstore_sql! {
     }
 }
 
-#[cfg(all(test, feature = "sqlx-postgres"))]
+#[cfg(all(test, feature = "postgres"))]
 mod postgres_tests {
     use super::*;
-    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+    use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
     use chrono::{Duration, Utc};
     use sqlx::postgres::PgPoolOptions;
     use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
@@ -1332,10 +1344,10 @@ mod postgres_tests {
     }
 }
 
-#[cfg(all(test, feature = "sqlx-sqlite"))]
+#[cfg(all(test, feature = "sqlite"))]
 mod sqlite_tests {
     use super::*;
-    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+    use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
     use chrono::{Duration, Utc};
     use sqlx::sqlite::SqlitePoolOptions;
 
@@ -1769,10 +1781,10 @@ mod sqlite_tests {
     }
 }
 
-#[cfg(all(test, feature = "sqlx-mysql"))]
+#[cfg(all(test, feature = "mysql"))]
 mod mysql_tests {
     use super::*;
-    use crate::code::{AuthorizationCode, AuthorizationCodeStore};
+    use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
     use chrono::{Duration, Utc};
     use sqlx::mysql::MySqlPoolOptions;
     use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};

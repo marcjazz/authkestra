@@ -1094,7 +1094,7 @@ enum RefreshTokenStoreOutcome {
 /// persisted.
 ///
 /// A backend can silently drop `jkt` on write without `store_token`
-/// itself ever returning an error: exactly the case `sqlx_store.rs`'s
+/// itself ever returning an error: exactly the case `authkestra-store-sqlx`'s
 /// `RefreshTokenStore` impl is in right now (its schema has no `jkt`
 /// column yet, so it accepts a token with `jkt: Some(_)` and simply
 /// never persists that field — see the comment on its `get_token`). If
@@ -5672,7 +5672,7 @@ mod tests {
 
         /// Wraps any `OpStore` but strips `jkt` on every `store_token`
         /// call before delegating — simulating exactly what
-        /// `sqlx_store.rs`'s `RefreshTokenStore` impl does today (accepts
+        /// `authkestra-store-sqlx`'s `RefreshTokenStore` impl does today (accepts
         /// a DPoP-bound `RefreshToken`, reports success, never persists
         /// the binding). Everything else forwards unchanged, including
         /// `check_and_record_dpop_jti`, which must still reach the inner

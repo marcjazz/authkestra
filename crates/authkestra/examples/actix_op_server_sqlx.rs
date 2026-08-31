@@ -20,7 +20,7 @@ use authkestra_actix::{ActixState, OpExt};
 use authkestra_engine::store::memory::MemoryStore;
 use authkestra_engine::{AkEngine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::config::OpConfig;
-use authkestra_op::sqlx_store::SqlxOpStore;
+use authkestra_store_sqlx::SqlxOpStore;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 

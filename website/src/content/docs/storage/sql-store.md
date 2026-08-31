@@ -5,7 +5,7 @@ description: Opinionated SQL relational persistence for building an OpenID Provi
 
 If you are building an OpenID Provider (OP) using `authkestra-op`, you can implement the storage traits (`ClientStore`, `AuthorizationCodeStore`, `RefreshTokenStore`, and `DeviceCodeStore`) however you prefer.
 
-However, to simplify building OPs, Authkestra provides a batteries-included **native SQL** implementation: `authkestra_op::sqlx_store::SqlxOpStore`.
+However, to simplify building OPs, Authkestra provides a batteries-included **native SQL** implementation in a separate crate: `authkestra_store_sqlx::SqlxOpStore`. It lives outside `authkestra-op` so that core has zero `sqlx` dependency — you only pull in `sqlx` (and its Postgres/MySQL/SQLite driver) if you actually want SQL-backed storage.
 
 ## Opinionated Relational Schema
 
@@ -15,12 +15,12 @@ This allows you to easily query your OAuth clients, see exactly which users have
 
 ## Enabling the Feature
 
-To use it, enable the respective feature flag on the `authkestra-op` crate (or via the facade `authkestra` crate if you're using it):
+To use it, add the `authkestra-store-sqlx` crate and enable the feature for the backend you want:
 
 ```toml
 [dependencies]
-authkestra-op = { version = "0.6", features = ["sqlx-postgres"] }
-# or sqlx-mysql, sqlx-sqlite
+authkestra-store-sqlx = { version = "0.6", features = ["postgres"] }
+# or mysql, sqlite
 ```
 
 ## Setup Differences (SQL Store vs KV Store)
@@ -73,7 +73,7 @@ refresh token predates this release.
 Once connected to your pool, initialize the store and run the built-in migration:
 
 ```rust
-use authkestra_op::sqlx_store::SqlxOpStore;
+use authkestra_store_sqlx::SqlxOpStore;
 use sqlx::postgres::PgPoolOptions;
 
 let pool = PgPoolOptions::new().connect("postgres://user:pass@localhost/db").await?;

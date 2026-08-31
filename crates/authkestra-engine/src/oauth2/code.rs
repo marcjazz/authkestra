@@ -45,7 +45,7 @@ impl AuthorizationCode {
     /// makes that possible (authkestra#268). `used` is a required parameter
     /// rather than a default: this crate's own storage backends deliberately
     /// fail *closed* on it (treating a code as already-used if its stored
-    /// value can't be read, e.g. `sqlx_store.rs`'s
+    /// value can't be read, e.g. `authkestra-store-sqlx`'s
     /// `row.try_get("used").unwrap_or(true)`), and a constructor that
     /// silently defaulted to `false` would make it easy for a downstream
     /// implementation to reconstruct an already-spent code as fresh by

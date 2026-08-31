@@ -456,6 +456,7 @@ dependencies = [
  "authkestra-op",
  "authkestra-providers",
  "authkestra-resource",
+ "authkestra-store-sqlx",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -657,9 +658,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sqlx",
- "testcontainers",
- "testcontainers-modules",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -703,6 +701,22 @@ dependencies = [
  "tracing",
  "url",
  "wiremock",
+]
+
+[[package]]
+name = "authkestra-store-sqlx"
+version = "0.6.2"
+dependencies = [
+ "async-trait",
+ "authkestra-engine",
+ "authkestra-op",
+ "chrono",
+ "serde_json",
+ "sqlx",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

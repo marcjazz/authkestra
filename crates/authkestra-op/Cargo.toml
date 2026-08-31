@@ -34,18 +34,12 @@ base64 = "0.22.1"
 url = { workspace = true }
 sha2 = { workspace = true }
 argon2 = "0.5.3"
-sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "json", "chrono"] }
 authkestra-crypto-util.workspace = true
 tokio = { version = "1", features = ["sync"] }
 
 [features]
 redis = ["dep:redis"]
 default = ["rustls-aws-lc-rs"]
-
-sqlx = ["dep:sqlx"]
-sqlx-postgres = ["sqlx", "sqlx/postgres"]
-sqlx-sqlite = ["sqlx", "sqlx/sqlite"]
-sqlx-mysql = ["sqlx", "sqlx/mysql"]
 
 # TLS backend, forwarded to authkestra-engine. See its documentation for the
 # `rustls-no-provider` contract.
@@ -60,16 +54,6 @@ rustls-no-provider = [
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
-# `migrate` only, not a full `sqlx` re-declaration: Cargo unifies this with
-# the optional main-dependency `sqlx` above for test/bench/example builds
-# only, so downstream consumers never get this feature. Used exclusively by
-# a regression test in `sqlx_store.rs` reproducing a host application's own
-# `sqlx::migrate!` running against the same pool as `SqlxOpStore::migrate`
-# (authkestra#290) — the collision that motivated moving `SqlxOpStore` off
-# `sqlx::migrate!` entirely in favor of introspection-guarded ALTERs.
-sqlx = { version = "0.8", features = ["migrate"] }
-testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql", "redis"] }
 # Test-only: generating real EC P-256 keypairs and signing enrolment
 # challenges with them, to exercise the attestation ceremony end-to-end
 # rather than mocking the crypto away. Already present in the dependency

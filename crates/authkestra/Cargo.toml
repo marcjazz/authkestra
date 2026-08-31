@@ -28,7 +28,8 @@ authkestra-engine = { workspace = true, features = ["token", "session", "memory"
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
 authkestra-oidc = { workspace = true }
-authkestra-op = { workspace = true, features = ["sqlx-sqlite"] }
+authkestra-op = { workspace = true }
+authkestra-store-sqlx = { workspace = true, features = ["sqlite"] }
 authkestra-macros = { workspace = true }
 authkestra-devsig = { workspace = true }
 authkestra-axum = { workspace = true, features = ["devsig", "macros", "session", "token", "resource", "op", "captcha"] }

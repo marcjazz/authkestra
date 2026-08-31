@@ -73,10 +73,6 @@ pub use store::OpStore;
 /// Redis-backed implementations.
 pub mod redis_store;
 
-#[cfg(feature = "sqlx")]
-/// Native SQL implementations using sqlx.
-pub mod sqlx_store;
-
 /// Provider-level configuration (issuer URL, supported scopes/response
 /// types).
 pub mod config;

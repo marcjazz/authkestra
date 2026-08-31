@@ -14,7 +14,7 @@ use crate::store::{ttl_ceil_secs, AtomicInsert, KvStore, StoreError};
 #[deprecated(
     since = "0.2.4",
     note = "Using SqlKvStore for OP-specific data (clients, authorization codes, refresh tokens, \
-            device codes) is deprecated — use `authkestra_op::sqlx_store::SqlxOpStore` instead, \
+            device codes) is deprecated — use `authkestra_store_sqlx::SqlxOpStore` instead, \
             which provides a normalized relational schema with proper foreign keys and ON DELETE CASCADE. \
             SqlKvStore remains a valid choice for generic KV/session storage when you prefer SQL \
             over Redis and do not need OP-specific semantics."

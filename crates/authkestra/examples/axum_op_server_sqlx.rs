@@ -19,7 +19,7 @@ use authkestra_axum::{AxumState, OpExt};
 use authkestra_engine::store::memory::MemoryStore;
 use authkestra_engine::{AkEngine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::config::OpConfig;
-use authkestra_op::sqlx_store::SqlxOpStore;
+use authkestra_store_sqlx::SqlxOpStore;
 use axum::Router;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
