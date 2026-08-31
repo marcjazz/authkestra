@@ -504,6 +504,7 @@ dependencies = [
  "jsonwebtoken",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
  "uuid",
 ]

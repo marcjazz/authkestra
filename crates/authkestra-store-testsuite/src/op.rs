@@ -8,7 +8,7 @@ pub async fn run_op_store_tests<S: OpStore>(_store: S) {
 use authkestra_engine::chrono::Utc;
 use authkestra_op::client_assertion::ClientAssertionStore;
 
-pub async fn run_client_assertion_store_tests<S: ClientAssertionStore>(store: &S) {
+pub async fn run_client_assertion_store_tests<S: ClientAssertionStore>(store: &mut S) {
     let exp = Utc::now() + authkestra_engine::chrono::Duration::seconds(60);
 
     // 1. First record_jti succeeds

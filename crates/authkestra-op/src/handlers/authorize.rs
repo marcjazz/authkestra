@@ -494,7 +494,7 @@ mod tests {
             .await
             .unwrap();
 
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 
@@ -565,7 +565,7 @@ mod tests {
             .await
             .unwrap();
 
-        let codes =
+        let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         let config = test_config();
 

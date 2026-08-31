@@ -17,6 +17,6 @@ use authkestra_store_testsuite::op::run_client_assertion_store_tests;
 
 #[tokio::test]
 async fn test_memory_client_assertion_store() {
-    let store = MemoryClientAssertionStore::default();
-    run_client_assertion_store_tests(&store).await;
+    let mut store = MemoryClientAssertionStore::default();
+    run_client_assertion_store_tests(&mut store).await;
 }

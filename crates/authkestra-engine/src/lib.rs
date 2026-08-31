@@ -27,6 +27,6 @@ pub mod captcha;
 #[cfg(feature = "captcha")]
 pub use captcha::{CaptchaProvider, CaptchaVerifier};
 
+pub mod oauth2;
 #[cfg(test)]
 mod tests;
-pub mod oauth2;

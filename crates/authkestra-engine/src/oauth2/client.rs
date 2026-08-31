@@ -1,9 +1,7 @@
-
 use argon2::{
-    password_hash::{PasswordHash, PasswordVerifier},
+    password_hash::{phc::PasswordHash, PasswordVerifier},
     Argon2,
 };
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// OAuth2/OIDC grant types a client may be permitted to use.
@@ -183,4 +181,3 @@ impl ClientRegistration {
         }
     }
 }
-

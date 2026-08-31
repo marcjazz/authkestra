@@ -28,11 +28,19 @@
 //! algorithms are refused before the key is even loaded, and a `jti` may be
 //! spent only once ([`ClientAssertionStore`]).
 
-pub use authkestra_engine::store::traits::ClientAssertionStore;
 use crate::attestation::parse_public_jwk;
 use crate::client::ClientRegistration;
 use crate::error::OpError;
 use async_trait::async_trait;
+/// Records that a client assertion's `jti` has been spent.
+///
+/// `record_jti` **must** be atomic — a `get`-then-`set` implemented as two
+/// separate storage calls is a TOCTOU race, and the race is precisely the
+/// replay this trait exists to prevent: two concurrent presentations of the
+/// same captured assertion would both observe "not yet seen". Same
+/// requirement, and the same reasoning, as
+/// `AuthorizationCodeStore::consume_code`.
+pub use authkestra_engine::store::traits::ClientAssertionStore;
 use base64::Engine;
 use chrono::{DateTime, TimeZone, Utc};
 use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk};
@@ -85,15 +93,6 @@ pub struct VerifiedClientAssertion {
     pub expires_at: DateTime<Utc>,
 }
 
-/// Records that a client assertion's `jti` has been spent.
-///
-/// `record_jti` **must** be atomic — a `get`-then-`set` implemented as two
-/// separate storage calls is a TOCTOU race, and the race is precisely the
-/// replay this trait exists to prevent: two concurrent presentations of the
-/// same captured assertion would both observe "not yet seen". Same
-/// requirement, and the same reasoning, as
-/// `AuthorizationCodeStore::consume_code`.
-
 /// Single-process, in-memory replay tracking.
 ///
 /// Atomic **within one process** — the map is behind a single `Mutex`, so the
@@ -118,7 +117,11 @@ impl MemoryClientAssertionStore {
 
 #[async_trait]
 impl authkestra_engine::store::traits::ClientAssertionStore for MemoryClientAssertionStore {
-    async fn record_jti(&mut self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, authkestra_engine::store::StoreError> {
+    async fn record_jti(
+        &mut self,
+        jti: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
         let now = Utc::now();
         if expires_at <= now {
             return Ok(false);
@@ -681,11 +684,11 @@ pub(crate) mod tests {
         let key = generate_test_key(None);
         let client = test_client(Some(jwks_of(&[&key])));
 
-        let mut public_key_bytes = serde_json::to_vec(&key.public_jwk).unwrap();
+        let public_key_bytes = serde_json::to_vec(&key.public_jwk).unwrap();
         let forged = jsonwebtoken::encode(
             &Header::new(Algorithm::HS256),
             &good_claims(),
-            &EncodingKey::from_secret(&mut public_key_bytes),
+            &EncodingKey::from_secret(&public_key_bytes),
         )
         .unwrap();
 
@@ -907,12 +910,14 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn no_store_refuses_rather_than_permitting_replay() {
-        let mut store = NoClientAssertionStore;
+        let mut store = authkestra_engine::store::traits::NoClientAssertionStore;
         let exp = Utc::now() + chrono::Duration::seconds(60);
-        assert!(matches!(
-            store.record_jti("jti-1", exp).await,
-            Err(OpError::ReplayProtectionUnavailable)
-        ));
+        // No store configured means every `jti` is treated as already
+        // spent (`Ok(false)`) rather than a hard error — callers (see
+        // `authenticate_client` in `handlers/token.rs`) already map that
+        // straight to a replay rejection, so this fails closed the same
+        // way a real replay would.
+        assert!(!store.record_jti("jti-1", exp).await.unwrap());
     }
 
     #[test]

@@ -1,7 +1,6 @@
 use crate::client::{ClientRegistration, ClientStore, TokenEndpointAuthMethod};
 use crate::code::{AuthorizationCode, AuthorizationCodeStore};
 use crate::device::{DeviceCodeSession, DeviceCodeStore};
-use crate::error::OpError;
 use crate::refresh::{RefreshToken, RefreshTokenStore};
 use async_trait::async_trait;
 
@@ -9,10 +8,23 @@ use async_trait::async_trait;
 // Since we are mapping JSON strings back into structs, we will map rows manually.
 
 /// Opinionated, native SQL implementation of OpStore using sqlx.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct SqlxOpStore<DB: sqlx::Database> {
     pool: sqlx::Pool<DB>,
+}
+
+// Written by hand rather than `#[derive(Clone)]`: the derive macro adds a
+// `DB: Clone` bound on the generic parameter, but `sqlx::Pool<DB>` is
+// already cheaply cloneable (it's a handle around a shared connection pool)
+// regardless of whether the `Database` marker type itself implements
+// `Clone` — Postgres/MySql/Sqlite don't.
+impl<DB: sqlx::Database> Clone for SqlxOpStore<DB> {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+        }
+    }
 }
 
 /// Add `column` to `table` if it isn't already there.
@@ -997,7 +1009,7 @@ mod postgres_tests {
             .await
             .unwrap();
 
-        let mut store = SqlxOpStore::<sqlx::Postgres>::new(pool);
+        let store = SqlxOpStore::<sqlx::Postgres>::new(pool);
         store.migrate().await.unwrap();
 
         (store, container)
@@ -1114,11 +1126,11 @@ mod postgres_tests {
         store.store_code(code.clone()).await.unwrap();
 
         let mut handles = vec![];
-        let store_arc = std::sync::store.clone();
+        let store_arc = store.clone();
 
         // Spawn 10 simultaneous consumers
         for _ in 0..10 {
-            let s = store_arc.clone();
+            let mut s = store_arc.clone();
             handles.push(tokio::spawn(async move {
                 s.consume_code("concurrent_code").await.unwrap()
             }));
@@ -1333,7 +1345,7 @@ mod sqlite_tests {
             .await
             .unwrap();
 
-        let mut store = SqlxOpStore::<sqlx::Sqlite>::new(pool);
+        let store = SqlxOpStore::<sqlx::Sqlite>::new(pool);
         store.migrate().await.unwrap();
 
         // Enable foreign keys in SQLite for this connection
@@ -1455,11 +1467,11 @@ mod sqlite_tests {
         store.store_code(code.clone()).await.unwrap();
 
         let mut handles = vec![];
-        let store_arc = std::sync::store.clone();
+        let store_arc = store.clone();
 
         // Spawn 10 simultaneous consumers
         for _ in 0..10 {
-            let s = store_arc.clone();
+            let mut s = store_arc.clone();
             handles.push(tokio::spawn(async move {
                 s.consume_code("concurrent_code").await.unwrap()
             }));
@@ -1678,7 +1690,7 @@ mod sqlite_tests {
                 .await
                 .expect("the host app's own migrator must succeed");
 
-            let mut store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
+            let store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
             store
                 .migrate()
                 .await
@@ -1706,7 +1718,7 @@ mod sqlite_tests {
                 .await
                 .unwrap();
 
-            let mut store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
+            let store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
             store.migrate().await.unwrap();
 
             sqlx::migrate!("./tests/fixture_migrations/host_app")
@@ -1751,7 +1763,7 @@ mod sqlite_tests {
 
         let result = store.find_client("malformed_client").await;
         assert!(
-            matches!(result, Err(authkestra_engine::store::StoreError::Internal("db".into()))),
+            matches!(result, Err(authkestra_engine::store::StoreError::Internal(_))),
             "an undecodable token_endpoint_auth_method must fail closed as a storage error, not silently decode to None: got {result:?}"
         );
     }
@@ -1782,7 +1794,7 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let mut store = SqlxOpStore::<sqlx::MySql>::new(pool);
+        let store = SqlxOpStore::<sqlx::MySql>::new(pool);
         store.migrate().await.unwrap();
 
         (store, container)
@@ -1898,11 +1910,11 @@ mod mysql_tests {
         store.store_code(code.clone()).await.unwrap();
 
         let mut handles = vec![];
-        let store_arc = std::sync::store.clone();
+        let store_arc = store.clone();
 
         // Spawn 10 simultaneous consumers
         for _ in 0..10 {
-            let s = store_arc.clone();
+            let mut s = store_arc.clone();
             handles.push(tokio::spawn(async move {
                 s.consume_code("concurrent_code").await.unwrap()
             }));

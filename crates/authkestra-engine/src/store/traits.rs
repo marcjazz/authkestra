@@ -1,14 +1,17 @@
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use crate::store::StoreError;
 use crate::oauth2::client::ClientRegistration;
 use crate::oauth2::code::AuthorizationCode;
-use crate::oauth2::refresh::RefreshToken;
 use crate::oauth2::device::DeviceCodeSession;
+use crate::oauth2::refresh::RefreshToken;
+use crate::store::StoreError;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 
 #[async_trait]
 pub trait ClientStore: Send + Sync {
-    async fn find_client(&mut self, client_id: &str) -> Result<Option<ClientRegistration>, StoreError>;
+    async fn find_client(
+        &mut self,
+        client_id: &str,
+    ) -> Result<Option<ClientRegistration>, StoreError>;
 }
 
 #[async_trait]
@@ -22,10 +25,7 @@ pub trait RefreshTokenStore: Send + Sync {
     async fn store_token(&mut self, token: RefreshToken) -> Result<(), StoreError>;
     async fn get_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError>;
     async fn revoke_token(&mut self, token: &str) -> Result<(), StoreError>;
-    async fn consume_token(
-        &mut self,
-        token: &str,
-    ) -> Result<Option<RefreshToken>, StoreError>;
+    async fn consume_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError>;
 }
 
 #[async_trait]
@@ -35,8 +35,10 @@ pub trait DeviceCodeStore: Send + Sync {
         &mut self,
         device_code: &str,
     ) -> Result<Option<DeviceCodeSession>, StoreError>;
-    async fn get_by_user_code(&mut self, user_code: &str)
-        -> Result<Option<DeviceCodeSession>, StoreError>;
+    async fn get_by_user_code(
+        &mut self,
+        user_code: &str,
+    ) -> Result<Option<DeviceCodeSession>, StoreError>;
     async fn update_device_code(&mut self, session: DeviceCodeSession) -> Result<(), StoreError>;
     async fn delete_device_code(&mut self, device_code: &str) -> Result<(), StoreError>;
     async fn consume_device_code(
@@ -47,7 +49,11 @@ pub trait DeviceCodeStore: Send + Sync {
 
 #[async_trait]
 pub trait ClientAssertionStore: Send + Sync {
-    async fn record_jti(&mut self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, StoreError>;
+    async fn record_jti(
+        &mut self,
+        jti: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<bool, StoreError>;
 }
 
 #[async_trait]
@@ -62,7 +68,11 @@ pub trait DpopReplayStore: Send + Sync {
 pub struct NoClientAssertionStore;
 #[async_trait]
 impl ClientAssertionStore for NoClientAssertionStore {
-    async fn record_jti(&mut self, _jti: &str, _expires_at: DateTime<Utc>) -> Result<bool, StoreError> {
+    async fn record_jti(
+        &mut self,
+        _jti: &str,
+        _expires_at: DateTime<Utc>,
+    ) -> Result<bool, StoreError> {
         Ok(false)
     }
 }
@@ -88,14 +98,17 @@ pub trait OpStore:
     }
 }
 
-use crate::store::{KvStore, IndexedKvStore, AtomicConsume, AtomicInsert};
+use crate::store::{AtomicConsume, AtomicInsert, IndexedKvStore, KvStore};
 
 #[async_trait]
 impl<S> ClientStore for S
 where
     S: KvStore<ClientRegistration> + Send + Sync,
 {
-    async fn find_client(&mut self, client_id: &str) -> Result<Option<ClientRegistration>, StoreError> {
+    async fn find_client(
+        &mut self,
+        client_id: &str,
+    ) -> Result<Option<ClientRegistration>, StoreError> {
         self.get(client_id).await
     }
 }
@@ -141,10 +154,7 @@ where
         self.delete(token).await
     }
 
-    async fn consume_token(
-        &mut self,
-        token: &str,
-    ) -> Result<Option<RefreshToken>, StoreError> {
+    async fn consume_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError> {
         self.consume(token).await
     }
 }
@@ -160,7 +170,13 @@ where
             .signed_duration_since(Utc::now())
             .to_std()
             .unwrap_or(std::time::Duration::from_secs(1));
-        self.set_indexed(&session.device_code.clone(), &session.user_code.clone(), session, ttl).await
+        self.set_indexed(
+            &session.device_code.clone(),
+            &session.user_code.clone(),
+            session,
+            ttl,
+        )
+        .await
     }
 
     async fn get_device_code(
@@ -170,7 +186,10 @@ where
         self.get(device_code).await
     }
 
-    async fn get_by_user_code(&mut self, user_code: &str) -> Result<Option<DeviceCodeSession>, StoreError> {
+    async fn get_by_user_code(
+        &mut self,
+        user_code: &str,
+    ) -> Result<Option<DeviceCodeSession>, StoreError> {
         self.get_by_index(user_code).await
     }
 
@@ -180,7 +199,13 @@ where
             .signed_duration_since(Utc::now())
             .to_std()
             .unwrap_or(std::time::Duration::from_secs(1));
-        self.set_indexed(&session.device_code.clone(), &session.user_code.clone(), session, ttl).await
+        self.set_indexed(
+            &session.device_code.clone(),
+            &session.user_code.clone(),
+            session,
+            ttl,
+        )
+        .await
     }
 
     async fn delete_device_code(&mut self, device_code: &str) -> Result<(), StoreError> {
@@ -194,7 +219,6 @@ where
         self.consume(device_code).await
     }
 }
-
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
@@ -212,9 +236,15 @@ impl DpopJtiRecord {
 pub struct NoDpopReplayStore;
 #[async_trait]
 impl DpopReplayStore for NoDpopReplayStore {
-    async fn check_and_record_dpop_jti(&mut self, _jti: &str, _expires_at: DateTime<Utc>) -> Result<bool, StoreError> {
+    async fn check_and_record_dpop_jti(
+        &mut self,
+        _jti: &str,
+        _expires_at: DateTime<Utc>,
+    ) -> Result<bool, StoreError> {
         tracing::error!("a DPoP proof was presented but no DpopReplayStore is wired; refusing it rather than accepting a proof that could be replayed");
-        Err(StoreError::Internal("DpopReplayProtectionUnavailable".into()))
+        Err(StoreError::Internal(
+            "DpopReplayProtectionUnavailable".into(),
+        ))
     }
 }
 

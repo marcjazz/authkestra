@@ -1,5 +1,4 @@
 use crate::client_assertion::ClientAssertionStore;
-use crate::error::OpError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use redis::aio::ConnectionManager;
@@ -14,7 +13,10 @@ pub struct RedisClientAssertionStore {
 
 impl RedisClientAssertionStore {
     /// Creates a new RedisClientAssertionStore from a redis URL and a key prefix.
-    pub async fn new(redis_url: &str, prefix: String) -> Result<Self, authkestra_engine::store::StoreError> {
+    pub async fn new(
+        redis_url: &str,
+        prefix: String,
+    ) -> Result<Self, authkestra_engine::store::StoreError> {
         let client = redis::Client::open(redis_url).map_err(|e| {
             tracing::error!(error = %e, "Failed to open redis client");
             authkestra_engine::store::StoreError::Internal("redis".into())
@@ -23,7 +25,10 @@ impl RedisClientAssertionStore {
     }
 
     /// Creates a new RedisClientAssertionStore from an existing redis client and a key prefix.
-    pub async fn with_client(client: redis::Client, prefix: String) -> Result<Self, authkestra_engine::store::StoreError> {
+    pub async fn with_client(
+        client: redis::Client,
+        prefix: String,
+    ) -> Result<Self, authkestra_engine::store::StoreError> {
         let conn = client.get_connection_manager().await.map_err(|e| {
             tracing::error!(error = %e, "Failed to create Redis connection manager");
             authkestra_engine::store::StoreError::Internal("redis".into())
@@ -43,7 +48,11 @@ impl RedisClientAssertionStore {
 
 #[async_trait]
 impl ClientAssertionStore for RedisClientAssertionStore {
-    async fn record_jti(&mut self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, authkestra_engine::store::StoreError> {
+    async fn record_jti(
+        &mut self,
+        jti: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
         let now = Utc::now();
         if expires_at <= now {
             tracing::debug!(jti = %jti, "Assertion is already expired; refusing without querying Redis");

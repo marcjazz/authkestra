@@ -225,9 +225,8 @@ async fn test_device_offline_access() {
 
 #[tokio::test]
 async fn test_device_concurrency() {
-    let mut devices = std::sync::Arc::new(authkestra_engine::store::memory::MemoryStore::<
-        crate::device::DeviceCodeSession,
-    >::new());
+    let mut devices =
+        authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
     let session = DeviceCodeSession {
         device_code: "dev123".to_string(),
         user_code: "USER123".to_string(),
@@ -238,6 +237,7 @@ async fn test_device_concurrency() {
         last_polled_at: None,
     };
     devices.store_device_code(session).await.unwrap();
+    let devices = std::sync::Arc::new(devices);
 
     let clients = std::sync::Arc::new(authkestra_engine::store::memory::MemoryStore::<
         crate::client::ClientRegistration,
@@ -267,7 +267,7 @@ async fn test_device_concurrency() {
     let mut handles = vec![];
 
     for _ in 0..10 {
-        let mut devices = devices.clone();
+        let devices = devices.clone();
         let clients = clients.clone();
         let config = config.clone();
         let tokens = tokens.clone();

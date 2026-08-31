@@ -74,10 +74,13 @@ where
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(client_id = %req.client_id, "Handling OP authorize request (axum)");
-    let op_store = match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(
+            &state,
+        ) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let config = OpConfig::from_ref(&state);
 
     let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state) {
@@ -96,7 +99,8 @@ where
         }
     };
 
-    match handle_authorize(req, identity, &config, \op_store.as_ref()mut *op_store.lock().await).await {
+    let response = match handle_authorize(req, identity, &config, &mut *op_store.lock().await).await
+    {
         authkestra_op::handlers::authorize::AuthorizeOutcome::Redirect(url) => {
             Redirect::to(&url).into_response()
         }
@@ -108,7 +112,8 @@ where
             })),
         )
             .into_response(),
-    }
+    };
+    response
 }
 
 /// Handler for the device authorization endpoint.
@@ -123,26 +128,33 @@ where
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device authorization request (axum)");
-    let op_store = match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(
+            &state,
+        ) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let config = OpConfig::from_ref(&state);
 
     let auth_header = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
 
-    match handle_device_authorization(req, auth_header, &config, \op_store.as_ref()mut *op_store.lock().await).await {
-        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
-        Err(err) => {
-            let status = match err.error.as_str() {
-                "invalid_client" | "unauthorized_client" => StatusCode::UNAUTHORIZED,
-                _ => StatusCode::BAD_REQUEST,
-            };
-            (status, Json(err)).into_response()
-        }
-    }
+    let response =
+        match handle_device_authorization(req, auth_header, &config, &mut *op_store.lock().await)
+            .await
+        {
+            Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+            Err(err) => {
+                let status = match err.error.as_str() {
+                    "invalid_client" | "unauthorized_client" => StatusCode::UNAUTHORIZED,
+                    _ => StatusCode::BAD_REQUEST,
+                };
+                (status, Json(err)).into_response()
+            }
+        };
+    response
 }
 
 /// Reads the request's `DPoP` header (RFC 9449 §4.1: exactly one is
@@ -199,10 +211,13 @@ where
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (axum)");
-    let op_store = match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(
+            &state,
+        ) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let tokens = match <Result<Arc<TokenManager>, AxumError>>::from_ref(&state) {
         Ok(t) => t,
         Err(e) => return e.into_response(),
@@ -225,11 +240,11 @@ where
         Err(err) => return (StatusCode::BAD_REQUEST, Json(err)).into_response(),
     };
 
-    match handle_token_with_client_cert(
+    let response = match handle_token_with_client_cert(
         req,
         auth_header,
         &config,
-        \op_store.as_ref()mut *op_store.lock().await,
+        &mut *op_store.lock().await,
         tokens.as_ref(),
         client_cert_der.as_deref(),
         dpop_header,
@@ -244,7 +259,8 @@ where
             };
             (status, Json(err)).into_response()
         }
-    }
+    };
+    response
 }
 
 /// Handler for the userinfo endpoint.
@@ -311,10 +327,13 @@ where
     authkestra_engine::SessionConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device verify request (axum)");
-    let op_store = match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>, AxumError>>::from_ref(
+            &state,
+        ) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
 
     let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state) {
         Ok(c) => c,
@@ -332,10 +351,10 @@ where
         }
     };
 
-    match authkestra_op::handlers::device_verify::handle_device_verify(
+    let response = match authkestra_op::handlers::device_verify::handle_device_verify(
         req,
         identity,
-        \op_store.as_ref()mut *op_store.lock().await,
+        &mut *op_store.lock().await,
     )
     .await
     {
@@ -348,7 +367,8 @@ where
             })),
         )
             .into_response(),
-    }
+    };
+    response
 }
 
 /// Maps an `OpError` from the attestation ceremony to an HTTP status and an

@@ -30,7 +30,7 @@ struct AppState {
     auth: AkEngine,
 
     #[authkestra(store)]
-    op_store: Arc<dyn authkestra_op::OpStore>,
+    op_store: Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>,
 
     #[authkestra(store)]
     config: OpConfig,
@@ -88,7 +88,8 @@ async fn main() {
     .await
     .unwrap();
 
-    let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(sqlx_store);
+    let op_store: Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>> =
+        Arc::new(tokio::sync::Mutex::new(sqlx_store));
 
     // Only the OP data lives in SQL here; the end-user login session can use
     // any `SessionStore`, so the example keeps that part dependency-free.

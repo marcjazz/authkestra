@@ -85,7 +85,9 @@ mod tests {
             approve: true,
         };
 
-        let res = handle_device_verify(req, identity, &mut devices).await.unwrap();
+        let res = handle_device_verify(req, identity, &mut devices)
+            .await
+            .unwrap();
         assert!(res.success);
 
         let updated = devices.get_device_code("dev123").await.unwrap().unwrap();

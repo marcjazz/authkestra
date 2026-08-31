@@ -58,7 +58,7 @@ pub async fn actix_authorize_handler(
         req.into_inner(),
         identity,
         config.get_ref(),
-        op_store.get_ref().as_ref(),
+        &mut *op_store.get_ref().lock().await,
     )
     .await
     {
@@ -89,7 +89,7 @@ pub async fn actix_device_authorization_handler(
         req.into_inner(),
         auth_header,
         config.get_ref(),
-        op_store.get_ref().as_ref(),
+        &mut *op_store.get_ref().lock().await,
     )
     .await
     {
@@ -181,7 +181,7 @@ pub async fn actix_token_handler(
         req.into_inner(),
         auth_header,
         config.get_ref(),
-        op_store.get_ref().as_ref(),
+        &mut *op_store.get_ref().lock().await,
         tokens.get_ref().as_ref(),
         client_cert_der.as_deref(),
         dpop_header,
@@ -256,7 +256,7 @@ pub async fn actix_device_verify_handler(
     match authkestra_op::handlers::device_verify::handle_device_verify(
         req.into_inner(),
         identity,
-        op_store.get_ref().as_ref(),
+        &mut *op_store.get_ref().lock().await,
     )
     .await
     {

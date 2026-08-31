@@ -24,10 +24,7 @@ pub use client::{ClientRegistration, ClientStore, GrantType, TokenEndpointAuthMe
 /// Asymmetric client authentication (`private_key_jwt`, RFC 7523 §2.2):
 /// assertion verification and the replay tracking it depends on.
 pub mod client_assertion;
-pub use client_assertion::{
-    MemoryClientAssertionStore,
-    CLIENT_ASSERTION_TYPE_JWT_BEARER,
-};
+pub use client_assertion::{MemoryClientAssertionStore, CLIENT_ASSERTION_TYPE_JWT_BEARER};
 
 /// Authorization codes issued during the `/authorize` step and consumed at
 /// `/token`.

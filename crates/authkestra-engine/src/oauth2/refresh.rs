@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use crate::auth::state::Identity;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -57,4 +56,3 @@ impl RefreshToken {
         }
     }
 }
-

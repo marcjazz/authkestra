@@ -1,10 +1,9 @@
 use crate::client::ClientStore;
-use authkestra_engine::store::traits::{ClientAssertionStore, NoClientAssertionStore};
 use crate::code::AuthorizationCodeStore;
 use crate::device::DeviceCodeStore;
 use crate::dpop::{DpopReplayStore, NoDpopReplayStore};
-use authkestra_engine::store::StoreError;
 use crate::refresh::RefreshTokenStore;
+use authkestra_engine::store::traits::{ClientAssertionStore, NoClientAssertionStore};
 use chrono::{DateTime, Utc};
 
 /// A unified store for all OpenID Provider state.
@@ -35,7 +34,7 @@ pub trait OpStore:
         jti: &str,
         expires_at: DateTime<Utc>,
     ) -> Result<bool, authkestra_engine::store::StoreError> {
-        NoClientAssertionStore.record_jti(jti, expires_at).await.map_err(Into::into)
+        NoClientAssertionStore.record_jti(jti, expires_at).await
     }
 
     /// Atomically records the `jti` of a presented DPoP proof, returning
@@ -56,7 +55,7 @@ pub trait OpStore:
     ) -> Result<bool, authkestra_engine::store::StoreError> {
         NoDpopReplayStore
             .check_and_record_dpop_jti(jti, expires_at)
-            .await.map_err(Into::into)
+            .await
     }
 
     /// Handle a custom grant type request during token exchange.
@@ -110,7 +109,7 @@ pub trait OpStore:
         crate::handlers::token::default_handle_authorization_code(
             req, client_id, client, config, self, tokens,
         )
-        .await.map_err(Into::into)
+        .await
     }
 
     /// Handle a `refresh_token` grant request during token exchange.
@@ -143,7 +142,7 @@ pub trait OpStore:
         crate::handlers::token::default_handle_refresh_token(
             req, client_id, client, config, self, tokens,
         )
-        .await.map_err(Into::into)
+        .await
     }
 
     /// Handle a `urn:ietf:params:oauth:grant-type:token-exchange` (RFC 8693)
@@ -173,7 +172,7 @@ pub trait OpStore:
         crate::handlers::token::default_handle_token_exchange(
             req, client_id, client, config, tokens,
         )
-        .await.map_err(Into::into)
+        .await
     }
 }
 
@@ -213,7 +212,7 @@ where
         jti: &str,
         expires_at: DateTime<Utc>,
     ) -> Result<bool, authkestra_engine::store::StoreError> {
-        self.assertions.record_jti(jti, expires_at).await.map_err(Into::into)
+        self.assertions.record_jti(jti, expires_at).await
     }
 
     async fn check_and_record_dpop_jti(
@@ -223,7 +222,7 @@ where
     ) -> Result<bool, authkestra_engine::store::StoreError> {
         self.dpop_replays
             .check_and_record_dpop_jti(jti, expires_at)
-            .await.map_err(Into::into)
+            .await
     }
 }
 
@@ -306,9 +305,10 @@ impl<
     async fn find_client(
         &mut self,
         client_id: &str,
-    ) -> Result<Option<crate::client::ClientRegistration>, authkestra_engine::store::StoreError> {
+    ) -> Result<Option<crate::client::ClientRegistration>, authkestra_engine::store::StoreError>
+    {
         tracing::debug!(client_id = %client_id, "CompositeOpStore: finding client");
-        self.clients.find_client(client_id).await.map_err(Into::into)
+        self.clients.find_client(client_id).await
     }
 }
 
@@ -328,7 +328,7 @@ impl<
         code: crate::code::AuthorizationCode,
     ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing authorization code");
-        self.codes.store_code(code).await.map_err(Into::into)
+        self.codes.store_code(code).await
     }
 
     #[tracing::instrument(skip(self))]
@@ -337,7 +337,7 @@ impl<
         code: &str,
     ) -> Result<Option<crate::code::AuthorizationCode>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: consuming authorization code");
-        self.codes.consume_code(code).await.map_err(Into::into)
+        self.codes.consume_code(code).await
     }
 }
 
@@ -357,7 +357,7 @@ impl<
         token: crate::refresh::RefreshToken,
     ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing refresh token");
-        self.refresh.store_token(token).await.map_err(Into::into)
+        self.refresh.store_token(token).await
     }
 
     #[tracing::instrument(skip(self))]
@@ -366,7 +366,7 @@ impl<
         token: &str,
     ) -> Result<Option<crate::refresh::RefreshToken>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: consuming refresh token");
-        self.refresh.consume_token(token).await.map_err(Into::into)
+        self.refresh.consume_token(token).await
     }
 
     #[tracing::instrument(skip(self))]
@@ -375,13 +375,16 @@ impl<
         token: &str,
     ) -> Result<Option<crate::refresh::RefreshToken>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: getting refresh token");
-        self.refresh.get_token(token).await.map_err(Into::into)
+        self.refresh.get_token(token).await
     }
 
     #[tracing::instrument(skip(self))]
-    async fn revoke_token(&mut self, token: &str) -> Result<(), authkestra_engine::store::StoreError> {
+    async fn revoke_token(
+        &mut self,
+        token: &str,
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: revoking refresh token");
-        self.refresh.revoke_token(token).await.map_err(Into::into)
+        self.refresh.revoke_token(token).await
     }
 }
 
@@ -401,25 +404,27 @@ impl<
         session: crate::device::DeviceCodeSession,
     ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing device code");
-        self.devices.store_device_code(session).await.map_err(Into::into)
+        self.devices.store_device_code(session).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_device_code(
         &mut self,
         device_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError>
+    {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: getting device code");
-        self.devices.get_device_code(device_code).await.map_err(Into::into)
+        self.devices.get_device_code(device_code).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_by_user_code(
         &mut self,
         user_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError>
+    {
         tracing::debug!(user_code = %user_code, "CompositeOpStore: getting by user code");
-        self.devices.get_by_user_code(user_code).await.map_err(Into::into)
+        self.devices.get_by_user_code(user_code).await
     }
 
     #[tracing::instrument(skip(self, session))]
@@ -428,21 +433,25 @@ impl<
         session: crate::device::DeviceCodeSession,
     ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: updating device code");
-        self.devices.update_device_code(session).await.map_err(Into::into)
+        self.devices.update_device_code(session).await
     }
 
     #[tracing::instrument(skip(self))]
-    async fn delete_device_code(&mut self, device_code: &str) -> Result<(), authkestra_engine::store::StoreError> {
+    async fn delete_device_code(
+        &mut self,
+        device_code: &str,
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: deleting device code");
-        self.devices.delete_device_code(device_code).await.map_err(Into::into)
+        self.devices.delete_device_code(device_code).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn consume_device_code(
         &mut self,
         device_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError>
+    {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: consuming device code");
-        self.devices.consume_device_code(device_code).await.map_err(Into::into)
+        self.devices.consume_device_code(device_code).await
     }
 }

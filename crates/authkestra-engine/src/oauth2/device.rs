@@ -1,5 +1,3 @@
-
-use async_trait::async_trait;
 use crate::auth::state::Identity;
 
 use chrono::{DateTime, Utc};
@@ -67,4 +65,3 @@ impl DeviceCodeSession {
         now >= self.expires_at
     }
 }
-

@@ -51,8 +51,8 @@ async fn test_redis_store_atomic_insert() {
 #[tokio::test]
 async fn test_redis_client_assertion_store() {
     let (url, _c) = setup_redis().await;
-    let store = RedisClientAssertionStore::new(&url, "test_jti".to_string())
+    let mut store = RedisClientAssertionStore::new(&url, "test_jti".to_string())
         .await
         .unwrap();
-    run_client_assertion_store_tests(&store).await;
+    run_client_assertion_store_tests(&mut store).await;
 }
