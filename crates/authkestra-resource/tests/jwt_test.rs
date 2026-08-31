@@ -910,4 +910,423 @@ fn builder_defaults_match_documented_behaviour() {
         "require_cert_binding must stay off by default: turning it on would reject every \
          certificate-bound token not presented over a matching mTLS connection"
     );
+    assert!(
+        !config.require_dpop,
+        "require_dpop must stay off by default: turning it on would reject every DPoP-bound \
+         token not presented over the DPoP auth-scheme with a matching proof"
+    );
+}
+
+// --- RFC 9449 DPoP key-bound (`cnf.jkt`) access token tests — authkestra#274
+// Phase C -------------------------------------------------------------------
+//
+// Covers the same shape of gap #224/cert-binding closed for RFC 8705: a
+// token stamped with `cnf.jkt` (see `authkestra-op`'s DPoP `/token` wiring)
+// must be rejected by `JwtStrategy::require_dpop` unless the request
+// presents a fresh, valid DPoP proof for that same key, bound to this
+// specific access token — and, per RFC 9449 §7.1, presented via the `DPoP`
+// auth-scheme, never `Bearer`.
+
+/// Claims shape carrying an optional `cnf` confirmation claim, separate from
+/// `CertBoundClaims` so a claims payload can be reused verbatim across both
+/// binding checks if a future test wants both at once.
+#[derive(Debug, Serialize, Deserialize)]
+struct DpopBoundClaims {
+    sub: String,
+    exp: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aud: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cnf: Option<serde_json::Value>,
+}
+
+fn dpop_b64(bytes: &[u8]) -> String {
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+fn dpop_b64_json(v: &serde_json::Value) -> String {
+    dpop_b64(serde_json::to_vec(v).unwrap().as_slice())
+}
+
+/// Builds a real, genuinely Ed25519-signed DPoP proof. Mirrors the
+/// (private, so unreachable from this integration-test binary)
+/// `DpopProofBuilder` in `authkestra_resource::jwt`'s own unit tests, and
+/// `authkestra_engine::token::dpop`'s before that.
+struct DpopProofBuilder {
+    signing_key: ed25519_dalek::SigningKey,
+    htm: String,
+    htu: String,
+    jti: String,
+    ath: Option<String>,
+}
+
+impl DpopProofBuilder {
+    fn with_key_seed(seed: u8, htm: &str, jti: &str) -> Self {
+        Self {
+            signing_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32]),
+            htm: htm.to_string(),
+            htu: "https://resource.example.com/protected".to_string(),
+            jti: jti.to_string(),
+            ath: None,
+        }
+    }
+
+    fn with_ath(mut self, ath: &str) -> Self {
+        self.ath = Some(ath.to_string());
+        self
+    }
+
+    fn with_htu(mut self, htu: &str) -> Self {
+        self.htu = htu.to_string();
+        self
+    }
+
+    fn jwk(&self) -> serde_json::Value {
+        serde_json::json!({
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": dpop_b64(self.signing_key.verifying_key().as_bytes()),
+        })
+    }
+
+    fn expected_jkt(&self) -> String {
+        authkestra_engine::token::dpop::compute_jwk_thumbprint(
+            &serde_json::from_value(self.jwk()).unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn build(&self) -> String {
+        use ed25519_dalek::Signer;
+        let header = serde_json::json!({
+            "typ": "dpop+jwt",
+            "alg": "EdDSA",
+            "jwk": self.jwk(),
+        });
+        let mut payload = serde_json::json!({
+            "htm": self.htm,
+            "htu": self.htu,
+            "iat": chrono::Utc::now().timestamp(),
+            "jti": self.jti,
+        });
+        if let Some(ath) = &self.ath {
+            payload["ath"] = serde_json::Value::String(ath.clone());
+        }
+        let signing_input = format!("{}.{}", dpop_b64_json(&header), dpop_b64_json(&payload));
+        let signature = self.signing_key.sign(signing_input.as_bytes());
+        format!("{signing_input}.{}", dpop_b64(&signature.to_bytes()))
+    }
+}
+
+/// Builds `http::request::Parts` presenting `token` via the given
+/// auth-scheme, with `dpop_proof`, if any, as the `DPoP` header.
+fn scheme_request_parts(
+    scheme: &str,
+    token: &str,
+    dpop_proof: Option<&str>,
+) -> http::request::Parts {
+    scheme_request_parts_with_uri(scheme, token, dpop_proof, "/")
+}
+
+/// As [`scheme_request_parts`], but lets the caller set the request's own
+/// path — needed to exercise `ValidationConfig::dpop_resource_origin`,
+/// which reconstructs the expected `htu` from this path.
+fn scheme_request_parts_with_uri(
+    scheme: &str,
+    token: &str,
+    dpop_proof: Option<&str>,
+    uri: &str,
+) -> http::request::Parts {
+    let mut builder = Request::builder()
+        .uri(uri)
+        .header(AUTHORIZATION, format!("{scheme} {token}"));
+    if let Some(proof) = dpop_proof {
+        builder = builder.header("DPoP", proof);
+    }
+    let request = builder.body(()).unwrap();
+    let (parts, _) = request.into_parts();
+    parts
+}
+
+#[tokio::test]
+async fn dpop_accepts_a_valid_proof_presented_via_the_dpop_scheme() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_dpop(true)
+        .build();
+    let strategy: JwtStrategy<DpopBoundClaims> = JwtStrategy::new(config).with_dpop_replay_store(
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            authkestra_resource::dpop::DpopJtiRecord,
+        >::new()),
+    );
+
+    let proof_builder = DpopProofBuilder::with_key_seed(11, "GET", "jti-e2e-1");
+    let claims = DpopBoundClaims {
+        sub: "user-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "jkt": proof_builder.expected_jkt() })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let proof = proof_builder
+        .with_ath(&x5t_s256_thumbprint(token.as_bytes()))
+        .build();
+    let parts = scheme_request_parts("DPoP", &token, Some(&proof));
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error");
+    let identity = result.expect(
+        "a DPoP-bound token, presented via the DPoP scheme with a valid matching proof, must be accepted",
+    );
+    assert_eq!(identity.sub, "user-a");
+}
+
+/// The regression test for the exact gap this whole test module is about:
+/// RFC 9449 §7.1 requires a DPoP-bound token be presented via the `DPoP`
+/// scheme, never `Bearer` — and before this fix, `authenticate` only ever
+/// looked for `Bearer`, so no request shaped the way a spec-compliant DPoP
+/// client actually sends one could ever reach the DPoP check at all.
+#[tokio::test]
+async fn dpop_rejects_a_bound_token_presented_via_the_bearer_scheme() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_dpop(true)
+        .build();
+    let strategy: JwtStrategy<DpopBoundClaims> = JwtStrategy::new(config).with_dpop_replay_store(
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            authkestra_resource::dpop::DpopJtiRecord,
+        >::new()),
+    );
+
+    let proof_builder = DpopProofBuilder::with_key_seed(11, "GET", "jti-e2e-2");
+    let claims = DpopBoundClaims {
+        sub: "user-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "jkt": proof_builder.expected_jkt() })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    // A genuinely valid proof is attached too — the point of this test is
+    // that the *scheme* alone must be enough to refuse it, independent of
+    // whether a valid proof also happens to be present.
+    let proof = proof_builder
+        .with_ath(&x5t_s256_thumbprint(token.as_bytes()))
+        .build();
+    let parts = scheme_request_parts("Bearer", &token, Some(&proof));
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error");
+    assert!(
+        result.is_none(),
+        "a DPoP-bound token presented via the Bearer scheme must be rejected, even with a \
+         genuinely valid DPoP proof attached"
+    );
+}
+
+#[tokio::test]
+async fn dpop_is_not_enforced_when_require_dpop_is_false() {
+    // Backward compatibility: a DPoP-bound token is still accepted as a
+    // plain bearer token when the resource server has not opted into
+    // `require_dpop` — mirrors `cert_binding_is_not_enforced_when_require_
+    // cert_binding_is_false` above.
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+    assert!(!config.require_dpop);
+    let strategy: JwtStrategy<DpopBoundClaims> = JwtStrategy::new(config);
+
+    let proof_builder = DpopProofBuilder::with_key_seed(11, "GET", "jti-e2e-3");
+    let claims = DpopBoundClaims {
+        sub: "user-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "jkt": proof_builder.expected_jkt() })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let parts = scheme_request_parts("Bearer", &token, None);
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error")
+        .expect("without require_dpop, a DPoP-bound token is still a valid bearer token");
+    assert_eq!(result.sub, "user-a");
+}
+
+/// The other regression this test module is about: a replay-store outage
+/// (or, as here, the fail-closed `NoDpopReplayStore` default) must surface
+/// as `Err(AuthError)`, never `Ok(None)`. `Ok(None)` means "this strategy
+/// declined, try the next one" under `AuthPolicy::FirstSuccess` — treating
+/// an infrastructure failure that way would let a `Guard` chain silently
+/// authenticate the request via some other strategy with the DPoP check
+/// skipped entirely, rather than surfacing the outage.
+#[tokio::test]
+async fn dpop_replay_store_outage_surfaces_as_err_not_ok_none() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_dpop(true)
+        .build();
+    // Deliberately not wiring `with_dpop_replay_store` — this strategy's
+    // replay store is the fail-closed `NoDpopReplayStore` default.
+    let strategy: JwtStrategy<DpopBoundClaims> = JwtStrategy::new(config);
+
+    let proof_builder = DpopProofBuilder::with_key_seed(11, "GET", "jti-e2e-4");
+    let claims = DpopBoundClaims {
+        sub: "user-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "jkt": proof_builder.expected_jkt() })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let proof = proof_builder
+        .with_ath(&x5t_s256_thumbprint(token.as_bytes()))
+        .build();
+    let parts = scheme_request_parts("DPoP", &token, Some(&proof));
+
+    let result = strategy.authenticate(&parts).await;
+    assert!(
+        result.is_err(),
+        "no replay store is configured; this must surface as Err(AuthError), not be swallowed \
+         as Ok(None)"
+    );
+}
+
+/// RFC 9449 §7.1's other direction: a request presented via the `DPoP`
+/// scheme is a claim that the token is DPoP-bound. A token with no
+/// `cnf.jkt` at all can't back that claim, so it must be refused too, not
+/// silently treated the same as if it had arrived via `Bearer`.
+#[tokio::test]
+async fn dpop_rejects_dpop_scheme_presentation_of_an_unbound_token() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_dpop(true)
+        .build();
+    let strategy: JwtStrategy<DpopBoundClaims> = JwtStrategy::new(config);
+
+    // No `cnf` claim at all — an ordinary, unbound token.
+    let claims = DpopBoundClaims {
+        sub: "user-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let parts = scheme_request_parts("DPoP", &token, None);
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error");
+    assert!(
+        result.is_none(),
+        "a token with no cnf.jkt presented via the DPoP scheme must be refused, not silently \
+         accepted as an ordinary bearer token"
+    );
+}
+
+/// `ValidationConfig::dpop_resource_origin` opt-in: with it configured, a
+/// proof minted for this exact URL (origin + request path) is accepted.
+#[tokio::test]
+async fn dpop_htu_check_accepts_when_configured_origin_matches() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_dpop(true)
+        .dpop_resource_origin("https://api.example.com")
+        .build();
+    let strategy: JwtStrategy<DpopBoundClaims> = JwtStrategy::new(config).with_dpop_replay_store(
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            authkestra_resource::dpop::DpopJtiRecord,
+        >::new()),
+    );
+
+    let proof_builder = DpopProofBuilder::with_key_seed(11, "GET", "jti-htu-1")
+        .with_htu("https://api.example.com/widgets/42");
+    let claims = DpopBoundClaims {
+        sub: "user-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "jkt": proof_builder.expected_jkt() })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let proof = proof_builder
+        .with_ath(&x5t_s256_thumbprint(token.as_bytes()))
+        .build();
+    let parts = scheme_request_parts_with_uri("DPoP", &token, Some(&proof), "/widgets/42");
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error");
+    assert!(
+        result.is_some(),
+        "a proof minted for this exact configured-origin URL must be accepted"
+    );
+}
+
+/// The other half: with `dpop_resource_origin` configured, a proof minted
+/// for a *different* URL — e.g. one forwarded from another resource server
+/// within its freshness window — must be refused. This is exactly the
+/// cross-service forwarding gap that leaving `dpop_resource_origin` unset
+/// does not close.
+#[tokio::test]
+async fn dpop_htu_check_rejects_when_configured_origin_url_mismatches() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .require_dpop(true)
+        .dpop_resource_origin("https://api.example.com")
+        .build();
+    let strategy: JwtStrategy<DpopBoundClaims> = JwtStrategy::new(config).with_dpop_replay_store(
+        Arc::new(authkestra_engine::store::memory::MemoryStore::<
+            authkestra_resource::dpop::DpopJtiRecord,
+        >::new()),
+    );
+
+    // The proof was minted for a different resource server's URL entirely.
+    let proof_builder = DpopProofBuilder::with_key_seed(11, "GET", "jti-htu-2")
+        .with_htu("https://a-different-service.example.com/widgets/42");
+    let claims = DpopBoundClaims {
+        sub: "user-a".to_string(),
+        exp: future_exp(),
+        aud: None,
+        cnf: Some(serde_json::json!({ "jkt": proof_builder.expected_jkt() })),
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let proof = proof_builder
+        .with_ath(&x5t_s256_thumbprint(token.as_bytes()))
+        .build();
+    let parts = scheme_request_parts_with_uri("DPoP", &token, Some(&proof), "/widgets/42");
+
+    let result = strategy
+        .authenticate(&parts)
+        .await
+        .expect("authenticate should not error");
+    assert!(
+        result.is_none(),
+        "a proof minted for a different resource server's URL must be refused once \
+         dpop_resource_origin is configured"
+    );
 }

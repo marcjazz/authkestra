@@ -208,6 +208,7 @@ async fn main() -> std::io::Result<()> {
     ));
 
     let clients = MemoryStore::new();
+    #[allow(deprecated)] // require_pkce (authkestra#273) — PKCE is mandatory unconditionally now
     clients
         .set(
             "test-client",

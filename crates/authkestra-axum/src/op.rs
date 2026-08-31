@@ -15,7 +15,7 @@ use authkestra_op::{
             CompleteChallengeRequest, EnrolStartRequest, ReissueStartRequest,
         },
         jwks::JwksResponse,
-        token::{handle_token_with_client_cert, TokenRequest},
+        token::{handle_token_with_client_cert, TokenErrorResponse, TokenRequest},
         userinfo::{handle_userinfo, UserInfoErrorResponse, UserInfoRequest},
     },
     OpError,
@@ -145,6 +145,38 @@ where
     }
 }
 
+/// Reads the request's `DPoP` header (RFC 9449 §4.1: exactly one is
+/// expected). Returns `Ok(None)` if it's absent, `Ok(Some(value))` if
+/// exactly one occurrence is present and valid ASCII, or `Err` in two
+/// cases that are refused outright rather than tolerated:
+///
+/// - **More than one occurrence.** Which one would be authoritative is
+///   ambiguous, and a duplicate is exactly the kind of situation a
+///   proxy bug or request-smuggling attempt could produce — a
+///   sender-constraining mechanism shouldn't guess which header to
+///   trust.
+/// - **A value that isn't valid ASCII.** Treating this as "no header"
+///   would silently issue a plain Bearer token while the client
+///   believes (because it sent one) that it's getting a
+///   sender-constrained one — a mangled header should fail loudly, not
+///   downgrade silently.
+fn extract_dpop_header(headers: &HeaderMap) -> Result<Option<&str>, TokenErrorResponse> {
+    let mut dpop_headers = headers.get_all("DPoP").iter();
+    match (dpop_headers.next(), dpop_headers.next()) {
+        (None, _) => Ok(None),
+        (Some(_), Some(_)) => Err(TokenErrorResponse::new(
+            "invalid_dpop_proof".to_string(),
+            "Multiple DPoP headers were presented".to_string(),
+        )),
+        (Some(v), None) => v.to_str().map(Some).map_err(|_| {
+            TokenErrorResponse::new(
+                "invalid_dpop_proof".to_string(),
+                "DPoP header value is not valid ASCII".to_string(),
+            )
+        }),
+    }
+}
+
 /// Handler for the token endpoint.
 ///
 /// `cert` is an RFC 8705 (§224) hook, not a TLS implementation: this crate
@@ -183,6 +215,16 @@ where
 
     let client_cert_der = cert.map(|Extension(ClientCertificateDer(der))| der);
 
+    // RFC 9449 — an ordinary header, unlike the mTLS certificate above:
+    // `headers` already gives access to the whole map, no host-supplied
+    // `Extension` plumbing needed. See `extract_dpop_header` for why more
+    // than one occurrence, or one that isn't valid ASCII, is refused
+    // outright rather than tolerated.
+    let dpop_header = match extract_dpop_header(&headers) {
+        Ok(h) => h,
+        Err(err) => return (StatusCode::BAD_REQUEST, Json(err)).into_response(),
+    };
+
     match handle_token_with_client_cert(
         req,
         auth_header,
@@ -190,6 +232,7 @@ where
         op_store.as_ref(),
         tokens.as_ref(),
         client_cert_der.as_deref(),
+        dpop_header,
     )
     .await
     {
@@ -207,10 +250,12 @@ where
 /// Handler for the userinfo endpoint.
 pub async fn axum_userinfo_handler<AppState>(
     State(state): State<AppState>,
+    method: axum::http::Method,
     headers: HeaderMap,
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
+    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
     Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
@@ -219,30 +264,73 @@ where
         Ok(t) => t,
         Err(e) => return e.into_response(),
     };
+    // `/userinfo` is a protected resource, so a DPoP-bound token presented
+    // here needs the same replay guard `/token` uses (RFC 9449 §11.1).
+    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
+        Ok(c) => c,
+        Err(e) => return e.into_response(),
+    };
 
+    let unauthorized = |scheme: &str, desc: &str| {
+        (
+            StatusCode::UNAUTHORIZED,
+            [("WWW-Authenticate", scheme.to_string())],
+            Json(UserInfoErrorResponse::new(
+                "invalid_request".to_string(),
+                desc.to_string(),
+            )),
+        )
+            .into_response()
+    };
+
+    // RFC 9110 §11.1 makes the auth-scheme token case-insensitive, and
+    // RFC 9449 §7.1 requires a DPoP-bound token to arrive under the `DPoP`
+    // scheme rather than `Bearer`. Which scheme was used is passed through
+    // to the handler, which refuses the two mismatches.
     let auth_header = match headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
     {
-        Some(h) if h.starts_with("Bearer ") => h,
-        _ => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                [("WWW-Authenticate", "Bearer")],
-                Json(UserInfoErrorResponse::new(
-                    "invalid_request".to_string(),
-                    "Missing or invalid Authorization header".to_string(),
-                )),
-            )
-                .into_response();
-        }
+        Some(h) => h,
+        None => return unauthorized("Bearer", "Missing or invalid Authorization header"),
     };
+    let (token, presented_as_dpop) = match auth_header.split_once(' ') {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("bearer") => (rest.trim(), false),
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("dpop") => (rest.trim(), true),
+        _ => return unauthorized("Bearer", "Missing or invalid Authorization header"),
+    };
+    if token.is_empty() {
+        return unauthorized("Bearer", "Missing or invalid Authorization header");
+    }
 
-    let req = UserInfoRequest::new(auth_header[7..].to_string());
+    let req = if presented_as_dpop {
+        let proof = match extract_dpop_header(&headers) {
+            Ok(p) => p.map(|p| p.to_string()),
+            Err(e) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    [("WWW-Authenticate", "DPoP")],
+                    Json(UserInfoErrorResponse::new(e.error, e.error_description)),
+                )
+                    .into_response();
+            }
+        };
+        // `htu` is left `None`: behind a reverse proxy this handler cannot
+        // reconstruct the absolute URL the client signed. See
+        // `UserInfoRequest::htu`.
+        UserInfoRequest::new_dpop(
+            token.to_string(),
+            proof,
+            Some(method.as_str().to_string()),
+            None,
+        )
+    } else {
+        UserInfoRequest::new(token.to_string())
+    };
 
     let config = OpConfig::from_ref(&state);
 
-    match handle_userinfo(req, &config, tokens.as_ref()).await {
+    match handle_userinfo(req, &config, tokens.as_ref(), op_store.as_ref()).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(err) => {
             let status = match err.error.as_str() {
@@ -603,5 +691,47 @@ impl FromRef<OpState> for Result<Arc<dyn SecondFactorVerifier>, AxumError> {
 impl FromRef<OpState> for Option<Arc<dyn AttestationStatusProvider>> {
     fn from_ref(state: &OpState) -> Self {
         state.0.status_provider.clone()
+    }
+}
+
+#[cfg(test)]
+mod dpop_header_tests {
+    use super::extract_dpop_header;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn no_header_is_none() {
+        let headers = HeaderMap::new();
+        assert_eq!(extract_dpop_header(&headers).unwrap(), None);
+    }
+
+    #[test]
+    fn exactly_one_header_is_returned() {
+        let mut headers = HeaderMap::new();
+        headers.insert("DPoP", HeaderValue::from_static("proof-value"));
+        assert_eq!(extract_dpop_header(&headers).unwrap(), Some("proof-value"));
+    }
+
+    /// RFC 9449 §4.1 expects exactly one `DPoP` header; a duplicate is
+    /// refused outright rather than silently resolved by picking one.
+    #[test]
+    fn two_headers_are_rejected() {
+        let mut headers = HeaderMap::new();
+        headers.append("DPoP", HeaderValue::from_static("first"));
+        headers.append("DPoP", HeaderValue::from_static("second"));
+        let err = extract_dpop_header(&headers).expect_err("a duplicate header must be refused");
+        assert_eq!(err.error, "invalid_dpop_proof");
+    }
+
+    /// A header value that isn't valid ASCII must be refused, not silently
+    /// treated as "no header present" (which would issue a plain Bearer
+    /// token while the client believes it asked for — and thinks it got —
+    /// a sender-constrained one).
+    #[test]
+    fn non_ascii_header_is_rejected() {
+        let mut headers = HeaderMap::new();
+        headers.insert("DPoP", HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap());
+        let err = extract_dpop_header(&headers).expect_err("a non-ASCII header must be refused");
+        assert_eq!(err.error, "invalid_dpop_proof");
     }
 }

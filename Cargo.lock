@@ -568,7 +568,9 @@ dependencies = [
  "ed25519-dalek",
  "http 1.5.0",
  "jsonwebtoken",
+ "p256",
  "rand 0.9.5",
+ "rand_core 0.6.4",
  "redis",
  "reqwest",
  "rsa",
@@ -672,6 +674,8 @@ dependencies = [
  "async-trait",
  "authkestra-engine",
  "base64 0.22.1",
+ "chrono",
+ "ed25519-dalek",
  "http 1.5.0",
  "jsonwebtoken",
  "rand 0.8.7",
@@ -682,6 +686,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "url",
  "wiremock",
 ]
 

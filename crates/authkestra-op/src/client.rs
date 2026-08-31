@@ -102,8 +102,17 @@ pub struct ClientRegistration {
     pub grant_types: Vec<GrantType>,
     /// Scopes this client is permitted to request.
     pub scopes: Vec<String>,
-    /// Whether this client must use PKCE (mandatory for public clients,
-    /// recommended for all — see RFC-003 §7 / OAuth 2.1).
+    /// Retained for wire/storage compatibility, but no longer consulted:
+    /// PKCE is mandatory for every client on the authorization code grant,
+    /// unconditionally, per OAuth 2.1 §4.1 (authkestra#273) — both
+    /// `handlers::authorize` and `handlers::token` enforce it regardless of
+    /// this value.
+    #[deprecated(
+        since = "0.7.0",
+        note = "PKCE is mandatory for every client on the authorization code grant, \
+                unconditionally, per OAuth 2.1 §4.1 (authkestra#273). This field is no longer \
+                read by handlers::authorize or handlers::token and has no effect."
+    )]
     pub require_pkce: bool,
     /// Downstream audiences (resources) this client is permitted to target
     /// during token exchange.
@@ -143,6 +152,16 @@ impl ClientRegistration {
     /// Checks if the client is allowed to use a specific grant type.
     pub fn allows_grant_type(&self, grant_type: &GrantType) -> bool {
         self.grant_types.contains(grant_type)
+    }
+
+    /// Checks if the client is registered for a single scope value.
+    ///
+    /// Takes one already-split scope token, not a space-delimited string —
+    /// callers validating a whole `scope` request should split it
+    /// themselves and check each token, so they can name the specific
+    /// offending scope in their own error response (authkestra#278).
+    pub fn allows_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == scope)
     }
 
     /// Verifies the provided secret against the stored argon2 hash in constant time.
@@ -194,6 +213,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod tests {
 
     use super::*;

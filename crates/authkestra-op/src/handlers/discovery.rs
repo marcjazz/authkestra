@@ -16,6 +16,32 @@ pub struct OidcDiscovery {
     /// advertising one would point clients at an endpoint that 404s.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_endpoint: Option<String>,
+    /// JSON array of PKCE code challenge methods this OP supports (RFC 8414
+    /// §2 / RFC 7636 §4.3).
+    ///
+    /// `handlers::authorize::handle_authorize` requires PKCE unconditionally
+    /// for every client (authkestra#273) — this field exists so a
+    /// spec-conformant client actually finds out, rather than discovering it
+    /// only after being rejected. Omitted entirely, for the same reason
+    /// `authorization_endpoint` is: a provider with no `authorization_code`
+    /// grant has no `/authorize` endpoint for a `code_challenge_method` to
+    /// apply to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_challenge_methods_supported: Option<Vec<String>>,
+    /// JSON array of JWS `alg` values this OP accepts in a DPoP proof's
+    /// header (RFC 9449 §5).
+    ///
+    /// Opt-in via [`OidcDiscovery::with_dpop_support`], for the same reason
+    /// `private_key_jwt` support is: `handlers::token::handle_token_with_client_cert`
+    /// accepts a `DPoP` header unconditionally, but every request using one
+    /// is refused with `invalid_dpop_proof` unless the deployment's
+    /// `OpStore` also has a `DpopReplayStore` wired (it fails closed via
+    /// `NoDpopReplayStore` otherwise — see `store::OpStore::check_and_record_dpop_jti`).
+    /// A discovery document promising DPoP support the OP will reject at
+    /// runtime is worse than one that stays quiet, so the decision belongs
+    /// to whoever wired the store, exactly like `with_private_key_jwt`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dpop_signing_alg_values_supported: Option<Vec<String>>,
     /// URL of the OP's OAuth 2.0 Token Endpoint.
     pub token_endpoint: String,
     /// URL of the OP's JSON Web Key Set document.
@@ -56,13 +82,18 @@ use crate::config::OpConfig;
 impl OidcDiscovery {
     /// Creates a discovery document reflecting the provided OP configuration.
     pub fn from_config(config: &OpConfig) -> Self {
+        let has_authorization_code_grant = config
+            .grant_types_supported
+            .iter()
+            .any(|grant| grant == "authorization_code");
+
         Self {
             issuer: config.issuer.clone(),
-            authorization_endpoint: config
-                .grant_types_supported
-                .iter()
-                .any(|grant| grant == "authorization_code")
+            authorization_endpoint: has_authorization_code_grant
                 .then(|| config.authorization_endpoint()),
+            code_challenge_methods_supported: has_authorization_code_grant
+                .then(|| vec!["S256".to_string()]),
+            dpop_signing_alg_values_supported: None,
             token_endpoint: config.token_endpoint(),
             jwks_uri: config.jwks_url(),
             userinfo_endpoint: Some(config.userinfo_endpoint()),
@@ -108,6 +139,36 @@ impl OidcDiscovery {
         if !self.token_endpoint_auth_methods_supported.contains(&method) {
             self.token_endpoint_auth_methods_supported.push(method);
         }
+        self
+    }
+
+    /// Advertises DPoP support (RFC 9449 §5) with the algorithms
+    /// `authkestra_engine::token::dpop::verify_dpop_proof` accepts.
+    ///
+    /// Opt-in for the same reason [`OidcDiscovery::with_private_key_jwt`]
+    /// is — see this field's doc comment. Call alongside
+    /// `CompositeOpStore::with_dpop_replay_store` once that's wired.
+    ///
+    /// **Resource-server note (authkestra#274 Phase C):** the bundled
+    /// `authkestra-resource` `JwtStrategy` can check `cnf.jkt` too, but it
+    /// is its own opt-in —
+    /// `ValidationConfig::require_dpop`/`ValidationConfigBuilder::require_dpop`
+    /// on that crate's side, off by default for the same backward-
+    /// compatibility reason this method is. Calling `with_dpop_support`
+    /// here only affects what this OP *advertises*; a deployment must
+    /// separately enable `require_dpop` (and wire a
+    /// `JwtStrategy::with_dpop_replay_store`) on the resource-server side
+    /// for a DPoP-bound access token to actually be rejected there when
+    /// presented without a matching proof. A client that sees DPoP
+    /// advertised should not assume every resource server behind it has
+    /// necessarily turned that check on.
+    pub fn with_dpop_support(mut self) -> Self {
+        self.dpop_signing_alg_values_supported = Some(vec![
+            "ES256".to_string(),
+            "ES384".to_string(),
+            "RS256".to_string(),
+            "EdDSA".to_string(),
+        ]);
         self
     }
 
@@ -217,6 +278,32 @@ mod tests {
             .contains(&"client_secret_basic".to_string()));
     }
 
+    /// A discovery document must not promise DPoP support the OP will
+    /// reject at runtime because no replay store is wired — same rationale
+    /// as `private_key_jwt_is_not_advertised_by_default`.
+    #[test]
+    fn dpop_is_not_advertised_by_default() {
+        let doc = OidcDiscovery::from_config(&discovery_config());
+        assert_eq!(doc.dpop_signing_alg_values_supported, None);
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert!(
+            json.get("dpop_signing_alg_values_supported").is_none(),
+            "must be omitted (not null) when not opted in"
+        );
+    }
+
+    #[test]
+    fn dpop_is_advertised_once_opted_in() {
+        let doc = OidcDiscovery::from_config(&discovery_config()).with_dpop_support();
+
+        let algs = doc
+            .dpop_signing_alg_values_supported
+            .expect("must be Some once opted in");
+        assert!(algs.contains(&"ES256".to_string()));
+        assert!(algs.contains(&"EdDSA".to_string()));
+    }
+
     /// A provider that serves no `authorization_code` grant (e.g. a
     /// token-exchange-only deployment with no `/authorize` route at all)
     /// must not advertise an `authorization_endpoint` that 404s. Asserted
@@ -256,6 +343,42 @@ mod tests {
             Some(&serde_json::Value::String(
                 "https://auth.example.com/authorize".to_string()
             ))
+        );
+    }
+
+    /// authkestra#273: PKCE is mandatory at `/authorize` for every client —
+    /// a provider that serves the `authorization_code` grant must advertise
+    /// that, so a spec-conformant client finds out before being rejected
+    /// rather than after.
+    #[test]
+    fn code_challenge_methods_supported_advertises_s256_when_auth_code_grant_supported() {
+        let doc = OidcDiscovery::from_config(&discovery_config());
+        assert_eq!(
+            doc.code_challenge_methods_supported,
+            Some(vec!["S256".to_string()])
+        );
+    }
+
+    /// A provider with no `authorization_code` grant has no `/authorize`
+    /// endpoint for a code challenge method to apply to — must be omitted
+    /// entirely, mirroring `authorization_endpoint`'s own omission rule.
+    #[test]
+    fn code_challenge_methods_supported_omitted_when_no_auth_code_grant() {
+        let mut config = discovery_config();
+        config.grant_types_supported = vec![
+            "urn:ietf:params:oauth:grant-type:token-exchange".to_string(),
+            "refresh_token".to_string(),
+        ];
+        config.response_types_supported = vec![];
+
+        let doc = OidcDiscovery::from_config(&config);
+        assert_eq!(doc.code_challenge_methods_supported, None);
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert!(
+            json.get("code_challenge_methods_supported").is_none(),
+            "must be omitted (not null) when the provider has no authorization_code grant; got {:?}",
+            json.get("code_challenge_methods_supported")
         );
     }
 

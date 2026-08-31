@@ -18,7 +18,15 @@ pub struct AuthorizeRequest {
     pub redirect_uri: String,
     /// Response type (must be "code").
     pub response_type: String,
-    /// Space-delimited scopes requested.
+    /// Space-delimited scopes requested. Defaults to empty when the client
+    /// omits the parameter entirely — RFC 6749 §3.3 makes this legal, and
+    /// nothing here distinguishes "omitted" from "explicitly empty"
+    /// (authkestra#280): both mean no scope requested, and neither is an
+    /// error. Plain `String` rather than `Option<String>` precisely because
+    /// that distinction is never made — there is no default-*value* branch
+    /// (as opposed to default-*absence*) implemented, so a `None` variant
+    /// would carry no information a `""` doesn't already carry.
+    #[serde(default)]
     pub scope: String,
     /// Optional opaque state parameter.
     pub state: Option<String>,
@@ -92,6 +100,23 @@ pub async fn handle_authorize(
         AuthorizeOutcome::Redirect(url.into())
     };
 
+    // 3. Validate requested scope against the client's registration
+    // (authkestra#278). `req.scope` was previously copied verbatim into the
+    // stored code — and from there into the eventual token — with no check
+    // at all, letting any registered client request (and receive) a scope
+    // it was never granted. Rejects on the first offending scope, naming it
+    // specifically, mirroring `default_handle_client_credentials`'s
+    // existing (and correct) scope check at the token endpoint.
+    for s in req.scope.split_whitespace() {
+        if !client.allows_scope(s) {
+            tracing::warn!(client_id = %req.client_id, scope = %s, "Client requested unauthorized scope");
+            return error_redirect(
+                "invalid_scope",
+                &format!("Scope {s} is not allowed for this client"),
+            );
+        }
+    }
+
     // 4. Check response_type == "code"
     if req.response_type != "code" {
         tracing::warn!(
@@ -117,24 +142,16 @@ pub async fn handle_authorize(
         );
     }
 
-    // 6. PKCE requirements
-    if client.require_pkce {
-        if req.code_challenge.is_none() {
-            tracing::warn!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
-            return error_redirect("invalid_request", "code_challenge is required");
-        }
-        if req.code_challenge_method.as_deref() != Some("S256") {
-            tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
-            return error_redirect("invalid_request", "code_challenge_method must be S256");
-        }
-    } else if req.code_challenge.is_none() && req.code_challenge_method.is_some() {
-        tracing::warn!(client_id = %req.client_id, "code_challenge_method specified without code_challenge");
-        return error_redirect(
-            "invalid_request",
-            "code_challenge is required when method is specified",
-        );
-    } else if req.code_challenge.is_some() && req.code_challenge_method.as_deref() != Some("S256") {
-        tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method provided (optional PKCE), S256 required");
+    // 6. PKCE requirements — mandatory for every client, per OAuth 2.1 §4.1
+    // (authkestra#273). `client.require_pkce` no longer gates this: OAuth 2.1
+    // does not grandfather in confidential clients or any other exemption,
+    // and per-client opt-out was the exact gap #273 closes.
+    if req.code_challenge.is_none() {
+        tracing::warn!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
+        return error_redirect("invalid_request", "code_challenge is required");
+    }
+    if req.code_challenge_method.as_deref() != Some("S256") {
+        tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
         return error_redirect("invalid_request", "code_challenge_method must be S256");
     }
 
@@ -182,6 +199,7 @@ pub async fn handle_authorize(
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod tests {
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
@@ -237,6 +255,29 @@ mod tests {
             outcome,
             AuthorizeOutcome::DirectError(OpError::UnknownClient(_))
         ));
+    }
+
+    /// The actual regression test for authkestra#280: `AuthorizeRequest` is
+    /// what `axum`'s and `actix`'s `Query` extractors deserialize from the
+    /// request's query string via the same generic serde `Deserialize`
+    /// derive exercised here — a JSON object is used purely as a
+    /// dependency-free stand-in for "a request with no `scope` key at all",
+    /// not because the real transport is JSON. Before this fix, a `String`
+    /// field with no `#[serde(default)]` and no key present would fail
+    /// deserialization outright, which is what turned an RFC-6749-legal
+    /// omitted `scope` into a raw framework 400 instead of ever reaching
+    /// `handle_authorize`.
+    #[test]
+    fn deserializes_successfully_when_scope_is_entirely_absent() {
+        let json = serde_json::json!({
+            "client_id": "client-1",
+            "redirect_uri": "https://app.example.com/cb",
+            "response_type": "code",
+            // no "scope" key at all
+        });
+        let req: AuthorizeRequest =
+            serde_json::from_value(json).expect("a missing scope must not fail deserialization");
+        assert_eq!(req.scope, "");
     }
 
     #[tokio::test]
@@ -299,7 +340,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -348,7 +389,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: true,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -395,7 +436,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: true,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -442,7 +483,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string(), "profile".to_string()],
                     require_pkce: true,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -493,6 +534,80 @@ mod tests {
         }
     }
 
+    /// authkestra#280: an omitted `scope` (RFC 6749 §3.3 makes this legal)
+    /// must not be an error at all — end to end, from deserialization
+    /// through to a persisted code with `scope == ""`. Builds `req` via
+    /// `serde_json::from_value` with no `scope` key present (rather than a
+    /// struct literal) specifically so this test exercises the same
+    /// deserialization path the `Query` extractors do, not just the
+    /// handler's behavior given an already-empty `String`.
+    #[tokio::test]
+    async fn test_missing_scope_is_treated_as_no_scope_and_succeeds() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req: AuthorizeRequest = serde_json::from_value(serde_json::json!({
+            "client_id": "client-1",
+            "redirect_uri": "https://app.example.com/cb",
+            "response_type": "code",
+            "code_challenge": "s256challenge",
+            "code_challenge_method": "S256",
+            // no "scope" key at all
+        }))
+        .expect("a missing scope must not fail deserialization");
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                codes.clone(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.starts_with("https://app.example.com/cb?code="));
+            let code_val = url
+                .split("code=")
+                .nth(1)
+                .unwrap()
+                .split('&')
+                .next()
+                .unwrap();
+            let persisted = codes.consume_code(code_val).await.unwrap().unwrap();
+            assert_eq!(persisted.scope, "");
+        } else {
+            panic!("Expected Redirect, a missing scope must not be an error");
+        }
+    }
+
     #[tokio::test]
     async fn test_state_encoding() {
         let clients = authkestra_engine::store::memory::MemoryStore::<
@@ -506,7 +621,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -524,14 +639,17 @@ mod tests {
         // State containing characters that require URL encoding
         let dangerous_state = "foo&bar=baz#123";
 
+        // PKCE is mandatory (authkestra#273) regardless of `require_pkce`,
+        // and unrelated to what this test actually covers (state encoding),
+        // but required to reach the success path at all.
         let req = AuthorizeRequest {
             client_id: "client-1".to_string(),
             redirect_uri: "https://app.example.com/cb".to_string(),
             response_type: "code".to_string(),
             scope: "openid".to_string(),
             state: Some(dangerous_state.to_string()),
-            code_challenge: None,
-            code_challenge_method: None,
+            code_challenge: Some("s256challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
             nonce: None,
         };
 
@@ -561,6 +679,10 @@ mod tests {
         }
     }
 
+    /// PKCE is mandatory regardless of `client.require_pkce` (authkestra#273):
+    /// a client not opted into PKCE that still omits `code_challenge` (even
+    /// while sending `code_challenge_method`) is rejected exactly like one
+    /// that requires it.
     #[tokio::test]
     async fn test_pkce_method_without_challenge_redirect_error() {
         let clients = authkestra_engine::store::memory::MemoryStore::<
@@ -574,8 +696,8 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec!["https://app.example.com/cb".to_string()],
                     grant_types: vec![GrantType::AuthorizationCode],
-                    scopes: vec![],
-                    require_pkce: false, // PKCE is optional
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false, // no longer changes the outcome — PKCE is always required
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
                     jwks: None,
@@ -603,11 +725,195 @@ mod tests {
         let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
         if let AuthorizeOutcome::Redirect(url) = outcome {
             assert!(url.contains("error=invalid_request"));
-            assert!(
-                url.contains(
-                    "error_description=code_challenge+is+required+when+method+is+specified"
-                ) || url.contains("code_challenge%20is%20required")
-            );
+            assert!(url.contains("error_description=code_challenge+is+required"));
+        } else {
+            panic!("Expected Redirect");
+        }
+    }
+
+    /// The core regression test for authkestra#273: a client explicitly
+    /// registered with `require_pkce: false` and sending no PKCE parameters
+    /// at all must still be rejected, since OAuth 2.1 §4.1 makes PKCE
+    /// mandatory unconditionally rather than an opt-in per client.
+    #[tokio::test]
+    async fn test_pkce_is_mandatory_even_when_client_does_not_require_it() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req = AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid".to_string(),
+            state: None,
+            code_challenge: None,
+            code_challenge_method: None,
+            nonce: None,
+        };
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.contains("error=invalid_request"));
+            assert!(url.contains("error_description=code_challenge+is+required"));
+        } else {
+            panic!("Expected Redirect");
+        }
+    }
+
+    /// The core regression test for authkestra#278: a client registered
+    /// with a narrow scope must not be able to request — and receive an
+    /// authorization code for — a scope it was never granted.
+    #[tokio::test]
+    async fn test_scope_not_granted_to_client_is_rejected() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["profile".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req = AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "admin".to_string(),
+            state: None,
+            code_challenge: Some("s256challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            nonce: None,
+        };
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.contains("error=invalid_scope"));
+            assert!(url.contains("error_description=Scope+admin+is+not+allowed"));
+        } else {
+            panic!("Expected Redirect");
+        }
+    }
+
+    /// A request mixing a granted and an ungranted scope must still be
+    /// rejected — partial credit is not an option.
+    #[tokio::test]
+    async fn test_one_ungranted_scope_among_several_is_rejected() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string(), "profile".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req = AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid admin".to_string(),
+            state: None,
+            code_challenge: Some("s256challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            nonce: None,
+        };
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                codes,
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(
+                ),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await;
+        if let AuthorizeOutcome::Redirect(url) = outcome {
+            assert!(url.contains("error=invalid_scope"));
         } else {
             panic!("Expected Redirect");
         }

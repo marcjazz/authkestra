@@ -112,6 +112,19 @@ pub async fn handle_device_authorization(
 
     let scope = req.scope.unwrap_or_default();
 
+    // Validate requested scope against the client's registration
+    // (authkestra#278) — the same gap `handle_authorize` had, found during
+    // the audit that issue asked for: this endpoint copied `req.scope`
+    // verbatim into the stored device session with no check at all.
+    for s in scope.split_whitespace() {
+        if !client.allows_scope(s) {
+            return Err(DeviceAuthorizationErrorResponse {
+                error: "invalid_scope".to_string(),
+                error_description: format!("Scope {s} is not allowed for this client"),
+            });
+        }
+    }
+
     // Generate codes
     let mut buf = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut buf);
@@ -148,6 +161,7 @@ pub async fn handle_device_authorization(
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod tests {
     use super::*;
     use crate::client::{ClientRegistration, GrantType};
@@ -250,6 +264,7 @@ mod tests {
             audience: None,
             client_assertion: None,
             client_assertion_type: None,
+            dpop_jkt: None,
             requested_token_type: None,
             subject_token: None,
             subject_token_type: None,
@@ -307,5 +322,60 @@ mod tests {
 
         assert_eq!(token_res_success.token_type, "Bearer");
         assert!(token_res_success.id_token.is_some());
+    }
+
+    /// authkestra#278: the same scope-escalation gap `/authorize` had —
+    /// found during the audit that issue asked for. A client registered
+    /// for a narrow scope must not be able to request a wider one here
+    /// either.
+    #[tokio::test]
+    async fn test_scope_not_granted_to_client_is_rejected() {
+        let config = test_config();
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+
+        clients
+            .set(
+                "device_client",
+                ClientRegistration {
+                    client_id: "device_client".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    grant_types: vec![GrantType::DeviceCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let req = DeviceAuthorizationRequest {
+            client_id: Some("device_client".to_string()),
+            scope: Some("admin".to_string()),
+            client_secret: None,
+            client_assertion: None,
+            client_assertion_type: None,
+        };
+
+        let err = handle_device_authorization(
+            req,
+            None,
+            &config,
+            &crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+        )
+        .await
+        .expect_err("a scope the client isn't registered for must be refused");
+
+        assert_eq!(err.error, "invalid_scope");
     }
 }
