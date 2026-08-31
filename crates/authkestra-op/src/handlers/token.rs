@@ -1460,6 +1460,36 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
             });
         }
     }
+    // RFC 6749 §6: a refresh token's scope is fixed at issuance, but the
+    // client's *registration* is not — an operator can narrow `scopes` at
+    // any time, and authkestra#278 made that narrowing the mechanism for
+    // revoking a scope. Without re-checking here, a refresh token issued
+    // before the narrowing keeps minting access tokens for the removed
+    // scope indefinitely, rotating a fresh 30-day token forward on every
+    // use, so the narrowing never takes effect for exactly the clients
+    // that already hold long-lived credentials. Every sibling grant
+    // already validates against the live registration (`handle_authorize`,
+    // `handle_device_authorization`, `handle_client_credentials`,
+    // `default_handle_token_exchange`); this was the one path that did
+    // not.
+    //
+    // Checked here, against the non-destructive `candidate`, rather than
+    // after `consume_token` below: a request that is refused must not
+    // destroy the token it had no right to consume (authkestra#287).
+    for scope in candidate.scope.split_whitespace() {
+        if !client.allows_scope(scope) {
+            tracing::warn!(
+                client_id = %client_id,
+                scope = %scope,
+                "Refresh token carries a scope the client is no longer registered for"
+            );
+            return Err(TokenErrorResponse {
+                error: "invalid_scope".to_string(),
+                error_description: format!("Scope {} is not allowed for this client", scope),
+            });
+        }
+    }
+
     // Carries the rotated token's binding forward. Deliberately reads from
     // `candidate.jkt` rather than `req.dpop_jkt` when the token was already
     // bound (the branch above already proved they're equal) — the stored,
@@ -3114,7 +3144,7 @@ mod tests {
                     client_secret_hash: None,
                     redirect_uris: vec![],
                     grant_types: vec![GrantType::RefreshToken],
-                    scopes: vec![],
+                    scopes: vec!["openid".to_string()],
                     require_pkce: false,
                     allowed_audiences: vec![],
                     token_endpoint_auth_method: None,
@@ -3297,13 +3327,159 @@ mod tests {
         }
     }
 
+    /// authkestra#278 made narrowing a client's registered `scopes` the way
+    /// to revoke a scope. A refresh token issued before the narrowing must
+    /// not keep minting access tokens for the removed scope.
+    #[tokio::test]
+    async fn test_refresh_token_rejects_a_scope_the_client_lost() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        let mut narrowed = refresh_test_client();
+        // The operator has since revoked `profile`.
+        narrowed.scopes = vec!["openid".to_string()];
+        clients
+            .set(
+                "client1",
+                narrowed,
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        refresh
+            .store_token(RefreshToken {
+                token: "rt-narrowed".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                scope: "openid profile".to_string(),
+                expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
+            })
+            .await
+            .unwrap();
+
+        let res = handle_token(
+            refresh_test_req("rt-narrowed"),
+            None,
+            &test_config(false),
+            &crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                refresh,
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(),
+            ),
+            &test_tokens(),
+        )
+        .await;
+
+        let err = res.expect_err("a revoked scope must not be renewable");
+        assert_eq!(err.error, "invalid_scope");
+        assert!(
+            err.error_description.contains("profile"),
+            "the error must name the offending scope, not just the class: {}",
+            err.error_description
+        );
+    }
+
+    /// The placement half of the fix, and the reason the check sits against
+    /// the non-destructive `candidate` rather than after `consume_token`:
+    /// a request that is refused must not destroy the token it had no right
+    /// to consume (authkestra#287). Moving the check below `consume_token`
+    /// passes the test above and fails this one.
+    #[tokio::test]
+    async fn test_refresh_token_scope_rejection_does_not_consume_the_token() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        let mut narrowed = refresh_test_client();
+        narrowed.scopes = vec!["openid".to_string()];
+        clients
+            .set(
+                "client1",
+                narrowed.clone(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        refresh
+            .store_token(RefreshToken {
+                token: "rt-survives".to_string(),
+                client_id: "client1".to_string(),
+                identity: test_identity(),
+                scope: "openid profile".to_string(),
+                expires_at: Utc::now() + Duration::days(1),
+                jkt: None,
+            })
+            .await
+            .unwrap();
+
+        let store = crate::store::CompositeOpStore::new(
+            clients.clone(),
+            authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+            refresh.clone(),
+            authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+        );
+
+        let err = handle_token(
+            refresh_test_req("rt-survives"),
+            None,
+            &test_config(false),
+            &store,
+            &test_tokens(),
+        )
+        .await
+        .expect_err("must be refused");
+        assert_eq!(err.error, "invalid_scope");
+
+        // The refused request must have left the token intact.
+        assert!(
+            crate::refresh::RefreshTokenStore::get_token(&refresh, "rt-survives")
+                .await
+                .unwrap()
+                .is_some(),
+            "a refused request must not consume the refresh token"
+        );
+
+        // And once the operator restores the scope, the very same token
+        // still works — proving the rejection was non-destructive rather
+        // than merely leaving a row behind.
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+        let ok = handle_token(
+            refresh_test_req("rt-survives"),
+            None,
+            &test_config(false),
+            &store,
+            &test_tokens(),
+        )
+        .await;
+        assert!(
+            ok.is_ok(),
+            "the same token must still be redeemable after the scope is restored"
+        );
+    }
+
     fn refresh_test_client() -> ClientRegistration {
         ClientRegistration {
             client_id: "client1".to_string(),
             client_secret_hash: None,
             redirect_uris: vec![],
             grant_types: vec![GrantType::RefreshToken],
-            scopes: vec![],
+            // Registered for the scopes these fixtures' refresh tokens
+            // carry. Previously `vec![]`, which authkestra#278 made
+            // self-contradictory: a client registered for no scopes can no
+            // longer obtain a scoped token in the first place, so the
+            // fixture described a state the OP cannot produce.
+            scopes: vec!["openid".to_string(), "profile".to_string()],
             require_pkce: false,
             allowed_audiences: vec![],
             token_endpoint_auth_method: None,
