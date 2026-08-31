@@ -1,27 +1,24 @@
-// The derive delegates to `SqlKvStore`, which is deprecated *for OP-specific
-// data* but remains the supported choice for generic KV/session storage — the
-// only thing it is used for here. The attribute cannot distinguish the two.
-#![allow(deprecated)]
 //! # Axum + the `KvStore` derive macro
 //!
-//! Same engine wiring as `axum_sql_store.rs`, but the session store is your
-//! own newtype rather than authkestra's. `#[derive(KvStore)]` generates the
-//! whole data-layer trait impl by delegating to the wrapped store, so a
+//! Same engine wiring as `axum_session_redis.rs`, but the session store is
+//! your own newtype rather than authkestra's. `#[derive(KvStore)]` generates
+//! the whole data-layer trait impl by delegating to the wrapped store, so a
 //! custom store costs one line instead of a screen of boilerplate.
 //!
-//! Use this when you want your own type (for a custom table name, extra
+//! Use this when you want your own type (for a custom key prefix, extra
 //! instrumentation, or a differently-shaped backend) without reimplementing
 //! [`SessionStore`] by hand.
 //!
 //! ```sh
-//! cargo run -p authkestra --example axum_data_layer_macros --all-features
+//! REDIS_URL=redis://127.0.0.1/ \
+//!   cargo run -p authkestra --example axum_data_layer_macros --all-features
 //! ```
 //!
 //! Set `PORT` to bind somewhere other than 3000.
 
 use authkestra::Authkestra;
 use authkestra_axum::{AuthSession, AxumError, AxumExt, AxumState};
-use authkestra_engine::store::sql::SqlKvStore;
+use authkestra_engine::store::redis::RedisStore;
 use authkestra_engine::{AkWebAppEngine, SessionConfig, SessionStore};
 use authkestra_macros::KvStore;
 use axum::{
@@ -31,7 +28,6 @@ use axum::{
     Router,
 };
 use serde_json::json;
-use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeDir;
@@ -41,10 +37,10 @@ use tower_http::services::ServeDir;
 // ============================================================================
 
 /// A custom session store. The derive forwards every `KvStore` method to the
-/// wrapped `SqlKvStore`, and the blanket impl in `authkestra-engine` turns any
+/// wrapped `RedisStore`, and the blanket impl in `authkestra-engine` turns any
 /// `KvStore` into a [`SessionStore`].
 #[derive(KvStore)]
-pub struct MySqliteSessionStore(SqlKvStore<sqlx::Sqlite>);
+pub struct MyRedisSessionStore(RedisStore);
 
 // ============================================================================
 // 2. Zero-boilerplate state extraction
@@ -71,29 +67,18 @@ async fn main() {
         )
         .init();
 
-    let pool = SqlitePoolOptions::new()
-        .connect("sqlite::memory:")
-        .await
-        .expect("failed to connect to SQLite");
+    dotenvy::dotenv().ok();
 
-    // This example picks a non-default table name to show that the newtype
-    // controls the schema, so it creates the table itself rather than calling
-    // `SqlKvStore::migrate()` (which targets `authkestra_kv`).
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS user_sessions (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            expires_at DATETIME NOT NULL
-        )",
-    )
-    .execute(&pool)
-    .await
-    .expect("failed to create session table");
+    let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
 
-    let session_store = MySqliteSessionStore(SqlKvStore::with_table_name(
-        pool,
-        "user_sessions".to_string(),
-    ));
+    // This example picks its own key prefix to show that the newtype
+    // controls the namespace, independently of any other `RedisStore` this
+    // Redis instance might back (see `axum_op_server.rs`, which does exactly
+    // that with several stores).
+    let session_store = MyRedisSessionStore(
+        RedisStore::new(&redis_url, "user_sessions".to_string())
+            .expect("failed to connect to Redis"),
+    );
     let session_store: Arc<dyn SessionStore> = Arc::new(session_store);
 
     let engine = Authkestra::builder()

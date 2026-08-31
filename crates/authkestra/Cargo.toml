@@ -24,7 +24,7 @@ serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 wiremock = "0.6"
 
-authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "sql-sqlite", "totp", "webauthn"] }
+authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "totp", "webauthn"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
 authkestra-oidc = { workspace = true }

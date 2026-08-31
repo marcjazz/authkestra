@@ -263,7 +263,7 @@ async fn main() {
 
     // TIP: authkestra uses traits (like `SessionStore`) for storage.
     // This makes it easy to swap out backends! You could easily replace `MemoryStore`
-    // with `SqlKvStore` or `RedisStore` simply by changing the struct instantiated here.
+    // with `RedisStore` simply by changing the struct instantiated here.
     let session_store: Arc<dyn authkestra_engine::auth::SessionStore> =
         Arc::new(authkestra_engine::store::memory::MemoryStore::new());
     let session_config = authkestra_engine::SessionConfig {

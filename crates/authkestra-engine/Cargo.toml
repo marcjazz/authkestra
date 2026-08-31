@@ -103,13 +103,12 @@ p256 = { version = "0.13", features = ["jwk"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 
 dotenvy = "0.15"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 redis = { version = "0.27", features = ["tokio-comp"] }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 tower-http = { version = "0.6", features = ["fs"] }
 actix-files = "0.6"
 
 testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["mysql", "postgres", "redis"] }
+testcontainers-modules = { version = "0.15.0", features = ["redis"] }
 wiremock = "0.6.5"
 authkestra-store-testsuite = { path = "../authkestra-store-testsuite" }

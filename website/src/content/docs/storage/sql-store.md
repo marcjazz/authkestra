@@ -9,7 +9,7 @@ However, to simplify building OPs, Authkestra provides a batteries-included **na
 
 ## Opinionated Relational Schema
 
-Unlike the generic [SqlKvStore](/storage/kv-store) which stores opaque JSON blobs, `SqlxOpStore` provides highly opinionated, normalized SQL tables with proper relational foreign keys, `ON DELETE CASCADE` constraints, and strictly defined columns (like `client_id`, `scopes`, `expires_at`).
+Unlike a generic [KV store](/storage/kv-store) that would store opaque JSON blobs, `SqlxOpStore` provides highly opinionated, normalized SQL tables with proper relational foreign keys, `ON DELETE CASCADE` constraints, and strictly defined columns (like `client_id`, `scopes`, `expires_at`).
 
 This allows you to easily query your OAuth clients, see exactly which users have active refresh tokens, and manage authorization codes directly via standard SQL queries in your dashboard or admin tools.
 

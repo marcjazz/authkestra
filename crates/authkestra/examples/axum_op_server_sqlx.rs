@@ -5,7 +5,7 @@
 //!
 //! Unlike `axum_op_server.rs` (which composes four `KvStore`s), `SqlxOpStore`
 //! is a single normalised schema with foreign keys and `ON DELETE CASCADE` —
-//! prefer it for OP data; `SqlKvStore` is deprecated for this purpose.
+//! prefer it for OP data over composing generic KV stores by hand.
 //!
 //! ```sh
 //! cargo run -p authkestra --example axum_op_server_sqlx --all-features

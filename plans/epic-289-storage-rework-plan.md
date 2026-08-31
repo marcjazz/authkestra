@@ -82,7 +82,7 @@ pass:
 
 ## Phase C — Extract SQL storage into `authkestra-store-sqlx`
 
-**Status: Done** (the `SqlKvStore` half is explicitly deferred — see below).
+**Status: Done.**
 
 Moved `SqlxOpStore` out of `authkestra-op/src/sqlx_store.rs` into a new
 satellite workspace crate, `crates/authkestra-store-sqlx`. `authkestra-op`
@@ -120,13 +120,49 @@ path and feature names. `cargo fmt --all -- --check`,
 carries the 14 tests that used to be `authkestra-op`'s (168 + 14 = the
 182 `authkestra-op` had before the move).
 
-**Deferred, not done**: the deprecated generic `SqlKvStore` in
-`authkestra-engine` (`crates/authkestra-engine/src/store/sql/`) did **not**
-move — the epic issue itself treats this as optional ("if it still makes
-sense once isolated"), and `authkestra-engine` still carries its own
-`sql-postgres`/`sql-mysql`/`sql-sqlite` features and optional `sqlx`
-dependency for it. Revisit if/when `SqlKvStore` itself gets touched again;
-not blocking the rest of this epic.
+**Update**: the deprecated generic `SqlKvStore` in `authkestra-engine`
+(`crates/authkestra-engine/src/store/sql/session.rs`) was not moved here —
+the epic issue treats that as optional ("if it still makes sense once
+isolated") — but was later **removed outright** rather than migrated, per
+an explicit follow-up request. See "SqlKvStore removal" below. `sql-postgres`/
+`sql-mysql`/`sql-sqlite` and the optional `sqlx` dependency stay on
+`authkestra-engine`, unrelated to that removal: `SqlxCredentialStore`
+(WebAuthn/TOTP credential storage, `crates/authkestra-engine/src/store/sql/credential.rs`)
+still needs them and was never in scope for either the move or the removal.
+
+### SqlKvStore removal
+
+Deleted `session.rs` wholesale (the struct, its `impl_sql_store!` macro
+covering all three backends, and its own `#[cfg(test)]` module with real
+Postgres/MySQL/SQLite testcontainers integration tests) rather than moving
+it to a satellite crate — a direct request superseding the "move it"
+framing above. `store/sql/mod.rs` now only wires up `credential.rs`.
+Trimmed the now-unneeded pieces from `authkestra-engine/Cargo.toml`: the
+`testcontainers-modules` dev-dependency's `postgres`/`mysql` features (kept
+`redis`, still needed by `store/redis.rs`'s own test) and a `[dev-dependencies]`
+`sqlx` entry that turned out to be fully redundant with what the `sql-*`
+features already pull in via the main dependency.
+
+Two examples existed solely to demonstrate `SqlKvStore`:
+`axum_sql_store.rs` was deleted outright (nothing left to demonstrate that
+`axum_basic_setup.rs`/`axum_session_redis.rs` don't already cover);
+`axum_data_layer_macros.rs` — whose actual point is the `#[derive(KvStore)]`
+macro, with `SqlKvStore` only ever the backend it happened to wrap — was
+rewritten to wrap `RedisStore` instead, preserving the macro demonstration.
+A dev-dependency feature enabling `sql-sqlite` on `authkestra-engine` from
+the `authkestra` facade crate's `Cargo.toml` came out too, once nothing in
+its own examples needed it any more (the two `*_op_server_sqlx.rs` examples
+use `authkestra-store-sqlx` and their own direct `sqlx` dev-dependency, not
+this). Updated the half-dozen other examples with a passing "or `SqlKvStore`"
+mention in a comment, `docs/book/ch08-getting-started-tutorial.md`'s
+equivalent comment, and reworked the `website/src/content/docs/storage/kv-store.md`
+page (dropped its entire "Generic SQL KV Store" section and the
+KV-vs-SQL-store comparison) and the `overview.md`/`sql-store.md` pages'
+cross-references to it.
+
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-features
+--all-targets -- -D warnings`, and `cargo test --workspace --all-features`
+all pass after the removal.
 
 ## Phase D — Real, compiled ORM example crates
 
@@ -182,8 +218,9 @@ conformance test, seeded the same way.
 ## DoD (Definition of Done, whole epic)
 
 - `authkestra-op` has zero `sqlx` dependency (Phase C, done).
-  `authkestra-engine` still carries one for the deferred `SqlKvStore` move —
-  see Phase C's "Deferred, not done" note.
+  `authkestra-engine` still carries one, unrelated to this epic: it backs
+  `SqlxCredentialStore` (WebAuthn/TOTP), which was never in scope for either
+  a move or removal — see Phase C's "SqlKvStore removal" note.
 - `authkestra-store-testsuite` is the documented, canonical way a
   third-party backend proves conformance (Phase A, done).
 - At least one real compiled ORM example builds and runs its tests in CI
