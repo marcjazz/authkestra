@@ -33,6 +33,41 @@ If you would rather manage the OP schema with your own migration runner (`sqlx-c
 or hand-written SQL), skip `migrate()` and create the tables yourself; the store issues plain
 queries against them and does not track a migration version of its own.
 
+### Upgrading a hand-managed schema to `authkestra-op` 0.7
+
+0.7 added RFC 9449 DPoP refresh-token continuity and RFC 7523 `private_key_jwt` client
+authentication, which need three new, nullable columns. `SqlxOpStore`'s `find_client` and
+`store_token` reference these columns unconditionally — **not** only when you call `migrate()` —
+so if you provision the schema yourself, upgrading to 0.7 without adding them breaks every
+token request against your existing tables. If you call `migrate()`, it adds them for you
+(idempotently, safe to run against a pre-0.7 database); this section is only for a schema you
+create and evolve outside of it.
+
+```sql
+-- Postgres
+ALTER TABLE authkestra.oauth_refresh_tokens ADD COLUMN IF NOT EXISTS jkt VARCHAR(255);
+ALTER TABLE authkestra.oauth_clients ADD COLUMN IF NOT EXISTS token_endpoint_auth_method JSONB;
+ALTER TABLE authkestra.oauth_clients ADD COLUMN IF NOT EXISTS jwks JSONB;
+```
+
+```sql
+-- SQLite (no ADD COLUMN IF NOT EXISTS — skip a statement if the column is already there)
+ALTER TABLE authkestra_oauth_refresh_tokens ADD COLUMN jkt TEXT;
+ALTER TABLE authkestra_oauth_clients ADD COLUMN token_endpoint_auth_method TEXT;
+ALTER TABLE authkestra_oauth_clients ADD COLUMN jwks TEXT;
+```
+
+```sql
+-- MySQL (no ADD COLUMN IF NOT EXISTS across commonly-deployed versions — same caveat as SQLite)
+ALTER TABLE authkestra_oauth_refresh_tokens ADD COLUMN jkt VARCHAR(255);
+ALTER TABLE authkestra_oauth_clients ADD COLUMN token_endpoint_auth_method JSON;
+ALTER TABLE authkestra_oauth_clients ADD COLUMN jwks JSON;
+```
+
+All three are nullable and additive: existing rows simply have `NULL` in them, read back as
+`jkt: None` / `token_endpoint_auth_method: None` / `jwks: None`, exactly as if the client or
+refresh token predates this release.
+
 ### Initialization & Migration
 
 Once connected to your pool, initialize the store and run the built-in migration:
