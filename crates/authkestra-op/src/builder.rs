@@ -264,11 +264,22 @@ mod tests {
             token_exchange_enabled: false,
         };
 
+
+
+        let att_config = AttestationConfig {
+            attestation_ttl_secs: 300,
+            attestation_reissue_after_secs: 150,
+            challenge_ttl_secs: 60,
+        };
+
         let op = Op::builder()
             .config(config)
+            .attestation_config(att_config)
             .engine(engine)
             .store(store)
             .build();
+
+
 
         assert_eq!(op.config.issuer, "http://localhost");
     }
