@@ -15,6 +15,63 @@ pub struct SqlxOpStore<DB: sqlx::Database> {
     pool: sqlx::Pool<DB>,
 }
 
+/// Add `column` to `table` if it isn't already there.
+///
+/// SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (unlike
+/// Postgres 9.6+), so this introspects via `pragma_table_info` first. Used
+/// by [`SqlxOpStore::<sqlx::Sqlite>::migrate`] instead of `sqlx::migrate!` —
+/// see that function's doc comment for why.
+#[cfg(feature = "sqlx-sqlite")]
+async fn ensure_sqlite_column(
+    pool: &sqlx::SqlitePool,
+    table: &str,
+    column: &str,
+    add_column_ddl: &str,
+) -> Result<(), sqlx::Error> {
+    let exists: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?"
+    ))
+    .bind(column)
+    .fetch_one(pool)
+    .await?;
+    if exists == 0 {
+        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {add_column_ddl}"))
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Add `column` to `table` if it isn't already there.
+///
+/// MySQL has no universally-available `ADD COLUMN IF NOT EXISTS` across
+/// commonly-deployed versions, so this introspects via
+/// `information_schema.columns` first. Used by
+/// [`SqlxOpStore::<sqlx::MySql>::migrate`] instead of `sqlx::migrate!` —
+/// see the Postgres impl's doc comment for why.
+#[cfg(feature = "sqlx-mysql")]
+async fn ensure_mysql_column(
+    pool: &sqlx::MySqlPool,
+    table: &str,
+    column: &str,
+    add_column_ddl: &str,
+) -> Result<(), sqlx::Error> {
+    let exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+    )
+    .bind(table)
+    .bind(column)
+    .fetch_one(pool)
+    .await?;
+    if exists == 0 {
+        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {add_column_ddl}"))
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 macro_rules! impl_opstore_sql {
     (
         $backend:path,
@@ -88,16 +145,23 @@ macro_rules! impl_opstore_sql {
                     // Nullable: a client registered before authkestra#287's
                     // migration added these columns simply has no value in
                     // them yet, same as any other pre-existing row and a
-                    // newly-added nullable column.
+                    // newly-added nullable column. That's a genuine SQL
+                    // NULL, which `try_get::<Option<Json<T>>, _>` already
+                    // reports as `Ok(None)` — distinct from a non-NULL value
+                    // that fails to decode, which it reports as `Err`.
+                    // Collapsing both cases with `.ok()` would silently turn
+                    // an operator-written value this enum doesn't model
+                    // (e.g. `client_secret_jwt`) into `None`, and
+                    // `authenticate_client` treats `None` as "no auth method
+                    // configured" — fail-open into an unauthenticated
+                    // client. Propagate the decode error instead.
                     let token_endpoint_auth_method: Option<TokenEndpointAuthMethod> = row
                         .try_get::<Option<sqlx::types::Json<TokenEndpointAuthMethod>>, _>("token_endpoint_auth_method")
-                        .ok()
-                        .flatten()
+                        .map_err(|_| OpError::Storage)?
                         .map(|j| j.0);
                     let jwks: Option<serde_json::Value> = row
                         .try_get::<Option<sqlx::types::Json<serde_json::Value>>, _>("jwks")
-                        .ok()
-                        .flatten()
+                        .map_err(|_| OpError::Storage)?
                         .map(|j| j.0);
 
                     Ok(Some(ClientRegistration {
@@ -218,7 +282,13 @@ macro_rules! impl_opstore_sql {
                         identity: identity.0,
                         scope: row.try_get("scope").map_err(|_| OpError::Storage)?,
                         expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
-                        jkt: row.try_get("jkt").ok(),
+                        // NULL (a pre-authkestra#287 row, or a token never
+                        // bound to a DPoP proof) is a legitimate `None`; a
+                        // decode error on a non-NULL value is propagated
+                        // rather than silently discarded, since that would
+                        // undo the RFC 9449 §5 continuity check this column
+                        // exists to enforce.
+                        jkt: row.try_get("jkt").map_err(|_| OpError::Storage)?,
                     }))
                 } else {
                     Ok(None)
@@ -408,16 +478,80 @@ impl_opstore_sql! {
     "authkestra.",
     /// Run necessary database migrations to set up schema and tables.
     ///
-    /// Backed by `sqlx::migrate!` (authkestra#287) — versioned, checksummed
-    /// `.sql` files under `migrations/postgres/`, tracked in this
-    /// database's own `_sqlx_migrations` table so each one runs exactly
-    /// once, ever. That guarantee is what makes it safe to *add* a column
-    /// to an existing deployment's table (migration 2) as well as create
-    /// the schema fresh (migration 1) — the old `CREATE TABLE IF NOT
-    /// EXISTS`-only approach this replaces had no such guarantee, so it
-    /// could only ever create tables, never evolve them.
+    /// Deliberately **not** `sqlx::migrate!` (tried in authkestra#287,
+    /// reverted): its bookkeeping lives in one database-global
+    /// `_sqlx_migrations` table with no supported way in sqlx 0.8 to
+    /// rename or namespace it. `authkestra-op` is a library embedded into
+    /// a host application's own connection pool — a host that also runs
+    /// `sqlx::migrate!` for its own schema against that same pool (the
+    /// common case) collides on that shared table the moment either side's
+    /// migration lands on a version number the other already used, and
+    /// `Migrator::run` then refuses to apply *either* set of migrations.
+    /// The old `CREATE TABLE IF NOT EXISTS`-only approach never had this
+    /// failure mode, because it kept no bookkeeping of its own at all —
+    /// this keeps that property while still being able to *add* a column
+    /// to an existing deployment's table. Postgres supports `ADD COLUMN IF
+    /// NOT EXISTS` directly (9.6+), so no introspection query is needed
+    /// here the way SQLite and MySQL's `migrate()` need one.
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
-        sqlx::migrate!("./migrations/postgres").run(&self.pool).await?;
+        use sqlx::Executor;
+        self.pool.execute(
+            r#"
+            CREATE SCHEMA IF NOT EXISTS authkestra;
+
+            CREATE TABLE IF NOT EXISTS authkestra.oauth_clients (
+                client_id VARCHAR(255) PRIMARY KEY,
+                client_secret_hash VARCHAR(255),
+                require_pkce BOOLEAN NOT NULL DEFAULT TRUE,
+                redirect_uris JSONB NOT NULL,
+                grant_types JSONB NOT NULL,
+                scopes JSONB NOT NULL,
+                allowed_audiences JSONB NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra.oauth_codes (
+                code VARCHAR(255) PRIMARY KEY,
+                client_id VARCHAR(255) NOT NULL REFERENCES authkestra.oauth_clients(client_id) ON DELETE CASCADE,
+                redirect_uri TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                code_challenge VARCHAR(255),
+                code_challenge_method VARCHAR(10),
+                nonce VARCHAR(255),
+                identity JSONB NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used BOOLEAN NOT NULL DEFAULT FALSE
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra.oauth_refresh_tokens (
+                token VARCHAR(255) PRIMARY KEY,
+                client_id VARCHAR(255) NOT NULL REFERENCES authkestra.oauth_clients(client_id) ON DELETE CASCADE,
+                identity JSONB NOT NULL,
+                scope TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                revoked_at TIMESTAMPTZ
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra.oauth_device_codes (
+                device_code VARCHAR(255) PRIMARY KEY,
+                user_code VARCHAR(255) UNIQUE NOT NULL,
+                client_id VARCHAR(255) NOT NULL REFERENCES authkestra.oauth_clients(client_id) ON DELETE CASCADE,
+                scope TEXT NOT NULL,
+                status JSONB NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                last_polled_at TIMESTAMPTZ
+            );
+
+            -- authkestra#287: additive columns for RFC 9449 DPoP
+            -- refresh-token key continuity and RFC 7523 private_key_jwt.
+            -- `IF NOT EXISTS` makes this safe to run on every startup,
+            -- against both a fresh install (just created above) and an
+            -- existing deployment upgrading from before these columns
+            -- existed.
+            ALTER TABLE authkestra.oauth_refresh_tokens ADD COLUMN IF NOT EXISTS jkt VARCHAR(255);
+            ALTER TABLE authkestra.oauth_clients ADD COLUMN IF NOT EXISTS token_endpoint_auth_method JSONB;
+            ALTER TABLE authkestra.oauth_clients ADD COLUMN IF NOT EXISTS jwks JSONB;
+            "#
+        ).await?;
         Ok(())
     },
     // consume_code (Postgres specific)
@@ -466,7 +600,7 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
-                jkt: row.try_get("jkt").ok(),
+                jkt: row.try_get("jkt").map_err(|_| OpError::Storage)?,
             }))
         } else {
             Ok(None)
@@ -507,10 +641,66 @@ impl_opstore_sql! {
     "authkestra_",
     /// Run necessary database migrations to set up schema and tables.
     ///
-    /// See the Postgres impl's identical doc comment: backed by
-    /// `sqlx::migrate!` (authkestra#287) against `migrations/sqlite/`.
+    /// See the Postgres impl's identical doc comment for why this is
+    /// deliberately not `sqlx::migrate!`. SQLite has no native `ADD COLUMN
+    /// IF NOT EXISTS`, so the three new columns go through
+    /// `ensure_sqlite_column`'s `pragma_table_info` introspection instead.
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
-        sqlx::migrate!("./migrations/sqlite").run(&self.pool).await?;
+        use sqlx::Executor;
+        self.pool.execute(
+            r#"
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_clients (
+                client_id TEXT PRIMARY KEY,
+                client_secret_hash TEXT,
+                require_pkce BOOLEAN NOT NULL DEFAULT 1,
+                redirect_uris TEXT NOT NULL,
+                grant_types TEXT NOT NULL,
+                scopes TEXT NOT NULL,
+                allowed_audiences TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_codes (
+                code TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE,
+                redirect_uri TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                code_challenge TEXT,
+                code_challenge_method TEXT,
+                nonce TEXT,
+                identity TEXT NOT NULL,
+                expires_at DATETIME NOT NULL,
+                used BOOLEAN NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_refresh_tokens (
+                token TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE,
+                identity TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                expires_at DATETIME NOT NULL,
+                revoked_at DATETIME
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_device_codes (
+                device_code TEXT PRIMARY KEY,
+                user_code TEXT UNIQUE NOT NULL,
+                client_id TEXT NOT NULL REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE,
+                scope TEXT NOT NULL,
+                status TEXT NOT NULL,
+                expires_at DATETIME NOT NULL,
+                last_polled_at DATETIME
+            );
+            "#
+        ).await?;
+
+        // authkestra#287: additive columns for RFC 9449 DPoP refresh-token
+        // key continuity and RFC 7523 private_key_jwt. Safe to run on every
+        // startup, against both a fresh install (just created above) and an
+        // existing deployment upgrading from before these columns existed.
+        ensure_sqlite_column(&self.pool, "authkestra_oauth_refresh_tokens", "jkt", "jkt TEXT").await?;
+        ensure_sqlite_column(&self.pool, "authkestra_oauth_clients", "token_endpoint_auth_method", "token_endpoint_auth_method TEXT").await?;
+        ensure_sqlite_column(&self.pool, "authkestra_oauth_clients", "jwks", "jwks TEXT").await?;
+
         Ok(())
     },
     // consume_code (SQLite specific)
@@ -559,7 +749,7 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
-                jkt: row.try_get("jkt").ok(),
+                jkt: row.try_get("jkt").map_err(|_| OpError::Storage)?,
             }))
         } else {
             Ok(None)
@@ -600,10 +790,70 @@ impl_opstore_sql! {
     "authkestra_",
     /// Run necessary database migrations to set up schema and tables.
     ///
-    /// See the Postgres impl's identical doc comment: backed by
-    /// `sqlx::migrate!` (authkestra#287) against `migrations/mysql/`.
+    /// See the Postgres impl's identical doc comment for why this is
+    /// deliberately not `sqlx::migrate!`. MySQL has no `ADD COLUMN IF NOT
+    /// EXISTS` across commonly-deployed versions, so the three new columns
+    /// go through `ensure_mysql_column`'s `information_schema`
+    /// introspection instead.
     pub async fn migrate(&self) -> Result<(), sqlx::Error> {
-        sqlx::migrate!("./migrations/mysql").run(&self.pool).await?;
+        use sqlx::Executor;
+        self.pool.execute(
+            r#"
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_clients (
+                client_id VARCHAR(255) PRIMARY KEY,
+                client_secret_hash VARCHAR(255),
+                require_pkce BOOLEAN NOT NULL DEFAULT TRUE,
+                redirect_uris JSON NOT NULL,
+                grant_types JSON NOT NULL,
+                scopes JSON NOT NULL,
+                allowed_audiences JSON NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_codes (
+                code VARCHAR(255) PRIMARY KEY,
+                client_id VARCHAR(255) NOT NULL,
+                redirect_uri TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                code_challenge VARCHAR(255),
+                code_challenge_method VARCHAR(10),
+                nonce VARCHAR(255),
+                identity JSON NOT NULL,
+                expires_at DATETIME NOT NULL,
+                used BOOLEAN NOT NULL DEFAULT FALSE,
+                FOREIGN KEY (client_id) REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_refresh_tokens (
+                token VARCHAR(255) PRIMARY KEY,
+                client_id VARCHAR(255) NOT NULL,
+                identity JSON NOT NULL,
+                scope TEXT NOT NULL,
+                expires_at DATETIME NOT NULL,
+                revoked_at DATETIME,
+                FOREIGN KEY (client_id) REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS authkestra_oauth_device_codes (
+                device_code VARCHAR(255) PRIMARY KEY,
+                user_code VARCHAR(255) UNIQUE NOT NULL,
+                client_id VARCHAR(255) NOT NULL,
+                scope TEXT NOT NULL,
+                status JSON NOT NULL,
+                expires_at DATETIME NOT NULL,
+                last_polled_at DATETIME,
+                FOREIGN KEY (client_id) REFERENCES authkestra_oauth_clients(client_id) ON DELETE CASCADE
+            );
+            "#
+        ).await?;
+
+        // authkestra#287: additive columns for RFC 9449 DPoP refresh-token
+        // key continuity and RFC 7523 private_key_jwt. Safe to run on every
+        // startup, against both a fresh install (just created above) and an
+        // existing deployment upgrading from before these columns existed.
+        ensure_mysql_column(&self.pool, "authkestra_oauth_refresh_tokens", "jkt", "jkt VARCHAR(255)").await?;
+        ensure_mysql_column(&self.pool, "authkestra_oauth_clients", "token_endpoint_auth_method", "token_endpoint_auth_method JSON").await?;
+        ensure_mysql_column(&self.pool, "authkestra_oauth_clients", "jwks", "jwks JSON").await?;
+
         Ok(())
     },
     // consume_code (MySQL specific - needs transaction and FOR UPDATE since no RETURNING)
@@ -675,7 +925,7 @@ impl_opstore_sql! {
                 identity: identity.0,
                 scope: row.try_get("scope").unwrap_or_default(),
                 expires_at: row.try_get("expires_at").map_err(|_| OpError::Storage)?,
-                jkt: row.try_get("jkt").ok(),
+                jkt: row.try_get("jkt").map_err(|_| OpError::Storage)?,
             }))
         } else {
             tx.rollback().await.map_err(|_| OpError::Storage)?;
@@ -1400,6 +1650,110 @@ mod sqlite_tests {
             .unwrap()
             .expect("token must be found");
         assert_eq!(fetched.jkt, Some("post-upgrade-jkt".to_string()));
+    }
+
+    /// authkestra#290 (PR review, HIGH #1): `sqlx::migrate!`'s bookkeeping
+    /// lives in one database-global, unqualified `_sqlx_migrations` table
+    /// that sqlx 0.8 provides no way to rename or namespace. `SqlxOpStore`
+    /// is embedded into a *host application's own* connection pool, and a
+    /// host that also runs `sqlx::migrate!` for its own schema against that
+    /// same pool -- a completely ordinary setup -- collided with it the
+    /// moment either side's migration version number matched the other's,
+    /// with `Migrate::run` then refusing to apply *either* migration set.
+    /// `SqlxOpStore::migrate` no longer uses `sqlx::migrate!` at all (see
+    /// its doc comment), so it keeps no bookkeeping of its own and cannot
+    /// collide -- verified here directly against a real `sqlx::migrate!`
+    /// call, in both orderings, sharing one pool.
+    #[tokio::test]
+    async fn test_sqlite_migrate_does_not_collide_with_a_host_apps_own_sqlx_migrate() {
+        // Order A: the host app's own sqlx::migrate! runs first.
+        {
+            let pool = SqlitePoolOptions::new()
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+
+            sqlx::migrate!("./tests/fixture_migrations/host_app")
+                .run(&pool)
+                .await
+                .expect("the host app's own migrator must succeed");
+
+            let store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
+            store
+                .migrate()
+                .await
+                .expect("authkestra-op's migrate() must not be blocked by a host app's prior sqlx::migrate! run on the same pool");
+
+            sqlx::query("SELECT id FROM app_widgets")
+                .fetch_optional(&pool)
+                .await
+                .expect("the host app's own table must still exist and be queryable");
+            let client_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM authkestra_oauth_clients")
+                    .fetch_one(&pool)
+                    .await
+                    .expect("authkestra-op's own tables must exist and be queryable");
+            assert_eq!(client_count, 0);
+        }
+
+        // Order B: authkestra-op's migrate() runs first, the host app's
+        // own sqlx::migrate! runs second. The reviewer's reproduction
+        // showed the reverse order broke the *other* side, so both
+        // orderings must be exercised.
+        {
+            let pool = SqlitePoolOptions::new()
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+
+            let store = SqlxOpStore::<sqlx::Sqlite>::new(pool.clone());
+            store.migrate().await.unwrap();
+
+            sqlx::migrate!("./tests/fixture_migrations/host_app")
+                .run(&pool)
+                .await
+                .expect("the host app's own migrator must not be blocked by authkestra-op's prior migrate() run on the same pool");
+
+            sqlx::query("SELECT id FROM app_widgets")
+                .fetch_optional(&pool)
+                .await
+                .expect("the host app's own table must exist and be queryable");
+        }
+    }
+
+    /// authkestra#290 (PR review, HIGH #2): a `token_endpoint_auth_method`
+    /// value the enum can't decode (e.g. an operator-written
+    /// `client_secret_jwt`, which this enum has no variant for) must
+    /// surface as a storage error, not silently become `None` -- `None`
+    /// means "no auth method configured" to `authenticate_client`, which
+    /// combined with a NULL `client_secret_hash` (a legitimate shape for a
+    /// private_key_jwt-only client) authenticates the client with zero
+    /// credentials.
+    #[tokio::test]
+    async fn test_sqlite_find_client_rejects_an_undecodable_token_endpoint_auth_method() {
+        let store = setup_db().await;
+
+        sqlx::query(
+            "INSERT INTO authkestra_oauth_clients
+             (client_id, client_secret_hash, require_pkce, redirect_uris, grant_types, scopes, allowed_audiences, token_endpoint_auth_method)
+             VALUES (?, NULL, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("malformed_client")
+        .bind(true)
+        .bind(sqlx::types::Json(vec!["http://localhost/cb"]))
+        .bind(sqlx::types::Json(vec!["authorization_code"]))
+        .bind(sqlx::types::Json(vec!["openid"]))
+        .bind(sqlx::types::Json(vec!["aud"]))
+        .bind(r#""client_secret_jwt""#)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        let result = store.find_client("malformed_client").await;
+        assert!(
+            matches!(result, Err(OpError::Storage)),
+            "an undecodable token_endpoint_auth_method must fail closed as a storage error, not silently decode to None: got {result:?}"
+        );
     }
 }
 
