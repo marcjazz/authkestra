@@ -130,14 +130,40 @@ not blocking the rest of this epic.
 
 ## Phase D — Real, compiled ORM example crates
 
-**Status: Not started.**
+**Status: In progress — SeaORM done, Diesel not started.**
 
 Workspace-member example crates (SeaORM, Diesel — CrateStack explicitly
 deferred, see the epic issue's "On CrateStack specifically" section) that
 build and run in CI against real ORMs, each implementing the traits from
 Phase B and passing the conformance suite from Phase A. Not markdown
 snippets — compiled, CI-tested code, so integration examples can't silently
-rot the way the epic's motivating problem describes.
+rot the way the epic's motivating problem describes. No CI workflow changes
+needed — `ci.yml`'s existing `cargo test`/`clippy`/`fmt --check` commands
+are already workspace-wide, so a new member crate is covered automatically.
+
+### SeaORM (`crates/authkestra-example-seaorm`) — done
+
+A real `SeaOrmOpStore` implementing `ClientStore`/`AuthorizationCodeStore`/
+`RefreshTokenStore`/`DeviceCodeStore`/`OpStore` against four SeaORM
+entities (`oauth_clients`/`oauth_codes`/`oauth_refresh_tokens`/
+`oauth_device_codes`), SQLite-only. Deliberately simpler than
+`authkestra-store-sqlx` in two ways, called out in the crate's own doc
+comment rather than hidden: no foreign-key constraints between tables (so
+no `ON DELETE CASCADE`), and single-use consume for codes/tokens/device
+sessions goes through a SeaORM transaction (find-then-delete-or-mark-used)
+rather than a single `UPDATE ... RETURNING`/`DELETE ... RETURNING`
+statement — correct for SQLite's single-writer model, but a multi-writer
+backend would need the conditional-`UPDATE` pattern `authkestra-store-sqlx`
+uses instead. Neither is a limitation of the trait design; both are scope
+choices to keep the example readable.
+
+Tested for real: `tests/conformance.rs` runs `authkestra-store-testsuite`'s
+`run_op_store_tests` against it after seeding one fixture client directly
+through a SeaORM `ActiveModel` insert (bypassing `ClientStore`, same
+reasoning as `authkestra-store-sqlx`'s own conformance test — see Phase A's
+note above). Passes.
+
+### Diesel — not started
 
 ## DoD (Definition of Done, whole epic)
 
@@ -146,8 +172,9 @@ rot the way the epic's motivating problem describes.
   see Phase C's "Deferred, not done" note.
 - `authkestra-store-testsuite` is the documented, canonical way a
   third-party backend proves conformance (Phase A, done).
-- At least one real compiled ORM example (SeaORM or Diesel) builds and runs
-  its tests in CI against the traits from Phase B (Phase D).
+- At least one real compiled ORM example builds and runs its tests in CI
+  against the traits from Phase B (Phase D, done — `authkestra-example-seaorm`;
+  Diesel not started).
 - `cargo fmt --all -- --check`, `cargo clippy --workspace --all-features --
   -D warnings`, and `cargo test --workspace --all-features` all pass on the
   branch before it's proposed for merge into `next`/`main`.

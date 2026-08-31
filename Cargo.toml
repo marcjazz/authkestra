@@ -13,6 +13,7 @@ members = [
     "crates/authkestra-op",
     "crates/authkestra-devsig", "crates/authkestra-crypto-util", "crates/authkestra-store-testsuite",
     "crates/authkestra-store-sqlx",
+    "crates/authkestra-example-seaorm",
 ]
 
 [workspace.package]
