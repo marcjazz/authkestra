@@ -59,6 +59,14 @@ rustls-no-provider = [
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+# `migrate` only, not a full `sqlx` re-declaration: Cargo unifies this with
+# the optional main-dependency `sqlx` above for test/bench/example builds
+# only, so downstream consumers never get this feature. Used exclusively by
+# a regression test in `sqlx_store.rs` reproducing a host application's own
+# `sqlx::migrate!` running against the same pool as `SqlxOpStore::migrate`
+# (authkestra#290) — the collision that motivated moving `SqlxOpStore` off
+# `sqlx::migrate!` entirely in favor of introspection-guarded ALTERs.
+sqlx = { version = "0.8", features = ["migrate"] }
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql", "redis"] }
 # Test-only: generating real EC P-256 keypairs and signing enrolment

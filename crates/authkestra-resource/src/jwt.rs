@@ -310,12 +310,25 @@ pub struct ValidationConfig {
     /// header whose proof verifies for the same key, binds (`ath`) to
     /// *this* access token, and hasn't been seen before (tracked via
     /// [`JwtStrategy::with_dpop_replay_store`]). Off by default for
-    /// backward compatibility — with this `false`, a DPoP-bound token is
-    /// still accepted as a plain bearer token, same as before this option
-    /// existed. Mirrors [`ValidationConfig::require_cert_binding`]'s
+    /// backward compatibility — with this `false`, a DPoP-bound token's
+    /// `cnf.jkt` is simply never checked, so it's accepted exactly as any
+    /// other valid token is. Mirrors [`ValidationConfig::require_cert_binding`]'s
     /// design exactly: a token that carries *no* `cnf.jkt` at all is not
     /// DPoP-bound and this check is a no-op for it, regardless of this
     /// setting. See [`JwtStrategy`] and issue #274.
+    ///
+    /// One respect in which this is *not* "identical to before this option
+    /// existed": this crate's `Authorization`-header parsing recognizes the
+    /// `DPoP` auth-scheme unconditionally, not only when `require_dpop` is `true`
+    /// (parsing the header can't yet know which setting applies). Before
+    /// DPoP support existed at all, `Authorization: DPoP <token>` matched
+    /// no recognized scheme and this strategy declined the request
+    /// outright. Now, with `require_dpop` off, that same request is
+    /// accepted — the token is still validated as an ordinary JWT either
+    /// way, so this grants no capability a `Bearer`-scheme presentation of
+    /// the same token didn't already have while the flag is off, but it is
+    /// a genuinely new acceptance path, not merely "same as before" under
+    /// a different label.
     ///
     /// `htm` (the request's HTTP method) is always checked. `htu` — the
     /// absolute URL the proof was minted for — is checked only when
