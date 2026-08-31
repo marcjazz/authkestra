@@ -123,7 +123,13 @@ mod tests {
         type Credentials = DummyCreds;
         async fn authenticate(&self, creds: Self::Credentials) -> Result<Identity, AuthError> {
             if creds.0 == "valid" {
-                Ok(Identity { provider_id: "dummy".to_string(), external_id: "user_123".to_string(), email: None, username: None, attributes: std::collections::HashMap::new() })
+                Ok(Identity {
+                    provider_id: "dummy".to_string(),
+                    external_id: "user_123".to_string(),
+                    email: None,
+                    username: None,
+                    attributes: std::collections::HashMap::new(),
+                })
             } else {
                 Err(AuthError::InvalidCredentials)
             }
@@ -145,7 +151,10 @@ mod tests {
     #[tokio::test]
     async fn test_credentials_flow() {
         let flow = CredentialsFlow::new(DummyProvider);
-        let res = flow.authenticate(DummyCreds("valid".to_string())).await.unwrap();
+        let res = flow
+            .authenticate(DummyCreds("valid".to_string()))
+            .await
+            .unwrap();
         assert_eq!(res.0.external_id, "user_123");
         assert!(res.1.is_none());
 
@@ -156,7 +165,10 @@ mod tests {
     #[tokio::test]
     async fn test_credentials_flow_with_mapper() {
         let flow = CredentialsFlow::with_mapper(DummyProvider, DummyMapper);
-        let res = flow.authenticate(DummyCreds("valid".to_string())).await.unwrap();
+        let res = flow
+            .authenticate(DummyCreds("valid".to_string()))
+            .await
+            .unwrap();
         assert_eq!(res.0.external_id, "user_123");
         assert_eq!(res.1.unwrap(), DummyUser("user_123".to_string()));
     }

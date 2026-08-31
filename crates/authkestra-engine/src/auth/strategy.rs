@@ -231,7 +231,10 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http::{Request, header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, COOKIE}};
+    use http::{
+        header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, COOKIE},
+        Request,
+    };
 
     #[derive(Debug, PartialEq)]
     struct DummyIdentity(String);
@@ -240,7 +243,11 @@ mod tests {
     #[async_trait]
     impl BasicAuthenticator for DummyBasic {
         type Identity = DummyIdentity;
-        async fn authenticate(&self, u: &str, p: &str) -> Result<Option<Self::Identity>, AuthError> {
+        async fn authenticate(
+            &self,
+            u: &str,
+            p: &str,
+        ) -> Result<Option<Self::Identity>, AuthError> {
             if u == "user" && p == "pass" {
                 Ok(Some(DummyIdentity(u.to_string())))
             } else {
@@ -279,11 +286,15 @@ mod tests {
     async fn test_basic_strategy() {
         let strategy = BasicStrategy::new(DummyBasic);
         let mut req = Request::builder().uri("/").body(()).unwrap();
-        
+
         let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
         assert_eq!(res, None);
 
-        let mut req2 = Request::builder().uri("/").header(AUTHORIZATION, "Basic dXNlcjpwYXNz").body(()).unwrap();
+        let mut req2 = Request::builder()
+            .uri("/")
+            .header(AUTHORIZATION, "Basic dXNlcjpwYXNz")
+            .body(())
+            .unwrap();
         let res2 = strategy.authenticate(&req2.into_parts().0).await.unwrap();
         assert_eq!(res2.unwrap(), DummyIdentity("user".to_string()));
     }
@@ -292,11 +303,15 @@ mod tests {
     async fn test_token_strategy() {
         let strategy = TokenStrategy::new(DummyToken);
         let mut req = Request::builder().uri("/").body(()).unwrap();
-        
+
         let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
         assert_eq!(res, None);
 
-        let mut req2 = Request::builder().uri("/").header(AUTHORIZATION, "Bearer valid_token").body(()).unwrap();
+        let mut req2 = Request::builder()
+            .uri("/")
+            .header(AUTHORIZATION, "Bearer valid_token")
+            .body(())
+            .unwrap();
         let res2 = strategy.authenticate(&req2.into_parts().0).await.unwrap();
         assert_eq!(res2.unwrap(), DummyIdentity("user".to_string()));
     }
@@ -311,14 +326,18 @@ mod tests {
                 } else {
                     Ok(None)
                 }
-            }
+            },
         );
         let mut req = Request::builder().uri("/").body(()).unwrap();
-        
+
         let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
         assert_eq!(res, None);
 
-        let mut req2 = Request::builder().uri("/").header("x-api-key", "secret").body(()).unwrap();
+        let mut req2 = Request::builder()
+            .uri("/")
+            .header("x-api-key", "secret")
+            .body(())
+            .unwrap();
         let res2 = strategy.authenticate(&req2.into_parts().0).await.unwrap();
         assert_eq!(res2.unwrap(), DummyIdentity("user".to_string()));
     }
@@ -327,11 +346,15 @@ mod tests {
     async fn test_session_strategy() {
         let strategy = SessionStrategy::new(DummySession, "sid");
         let mut req = Request::builder().uri("/").body(()).unwrap();
-        
+
         let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
         assert_eq!(res, None);
 
-        let mut req2 = Request::builder().uri("/").header(COOKIE, "sid=valid_sid").body(()).unwrap();
+        let mut req2 = Request::builder()
+            .uri("/")
+            .header(COOKIE, "sid=valid_sid")
+            .body(())
+            .unwrap();
         let res2 = strategy.authenticate(&req2.into_parts().0).await.unwrap();
         assert_eq!(res2.unwrap(), DummyIdentity("user".to_string()));
     }
@@ -344,8 +367,14 @@ mod tests {
         assert_eq!(utils::extract_bearer_token(&headers), Some("token"));
 
         let mut headers2 = HeaderMap::new();
-        headers2.insert(AUTHORIZATION, HeaderValue::from_static("Basic dXNlcjpwYXNz"));
-        assert_eq!(utils::extract_basic_credentials(&headers2), Some(("user".to_string(), "pass".to_string())));
+        headers2.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Basic dXNlcjpwYXNz"),
+        );
+        assert_eq!(
+            utils::extract_basic_credentials(&headers2),
+            Some(("user".to_string(), "pass".to_string()))
+        );
 
         let mut headers3 = HeaderMap::new();
         headers3.insert(COOKIE, HeaderValue::from_static("foo=bar; sid=123"));
