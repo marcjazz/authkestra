@@ -15,8 +15,25 @@ that any `KvStore`/`AtomicConsume`/`AtomicInsert`/`OpStore`-family
 implementation — first-party or third-party — can run against itself to
 prove atomicity of consume/insert-if-absent, replay semantics, expiry
 behavior, and concurrent-access races. Ported the existing hand-written
-`MemoryStore`/`RedisStore` test coverage into it (`kv.rs`, `atomic.rs`,
-`op.rs`).
+`MemoryStore`/`RedisStore` test coverage into it (`kv.rs`, `atomic.rs`).
+
+**Correction to an earlier pass**: `op.rs`'s `run_op_store_tests` was left
+as an empty stub through the Phase 1/2/3 commits ("For Phase 1, we just lay
+down the structure") and never actually implemented, despite Phase A being
+marked done — the client-assertion suite (`run_client_assertion_store_tests`)
+was real, but the `AuthorizationCodeStore`/`RefreshTokenStore`/
+`DeviceCodeStore` conformance suite Phase D depends on ("passing the suite
+from (3)") was not. Filled in while starting Phase D: single-use/atomic
+consume for authorization codes, refresh tokens, and device code sessions;
+full device-code lifecycle (store/get/get_by_user_code/update/delete);
+revoke-then-unreadable for refresh tokens. `ClientStore` is deliberately
+*not* covered — it exposes only `find_client`, so there's no store-agnostic
+way to seed a client through the trait itself (registration is out-of-band
+by design). Wired into `authkestra-store-testsuite`'s own tests against
+`CompositeOpStore<MemoryStore, ...>` and, closing the loop Phase C's own
+plan noted but never executed, against `authkestra-store-sqlx`'s
+`SqlxOpStore` (in-memory SQLite, seeded with one fixture client via raw SQL
+since the FK from codes/tokens to clients needs one to exist).
 
 ## Phase B — Executor/`&mut self`-composable trait rework
 

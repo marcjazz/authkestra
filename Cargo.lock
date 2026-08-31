@@ -727,6 +727,8 @@ dependencies = [
  "authkestra-engine",
  "authkestra-op",
  "authkestra-resource",
+ "authkestra-store-sqlx",
+ "sqlx",
  "testcontainers",
  "testcontainers-modules",
  "tokio",
