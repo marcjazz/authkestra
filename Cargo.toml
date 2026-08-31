@@ -14,6 +14,7 @@ members = [
     "crates/authkestra-devsig", "crates/authkestra-crypto-util", "crates/authkestra-store-testsuite",
     "crates/authkestra-store-sqlx",
     "crates/authkestra-example-seaorm",
+    "crates/authkestra-example-diesel",
 ]
 
 [workspace.package]

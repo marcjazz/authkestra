@@ -130,7 +130,7 @@ not blocking the rest of this epic.
 
 ## Phase D — Real, compiled ORM example crates
 
-**Status: In progress — SeaORM done, Diesel not started.**
+**Status: Done — both SeaORM and Diesel examples land; CrateStack stays deferred.**
 
 Workspace-member example crates (SeaORM, Diesel — CrateStack explicitly
 deferred, see the epic issue's "On CrateStack specifically" section) that
@@ -163,7 +163,21 @@ through a SeaORM `ActiveModel` insert (bypassing `ClientStore`, same
 reasoning as `authkestra-store-sqlx`'s own conformance test — see Phase A's
 note above). Passes.
 
-### Diesel — not started
+### Diesel (`crates/authkestra-example-diesel`) — done
+
+Diesel is sync-only, so `DieselOpStore` hands every trait method's work to
+`tokio::task::spawn_blocking` — the standard pattern for embedding a
+blocking library in async code, and exactly what a real host application
+using Diesel would need to do too. A connection *pool* (`diesel::r2d2`),
+not a single connection, is required for this: `SqliteConnection` is
+`!Sync`, so each blocking task checks out its own connection rather than
+sharing one across threads. JSON-shaped fields (`Vec<String>`, `Identity`,
+`DeviceCodeStatus`) are stored as `Text` columns holding a serde_json string
+and (de)serialized by hand — Diesel has no built-in JSON column type for
+SQLite the way it does for Postgres. Same simplifications as the SeaORM
+example otherwise (no foreign keys; transaction-based consume rather than
+a single `RETURNING` statement), and the same `run_op_store_tests`
+conformance test, seeded the same way.
 
 ## DoD (Definition of Done, whole epic)
 
@@ -173,8 +187,8 @@ note above). Passes.
 - `authkestra-store-testsuite` is the documented, canonical way a
   third-party backend proves conformance (Phase A, done).
 - At least one real compiled ORM example builds and runs its tests in CI
-  against the traits from Phase B (Phase D, done — `authkestra-example-seaorm`;
-  Diesel not started).
+  against the traits from Phase B (Phase D, done — both
+  `authkestra-example-seaorm` and `authkestra-example-diesel`).
 - `cargo fmt --all -- --check`, `cargo clippy --workspace --all-features --
   -D warnings`, and `cargo test --workspace --all-features` all pass on the
   branch before it's proposed for merge into `next`/`main`.
