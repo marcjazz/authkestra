@@ -13,12 +13,12 @@ use diesel::sqlite::SqliteConnection;
 
 type SqlitePool = Pool<ConnectionManager<SqliteConnection>>;
 
-fn pool_err(_e: impl std::fmt::Display) -> StoreError {
-    StoreError::Internal("db".into())
+fn pool_err(e: impl std::fmt::Display) -> StoreError {
+    StoreError::Internal(format!("connection pool error: {e}"))
 }
 
-fn diesel_err(_e: diesel::result::Error) -> StoreError {
-    StoreError::Internal("db".into())
+fn diesel_err(e: diesel::result::Error) -> StoreError {
+    StoreError::Internal(format!("diesel error: {e}"))
 }
 
 /// A real, compiled `OpStore` implementation backed by [`diesel`] —
@@ -48,9 +48,23 @@ pub struct DieselOpStore {
 impl DieselOpStore {
     /// Builds a connection pool for `database_url` (e.g. `:memory:` or a
     /// file path) and wraps it.
+    ///
+    /// `:memory:` is special-cased to a single-connection pool: SQLite's
+    /// `:memory:` URI gives every connection its own private, independent
+    /// database, so a pool with r2d2's default size (10) would silently
+    /// scatter this store's rows across ten unrelated in-memory databases —
+    /// `migrate()` would create tables in whichever one it happens to check
+    /// out, and any other checkout would see "no such table". A real
+    /// (file-backed) database has no such problem and keeps the default
+    /// pool size, since SQLite's own locking already serializes writers
+    /// across connections.
     pub fn connect(database_url: &str) -> Result<Self, diesel::r2d2::PoolError> {
         let manager = ConnectionManager::<SqliteConnection>::new(database_url);
-        let pool = Pool::builder().build(manager)?;
+        let mut builder = Pool::builder();
+        if database_url == ":memory:" {
+            builder = builder.max_size(1);
+        }
+        let pool = builder.build(manager)?;
         Ok(Self { pool })
     }
 
@@ -132,7 +146,7 @@ impl DieselOpStore {
             Ok(())
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 }
 
@@ -154,7 +168,7 @@ impl ClientStore for DieselOpStore {
             row.map(ClientRow::into_domain).transpose()
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 }
 
@@ -172,7 +186,7 @@ impl AuthorizationCodeStore for DieselOpStore {
             Ok(())
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn consume_code(&mut self, code: &str) -> Result<Option<AuthorizationCode>, StoreError> {
@@ -203,7 +217,7 @@ impl AuthorizationCodeStore for DieselOpStore {
             .transpose()
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 }
 
@@ -221,7 +235,7 @@ impl RefreshTokenStore for DieselOpStore {
             Ok(())
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn get_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError> {
@@ -237,7 +251,7 @@ impl RefreshTokenStore for DieselOpStore {
             row.map(RefreshTokenRow::into_domain).transpose()
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn revoke_token(&mut self, token: &str) -> Result<(), StoreError> {
@@ -251,7 +265,7 @@ impl RefreshTokenStore for DieselOpStore {
             Ok(())
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn consume_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError> {
@@ -275,7 +289,7 @@ impl RefreshTokenStore for DieselOpStore {
             .transpose()
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 }
 
@@ -293,7 +307,7 @@ impl DeviceCodeStore for DieselOpStore {
             Ok(())
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn get_device_code(
@@ -312,7 +326,7 @@ impl DeviceCodeStore for DieselOpStore {
             row.map(DeviceCodeRow::into_domain).transpose()
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn get_by_user_code(
@@ -331,7 +345,7 @@ impl DeviceCodeStore for DieselOpStore {
             row.map(DeviceCodeRow::into_domain).transpose()
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn update_device_code(&mut self, session: DeviceCodeSession) -> Result<(), StoreError> {
@@ -347,7 +361,7 @@ impl DeviceCodeStore for DieselOpStore {
             Ok(())
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn delete_device_code(&mut self, device_code: &str) -> Result<(), StoreError> {
@@ -361,7 +375,7 @@ impl DeviceCodeStore for DieselOpStore {
             Ok(())
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 
     async fn consume_device_code(
@@ -388,7 +402,7 @@ impl DeviceCodeStore for DieselOpStore {
             .transpose()
         })
         .await
-        .map_err(|_| StoreError::Internal("db".into()))?
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
     }
 }
 

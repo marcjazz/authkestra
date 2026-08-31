@@ -176,6 +176,39 @@ pub trait OpStore:
     }
 }
 
+/// An `OpStore` that can be cloned behind a trait object.
+///
+/// This is the seam that lets `authkestra-axum`/`authkestra-actix` hand
+/// each request its own independent, owned store instance — a plain
+/// `Box::new(store.clone())` — instead of holding one shared instance
+/// behind a lock for the whole handler. That distinction matters: a
+/// pool-backed store (`authkestra-store-sqlx`'s `SqlxOpStore`, or either
+/// ORM example crate) is already cheap to clone precisely because cloning
+/// it doesn't clone the pool, just a handle to it, so serializing every
+/// request behind one `Mutex` would throw away all of the pool's own
+/// concurrency for no benefit.
+///
+/// Blanket-implemented for any `OpStore + Clone` — nothing to implement by
+/// hand. `CompositeOpStore` and every first-party backend already satisfy
+/// it; a custom `OpStore` needs only `#[derive(Clone)]` (or a hand-written
+/// impl) to pick it up too.
+pub trait CloneableOpStore: OpStore {
+    /// Returns an owned, independent clone of this store, boxed as a plain
+    /// `OpStore` trait object (not `Self` or `CloneableOpStore` again) —
+    /// callers use the clone for exactly one request and then drop it, so
+    /// there's no need for the clone to itself be re-cloneable.
+    fn clone_op_store(&self) -> Box<dyn OpStore>;
+}
+
+impl<T> CloneableOpStore for T
+where
+    T: OpStore + Clone + 'static,
+{
+    fn clone_op_store(&self) -> Box<dyn OpStore> {
+        Box::new(self.clone())
+    }
+}
+
 /// A helper struct that implements `OpStore` by delegating to individual stores.
 /// Useful if you want to use different backends for different types of data (e.g., config for clients, Redis for codes).
 ///
@@ -186,6 +219,7 @@ pub trait OpStore:
 /// [`CompositeOpStore::with_dpop_replay_store`]. Both are defaulted type
 /// parameters rather than required arguments to [`CompositeOpStore::new`]
 /// so that existing four-store call sites keep compiling untouched.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct CompositeOpStore<C, A, R, D, J = NoClientAssertionStore, P = NoDpopReplayStore> {
     clients: C,

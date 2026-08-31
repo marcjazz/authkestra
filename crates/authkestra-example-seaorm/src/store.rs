@@ -11,12 +11,13 @@ use sea_orm::{
     EntityTrait, Schema, TransactionTrait,
 };
 
-fn db_err(_e: DbErr) -> StoreError {
-    StoreError::Internal("db".into())
+fn db_err(e: DbErr) -> StoreError {
+    StoreError::Internal(format!("sea_orm error: {e}"))
 }
 
 fn decode_json<T: serde::de::DeserializeOwned>(value: sea_orm::JsonValue) -> Result<T, StoreError> {
-    serde_json::from_value(value).map_err(|_| StoreError::Internal("db".into()))
+    serde_json::from_value(value)
+        .map_err(|e| StoreError::Internal(format!("failed to decode stored JSON: {e}")))
 }
 
 /// A real, compiled `OpStore` implementation backed by [`sea_orm`] —
@@ -129,8 +130,8 @@ fn code_from_model(model: code::Model) -> Result<AuthorizationCode, StoreError> 
 #[async_trait]
 impl AuthorizationCodeStore for SeaOrmOpStore {
     async fn store_code(&mut self, code: AuthorizationCode) -> Result<(), StoreError> {
-        let identity =
-            serde_json::to_value(&code.identity).map_err(|_| StoreError::Internal("db".into()))?;
+        let identity = serde_json::to_value(&code.identity)
+            .map_err(|e| StoreError::Internal(format!("failed to encode value as JSON: {e}")))?;
         let active = code::ActiveModel {
             code: ActiveValue::Set(code.code),
             client_id: ActiveValue::Set(code.client_id),
@@ -188,8 +189,8 @@ fn refresh_token_from_model(model: refresh_token::Model) -> Result<RefreshToken,
 #[async_trait]
 impl RefreshTokenStore for SeaOrmOpStore {
     async fn store_token(&mut self, token: RefreshToken) -> Result<(), StoreError> {
-        let identity =
-            serde_json::to_value(&token.identity).map_err(|_| StoreError::Internal("db".into()))?;
+        let identity = serde_json::to_value(&token.identity)
+            .map_err(|e| StoreError::Internal(format!("failed to encode value as JSON: {e}")))?;
         let active = refresh_token::ActiveModel {
             token: ActiveValue::Set(token.token),
             client_id: ActiveValue::Set(token.client_id),
@@ -253,8 +254,8 @@ fn device_code_from_model(model: device_code::Model) -> Result<DeviceCodeSession
 fn device_code_active_model(
     session: &DeviceCodeSession,
 ) -> Result<device_code::ActiveModel, StoreError> {
-    let status =
-        serde_json::to_value(&session.status).map_err(|_| StoreError::Internal("db".into()))?;
+    let status = serde_json::to_value(&session.status)
+        .map_err(|e| StoreError::Internal(format!("failed to encode value as JSON: {e}")))?;
     Ok(device_code::ActiveModel {
         device_code: ActiveValue::Set(session.device_code.clone()),
         user_code: ActiveValue::Set(session.user_code.clone()),

@@ -9,7 +9,15 @@ use sqlx::sqlite::SqlitePoolOptions;
 /// closes that loop, in-memory SQLite so it stays fast and docker-free.
 #[tokio::test]
 async fn test_sqlx_op_store_sqlite() {
+    // `sqlite::memory:` gives every connection its own private, independent
+    // database — with the default pool size (10), a second physical
+    // connection opened under the hood would silently see an empty
+    // database. Pinning the pool to one connection is what actually makes
+    // this a *shared* in-memory database rather than up to ten unrelated
+    // ones; the test passing today with the default size is an accident of
+    // sequential access, not something this test should rely on.
     let pool = SqlitePoolOptions::new()
+        .max_connections(1)
         .connect("sqlite::memory:")
         .await
         .expect("in-memory sqlite pool must connect");

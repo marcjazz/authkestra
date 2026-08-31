@@ -3,7 +3,7 @@ use crate::{
         AttestationConfig, AttestationStatusProvider, EnrolmentChallengeStore, SecondFactorVerifier,
     },
     config::OpConfig,
-    store::OpStore,
+    store::CloneableOpStore,
 };
 use authkestra_engine::auth::session::SessionStore;
 use authkestra_engine::Configured;
@@ -107,8 +107,8 @@ impl<E> OpBuilder<E, Missing> {
     /// Set the OP store, advancing the typestate.
     pub fn store(
         self,
-        store: Arc<tokio::sync::Mutex<dyn OpStore>>,
-    ) -> OpBuilder<E, Arc<tokio::sync::Mutex<dyn OpStore>>> {
+        store: Arc<dyn CloneableOpStore>,
+    ) -> OpBuilder<E, Arc<dyn CloneableOpStore>> {
         OpBuilder {
             engine: self.engine,
             config: self.config,
@@ -125,7 +125,7 @@ impl<E> OpBuilder<E, Missing> {
 impl
     OpBuilder<
         Engine<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
-        Arc<tokio::sync::Mutex<dyn OpStore>>,
+        Arc<dyn CloneableOpStore>,
     >
 {
     /// Build the `Op` instance. Panics if `config` was not provided.
@@ -133,7 +133,7 @@ impl
         self,
     ) -> Op<
         Engine<Configured<Arc<dyn SessionStore>>, Configured<Arc<TokenManager>>>,
-        Arc<tokio::sync::Mutex<dyn OpStore>>,
+        Arc<dyn CloneableOpStore>,
     > {
         Op {
             engine: self.engine,
@@ -155,10 +155,12 @@ mod tests {
     use crate::config::OpConfig;
     use crate::device::{DeviceCodeSession, DeviceCodeStore};
     use crate::refresh::{RefreshToken, RefreshTokenStore};
+    use crate::store::OpStore;
     use authkestra_engine::auth::session::{Session, SessionStore};
     use authkestra_engine::store::StoreError;
     use authkestra_engine::{Engine, TokenManager};
 
+    #[derive(Clone)]
     struct DummyOpStore;
 
     #[async_trait::async_trait]
@@ -254,8 +256,7 @@ mod tests {
 
     #[test]
     fn test_op_builder_flow() {
-        let store: Arc<tokio::sync::Mutex<dyn OpStore>> =
-            Arc::new(tokio::sync::Mutex::new(DummyOpStore));
+        let store: Arc<dyn CloneableOpStore> = Arc::new(DummyOpStore);
         let session_store: Arc<dyn SessionStore> = Arc::new(DummySessionStore);
 
         let token_manager = TokenManager::new(

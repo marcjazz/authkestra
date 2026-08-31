@@ -229,3 +229,68 @@ conformance test, seeded the same way.
 - `cargo fmt --all -- --check`, `cargo clippy --workspace --all-features --
   -D warnings`, and `cargo test --workspace --all-features` all pass on the
   branch before it's proposed for merge into `next`/`main`.
+
+## Post-merge review fixes (PR #299)
+
+A review of `origin/next...HEAD` after Phases A–D landed found 11 issues.
+All are fixed on this branch:
+
+1. **Device-code grace period** — restored the 5-minute post-expiry
+   storage grace period `device_code_ttl` needs for RFC 8628's
+   `expired_token` (vs. `invalid_grant`) distinction; it had been dropped
+   when TTL fallbacks were reworked earlier in the epic.
+2. **`OpStore::check_and_record_dpop_jti` default** — was fail-open
+   (returned `Ok(true)`, i.e. "not a replay") when no `DpopReplayStore` is
+   wired; now fails closed via `NoDpopReplayStore`, matching
+   `record_client_assertion_jti`'s existing fail-closed default.
+3. **Global `Mutex<dyn OpStore>` serialization** — the biggest fix. The
+   `&self` → `&mut self` conversion done earlier in the epic (so pool-backed
+   stores can borrow a connection per call) had forced every OP handler
+   through one shared `Arc<tokio::sync::Mutex<dyn OpStore>>`, serializing
+   *all* OP traffic (authorize/token/userinfo/device endpoints) through a
+   single lock regardless of backend. Replaced with a new
+   `CloneableOpStore` trait (`authkestra-op/src/store.rs`): blanket-
+   implemented for any `OpStore + Clone`, with
+   `clone_op_store(&self) -> Box<dyn OpStore>` sidestepping Rust's lack of
+   object-safe `Clone`. `Arc<dyn CloneableOpStore>` replaces
+   `Arc<Mutex<dyn OpStore>>` everywhere (`authkestra-op`'s builder,
+   `authkestra-axum`/`authkestra-actix`'s handlers and `CompleteOp`/
+   `OpExt`, and all 8 `*_op_server*.rs` examples); each request now clones
+   a cheap owned handle instead of contending on a lock. `CompositeOpStore`,
+   `SqlxOpStore`, `RedisStore`, `NoClientAssertionStore`, and
+   `NoDpopReplayStore` all gained `#[derive(Clone)]`/a hand-written `Clone`
+   impl to satisfy the new bound; a custom `OpStore` (e.g. the
+   `*_custom_grant.rs` examples' `MyCustomOpStore`) needs the same.
+4. **`:memory:` pool bugs** — `authkestra-example-diesel`'s `connect()` and
+   `authkestra-store-testsuite`'s `sqlx_store.rs` conformance test each
+   opened a multi-connection pool against `:memory:`, where SQLite gives
+   each connection an independent private database — so a value written on
+   one pooled connection could be invisible to a query on another. Both
+   now cap the pool to a single connection for `:memory:` URLs. (The same
+   bug class pre-exists in `authkestra-store-sqlx`'s own test helper but
+   was deliberately left alone — not introduced by this epic, not
+   flagged, and a naive fix would weaken a genuine concurrency test.)
+5. **Silent misconfiguration** — `NoClientAssertionStore::record_jti` now
+   logs a `tracing::warn!` explaining that a `private_key_jwt` assertion
+   was refused because no `ClientAssertionStore` is wired, since the
+   refusal is otherwise indistinguishable from a real replay to the caller.
+6. Commented the TTL-fallback default (kept at `from_secs(0)`, which
+   `RedisStore::set` treats as a silent no-op, not an error — reverted an
+   earlier unintentional change to `from_secs(1)`).
+7. Re-exported `NoClientAssertionStore` from `authkestra-op`'s crate root
+   (it was constructible via the re-exported `client_assertion` module but
+   not from the crate root like its sibling `NoDpopReplayStore`).
+8. Removed the deleted `axum_sql_store` example's row from `README.md`'s
+   example table (left over from the `SqlKvStore` removal).
+9. Updated `website/src/content/docs/advanced/op-server.md`'s `OpStore`
+   section for `&mut self` and `CloneableOpStore`/`Arc<dyn
+   CloneableOpStore>` (superseding the shape it would have needed to
+   describe for `Arc<Mutex<dyn OpStore>>`).
+10. Replaced `StoreError::Internal("db".into())` — used at every sqlx/
+    diesel/sea_orm error site across `authkestra-store-sqlx`,
+    `authkestra-example-diesel`, and `authkestra-example-seaorm` — with the
+    actual underlying error interpolated into the message (e.g. `format!("db
+    error: {e}")`), so a caller doesn't see the same opaque `"db"` string
+    for every possible failure.
+11. Added `.max_connections(1)` to `authkestra-store-testsuite/tests/
+    sqlx_store.rs`'s SQLite pool (see #4).

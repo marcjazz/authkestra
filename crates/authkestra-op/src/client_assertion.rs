@@ -40,7 +40,7 @@ use async_trait::async_trait;
 /// same captured assertion would both observe "not yet seen". Same
 /// requirement, and the same reasoning, as
 /// `AuthorizationCodeStore::consume_code`.
-pub use authkestra_engine::store::traits::ClientAssertionStore;
+pub use authkestra_engine::store::traits::{ClientAssertionStore, NoClientAssertionStore};
 use base64::Engine;
 use chrono::{DateTime, TimeZone, Utc};
 use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk};

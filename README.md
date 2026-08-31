@@ -113,7 +113,6 @@ own module docs list the environment variables it needs.
 | Axum with Google OIDC | `cargo run -p authkestra --example axum_oidc_google --all-features` |
 | Axum stateless OAuth (JWT callback) | `cargo run -p authkestra --example axum_oauth_stateless --all-features` |
 | Axum with Redis session | `cargo run -p authkestra --example axum_session_redis --all-features` |
-| Axum with SQL store | `cargo run -p authkestra --example axum_sql_store --all-features` |
 | Axum resource server | `cargo run -p authkestra --example axum_resource_server --all-features` |
 | Axum OP server | `cargo run -p authkestra --example axum_op_server --all-features` |
 | Axum OP server on SQLx | `cargo run -p authkestra --example axum_op_server_sqlx --all-features` |

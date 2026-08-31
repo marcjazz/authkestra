@@ -24,7 +24,9 @@ pub use client::{ClientRegistration, ClientStore, GrantType, TokenEndpointAuthMe
 /// Asymmetric client authentication (`private_key_jwt`, RFC 7523 §2.2):
 /// assertion verification and the replay tracking it depends on.
 pub mod client_assertion;
-pub use client_assertion::{MemoryClientAssertionStore, CLIENT_ASSERTION_TYPE_JWT_BEARER};
+pub use client_assertion::{
+    MemoryClientAssertionStore, NoClientAssertionStore, CLIENT_ASSERTION_TYPE_JWT_BEARER,
+};
 
 /// Authorization codes issued during the `/authorize` step and consumed at
 /// `/token`.
@@ -67,7 +69,7 @@ pub mod refresh;
 
 /// Unified OpStore trait.
 pub mod store;
-pub use store::OpStore;
+pub use store::{CloneableOpStore, OpStore};
 
 #[cfg(feature = "redis")]
 /// Redis-backed implementations.

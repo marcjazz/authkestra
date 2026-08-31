@@ -24,7 +24,7 @@ struct AppState {
     auth: authkestra_engine::AkEngine,
 
     #[authkestra(store)]
-    op_store: Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>>,
+    op_store: Arc<dyn authkestra_op::CloneableOpStore>,
 
     #[authkestra(store)]
     config: OpConfig,
@@ -34,6 +34,7 @@ struct AppState {
 // CUSTOM GRANT TYPE EXAMPLE
 // We wrap `CompositeOpStore` so we can override `handle_custom_grant`.
 // -------------------------------------------------------------------------
+#[derive(Clone)]
 struct MyCustomOpStore<C, A, R, D> {
     inner: authkestra_op::store::CompositeOpStore<C, A, R, D>,
 }
@@ -249,15 +250,14 @@ async fn main() -> std::io::Result<()> {
     let refresh_tokens = MemoryStore::new();
     let device_codes = MemoryStore::new();
 
-    let op_store: Arc<tokio::sync::Mutex<dyn authkestra_op::OpStore>> =
-        Arc::new(tokio::sync::Mutex::new(MyCustomOpStore {
-            inner: authkestra_op::store::CompositeOpStore::new(
-                clients,
-                auth_codes,
-                refresh_tokens,
-                device_codes,
-            ),
-        }));
+    let op_store: Arc<dyn authkestra_op::CloneableOpStore> = Arc::new(MyCustomOpStore {
+        inner: authkestra_op::store::CompositeOpStore::new(
+            clients,
+            auth_codes,
+            refresh_tokens,
+            device_codes,
+        ),
+    });
 
     let config = OpConfig {
         issuer: issuer.clone(),
