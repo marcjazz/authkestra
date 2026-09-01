@@ -121,6 +121,75 @@ fn take_jti(extra: &mut HashMap<String, serde_json::Value>) -> String {
     }
 }
 
+/// Every named field [`Claims`] serializes at the top level of the JWT
+/// payload. `Claims::extra` is `#[serde(flatten)]`ed alongside them, so any
+/// of these names *also* appearing in `extra` gets written twice under the
+/// same key.
+///
+/// `jti` is deliberately **absent**: [`take_jti`] removes it from `extra`
+/// before any collision check runs, which makes it a supported override
+/// rather than a collision (#212).
+///
+/// `identity` **is** included even though it is
+/// `skip_serializing_if = "Option::is_none"`, so an `extra["identity"]`
+/// only duplicates on the paths that actually carry an identity. Rejecting
+/// it unconditionally keeps one rule for every constructor instead of one
+/// that silently depends on which `issue_*` was called; on the paths where
+/// it does not duplicate, `extra["identity"]` is captured by the named
+/// field on the way back in anyway, never by `extra`, so nothing could
+/// have been reading it from where it was put.
+pub(crate) const NAMED_CLAIM_FIELDS: &[&str] = &[
+    "iss", "sub", "aud", "exp", "iat", "nbf", "scope", "identity",
+];
+
+/// Rejects any `extra` key that collides with a named [`Claims`] field.
+///
+/// This is the fix for #283, the general case #212 left open. `#212` only
+/// removed `jti`; every other name in [`NAMED_CLAIM_FIELDS`] still
+/// serialized twice, producing a payload `encode` accepts but no
+/// `serde_json`-based decoder — including this crate's own
+/// [`TokenManager::validate_token`] — can read back, because `serde_json`
+/// hard-errors on a literal duplicate field whether or not it arrived via
+/// a flattened map.
+///
+/// Failing here, at issuance, rather than silently stripping the keys is
+/// the deliberate choice: the natural adapter for an embedder with an
+/// existing typed claims struct is `extra = serde_json::to_value(&claims)?`,
+/// which collides on `iss`/`sub`/`aud` and is silently wrong. Left to
+/// strip, that mistake becomes a token missing the claims its author
+/// believed it set; left as-is, it becomes every resource server rejecting
+/// every token, diagnosed a process away from its cause. Returning an
+/// error puts the failure at the call site that caused it.
+///
+/// All collisions are reported at once, in [`NAMED_CLAIM_FIELDS`]
+/// declaration order, so the message is deterministic despite `extra`
+/// being a [`HashMap`] and so a caller flattening a whole struct fixes
+/// every key in one pass instead of one error at a time.
+fn reject_named_claim_collisions(
+    extra: &HashMap<String, serde_json::Value>,
+) -> Result<(), AuthError> {
+    let collisions: Vec<&str> = NAMED_CLAIM_FIELDS
+        .iter()
+        .copied()
+        .filter(|name| extra.contains_key(*name))
+        .collect();
+
+    if collisions.is_empty() {
+        return Ok(());
+    }
+
+    let joined = collisions.join(", ");
+    tracing::warn!(
+        colliding_keys = %joined,
+        "rejecting token issuance: `extra` keys collide with named Claims fields"
+    );
+    Err(AuthError::Token(format!(
+        "extra claim key(s) [{joined}] collide with named claims and would be serialized \
+         twice, producing a token that cannot be decoded again; remove them from `extra` \
+         (`jti` is the one supported override)"
+    )))
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[non_exhaustive]
 pub struct Claims {
@@ -310,15 +379,28 @@ impl TokenManager {
     /// `project_id`, or `roles` — so downstream consumers (an API gateway or
     /// authorization proxy) can read them directly off the token without a
     /// database round-trip. Keys in `extra` take precedence over any
-    /// same-named field set elsewhere in `extra` by this method; they cannot
-    /// override the top-level standard claims (`sub`, `aud`, `exp`, etc.)
-    /// since those are not part of the flattened map, with one exception:
-    /// `jti` is a reserved key. If `extra["jti"]` is a JSON string, it is
-    /// removed from `extra` and used verbatim as the token's `jti` claim
-    /// instead of a generated UUIDv4 — see [`take_jti`] for why this has to
-    /// happen this way rather than leaving the key in `extra`. `nbf`
-    /// (not-before, set to issuance time) and `identity` are unconditional
-    /// parts of this token's contract and have no opt-out.
+    /// same-named field set elsewhere in `extra` by this method.
+    ///
+    /// # Errors
+    ///
+    /// `extra` **cannot** override the top-level standard claims, and
+    /// trying is an error rather than a silent no-op: if `extra` contains
+    /// any of [`NAMED_CLAIM_FIELDS`] (`iss`, `sub`, `aud`, `exp`, `iat`,
+    /// `nbf`, `scope`, `identity`) this returns
+    /// [`AuthError::Token`] naming every colliding key, and mints nothing.
+    /// Those names are `#[serde(flatten)]`-adjacent to the named `Claims`
+    /// fields, so letting them through would serialize each twice and
+    /// produce a token this crate could sign but never decode (#283). If
+    /// you are flattening an existing claims struct into `extra`, strip
+    /// those keys first — the standard claims are set from this method's
+    /// own parameters.
+    ///
+    /// `jti` is the one supported override: if `extra["jti"]` is a JSON
+    /// string, it is removed from `extra` and used verbatim as the token's
+    /// `jti` claim instead of a generated UUIDv4 — see [`take_jti`] for why
+    /// this has to happen this way rather than leaving the key in `extra`.
+    /// `nbf` (not-before, set to issuance time) and `identity` are
+    /// unconditional parts of this token's contract and have no opt-out.
     pub fn issue_user_token_with_extra(
         &self,
         identity: Identity,
@@ -330,6 +412,7 @@ impl TokenManager {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
         let jti = take_jti(&mut extra);
+        reject_named_claim_collisions(&extra)?;
 
         let claims = Claims {
             iss: self.issuer.clone(),
@@ -378,6 +461,13 @@ impl TokenManager {
     /// [`Self::issue_user_token_with_extra`] for how `extra["jti"]`
     /// overrides the generated one. `nbf` and `identity` are unconditional
     /// on this path too, with no opt-out.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::Token`] without minting anything if `extra`
+    /// carries a key that collides with a named `Claims` field — see
+    /// [`Self::issue_user_token_with_extra`] for the full rule and why it
+    /// is an error rather than a silent strip.
     pub fn issue_id_token_with_extra(
         &self,
         identity: Identity,
@@ -389,6 +479,7 @@ impl TokenManager {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
         let jti = take_jti(&mut extra);
+        reject_named_claim_collisions(&extra)?;
 
         let mut claims = Claims {
             iss: self.issuer.clone(),
@@ -432,6 +523,12 @@ impl TokenManager {
     /// given `extra` claims onto the token in addition to the standard/core
     /// claims. See [`Self::issue_user_token_with_extra`] for the rationale,
     /// including the `extra["jti"]` override.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::Token`] without minting anything if `extra`
+    /// carries a key that collides with a named `Claims` field — see
+    /// [`Self::issue_user_token_with_extra`].
     pub fn issue_client_token_with_extra(
         &self,
         client_id: &str,
@@ -443,6 +540,7 @@ impl TokenManager {
         let now = chrono::Utc::now().timestamp() as usize;
         let expiration = now + expires_in_secs as usize;
         let jti = take_jti(&mut extra);
+        reject_named_claim_collisions(&extra)?;
 
         let claims = Claims {
             iss: self.issuer.clone(),
@@ -473,6 +571,12 @@ impl TokenManager {
     /// default `"JWT"`). Additive alongside the `issue_*_token*` family
     /// above; those are unchanged. `extra["jti"]` is honored the same way
     /// as [`Self::issue_user_token_with_extra`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::Token`] without minting anything if `extra`
+    /// carries a key that collides with a named `Claims` field — see
+    /// [`Self::issue_user_token_with_extra`].
     pub fn issue_custom_token(
         &self,
         sub: String,
@@ -482,6 +586,8 @@ impl TokenManager {
     ) -> Result<String, AuthError> {
         let now = chrono::Utc::now().timestamp() as usize;
         let jti = take_jti(&mut extra);
+        reject_named_claim_collisions(&extra)?;
+
         let claims = Claims {
             iss: self.issuer.clone(),
             sub,
@@ -1418,6 +1524,211 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
 
         let deserialized_multi: Audience = serde_json::from_str(&serialized_multi).unwrap();
         assert_eq!(deserialized_multi, multiple);
+    }
+
+    fn test_identity() -> Identity {
+        Identity {
+            provider_id: "mock".to_string(),
+            external_id: "user123".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        }
+    }
+
+    /// The exact reproduction from #283, verbatim: a caller flattens its
+    /// own typed claims struct into `extra`, three of whose keys collide
+    /// with named `Claims` fields. Before the fix this returned `Ok` and
+    /// minted a payload with `"iss"`, `"sub"` and `"aud"` written twice,
+    /// which `validate_token` then refused to decode — an issuer-side
+    /// mistake whose only symptom appeared in a different process. It must
+    /// now fail at issuance, naming every colliding key.
+    #[test]
+    fn test_issue_custom_token_rejects_extra_colliding_with_named_claims() {
+        let manager =
+            TokenManager::new(b"probe-secret", Some("https://issuer.example".to_string()));
+
+        let mut extra: HashMap<String, serde_json::Value> = HashMap::new();
+        extra.insert("iss".into(), serde_json::json!("https://caller.example"));
+        extra.insert("sub".into(), serde_json::json!("caller-subject"));
+        extra.insert("aud".into(), serde_json::json!("caller-audience"));
+
+        let err = manager
+            .issue_custom_token("engine-subject".to_string(), 3600, "JWT", extra)
+            .expect_err("extra colliding with named claims must not mint a token");
+
+        let msg = err.to_string();
+        for key in ["iss", "sub", "aud"] {
+            assert!(
+                msg.contains(key),
+                "error must name every colliding key; `{key}` missing from: {msg}"
+            );
+        }
+    }
+
+    /// Every name in `NAMED_CLAIM_FIELDS` must be rejected, on every
+    /// `extra`-taking issuance path. This is the assertion that keeps #283
+    /// from regressing one field or one constructor at a time: adding a
+    /// named field to `Claims` without adding it to `NAMED_CLAIM_FIELDS`
+    /// leaves this test passing but the new field unguarded, which is why
+    /// the companion test below pins the list against `Claims` itself.
+    #[test]
+    fn test_every_named_claim_field_is_rejected_on_every_issuance_path() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        for field in NAMED_CLAIM_FIELDS {
+            let one = |value: serde_json::Value| {
+                let mut extra = HashMap::new();
+                extra.insert((*field).to_string(), value);
+                extra
+            };
+            let probe = serde_json::json!("collides");
+
+            assert!(
+                manager
+                    .issue_user_token_with_extra(
+                        test_identity(),
+                        3600,
+                        None,
+                        None,
+                        one(probe.clone())
+                    )
+                    .is_err(),
+                "issue_user_token_with_extra must reject extra[{field}]"
+            );
+            assert!(
+                manager
+                    .issue_id_token_with_extra(
+                        test_identity(),
+                        "client-1",
+                        None,
+                        3600,
+                        one(probe.clone())
+                    )
+                    .is_err(),
+                "issue_id_token_with_extra must reject extra[{field}]"
+            );
+            assert!(
+                manager
+                    .issue_client_token_with_extra("client-1", 3600, None, None, one(probe.clone()))
+                    .is_err(),
+                "issue_client_token_with_extra must reject extra[{field}]"
+            );
+            assert!(
+                manager
+                    .issue_custom_token("sub".to_string(), 3600, "JWT", one(probe.clone()))
+                    .is_err(),
+                "issue_custom_token must reject extra[{field}]"
+            );
+            assert!(
+                manager
+                    .issue_sd_jwt(
+                        "sub".to_string(),
+                        3600,
+                        None,
+                        None,
+                        Vec::new(),
+                        one(probe.clone())
+                    )
+                    .is_err(),
+                "issue_sd_jwt must reject extra[{field}]"
+            );
+        }
+    }
+
+    /// Pins `NAMED_CLAIM_FIELDS` against what `Claims` actually serializes,
+    /// rather than against a second hand-written list that would drift the
+    /// same way the original one did. Serializing a `Claims` with an empty
+    /// `extra` yields exactly the named keys; every one of them except
+    /// `jti` (removed by `take_jti`, so a supported override rather than a
+    /// collision) must be covered. A `Claims` field added later without a
+    /// `NAMED_CLAIM_FIELDS` entry fails here.
+    #[test]
+    fn test_named_claim_fields_covers_every_serialized_claims_key() {
+        let claims = Claims {
+            iss: Some("issuer".to_string()),
+            sub: "sub".to_string(),
+            aud: Some(Audience::from("client-1")),
+            exp: 0,
+            iat: 0,
+            nbf: Some(0),
+            jti: Some("jti".to_string()),
+            scope: Some("openid".to_string()),
+            // `Some`, so the `skip_serializing_if` field is present in the
+            // serialized form and therefore actually checked below.
+            identity: Some(test_identity()),
+            extra: HashMap::new(),
+        };
+
+        let serialized = serde_json::to_value(&claims).unwrap();
+        let keys: Vec<&str> = serialized
+            .as_object()
+            .expect("Claims serializes as a JSON object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+
+        for key in keys {
+            assert!(
+                key == "jti" || NAMED_CLAIM_FIELDS.contains(&key),
+                "`Claims` serializes `{key}` but NAMED_CLAIM_FIELDS does not list it, so \
+                 `extra[\"{key}\"]` would silently produce a duplicate key again (#283)"
+            );
+        }
+    }
+
+    /// The fix must not narrow what `extra` is actually for. Non-colliding
+    /// custom claims still round-trip, and `jti` is still the one
+    /// documented override rather than being caught by the new check.
+    #[test]
+    fn test_non_colliding_extra_and_jti_override_still_work() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        let mut extra = HashMap::new();
+        extra.insert("api_key_id".to_string(), serde_json::json!("key-abc"));
+        extra.insert("cnf".to_string(), serde_json::json!({"jkt": "abc"}));
+        extra.insert(
+            "jti".to_string(),
+            serde_json::json!("caller-supplied-cuid2"),
+        );
+
+        let token = manager
+            .issue_user_token_with_extra(test_identity(), 3600, None, None, extra)
+            .expect("non-colliding extra plus a jti override must still issue");
+
+        let claims = manager
+            .validate_token(&token, None)
+            .expect("TokenManager must be able to decode the token it just issued");
+
+        assert_eq!(claims.jti, Some("caller-supplied-cuid2".to_string()));
+        assert_eq!(
+            claims.extra.get("api_key_id"),
+            Some(&serde_json::json!("key-abc"))
+        );
+        assert_eq!(claims.extra.get("cnf").unwrap()["jkt"], "abc");
+        assert!(!claims.extra.contains_key("jti"));
+    }
+
+    /// `nonce` is applied to `extra` by `issue_id_token_with_extra` after
+    /// the collision check, and is not a named `Claims` field. Pins that
+    /// the new check did not accidentally make the OIDC `nonce` path
+    /// unreachable.
+    #[test]
+    fn test_id_token_nonce_still_stamped_after_collision_check() {
+        let manager = TokenManager::new(b"secret", Some("issuer".to_string()));
+
+        let token = manager
+            .issue_id_token_with_extra(
+                test_identity(),
+                "client-1",
+                Some("nonce123".to_string()),
+                3600,
+                HashMap::new(),
+            )
+            .expect("id token issuance must be unaffected");
+
+        let claims = manager.validate_token(&token, Some("client-1")).unwrap();
+        assert_eq!(claims.extra.get("nonce").unwrap(), "nonce123");
     }
 }
 pub mod jwk;

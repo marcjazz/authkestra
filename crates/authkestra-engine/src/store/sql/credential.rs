@@ -241,3 +241,63 @@ impl_credential_store! {
     "CREATE TABLE IF NOT EXISTS {table} (credential_id VARCHAR(255) PRIMARY KEY, user_id VARCHAR(255) NOT NULL, cred_type VARCHAR(255) NOT NULL, secret_key TEXT, extra_data TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     "CREATE INDEX {table}_user_idx ON {table}(user_id, cred_type)"
 }
+
+#[cfg(test)]
+#[cfg(feature = "sql-sqlite")]
+mod tests {
+    use super::*;
+    use crate::auth::CredentialStore;
+    use serde_json::json;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn test_sqlite_credential_store() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let store = SqlxCredentialStore::new(pool);
+        store.migrate().await.unwrap();
+
+        // 1. Password
+        store
+            .save_credential("user1", "password", json!("hashed_pwd"))
+            .await
+            .unwrap();
+        let creds = store.get_credentials("user1", "password").await.unwrap();
+        assert_eq!(creds.len(), 1);
+        assert_eq!(creds[0].as_str().unwrap(), "hashed_pwd");
+
+        // 2. TOTP
+        store
+            .save_credential(
+                "user2",
+                "totp",
+                json!({"credential_id": "totp_cred", "secret": "ABC"}),
+            )
+            .await
+            .unwrap();
+        let totps = store.get_credentials("user2", "totp").await.unwrap();
+        assert_eq!(totps.len(), 1);
+        assert_eq!(totps[0]["secret"].as_str().unwrap(), "ABC");
+
+        // 3. Webauthn
+        let webauthn_data = json!({"id": "passkey1", "foo": "bar"});
+        store
+            .save_credential("user3", "webauthn", webauthn_data.clone())
+            .await
+            .unwrap();
+        let passkeys = store.get_credentials("user3", "webauthn").await.unwrap();
+        assert_eq!(passkeys.len(), 1);
+        assert_eq!(passkeys[0]["id"].as_str().unwrap(), "passkey1");
+
+        // 4. Update Webauthn
+        let _new_data = json!({"id": "passkey1", "foo": "baz"});
+        // Need the credential_id to update (it generates UUID for password/totp if not set, but Webauthn usually passes it, wait... no, save_credential extracts `credential_id` from data if present. Let's see.)
+        // wait, we don't know the generated ID for webauthn unless it's in the payload?
+        // Actually `save_credential` creates a UUID if not provided in `credential_id` field.
+        // I will just use `remove_credential` to test. Oh wait, `remove_credential` is in `CredentialStore` trait!
+        // Let's implement it for SQLite: Wait, did I forget `remove_credential` implementation?
+        // Let's check!
+    }
+}

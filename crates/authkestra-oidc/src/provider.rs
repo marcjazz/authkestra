@@ -539,3 +539,106 @@ impl OAuthProvider for OidcProvider {
         Ok((identity, token))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn test_oidc_provider_paths() {
+        let server = MockServer::start().await;
+
+        let jwks_uri = format!("{}/jwks", server.uri());
+
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/.well-known/openid-configuration"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "issuer": server.uri(),
+                "authorization_endpoint": format!("{}/auth", server.uri()),
+                "token_endpoint": format!("{}/token", server.uri()),
+                "jwks_uri": jwks_uri
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = OidcProvider::discover(
+            "test_client".to_string(),
+            "test_secret".to_string(),
+            "http://localhost/callback".to_string(),
+            &server.uri(),
+            std::time::Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+
+        // Test auth URL
+        let url = provider.get_authorization_url(
+            "mystate",
+            &["email"],
+            Some("challenge"),
+            Some("my_nonce"),
+        );
+        assert!(url.contains("scope=email%20openid"));
+        assert!(url.contains("nonce=my_nonce"));
+        assert!(url.contains("code_challenge=challenge"));
+
+        // Test network error on token endpoint
+        let err = provider
+            .exchange_code_for_identity("code", None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AuthError::Provider(_)));
+
+        // Test token parsing error
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+
+        let err = provider
+            .exchange_code_for_identity("code", None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AuthError::Provider(_)));
+
+        server.reset().await;
+
+        // Test missing id_token
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "acc",
+                "token_type": "Bearer"
+            })))
+            .mount(&server)
+            .await;
+
+        let err = provider
+            .exchange_code_for_identity("code", None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AuthError::Token(_)));
+
+        server.reset().await;
+
+        // Validation fails because signature is bad
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "acc",
+                "token_type": "Bearer",
+                "id_token": "bad.jwt.token"
+            })))
+            .mount(&server)
+            .await;
+
+        let err = provider
+            .exchange_code_for_identity("code", None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AuthError::Token(_)));
+    }
+}

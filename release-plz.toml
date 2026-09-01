@@ -45,3 +45,15 @@ version_group = "authkestra"
 [[package]]
 name = "authkestra-devsig"
 version_group = "authkestra"
+
+[[package]]
+name = "authkestra-crypto-util"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-store-sqlx"
+version_group = "authkestra"
+
+[[package]]
+name = "authkestra-store-testsuite"
+version_group = "authkestra"

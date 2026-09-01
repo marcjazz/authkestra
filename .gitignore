@@ -7,4 +7,6 @@ act_output.log
 *.rlib
 *.orig
 *.patch
+*.profraw
+lcov.info
 scratch/

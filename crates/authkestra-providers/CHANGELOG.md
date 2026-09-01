@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.6.3...authkestra-providers-v0.7.0) - 2026-08-31
+
+### Other
+
+- add coverage for auth strategies and flow orchestration ([#297](https://github.com/marcjazz/authkestra/pull/297)) ([#298](https://github.com/marcjazz/authkestra/pull/298))
+
 ## [0.6.2](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.6.1...authkestra-providers-v0.6.2) - 2026-08-28
 
 ### Other

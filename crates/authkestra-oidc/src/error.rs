@@ -97,3 +97,92 @@ impl From<authkestra_resource::jwt::ValidationError> for OidcError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use authkestra_resource::jwt::ValidationError;
+
+    #[test]
+    fn test_oidc_error_mappings() {
+        let err = OidcError::Discovery("foo".into());
+        let ae: AuthError = err.into();
+        assert!(matches!(ae, AuthError::Provider(_)));
+
+        let err = OidcError::Network("foo".into());
+        assert!(matches!(AuthError::from(err), AuthError::Network));
+
+        let err = OidcError::ValidationError("foo".into());
+        assert!(matches!(AuthError::from(err), AuthError::Token(_)));
+
+        let err = OidcError::Provider("foo".into());
+        assert!(matches!(AuthError::from(err), AuthError::Provider(_)));
+
+        let err = OidcError::Internal("foo".into());
+        assert!(matches!(AuthError::from(err), AuthError::Provider(_)));
+
+        let err = AuthError::Discovery("foo".into());
+        let oe: OidcError = err.into();
+        assert!(matches!(oe, OidcError::Discovery(_)));
+
+        let err = AuthError::Network;
+        assert!(matches!(OidcError::from(err), OidcError::Network(_)));
+
+        let err = AuthError::Token("foo".into());
+        assert!(matches!(
+            OidcError::from(err),
+            OidcError::ValidationError(_)
+        ));
+
+        let err = AuthError::Provider("foo".into());
+        assert!(matches!(OidcError::from(err), OidcError::Provider(_)));
+
+        let err = AuthError::InvalidInput;
+        assert!(matches!(OidcError::from(err), OidcError::Internal(_)));
+
+        let err = ValidationError::KeyNotFound;
+        assert!(matches!(
+            OidcError::from(err),
+            OidcError::ValidationError(_)
+        ));
+
+        let err = ValidationError::MissingKid;
+        assert!(matches!(
+            OidcError::from(err),
+            OidcError::ValidationError(_)
+        ));
+
+        let err = ValidationError::UntrustedIssuer("foo".into());
+        assert!(matches!(
+            OidcError::from(err),
+            OidcError::ValidationError(_)
+        ));
+
+        let err = ValidationError::MissingIssuer;
+        assert!(matches!(
+            OidcError::from(err),
+            OidcError::ValidationError(_)
+        ));
+
+        let err = ValidationError::Paseto("foo".into());
+        assert!(matches!(
+            OidcError::from(err),
+            OidcError::ValidationError(_)
+        ));
+
+        let err = ValidationError::Validation("foo".into());
+        assert!(matches!(
+            OidcError::from(err),
+            OidcError::ValidationError(_)
+        ));
+
+        let err = ValidationError::DpopReplayUnavailable("foo".into());
+        assert!(matches!(OidcError::from(err), OidcError::Internal(_)));
+
+        let err = ValidationError::InvalidToken("foo".into());
+        assert!(matches!(
+            OidcError::from(err),
+            OidcError::ValidationError(_)
+        ));
+    }
+}
