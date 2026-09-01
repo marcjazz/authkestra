@@ -26,7 +26,7 @@ fn temp_db_path() -> std::path::PathBuf {
     ))
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn consume_code_is_atomic_under_concurrent_redemption() {
     let path = temp_db_path();
     let url = format!("sqlite://{}?mode=rwc", path.display());

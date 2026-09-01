@@ -36,3 +36,7 @@ testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["redis", "postgres", "mysql"] }
 authkestra-store-sqlx = { workspace = true, default-features = true, features = ["sqlite"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+# This crate's own tests/*.rs use #[tokio::test], which needs "macros" —
+# declared explicitly rather than relying on it arriving via
+# feature-unification from testcontainers' own tokio dependency.
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -1,10 +1,11 @@
-//! Shared helper for SQL-backed `OpStore` examples that support SQLite.
+//! Classifying SQLite connection strings — no `sqlx`/`diesel`/`sea_orm`
+//! dependency, just URL parsing, so this lives here (always available)
+//! rather than behind any of the `sql-*` feature gates `store::sql` needs.
 //!
-//! Not a conformance test like the other modules in this crate — a small
-//! utility both `authkestra-example-diesel` and `authkestra-example-seaorm`
-//! need for the exact same reason, factored out here (rather than
-//! duplicated in each example) so a future refinement of the URL
-//! classification only has to land once.
+//! Every SQL-backed `OpStore` example in this workspace
+//! (`authkestra-example-diesel`, `authkestra-example-seaorm`) needs the
+//! same answer to "is this URL a private, per-connection in-memory
+//! database", so it lives here once rather than duplicated in each.
 
 /// True if `database_url` names a private, per-connection SQLite database —
 /// one where a multi-connection pool would scatter a store's rows across

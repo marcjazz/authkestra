@@ -29,7 +29,7 @@ fn temp_db_path() -> String {
         .into_owned()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn consume_code_is_atomic_under_concurrent_redemption() {
     let path = temp_db_path();
     let store = DieselOpStore::connect(&path).expect("file-backed sqlite pool must build");
