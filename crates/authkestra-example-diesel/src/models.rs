@@ -114,7 +114,7 @@ impl CodeRow {
 
     pub fn into_domain(self) -> Result<AuthorizationCode, StoreError> {
         Ok({
-            let mut __tmp = AuthorizationCode::new(
+            let mut code = AuthorizationCode::new(
                 self.code,
                 self.client_id,
                 self.redirect_uri,
@@ -123,10 +123,10 @@ impl CodeRow {
                 from_naive(self.expires_at),
                 self.used,
             );
-            __tmp.code_challenge = self.code_challenge;
-            __tmp.code_challenge_method = self.code_challenge_method;
-            __tmp.nonce = self.nonce;
-            __tmp
+            code.code_challenge = self.code_challenge;
+            code.code_challenge_method = self.code_challenge_method;
+            code.nonce = self.nonce;
+            code
         })
     }
 }
@@ -201,7 +201,7 @@ impl DeviceCodeRow {
     pub fn into_domain(self) -> Result<DeviceCodeSession, StoreError> {
         let status: DeviceCodeStatus = from_json(&self.status)?;
         Ok({
-            let mut __tmp = DeviceCodeSession::new(
+            let mut session = DeviceCodeSession::new(
                 self.device_code,
                 self.user_code,
                 self.client_id,
@@ -209,8 +209,8 @@ impl DeviceCodeRow {
                 from_naive(self.expires_at),
                 status,
             );
-            __tmp.last_polled_at = self.last_polled_at.map(from_naive);
-            __tmp
+            session.last_polled_at = self.last_polled_at.map(from_naive);
+            session
         })
     }
 }

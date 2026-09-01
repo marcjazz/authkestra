@@ -17,7 +17,11 @@ exclude.workspace = true
 # each dependency's own defaults (its TLS backend included).
 authkestra-engine = { workspace = true, default-features = true }
 authkestra-op = { workspace = true, default-features = true }
-tokio = { version = "1", features = ["full"] }
+# Only "rt" (tokio::spawn, in the atomic-insert concurrency test) and
+# "time" (tokio::time::sleep, waiting out a TTL) are actually used by
+# src/ — "full" would push tokio's entire feature set onto every consumer
+# of this now-published crate for no reason.
+tokio = { version = "1", features = ["rt", "time"] }
 async-trait = "0.1"
 
 [dev-dependencies]

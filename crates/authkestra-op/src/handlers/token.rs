@@ -2138,7 +2138,7 @@ mod tests {
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code({
-                let mut __tmp = AuthorizationCode::new(
+                let mut auth_code = AuthorizationCode::new(
                     "code1".to_string(),
                     "client1".to_string(),
                     "https://cb".to_string(),
@@ -2147,9 +2147,9 @@ mod tests {
                     Utc::now() + Duration::minutes(5),
                     false,
                 );
-                __tmp.code_challenge = Some(challenge);
-                __tmp.code_challenge_method = Some("S256".to_string());
-                __tmp
+                auth_code.code_challenge = Some(challenge);
+                auth_code.code_challenge_method = Some("S256".to_string());
+                auth_code
             })
             .await
             .unwrap();
@@ -2440,7 +2440,7 @@ mod tests {
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code({
-                let mut __tmp = AuthorizationCode::new(
+                let mut auth_code = AuthorizationCode::new(
                     "code-default".to_string(),
                     "client1".to_string(),
                     "https://cb".to_string(),
@@ -2449,9 +2449,9 @@ mod tests {
                     Utc::now() + Duration::minutes(5),
                     false,
                 );
-                __tmp.code_challenge = Some(challenge);
-                __tmp.code_challenge_method = Some("S256".to_string());
-                __tmp
+                auth_code.code_challenge = Some(challenge);
+                auth_code.code_challenge_method = Some("S256".to_string());
+                auth_code
             })
             .await
             .unwrap();
@@ -2511,7 +2511,7 @@ mod tests {
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code({
-                let mut __tmp = AuthorizationCode::new(
+                let mut auth_code = AuthorizationCode::new(
                     "code1".to_string(),
                     "client1".to_string(),
                     "https://cb".to_string(),
@@ -2520,9 +2520,9 @@ mod tests {
                     Utc::now() + Duration::minutes(5),
                     false,
                 );
-                __tmp.code_challenge = Some("valid_challenge".to_string());
-                __tmp.code_challenge_method = Some("S256".to_string());
-                __tmp
+                auth_code.code_challenge = Some("valid_challenge".to_string());
+                auth_code.code_challenge_method = Some("S256".to_string());
+                auth_code
             })
             .await
             .unwrap();
@@ -2666,7 +2666,7 @@ mod tests {
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
             .store_code({
-                let mut __tmp = AuthorizationCode::new(
+                let mut auth_code = AuthorizationCode::new(
                     "code1".to_string(),
                     "client1".to_string(),
                     "https://cb".to_string(),
@@ -2675,9 +2675,9 @@ mod tests {
                     Utc::now() + Duration::minutes(5),
                     false,
                 );
-                __tmp.code_challenge = Some("challenge".to_string());
-                __tmp.code_challenge_method = Some("plain".to_string());
-                __tmp
+                auth_code.code_challenge = Some("challenge".to_string());
+                auth_code.code_challenge_method = Some("plain".to_string());
+                auth_code
             })
             .await
             .unwrap();
@@ -5419,7 +5419,7 @@ mod tests {
             >::new();
             codes
                 .store_code({
-                    let mut __tmp = AuthorizationCode::new(
+                    let mut auth_code = AuthorizationCode::new(
                         "code1".to_string(),
                         "client1".to_string(),
                         "https://cb".to_string(),
@@ -5428,9 +5428,9 @@ mod tests {
                         Utc::now() + Duration::minutes(5),
                         false,
                     );
-                    __tmp.code_challenge = Some(challenge);
-                    __tmp.code_challenge_method = Some("S256".to_string());
-                    __tmp
+                    auth_code.code_challenge = Some(challenge);
+                    auth_code.code_challenge_method = Some("S256".to_string());
+                    auth_code
                 })
                 .await
                 .unwrap();
@@ -5550,7 +5550,7 @@ mod tests {
             >::new();
             codes
                 .store_code({
-                    let mut __tmp = AuthorizationCode::new(
+                    let mut auth_code = AuthorizationCode::new(
                         "code1".to_string(),
                         "client1".to_string(),
                         "https://cb".to_string(),
@@ -5559,9 +5559,9 @@ mod tests {
                         Utc::now() + Duration::minutes(5),
                         false,
                     );
-                    __tmp.code_challenge = Some(challenge);
-                    __tmp.code_challenge_method = Some("S256".to_string());
-                    __tmp
+                    auth_code.code_challenge = Some(challenge);
+                    auth_code.code_challenge_method = Some("S256".to_string());
+                    auth_code
                 })
                 .await
                 .unwrap();

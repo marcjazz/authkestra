@@ -65,6 +65,15 @@ pub trait DpopReplayStore: Send + Sync {
     ) -> Result<bool, StoreError>;
 }
 
+/// The exact `StoreError::Internal` payload [`NoClientAssertionStore`]
+/// fails with — `authkestra_op::error::OpError`'s `From<StoreError>` impl
+/// matches on this literal to recover the distinct
+/// `OpError::ReplayProtectionUnavailable` variant instead of collapsing it
+/// into the generic `OpError::Storage`. A `pub const` rather than two
+/// independent string literals so the two crates can't drift apart.
+pub const CLIENT_ASSERTION_REPLAY_PROTECTION_UNAVAILABLE: &str =
+    "ClientAssertionReplayProtectionUnavailable";
+
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct NoClientAssertionStore;
@@ -89,7 +98,7 @@ impl ClientAssertionStore for NoClientAssertionStore {
              a missing-store misconfiguration)"
         );
         Err(StoreError::Internal(
-            "ClientAssertionReplayProtectionUnavailable".into(),
+            CLIENT_ASSERTION_REPLAY_PROTECTION_UNAVAILABLE.into(),
         ))
     }
 }
@@ -239,6 +248,10 @@ impl DpopJtiRecord {
     }
 }
 
+/// Same purpose as [`CLIENT_ASSERTION_REPLAY_PROTECTION_UNAVAILABLE`], for
+/// [`NoDpopReplayStore`]'s sibling `OpError::DpopReplayProtectionUnavailable`.
+pub const DPOP_REPLAY_PROTECTION_UNAVAILABLE: &str = "DpopReplayProtectionUnavailable";
+
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct NoDpopReplayStore;
@@ -251,7 +264,7 @@ impl DpopReplayStore for NoDpopReplayStore {
     ) -> Result<bool, StoreError> {
         tracing::error!("a DPoP proof was presented but no DpopReplayStore is wired; refusing it rather than accepting a proof that could be replayed");
         Err(StoreError::Internal(
-            "DpopReplayProtectionUnavailable".into(),
+            DPOP_REPLAY_PROTECTION_UNAVAILABLE.into(),
         ))
     }
 }

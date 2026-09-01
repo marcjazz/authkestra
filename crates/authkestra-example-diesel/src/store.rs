@@ -7,6 +7,7 @@ use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
 use authkestra_op::device::{DeviceCodeSession, DeviceCodeStore};
 use authkestra_op::refresh::{RefreshToken, RefreshTokenStore};
 use authkestra_op::store::OpStore;
+use authkestra_store_testsuite::sqlite::is_private_memory_url;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::sqlite::SqliteConnection;
@@ -21,25 +22,37 @@ fn diesel_err(e: diesel::result::Error) -> StoreError {
     StoreError::Internal(format!("diesel error: {e}"))
 }
 
-/// True if `database_url` names a private, per-connection SQLite database —
-/// one where a multi-connection pool would scatter this store's rows across
-/// several unrelated databases (see [`DieselOpStore::connect`]).
+/// Sets SQLite's `busy_timeout` on every connection r2d2 hands out.
 ///
-/// Covers the bare `:memory:` filename, the URI forms `file::memory:` and
-/// `file:name?mode=memory` (SQLite's *named* in-memory database — distinct
-/// per name, but still private to the connection that opened it unless
-/// shared), and `""` (a private temporary on-disk database — same
-/// per-connection isolation). `cache=shared` is the one exception: it puts
-/// an in-memory database in SQLite's shared cache instead, which every
-/// connection in the process can see, so it does not need — and should not
-/// get — the single-connection restriction the other forms do.
-fn is_private_memory_url(database_url: &str) -> bool {
-    let url = database_url.trim();
-    if url.is_empty() {
-        return true;
+/// Without it, SQLite's default is to fail a write immediately with
+/// "database is locked" the instant it can't grab the single writer lock,
+/// rather than waiting for the current writer to finish — turning any two
+/// genuinely concurrent writers (e.g. two `consume_code` calls racing on
+/// separate pooled connections, exactly the case the compare-and-swap in
+/// `AuthorizationCodeStore::consume_code` is meant to resolve cleanly into
+/// one winner and one `None`) into a hard error on whichever one loses,
+/// instead of the loser simply waiting its turn and then correctly
+/// observing the row as already consumed.
+#[derive(Debug, Clone, Copy)]
+struct SetBusyTimeout;
+
+impl diesel::r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SetBusyTimeout {
+    fn on_acquire(&self, conn: &mut SqliteConnection) -> Result<(), diesel::r2d2::Error> {
+        diesel::sql_query("PRAGMA busy_timeout = 5000;")
+            .execute(conn)
+            .map_err(diesel::r2d2::Error::QueryError)?;
+        // WAL mode lets readers proceed without waiting on the single
+        // writer (rollback-journal mode's default), which is what actually
+        // lets `busy_timeout` matter under real concurrent load rather than
+        // every reader also contending for the same lock. A silent no-op
+        // for a `:memory:`/temporary database, which SQLite doesn't support
+        // WAL for — harmless there since that path is already capped to a
+        // single connection anyway (see `connect`).
+        diesel::sql_query("PRAGMA journal_mode = WAL;")
+            .execute(conn)
+            .map_err(diesel::r2d2::Error::QueryError)?;
+        Ok(())
     }
-    let lower = url.to_ascii_lowercase();
-    (lower.contains(":memory:") || lower.contains("mode=memory")) && !lower.contains("cache=shared")
 }
 
 /// A real, compiled `OpStore` implementation backed by [`diesel`] —
@@ -78,20 +91,14 @@ impl DieselOpStore {
     /// in whichever one it happens to check out, and any other checkout
     /// would see "no such table". A real (file-backed) database has no such
     /// problem and keeps the default pool size, since SQLite's own locking
-    /// already serializes writers across connections.
-    ///
-    /// SQLite accepts several spellings of "private in-memory/temporary
-    /// database" — the bare `:memory:` filename, the URI form
-    /// `file::memory:` (with or without a trailing query string, *unless*
-    /// it sets `cache=shared`, which is the actual escape hatch for sharing
-    /// one in-memory database across connections), and `""` (a private
-    /// temporary on-disk database, same per-connection isolation problem).
-    /// Matching only the exact string `":memory:"` misses the other two and
-    /// silently reintroduces the ten-independent-databases bug this guard
-    /// exists to prevent.
+    /// already serializes writers across connections. See
+    /// [`authkestra_store_testsuite::sqlite::is_private_memory_url`] for
+    /// exactly which URL forms count as private — shared with
+    /// `authkestra-example-seaorm`'s identical guard, since both examples
+    /// need to recognize the same set of SQLite spellings.
     pub fn connect(database_url: &str) -> Result<Self, diesel::r2d2::PoolError> {
         let manager = ConnectionManager::<SqliteConnection>::new(database_url);
-        let mut builder = Pool::builder();
+        let mut builder = Pool::builder().connection_customizer(Box::new(SetBusyTimeout));
         if is_private_memory_url(database_url) {
             builder = builder.max_size(1);
         }
@@ -225,7 +232,7 @@ impl AuthorizationCodeStore for DieselOpStore {
         let code = code.to_string();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(pool_err)?;
-            conn.transaction(|conn| {
+            conn.immediate_transaction(|conn| {
                 let row: Option<CodeRow> = oauth_codes::table.find(&code).first(conn).optional()?;
                 let Some(mut row) = row else {
                     return Ok(None);
@@ -313,7 +320,7 @@ impl RefreshTokenStore for DieselOpStore {
         let token = token.to_string();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(pool_err)?;
-            conn.transaction(|conn| {
+            conn.immediate_transaction(|conn| {
                 let row: Option<RefreshTokenRow> = oauth_refresh_tokens::table
                     .find(&token)
                     .first(conn)
@@ -436,7 +443,7 @@ impl DeviceCodeStore for DieselOpStore {
         let device_code = device_code.to_string();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(pool_err)?;
-            conn.transaction(|conn| {
+            conn.immediate_transaction(|conn| {
                 let row: Option<DeviceCodeRow> = oauth_device_codes::table
                     .find(&device_code)
                     .first(conn)
@@ -465,42 +472,3 @@ impl DeviceCodeStore for DieselOpStore {
 }
 
 impl OpStore for DieselOpStore {}
-
-#[cfg(test)]
-mod tests {
-    use super::is_private_memory_url;
-
-    #[test]
-    fn bare_memory_filename_is_private() {
-        assert!(is_private_memory_url(":memory:"));
-    }
-
-    #[test]
-    fn empty_url_is_a_private_temporary_database() {
-        assert!(is_private_memory_url(""));
-        assert!(is_private_memory_url("   "));
-    }
-
-    #[test]
-    fn file_uri_memory_form_is_private() {
-        assert!(is_private_memory_url("file::memory:"));
-        assert!(is_private_memory_url("file::memory:?cache=private"));
-    }
-
-    #[test]
-    fn named_mode_memory_uri_is_private() {
-        assert!(is_private_memory_url("file:mydb?mode=memory"));
-    }
-
-    #[test]
-    fn shared_cache_memory_uri_is_not_private() {
-        assert!(!is_private_memory_url("file::memory:?cache=shared"));
-        assert!(!is_private_memory_url("file:mydb?mode=memory&cache=shared"));
-    }
-
-    #[test]
-    fn a_real_file_path_is_not_private() {
-        assert!(!is_private_memory_url("/tmp/authkestra-example.sqlite"));
-        assert!(!is_private_memory_url("sqlite://data.db"));
-    }
-}

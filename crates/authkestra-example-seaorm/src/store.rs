@@ -6,6 +6,7 @@ use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
 use authkestra_op::device::{DeviceCodeSession, DeviceCodeStatus, DeviceCodeStore};
 use authkestra_op::refresh::{RefreshToken, RefreshTokenStore};
 use authkestra_op::store::OpStore;
+use authkestra_store_testsuite::sqlite::is_private_memory_url;
 use sea_orm::{
     sea_query::Expr, ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, Database,
     DatabaseConnection, DbErr, EntityTrait, QueryFilter, Schema, TransactionTrait,
@@ -18,27 +19,6 @@ fn db_err(e: DbErr) -> StoreError {
 fn decode_json<T: serde::de::DeserializeOwned>(value: sea_orm::JsonValue) -> Result<T, StoreError> {
     serde_json::from_value(value)
         .map_err(|e| StoreError::Internal(format!("failed to decode stored JSON: {e}")))
-}
-
-/// True if `database_url` names a private, per-connection SQLite database —
-/// one where a multi-connection pool would scatter this store's rows across
-/// several unrelated databases (see [`SeaOrmOpStore::connect`]).
-///
-/// Covers the bare `:memory:` filename, the URI forms `file::memory:` and
-/// `file:name?mode=memory` (SQLite's *named* in-memory database — distinct
-/// per name, but still private to the connection that opened it unless
-/// shared), and `""` (a private temporary on-disk database — same
-/// per-connection isolation). `cache=shared` is the one exception: it puts
-/// an in-memory database in SQLite's shared cache instead, which every
-/// connection in the process can see, so it does not need — and should not
-/// get — the single-connection restriction the other forms do.
-fn is_private_memory_url(database_url: &str) -> bool {
-    let url = database_url.trim();
-    if url.is_empty() {
-        return true;
-    }
-    let lower = url.to_ascii_lowercase();
-    (lower.contains(":memory:") || lower.contains("mode=memory")) && !lower.contains("cache=shared")
 }
 
 /// A real, compiled `OpStore` implementation backed by [`sea_orm`] —
@@ -70,8 +50,11 @@ impl SeaOrmOpStore {
     /// checkout would see "no such table: oauth_clients". A real
     /// (file-backed) database has no such problem and keeps the default
     /// pool size, since SQLite's own locking already serializes writers
-    /// across connections. See `is_private_memory_url` for exactly which
-    /// URL forms this covers.
+    /// across connections. See
+    /// [`authkestra_store_testsuite::sqlite::is_private_memory_url`] for
+    /// exactly which URL forms count as private — shared with
+    /// `authkestra-example-diesel`'s identical guard, since both examples
+    /// need to recognize the same set of SQLite spellings.
     pub async fn connect(database_url: &str) -> Result<Self, DbErr> {
         let mut opt = sea_orm::ConnectOptions::new(database_url);
         if is_private_memory_url(database_url) {
@@ -166,7 +149,7 @@ impl ClientStore for SeaOrmOpStore {
 
 fn code_from_model(model: code::Model) -> Result<AuthorizationCode, StoreError> {
     Ok({
-        let mut __tmp = AuthorizationCode::new(
+        let mut code = AuthorizationCode::new(
             model.code,
             model.client_id,
             model.redirect_uri,
@@ -175,10 +158,10 @@ fn code_from_model(model: code::Model) -> Result<AuthorizationCode, StoreError> 
             model.expires_at,
             model.used,
         );
-        __tmp.code_challenge = model.code_challenge;
-        __tmp.code_challenge_method = model.code_challenge_method;
-        __tmp.nonce = model.nonce;
-        __tmp
+        code.code_challenge = model.code_challenge;
+        code.code_challenge_method = model.code_challenge_method;
+        code.nonce = model.nonce;
+        code
     })
 }
 
@@ -313,7 +296,7 @@ impl RefreshTokenStore for SeaOrmOpStore {
 fn device_code_from_model(model: device_code::Model) -> Result<DeviceCodeSession, StoreError> {
     let status: DeviceCodeStatus = decode_json(model.status)?;
     Ok({
-        let mut __tmp = DeviceCodeSession::new(
+        let mut session = DeviceCodeSession::new(
             model.device_code,
             model.user_code,
             model.client_id,
@@ -321,8 +304,8 @@ fn device_code_from_model(model: device_code::Model) -> Result<DeviceCodeSession
             model.expires_at,
             status,
         );
-        __tmp.last_polled_at = model.last_polled_at;
-        __tmp
+        session.last_polled_at = model.last_polled_at;
+        session
     })
 }
 
@@ -423,42 +406,3 @@ impl DeviceCodeStore for SeaOrmOpStore {
 }
 
 impl OpStore for SeaOrmOpStore {}
-
-#[cfg(test)]
-mod tests {
-    use super::is_private_memory_url;
-
-    #[test]
-    fn bare_memory_filename_is_private() {
-        assert!(is_private_memory_url(":memory:"));
-    }
-
-    #[test]
-    fn empty_url_is_a_private_temporary_database() {
-        assert!(is_private_memory_url(""));
-        assert!(is_private_memory_url("   "));
-    }
-
-    #[test]
-    fn file_uri_memory_form_is_private() {
-        assert!(is_private_memory_url("file::memory:"));
-        assert!(is_private_memory_url("file::memory:?cache=private"));
-    }
-
-    #[test]
-    fn named_mode_memory_uri_is_private() {
-        assert!(is_private_memory_url("file:mydb?mode=memory"));
-    }
-
-    #[test]
-    fn shared_cache_memory_uri_is_not_private() {
-        assert!(!is_private_memory_url("file::memory:?cache=shared"));
-        assert!(!is_private_memory_url("file:mydb?mode=memory&cache=shared"));
-    }
-
-    #[test]
-    fn a_real_file_path_is_not_private() {
-        assert!(!is_private_memory_url("/tmp/authkestra-example.sqlite"));
-        assert!(!is_private_memory_url("sqlite://data.db"));
-    }
-}

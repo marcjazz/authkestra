@@ -14,6 +14,10 @@ publish = false
 [dependencies]
 authkestra-op = { workspace = true, default-features = false }
 authkestra-engine = { workspace = true, default-features = false }
+# Not test-only: `store::is_private_memory_url` (via
+# `authkestra_store_testsuite::sqlite`) is shared with
+# `authkestra-example-diesel` and used by `SeaOrmOpStore::connect` itself.
+authkestra-store-testsuite = { workspace = true }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -33,4 +37,3 @@ rustls-no-provider = ["authkestra-engine/rustls-no-provider", "authkestra-op/rus
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-authkestra-store-testsuite = { path = "../authkestra-store-testsuite" }

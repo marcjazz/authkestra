@@ -488,7 +488,7 @@ macro_rules! impl_opstore_sql {
                     let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
 
                     Ok(Some({
-                        let mut __tmp = DeviceCodeSession::new(
+                        let mut session = DeviceCodeSession::new(
                         row.try_get("device_code").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                         row.try_get("user_code").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                         row.try_get("client_id").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
@@ -496,8 +496,8 @@ macro_rules! impl_opstore_sql {
                         row.try_get("expires_at").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                         status.0,
                     );
-                        __tmp.last_polled_at = row.try_get("last_polled_at").ok();
-                        __tmp
+                        session.last_polled_at = row.try_get("last_polled_at").ok();
+                        session
                     }))
                 } else {
                     Ok(None)
@@ -527,7 +527,7 @@ macro_rules! impl_opstore_sql {
                     let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
 
                     Ok(Some({
-                        let mut __tmp = DeviceCodeSession::new(
+                        let mut session = DeviceCodeSession::new(
                         row.try_get("device_code").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                         row.try_get("user_code").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                         row.try_get("client_id").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
@@ -535,8 +535,8 @@ macro_rules! impl_opstore_sql {
                         row.try_get("expires_at").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                         status.0,
                     );
-                        __tmp.last_polled_at = row.try_get("last_polled_at").ok();
-                        __tmp
+                        session.last_polled_at = row.try_get("last_polled_at").ok();
+                        session
                     }))
                 } else {
                     Ok(None)
@@ -697,7 +697,7 @@ impl_opstore_sql! {
             use sqlx::Row;
             let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
             Ok(Some({
-                let mut __tmp = AuthorizationCode::new(
+                let mut code = AuthorizationCode::new(
                 row.try_get("code").unwrap_or_default(),
                 row.try_get("client_id").unwrap_or_default(),
                 row.try_get("redirect_uri").unwrap_or_default(),
@@ -706,10 +706,10 @@ impl_opstore_sql! {
                 row.try_get("expires_at").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                 row.try_get("used").unwrap_or(true),
             );
-                __tmp.code_challenge = row.try_get("code_challenge").ok();
-                __tmp.code_challenge_method = row.try_get("code_challenge_method").ok();
-                __tmp.nonce = row.try_get("nonce").ok();
-                __tmp
+                code.code_challenge = row.try_get("code_challenge").ok();
+                code.code_challenge_method = row.try_get("code_challenge_method").ok();
+                code.nonce = row.try_get("nonce").ok();
+                code
             }))
         } else {
             Ok(None)
@@ -752,7 +752,7 @@ impl_opstore_sql! {
             use sqlx::Row;
             let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
             Ok(Some({
-                let mut __tmp = DeviceCodeSession::new(
+                let mut session = DeviceCodeSession::new(
                 row.try_get("device_code").unwrap_or_default(),
                 row.try_get("user_code").unwrap_or_default(),
                 row.try_get("client_id").unwrap_or_default(),
@@ -760,8 +760,8 @@ impl_opstore_sql! {
                 row.try_get("expires_at").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                 status.0,
             );
-                __tmp.last_polled_at = row.try_get("last_polled_at").ok();
-                __tmp
+                session.last_polled_at = row.try_get("last_polled_at").ok();
+                session
             }))
         } else {
             Ok(None)
@@ -897,7 +897,7 @@ impl_opstore_sql! {
             use sqlx::Row;
             let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
             Ok(Some({
-                let mut __tmp = AuthorizationCode::new(
+                let mut code = AuthorizationCode::new(
                 row.try_get("code").unwrap_or_default(),
                 row.try_get("client_id").unwrap_or_default(),
                 row.try_get("redirect_uri").unwrap_or_default(),
@@ -906,10 +906,10 @@ impl_opstore_sql! {
                 row.try_get("expires_at").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                 row.try_get("used").unwrap_or(true),
             );
-                __tmp.code_challenge = row.try_get("code_challenge").ok();
-                __tmp.code_challenge_method = row.try_get("code_challenge_method").ok();
-                __tmp.nonce = row.try_get("nonce").ok();
-                __tmp
+                code.code_challenge = row.try_get("code_challenge").ok();
+                code.code_challenge_method = row.try_get("code_challenge_method").ok();
+                code.nonce = row.try_get("nonce").ok();
+                code
             }))
         } else {
             Ok(None)
@@ -952,7 +952,7 @@ impl_opstore_sql! {
             use sqlx::Row;
             let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
             Ok(Some({
-                let mut __tmp = DeviceCodeSession::new(
+                let mut session = DeviceCodeSession::new(
                 row.try_get("device_code").unwrap_or_default(),
                 row.try_get("user_code").unwrap_or_default(),
                 row.try_get("client_id").unwrap_or_default(),
@@ -960,8 +960,8 @@ impl_opstore_sql! {
                 row.try_get("expires_at").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                 status.0,
             );
-                __tmp.last_polled_at = row.try_get("last_polled_at").ok();
-                __tmp
+                session.last_polled_at = row.try_get("last_polled_at").ok();
+                session
             }))
         } else {
             Ok(None)
@@ -1115,7 +1115,7 @@ impl_opstore_sql! {
             use sqlx::Row;
             let identity: sqlx::types::Json<authkestra_engine::auth::state::Identity> = row.try_get("identity").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
             Ok(Some({
-                let mut __tmp = AuthorizationCode::new(
+                let mut code = AuthorizationCode::new(
                 row.try_get("code").unwrap_or_default(),
                 row.try_get("client_id").unwrap_or_default(),
                 row.try_get("redirect_uri").unwrap_or_default(),
@@ -1124,10 +1124,10 @@ impl_opstore_sql! {
                 row.try_get("expires_at").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                 row.try_get("used").unwrap_or(true),
             );
-                __tmp.code_challenge = row.try_get("code_challenge").ok();
-                __tmp.code_challenge_method = row.try_get("code_challenge_method").ok();
-                __tmp.nonce = row.try_get("nonce").ok();
-                __tmp
+                code.code_challenge = row.try_get("code_challenge").ok();
+                code.code_challenge_method = row.try_get("code_challenge_method").ok();
+                code.nonce = row.try_get("nonce").ok();
+                code
             }))
         } else {
             tx.rollback().await.map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
@@ -1194,7 +1194,7 @@ impl_opstore_sql! {
             use sqlx::Row;
             let status: sqlx::types::Json<authkestra_op::device::DeviceCodeStatus> = row.try_get("status").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
             Ok(Some({
-                let mut __tmp = DeviceCodeSession::new(
+                let mut session = DeviceCodeSession::new(
                 row.try_get("device_code").unwrap_or_default(),
                 row.try_get("user_code").unwrap_or_default(),
                 row.try_get("client_id").unwrap_or_default(),
@@ -1202,8 +1202,8 @@ impl_opstore_sql! {
                 row.try_get("expires_at").map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?,
                 status.0,
             );
-                __tmp.last_polled_at = row.try_get("last_polled_at").ok();
-                __tmp
+                session.last_polled_at = row.try_get("last_polled_at").ok();
+                session
             }))
         } else {
             tx.rollback().await.map_err(|e| authkestra_engine::store::StoreError::Internal(format!("db error: {e}")))?;
