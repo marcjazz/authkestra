@@ -20,10 +20,9 @@ const CLIENT_ID: &str = "svc-1";
 const SECRET: &str = "correct-horse-battery-staple";
 
 fn hash_secret(secret: &str) -> String {
-    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
-    let salt = SaltString::generate(&mut OsRng);
+    use argon2::password_hash::PasswordHasher;
     argon2::Argon2::default()
-        .hash_password(secret.as_bytes(), &salt)
+        .hash_password(secret.as_bytes())
         .unwrap()
         .to_string()
 }

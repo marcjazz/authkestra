@@ -16,6 +16,7 @@ pub enum DeviceCodeStatus {
 
 /// Represents a device authorization session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeviceCodeSession {
     /// The device verification code.
     pub device_code: String,
@@ -36,6 +37,7 @@ pub struct DeviceCodeSession {
 impl DeviceCodeSession {
     /// Creates a new device code session with no poll recorded yet.
     ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
     /// this crate, but `DeviceCodeStore` implementations must be able to
     /// reconstruct a session from their own storage — this is the seam that
     /// makes that possible (authkestra#268). `last_polled_at` starts `None`

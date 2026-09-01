@@ -36,18 +36,15 @@ pub async fn run_op_store_tests<S: OpStore>(store: &mut S) {
 }
 
 async fn run_authorization_code_store_tests<S: AuthorizationCodeStore>(store: &mut S) {
-    let code = AuthorizationCode {
-        code: "conformance-code-1".to_string(),
-        client_id: "client-1".to_string(),
-        redirect_uri: "https://cb.example.com".to_string(),
-        scope: "openid".to_string(),
-        code_challenge: None,
-        code_challenge_method: None,
-        nonce: None,
-        identity: test_identity(),
-        expires_at: Utc::now() + Duration::minutes(5),
-        used: false,
-    };
+    let code = AuthorizationCode::new(
+        "conformance-code-1".to_string(),
+        "client-1".to_string(),
+        "https://cb.example.com".to_string(),
+        "openid".to_string(),
+        test_identity(),
+        Utc::now() + Duration::minutes(5),
+        false,
+    );
 
     store
         .store_code(code.clone())
@@ -84,14 +81,14 @@ async fn run_authorization_code_store_tests<S: AuthorizationCodeStore>(store: &m
 }
 
 async fn run_refresh_token_store_tests<S: RefreshTokenStore>(store: &mut S) {
-    let token = RefreshToken {
-        token: "conformance-refresh-1".to_string(),
-        client_id: "client-1".to_string(),
-        identity: test_identity(),
-        scope: "openid offline_access".to_string(),
-        expires_at: Utc::now() + Duration::days(30),
-        jkt: None,
-    };
+    let token = RefreshToken::new(
+        "conformance-refresh-1".to_string(),
+        "client-1".to_string(),
+        test_identity(),
+        "openid offline_access".to_string(),
+        Utc::now() + Duration::days(30),
+        None,
+    );
 
     store
         .store_token(token.clone())
@@ -131,10 +128,8 @@ async fn run_refresh_token_store_tests<S: RefreshTokenStore>(store: &mut S) {
          must not return it the second time"
     );
 
-    let revocable = RefreshToken {
-        token: "conformance-refresh-2".to_string(),
-        ..token
-    };
+    let mut revocable = token;
+    revocable.token = "conformance-refresh-2".to_string();
     store
         .store_token(revocable.clone())
         .await
@@ -154,15 +149,14 @@ async fn run_refresh_token_store_tests<S: RefreshTokenStore>(store: &mut S) {
 }
 
 async fn run_device_code_store_tests<S: DeviceCodeStore>(store: &mut S) {
-    let session = DeviceCodeSession {
-        device_code: "conformance-device-1".to_string(),
-        user_code: "CONF-USER-1".to_string(),
-        client_id: "client-1".to_string(),
-        scope: "openid".to_string(),
-        expires_at: Utc::now() + Duration::minutes(10),
-        status: DeviceCodeStatus::Pending,
-        last_polled_at: None,
-    };
+    let session = DeviceCodeSession::new(
+        "conformance-device-1".to_string(),
+        "CONF-USER-1".to_string(),
+        "client-1".to_string(),
+        "openid".to_string(),
+        Utc::now() + Duration::minutes(10),
+        DeviceCodeStatus::Pending,
+    );
 
     store
         .store_device_code(session.clone())
@@ -183,10 +177,8 @@ async fn run_device_code_store_tests<S: DeviceCodeStore>(store: &mut S) {
         .expect("getting a just-stored session by user_code must return it");
     assert_eq!(by_user.device_code, session.device_code);
 
-    let approved = DeviceCodeSession {
-        status: DeviceCodeStatus::Approved(test_identity()),
-        ..by_device
-    };
+    let mut approved = by_device;
+    approved.status = DeviceCodeStatus::Approved(test_identity());
     store
         .update_device_code(approved)
         .await
@@ -218,11 +210,9 @@ async fn run_device_code_store_tests<S: DeviceCodeStore>(store: &mut S) {
          consuming it twice must not return it the second time"
     );
 
-    let deletable = DeviceCodeSession {
-        device_code: "conformance-device-2".to_string(),
-        user_code: "CONF-USER-2".to_string(),
-        ..session
-    };
+    let mut deletable = session;
+    deletable.device_code = "conformance-device-2".to_string();
+    deletable.user_code = "CONF-USER-2".to_string();
     store
         .store_device_code(deletable.clone())
         .await

@@ -56,8 +56,16 @@ async fn main() -> std::io::Result<()> {
         Some(issuer.clone()),
     ));
 
-    // Create a SQLite connection pool (in-memory for the example, but can be a file path)
+    // Create a SQLite connection pool (in-memory for the example, but can be a file path).
+    // Capped to a single connection: SQLite's `:memory:` URI gives every
+    // connection its own private, independent database, so a multi-connection
+    // pool would scatter this store's rows across several unrelated
+    // in-memory databases — `migrate()` would create tables in whichever one
+    // it happens to check out, and a second concurrent request could hit a
+    // different, un-migrated connection and see "no such table". A real
+    // (file-backed) database has no such problem and should drop this.
     let pool = SqlitePoolOptions::new()
+        .max_connections(1)
         .connect("sqlite::memory:")
         .await
         .unwrap();

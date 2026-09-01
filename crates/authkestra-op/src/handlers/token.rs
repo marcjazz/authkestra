@@ -751,18 +751,18 @@ async fn handle_device_code(
                 let mut issued_refresh_token = None;
                 if session.scope.contains("offline_access") {
                     let refresh_val = uuid::Uuid::new_v4().to_string();
-                    let rt = RefreshToken {
-                        token: refresh_val.clone(),
-                        client_id: client_id.clone(),
+                    // RFC 9449 §5: a refresh token minted alongside a
+                    // DPoP-bound access token must itself be bound to the
+                    // same key, so `default_handle_refresh_token` can
+                    // enforce continuity on every future rotation.
+                    let rt = RefreshToken::new(
+                        refresh_val.clone(),
+                        client_id.clone(),
                         identity,
-                        scope: session.scope,
-                        expires_at: Utc::now() + chrono::Duration::days(30),
-                        // RFC 9449 §5: a refresh token minted alongside a
-                        // DPoP-bound access token must itself be bound to
-                        // the same key, so `default_handle_refresh_token`
-                        // can enforce continuity on every future rotation.
-                        jkt: req.dpop_jkt.clone(),
-                    };
+                        session.scope,
+                        Utc::now() + chrono::Duration::days(30),
+                        req.dpop_jkt.clone(),
+                    );
                     match store_refresh_token_verifying_dpop_binding(op_store, rt).await {
                         RefreshTokenStoreOutcome::Stored => {
                             issued_refresh_token = Some(refresh_val)
@@ -994,15 +994,15 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
     let mut issued_refresh_token = None;
     if auth_code.scope.contains("offline_access") {
         let refresh_val = uuid::Uuid::new_v4().to_string();
-        let rt_model = RefreshToken {
-            token: refresh_val.clone(),
-            client_id: client_id.clone(),
-            identity: auth_code.identity.clone(),
-            scope: auth_code.scope.clone(),
-            expires_at: Utc::now() + chrono::Duration::days(30),
-            // RFC 9449 §5: see the identical comment in `handle_device_code`.
-            jkt: req.dpop_jkt.clone(),
-        };
+        // RFC 9449 §5: see the identical comment in `handle_device_code`.
+        let rt_model = RefreshToken::new(
+            refresh_val.clone(),
+            client_id.clone(),
+            auth_code.identity.clone(),
+            auth_code.scope.clone(),
+            Utc::now() + chrono::Duration::days(30),
+            req.dpop_jkt.clone(),
+        );
         match store_refresh_token_verifying_dpop_binding(op_store, rt_model).await {
             RefreshTokenStoreOutcome::Stored => issued_refresh_token = Some(refresh_val),
             RefreshTokenStoreOutcome::NonFatalStorageFailure => {}
@@ -1524,14 +1524,14 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     };
 
     let new_refresh_val = uuid::Uuid::new_v4().to_string();
-    let new_rt = RefreshToken {
-        token: new_refresh_val.clone(),
-        client_id: client_id.clone(),
-        identity: old_rt.identity.clone(),
-        scope: old_rt.scope.clone(),
-        expires_at: chrono::Utc::now() + chrono::Duration::days(30),
-        jkt: jkt.clone(),
-    };
+    let new_rt = RefreshToken::new(
+        new_refresh_val.clone(),
+        client_id.clone(),
+        old_rt.identity.clone(),
+        old_rt.scope.clone(),
+        chrono::Utc::now() + chrono::Duration::days(30),
+        jkt.clone(),
+    );
 
     match store_refresh_token_verifying_dpop_binding(op_store, new_rt).await {
         RefreshTokenStoreOutcome::Stored => {}
@@ -2137,17 +2137,19 @@ mod tests {
         let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
-            .store_code(AuthorizationCode {
-                code: "code1".to_string(),
-                client_id: "client1".to_string(),
-                redirect_uri: "https://cb".to_string(),
-                identity: test_identity(),
-                scope: "openid".to_string(),
-                nonce: None,
-                expires_at: Utc::now() + Duration::minutes(5),
-                code_challenge: Some(challenge),
-                code_challenge_method: Some("S256".to_string()),
-                used: false,
+            .store_code({
+                let mut __tmp = AuthorizationCode::new(
+                    "code1".to_string(),
+                    "client1".to_string(),
+                    "https://cb".to_string(),
+                    "openid".to_string(),
+                    test_identity(),
+                    Utc::now() + Duration::minutes(5),
+                    false,
+                );
+                __tmp.code_challenge = Some(challenge);
+                __tmp.code_challenge_method = Some("S256".to_string());
+                __tmp
             })
             .await
             .unwrap();
@@ -2437,17 +2439,19 @@ mod tests {
         let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
-            .store_code(AuthorizationCode {
-                code: "code-default".to_string(),
-                client_id: "client1".to_string(),
-                redirect_uri: "https://cb".to_string(),
-                identity: test_identity(),
-                scope: "openid offline_access".to_string(),
-                nonce: None,
-                expires_at: Utc::now() + Duration::minutes(5),
-                code_challenge: Some(challenge),
-                code_challenge_method: Some("S256".to_string()),
-                used: false,
+            .store_code({
+                let mut __tmp = AuthorizationCode::new(
+                    "code-default".to_string(),
+                    "client1".to_string(),
+                    "https://cb".to_string(),
+                    "openid offline_access".to_string(),
+                    test_identity(),
+                    Utc::now() + Duration::minutes(5),
+                    false,
+                );
+                __tmp.code_challenge = Some(challenge);
+                __tmp.code_challenge_method = Some("S256".to_string());
+                __tmp
             })
             .await
             .unwrap();
@@ -2506,17 +2510,19 @@ mod tests {
         let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
-            .store_code(AuthorizationCode {
-                code: "code1".to_string(),
-                client_id: "client1".to_string(),
-                redirect_uri: "https://cb".to_string(),
-                identity: test_identity(),
-                scope: "openid".to_string(),
-                nonce: None,
-                expires_at: Utc::now() + Duration::minutes(5),
-                code_challenge: Some("valid_challenge".to_string()),
-                code_challenge_method: Some("S256".to_string()),
-                used: false,
+            .store_code({
+                let mut __tmp = AuthorizationCode::new(
+                    "code1".to_string(),
+                    "client1".to_string(),
+                    "https://cb".to_string(),
+                    "openid".to_string(),
+                    test_identity(),
+                    Utc::now() + Duration::minutes(5),
+                    false,
+                );
+                __tmp.code_challenge = Some("valid_challenge".to_string());
+                __tmp.code_challenge_method = Some("S256".to_string());
+                __tmp
             })
             .await
             .unwrap();
@@ -2584,18 +2590,15 @@ mod tests {
         let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
-            .store_code(AuthorizationCode {
-                code: "code1".to_string(),
-                client_id: "client1".to_string(),
-                redirect_uri: "https://cb".to_string(),
-                identity: test_identity(),
-                scope: "".to_string(),
-                nonce: None,
-                expires_at: Utc::now() + Duration::minutes(5),
-                code_challenge: None,
-                code_challenge_method: None,
-                used: false,
-            })
+            .store_code(AuthorizationCode::new(
+                "code1".to_string(),
+                "client1".to_string(),
+                "https://cb".to_string(),
+                "".to_string(),
+                test_identity(),
+                Utc::now() + Duration::minutes(5),
+                false,
+            ))
             .await
             .unwrap();
 
@@ -2662,17 +2665,19 @@ mod tests {
         let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
-            .store_code(AuthorizationCode {
-                code: "code1".to_string(),
-                client_id: "client1".to_string(),
-                redirect_uri: "https://cb".to_string(),
-                identity: test_identity(),
-                scope: "".to_string(),
-                nonce: None,
-                expires_at: Utc::now() + Duration::minutes(5),
-                code_challenge: Some("challenge".to_string()),
-                code_challenge_method: Some("plain".to_string()),
-                used: false,
+            .store_code({
+                let mut __tmp = AuthorizationCode::new(
+                    "code1".to_string(),
+                    "client1".to_string(),
+                    "https://cb".to_string(),
+                    "".to_string(),
+                    test_identity(),
+                    Utc::now() + Duration::minutes(5),
+                    false,
+                );
+                __tmp.code_challenge = Some("challenge".to_string());
+                __tmp.code_challenge_method = Some("plain".to_string());
+                __tmp
             })
             .await
             .unwrap();
@@ -2745,18 +2750,15 @@ mod tests {
         let mut codes =
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
         codes
-            .store_code(AuthorizationCode {
-                code: "code1".to_string(),
-                client_id: "client1".to_string(),
-                redirect_uri: "https://cb".to_string(),
-                identity: test_identity(),
-                scope: "".to_string(),
-                nonce: None,
-                expires_at: Utc::now() + Duration::minutes(5),
-                code_challenge: None,
-                code_challenge_method: None,
-                used: false,
-            })
+            .store_code(AuthorizationCode::new(
+                "code1".to_string(),
+                "client1".to_string(),
+                "https://cb".to_string(),
+                "".to_string(),
+                test_identity(),
+                Utc::now() + Duration::minutes(5),
+                false,
+            ))
             .await
             .unwrap();
 
@@ -3181,14 +3183,14 @@ mod tests {
         let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
-            .store_token(RefreshToken {
-                token: "rt1".to_string(),
-                client_id: "client1".to_string(),
-                identity: test_identity(),
-                scope: "openid".to_string(),
-                expires_at: Utc::now() + Duration::days(1),
-                jkt: None,
-            })
+            .store_token(RefreshToken::new(
+                "rt1".to_string(),
+                "client1".to_string(),
+                test_identity(),
+                "openid".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
             .await
             .unwrap();
 
@@ -3396,14 +3398,14 @@ mod tests {
         let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
-            .store_token(RefreshToken {
-                token: "rt-narrowed".to_string(),
-                client_id: "client1".to_string(),
-                identity: test_identity(),
-                scope: "openid profile".to_string(),
-                expires_at: Utc::now() + Duration::days(1),
-                jkt: None,
-            })
+            .store_token(RefreshToken::new(
+                "rt-narrowed".to_string(),
+                "client1".to_string(),
+                test_identity(),
+                "openid profile".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
             .await
             .unwrap();
 
@@ -3452,14 +3454,14 @@ mod tests {
         let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
-            .store_token(RefreshToken {
-                token: "rt-survives".to_string(),
-                client_id: "client1".to_string(),
-                identity: test_identity(),
-                scope: "openid profile".to_string(),
-                expires_at: Utc::now() + Duration::days(1),
-                jkt: None,
-            })
+            .store_token(RefreshToken::new(
+                "rt-survives".to_string(),
+                "client1".to_string(),
+                test_identity(),
+                "openid profile".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
             .await
             .unwrap();
 
@@ -3614,18 +3616,18 @@ mod tests {
 
         let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        // Non-openid scope: the built-in handler's `id_token: None` is a
+        // fixed point here regardless of whether a later change teaches it
+        // to issue one for the `openid` scope.
         refresh
-            .store_token(RefreshToken {
-                token: "rt-default".to_string(),
-                client_id: "client1".to_string(),
-                identity: test_identity(),
-                // Non-openid scope: the built-in handler's `id_token: None`
-                // is a fixed point here regardless of whether a later change
-                // teaches it to issue one for the `openid` scope.
-                scope: "profile".to_string(),
-                expires_at: Utc::now() + Duration::days(1),
-                jkt: None,
-            })
+            .store_token(RefreshToken::new(
+                "rt-default".to_string(),
+                "client1".to_string(),
+                test_identity(),
+                "profile".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
             .await
             .unwrap();
 
@@ -3707,14 +3709,14 @@ mod tests {
         refresh
             .set(
                 "rt-expired",
-                RefreshToken {
-                    token: "rt-expired".to_string(),
-                    client_id: "client1".to_string(),
-                    identity: test_identity(),
-                    scope: "profile".to_string(),
-                    expires_at: Utc::now() - Duration::minutes(1),
-                    jkt: None,
-                },
+                RefreshToken::new(
+                    "rt-expired".to_string(),
+                    "client1".to_string(),
+                    test_identity(),
+                    "profile".to_string(),
+                    Utc::now() - Duration::minutes(1),
+                    None,
+                ),
                 std::time::Duration::from_secs(60),
             )
             .await
@@ -3754,14 +3756,14 @@ mod tests {
         let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
-            .store_token(RefreshToken {
-                token: "rt-once".to_string(),
-                client_id: "client1".to_string(),
-                identity: test_identity(),
-                scope: "profile".to_string(),
-                expires_at: Utc::now() + Duration::days(1),
-                jkt: None,
-            })
+            .store_token(RefreshToken::new(
+                "rt-once".to_string(),
+                "client1".to_string(),
+                test_identity(),
+                "profile".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
             .await
             .unwrap();
 
@@ -3812,14 +3814,14 @@ mod tests {
         let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
-            .store_token(RefreshToken {
-                token: "rt-openid".to_string(),
-                client_id: "client1".to_string(),
-                identity: test_identity(),
-                scope: "openid profile".to_string(),
-                expires_at: Utc::now() + Duration::days(1),
-                jkt: None,
-            })
+            .store_token(RefreshToken::new(
+                "rt-openid".to_string(),
+                "client1".to_string(),
+                test_identity(),
+                "openid profile".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
             .await
             .unwrap();
 
@@ -3860,14 +3862,14 @@ mod tests {
         let mut refresh =
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
         refresh
-            .store_token(RefreshToken {
-                token: "rt-no-openid".to_string(),
-                client_id: "client1".to_string(),
-                identity: test_identity(),
-                scope: "profile".to_string(),
-                expires_at: Utc::now() + Duration::days(1),
-                jkt: None,
-            })
+            .store_token(RefreshToken::new(
+                "rt-no-openid".to_string(),
+                "client1".to_string(),
+                test_identity(),
+                "profile".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
             .await
             .unwrap();
 
@@ -5416,17 +5418,19 @@ mod tests {
                 crate::code::AuthorizationCode,
             >::new();
             codes
-                .store_code(AuthorizationCode {
-                    code: "code1".to_string(),
-                    client_id: "client1".to_string(),
-                    redirect_uri: "https://cb".to_string(),
-                    identity: test_identity(),
-                    scope: "openid".to_string(),
-                    nonce: None,
-                    expires_at: Utc::now() + Duration::minutes(5),
-                    code_challenge: Some(challenge),
-                    code_challenge_method: Some("S256".to_string()),
-                    used: false,
+                .store_code({
+                    let mut __tmp = AuthorizationCode::new(
+                        "code1".to_string(),
+                        "client1".to_string(),
+                        "https://cb".to_string(),
+                        "openid".to_string(),
+                        test_identity(),
+                        Utc::now() + Duration::minutes(5),
+                        false,
+                    );
+                    __tmp.code_challenge = Some(challenge);
+                    __tmp.code_challenge_method = Some("S256".to_string());
+                    __tmp
                 })
                 .await
                 .unwrap();
@@ -5545,17 +5549,19 @@ mod tests {
                 crate::code::AuthorizationCode,
             >::new();
             codes
-                .store_code(AuthorizationCode {
-                    code: "code1".to_string(),
-                    client_id: "client1".to_string(),
-                    redirect_uri: "https://cb".to_string(),
-                    identity: test_identity(),
-                    scope: "openid offline_access".to_string(),
-                    nonce: None,
-                    expires_at: Utc::now() + Duration::minutes(5),
-                    code_challenge: Some(challenge),
-                    code_challenge_method: Some("S256".to_string()),
-                    used: false,
+                .store_code({
+                    let mut __tmp = AuthorizationCode::new(
+                        "code1".to_string(),
+                        "client1".to_string(),
+                        "https://cb".to_string(),
+                        "openid offline_access".to_string(),
+                        test_identity(),
+                        Utc::now() + Duration::minutes(5),
+                        false,
+                    );
+                    __tmp.code_challenge = Some(challenge);
+                    __tmp.code_challenge_method = Some("S256".to_string());
+                    __tmp
                 })
                 .await
                 .unwrap();
@@ -6394,14 +6400,14 @@ mod tests {
         impl OpStore for CannedGetTokenStore {}
 
         fn dpop_bound_refresh_token() -> RefreshToken {
-            RefreshToken {
-                token: "rt-1".to_string(),
-                client_id: "client1".to_string(),
-                identity: test_identity(),
-                scope: "openid offline_access".to_string(),
-                expires_at: Utc::now() + Duration::days(30),
-                jkt: Some("expected-jkt".to_string()),
-            }
+            RefreshToken::new(
+                "rt-1".to_string(),
+                "client1".to_string(),
+                test_identity(),
+                "openid offline_access".to_string(),
+                Utc::now() + Duration::days(30),
+                Some("expected-jkt".to_string()),
+            )
         }
 
         /// The write already succeeded (`store_token` returned `Ok`) by

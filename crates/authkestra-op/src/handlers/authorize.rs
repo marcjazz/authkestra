@@ -165,18 +165,18 @@ pub async fn handle_authorize(
 
     let expires_at = Utc::now() + Duration::seconds(config.authorization_code_ttl_secs);
 
-    let auth_code = AuthorizationCode {
-        code: code_val.clone(),
-        client_id: client.client_id.clone(),
-        redirect_uri: req.redirect_uri.clone(),
-        scope: req.scope.clone(),
-        code_challenge: req.code_challenge.clone(),
-        code_challenge_method: req.code_challenge_method.clone(),
-        nonce: req.nonce.clone(),
+    let mut auth_code = AuthorizationCode::new(
+        code_val.clone(),
+        client.client_id.clone(),
+        req.redirect_uri.clone(),
+        req.scope.clone(),
         identity,
         expires_at,
-        used: false,
-    };
+        false,
+    );
+    auth_code.code_challenge = req.code_challenge.clone();
+    auth_code.code_challenge_method = req.code_challenge_method.clone();
+    auth_code.nonce = req.nonce.clone();
 
     // 8. Store the code
     if let Err(e) = op_store.store_code(auth_code).await {

@@ -65,7 +65,8 @@ pub trait DpopReplayStore: Send + Sync {
     ) -> Result<bool, StoreError>;
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct NoClientAssertionStore;
 #[async_trait]
 impl ClientAssertionStore for NoClientAssertionStore {
@@ -74,41 +75,22 @@ impl ClientAssertionStore for NoClientAssertionStore {
         _jti: &str,
         _expires_at: DateTime<Utc>,
     ) -> Result<bool, StoreError> {
-        // `Ok(false)`, not an `Err`: callers (see `authenticate_client` in
-        // authkestra-op's handlers/token.rs) already treat "not freshly
-        // recorded" as a replay and refuse the request either way. This log
-        // line exists solely so an operator who enabled `private_key_jwt`
-        // but forgot to wire a real ClientAssertionStore isn't left thinking
-        // every rejection is an actual replay attack.
+        // A hard `Err`, not `Ok(false)` — same shape as `NoDpopReplayStore`
+        // below, and for the same reason: `Ok(false)` reads identically to
+        // an actual replay to anything downstream that only checks the
+        // bool, so a deployment with `private_key_jwt` enabled but no real
+        // `ClientAssertionStore` wired would have every legitimate request
+        // logged as "already been spent — replay refused" alongside this
+        // warning, muddying exactly the misconfiguration-vs-attack
+        // distinction this log line exists to preserve.
         tracing::warn!(
             "a private_key_jwt client assertion was presented but no ClientAssertionStore \
              is wired; refusing it (this looks identical to a replay to the caller, but is \
              a missing-store misconfiguration)"
         );
-        Ok(false)
-    }
-}
-
-#[async_trait]
-pub trait OpStore:
-    ClientStore + AuthorizationCodeStore + RefreshTokenStore + DeviceCodeStore + Send + Sync
-{
-    async fn record_client_assertion_jti(
-        &mut self,
-        jti: &str,
-        expires_at: DateTime<Utc>,
-    ) -> Result<bool, StoreError> {
-        NoClientAssertionStore.record_jti(jti, expires_at).await
-    }
-
-    async fn check_and_record_dpop_jti(
-        &mut self,
-        jti: &str,
-        expires_at: DateTime<Utc>,
-    ) -> Result<bool, StoreError> {
-        NoDpopReplayStore
-            .check_and_record_dpop_jti(jti, expires_at)
-            .await
+        Err(StoreError::Internal(
+            "ClientAssertionReplayProtectionUnavailable".into(),
+        ))
     }
 }
 
@@ -257,7 +239,8 @@ impl DpopJtiRecord {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct NoDpopReplayStore;
 #[async_trait]
 impl DpopReplayStore for NoDpopReplayStore {

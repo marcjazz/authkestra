@@ -225,22 +225,31 @@ impl AuthorizationCodeStore for DieselOpStore {
         let code = code.to_string();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(pool_err)?;
-            // Single-use, atomically: SQLite serializes writers, so the
-            // transaction below is exact for this backend — a multi-writer
-            // backend would need a conditional `UPDATE ... WHERE used =
-            // false` instead, same reasoning as authkestra-store-sqlx's own
-            // consume_code.
             conn.transaction(|conn| {
                 let row: Option<CodeRow> = oauth_codes::table.find(&code).first(conn).optional()?;
-                let Some(row) = row else {
+                let Some(mut row) = row else {
                     return Ok(None);
                 };
-                if row.used {
+                // Single-use, atomically: the `UPDATE ... WHERE used =
+                // false` below is the actual compare-and-swap — two
+                // concurrent consumers can both reach this point having
+                // read `used: false` above, but only the one whose UPDATE
+                // affects a row (still `used = false` at write time) may
+                // treat the code as consumed. Same shape, and the same
+                // reasoning, as authkestra-store-sqlx's own consume_code;
+                // the `find` above is a read for the fields to return, not
+                // the authority on whether this call wins the race.
+                let affected = diesel::update(
+                    oauth_codes::table
+                        .filter(oauth_codes::code.eq(&code))
+                        .filter(oauth_codes::used.eq(false)),
+                )
+                .set(oauth_codes::used.eq(true))
+                .execute(conn)?;
+                if affected != 1 {
                     return Ok(None);
                 }
-                diesel::update(oauth_codes::table.find(&code))
-                    .set(oauth_codes::used.eq(true))
-                    .execute(conn)?;
+                row.used = true;
                 Ok::<_, diesel::result::Error>(Some(row))
             })
             .map_err(diesel_err)?
@@ -312,7 +321,17 @@ impl RefreshTokenStore for DieselOpStore {
                 let Some(row) = row else {
                     return Ok(None);
                 };
-                diesel::delete(oauth_refresh_tokens::table.find(&token)).execute(conn)?;
+                // The DELETE, not the `find` above, is what's atomic: two
+                // concurrent consumers can both read the row present, but
+                // only the one whose DELETE actually removes it (checked
+                // via the affected-row count) may treat the token as
+                // consumed — same compare-and-swap reasoning as
+                // `consume_code`.
+                let affected =
+                    diesel::delete(oauth_refresh_tokens::table.find(&token)).execute(conn)?;
+                if affected != 1 {
+                    return Ok(None);
+                }
                 Ok::<_, diesel::result::Error>(Some(row))
             })
             .map_err(diesel_err)?
@@ -425,7 +444,15 @@ impl DeviceCodeStore for DieselOpStore {
                 let Some(row) = row else {
                     return Ok(None);
                 };
-                diesel::delete(oauth_device_codes::table.find(&device_code)).execute(conn)?;
+                // Same compare-and-swap reasoning as `consume_token`: the
+                // DELETE's affected-row count, not the read above, decides
+                // whether this call wins the race against a concurrent
+                // consumer of the same device code.
+                let affected =
+                    diesel::delete(oauth_device_codes::table.find(&device_code)).execute(conn)?;
+                if affected != 1 {
+                    return Ok(None);
+                }
                 Ok::<_, diesel::result::Error>(Some(row))
             })
             .map_err(diesel_err)?

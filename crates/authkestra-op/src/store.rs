@@ -34,7 +34,9 @@ pub trait OpStore:
         jti: &str,
         expires_at: DateTime<Utc>,
     ) -> Result<bool, authkestra_engine::store::StoreError> {
-        NoClientAssertionStore.record_jti(jti, expires_at).await
+        NoClientAssertionStore::default()
+            .record_jti(jti, expires_at)
+            .await
     }
 
     /// Atomically records the `jti` of a presented DPoP proof, returning
@@ -53,7 +55,7 @@ pub trait OpStore:
         jti: &str,
         expires_at: DateTime<Utc>,
     ) -> Result<bool, authkestra_engine::store::StoreError> {
-        NoDpopReplayStore
+        NoDpopReplayStore::default()
             .check_and_record_dpop_jti(jti, expires_at)
             .await
     }
@@ -284,8 +286,8 @@ impl<C, A, R, D> CompositeOpStore<C, A, R, D, NoClientAssertionStore, NoDpopRepl
             codes,
             refresh,
             devices,
-            assertions: NoClientAssertionStore,
-            dpop_replays: NoDpopReplayStore,
+            assertions: NoClientAssertionStore::default(),
+            dpop_replays: NoDpopReplayStore::default(),
         }
     }
 }

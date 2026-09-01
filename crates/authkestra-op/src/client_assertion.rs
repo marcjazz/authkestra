@@ -917,14 +917,18 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn no_store_refuses_rather_than_permitting_replay() {
-        let mut store = authkestra_engine::store::traits::NoClientAssertionStore;
+        let mut store = authkestra_engine::store::traits::NoClientAssertionStore::default();
         let exp = Utc::now() + chrono::Duration::seconds(60);
-        // No store configured means every `jti` is treated as already
-        // spent (`Ok(false)`) rather than a hard error — callers (see
-        // `authenticate_client` in `handlers/token.rs`) already map that
-        // straight to a replay rejection, so this fails closed the same
-        // way a real replay would.
-        assert!(!store.record_jti("jti-1", exp).await.unwrap());
+        // No store configured is a hard error, not `Ok(false)` — same
+        // shape as `NoDpopReplayStore`, and distinguishable from a real
+        // replay by anything downstream that inspects the error rather
+        // than just the bool (`authenticate_client` in `handlers/token.rs`
+        // currently collapses both to the same `invalid_client` response,
+        // but the distinction is preserved for anyone who wants it).
+        store
+            .record_jti("jti-1", exp)
+            .await
+            .expect_err("no store configured must fail closed, not silently succeed");
     }
 
     #[test]

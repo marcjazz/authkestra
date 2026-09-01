@@ -33,7 +33,6 @@ rand = { workspace = true }
 base64 = "0.22.1"
 url = { workspace = true }
 sha2 = { workspace = true }
-argon2 = "0.5.3"
 authkestra-crypto-util.workspace = true
 
 [features]
@@ -53,6 +52,12 @@ rustls-no-provider = [
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+# Test-only: `handlers/token/client_auth_tests.rs` hashes a client_secret
+# to exercise `client_secret_basic`/`client_secret_post` verification.
+# Version pinned to match authkestra-engine's own (non-dev) `argon2`
+# dependency (which backs `ClientRegistration::verify_secret`) so cargo
+# resolves one shared copy instead of linking two.
+argon2 = { version = "0.6.0", features = ["password-hash"] }
 # Used by redis_store.rs's real-Redis replay-protection integration test.
 # Postgres/MySQL/SQLite went to authkestra-store-sqlx with SqlxOpStore
 # itself (authkestra#289).

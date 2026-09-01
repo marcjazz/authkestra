@@ -61,15 +61,14 @@ mod tests {
         let mut devices = authkestra_engine::store::memory::MemoryStore::<
             crate::device::DeviceCodeSession,
         >::new();
-        let session = DeviceCodeSession {
-            device_code: "dev123".to_string(),
-            user_code: "USER123".to_string(),
-            client_id: "client1".to_string(),
-            scope: "openid".to_string(),
-            expires_at: Utc::now() + Duration::seconds(600),
-            status: DeviceCodeStatus::Pending,
-            last_polled_at: None,
-        };
+        let session = DeviceCodeSession::new(
+            "dev123".to_string(),
+            "USER123".to_string(),
+            "client1".to_string(),
+            "openid".to_string(),
+            Utc::now() + Duration::seconds(600),
+            DeviceCodeStatus::Pending,
+        );
         devices.store_device_code(session).await.unwrap();
 
         let identity = Identity {

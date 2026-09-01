@@ -133,15 +133,14 @@ pub async fn handle_device_authorization(
     // Simple 8-character alphanumeric string
     let user_code = uuid::Uuid::new_v4().to_string()[0..8].to_uppercase();
 
-    let session = DeviceCodeSession {
-        device_code: device_code.clone(),
-        user_code: user_code.clone(),
-        client_id: client_id.clone(),
+    let session = DeviceCodeSession::new(
+        device_code.clone(),
+        user_code.clone(),
+        client_id.clone(),
         scope,
-        expires_at: Utc::now() + Duration::seconds(config.device_code_ttl_secs as i64),
-        status: DeviceCodeStatus::Pending,
-        last_polled_at: None,
-    };
+        Utc::now() + Duration::seconds(config.device_code_ttl_secs as i64),
+        DeviceCodeStatus::Pending,
+    );
 
     if op_store.store_device_code(session).await.is_err() {
         return Err(DeviceAuthorizationErrorResponse {

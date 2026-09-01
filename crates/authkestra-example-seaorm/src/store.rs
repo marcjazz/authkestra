@@ -7,8 +7,8 @@ use authkestra_op::device::{DeviceCodeSession, DeviceCodeStatus, DeviceCodeStore
 use authkestra_op::refresh::{RefreshToken, RefreshTokenStore};
 use authkestra_op::store::OpStore;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ConnectionTrait, Database, DatabaseConnection, DbErr,
-    EntityTrait, Schema, TransactionTrait,
+    sea_query::Expr, ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, Database,
+    DatabaseConnection, DbErr, EntityTrait, QueryFilter, Schema, TransactionTrait,
 };
 
 fn db_err(e: DbErr) -> StoreError {
@@ -18,6 +18,27 @@ fn db_err(e: DbErr) -> StoreError {
 fn decode_json<T: serde::de::DeserializeOwned>(value: sea_orm::JsonValue) -> Result<T, StoreError> {
     serde_json::from_value(value)
         .map_err(|e| StoreError::Internal(format!("failed to decode stored JSON: {e}")))
+}
+
+/// True if `database_url` names a private, per-connection SQLite database —
+/// one where a multi-connection pool would scatter this store's rows across
+/// several unrelated databases (see [`SeaOrmOpStore::connect`]).
+///
+/// Covers the bare `:memory:` filename, the URI forms `file::memory:` and
+/// `file:name?mode=memory` (SQLite's *named* in-memory database — distinct
+/// per name, but still private to the connection that opened it unless
+/// shared), and `""` (a private temporary on-disk database — same
+/// per-connection isolation). `cache=shared` is the one exception: it puts
+/// an in-memory database in SQLite's shared cache instead, which every
+/// connection in the process can see, so it does not need — and should not
+/// get — the single-connection restriction the other forms do.
+fn is_private_memory_url(database_url: &str) -> bool {
+    let url = database_url.trim();
+    if url.is_empty() {
+        return true;
+    }
+    let lower = url.to_ascii_lowercase();
+    (lower.contains(":memory:") || lower.contains("mode=memory")) && !lower.contains("cache=shared")
 }
 
 /// A real, compiled `OpStore` implementation backed by [`sea_orm`] —
@@ -39,8 +60,24 @@ pub struct SeaOrmOpStore {
 impl SeaOrmOpStore {
     /// Connects to `database_url` (e.g. `sqlite::memory:` or
     /// `sqlite://path/to/db.sqlite`) via SeaORM.
+    ///
+    /// A private, per-connection in-memory (or temporary) database is
+    /// special-cased to a single-connection pool: SQLite gives every such
+    /// connection its own independent database, so SeaORM/sqlx's default
+    /// pool size (5) would silently scatter this store's rows across
+    /// several unrelated in-memory databases — `migrate()` would create
+    /// tables in whichever one it happens to check out, and any other
+    /// checkout would see "no such table: oauth_clients". A real
+    /// (file-backed) database has no such problem and keeps the default
+    /// pool size, since SQLite's own locking already serializes writers
+    /// across connections. See `is_private_memory_url` for exactly which
+    /// URL forms this covers.
     pub async fn connect(database_url: &str) -> Result<Self, DbErr> {
-        let db = Database::connect(database_url).await?;
+        let mut opt = sea_orm::ConnectOptions::new(database_url);
+        if is_private_memory_url(database_url) {
+            opt.max_connections(1);
+        }
+        let db = Database::connect(opt).await?;
         Ok(Self { db })
     }
 
@@ -70,6 +107,21 @@ impl SeaOrmOpStore {
             schema.create_table_from_entity(refresh_token::Entity),
             schema.create_table_from_entity(device_code::Entity),
         ] {
+            let mut stmt = stmt;
+            self.db.execute(backend.build(stmt.if_not_exists())).await?;
+        }
+
+        // `create_table_from_entity` does not emit the `#[sea_orm(indexed)]`
+        // columns' indexes (e.g. `device_code::Model::user_code`, on the
+        // device-flow's `/device/verify` hot path via `get_by_user_code`) —
+        // that needs `create_index_from_entity` explicitly.
+        for stmt in schema
+            .create_index_from_entity(client::Entity)
+            .into_iter()
+            .chain(schema.create_index_from_entity(code::Entity))
+            .chain(schema.create_index_from_entity(refresh_token::Entity))
+            .chain(schema.create_index_from_entity(device_code::Entity))
+        {
             let mut stmt = stmt;
             self.db.execute(backend.build(stmt.if_not_exists())).await?;
         }
@@ -113,17 +165,20 @@ impl ClientStore for SeaOrmOpStore {
 }
 
 fn code_from_model(model: code::Model) -> Result<AuthorizationCode, StoreError> {
-    Ok(AuthorizationCode {
-        code: model.code,
-        client_id: model.client_id,
-        redirect_uri: model.redirect_uri,
-        scope: model.scope,
-        code_challenge: model.code_challenge,
-        code_challenge_method: model.code_challenge_method,
-        nonce: model.nonce,
-        identity: decode_json(model.identity)?,
-        expires_at: model.expires_at,
-        used: model.used,
+    Ok({
+        let mut __tmp = AuthorizationCode::new(
+            model.code,
+            model.client_id,
+            model.redirect_uri,
+            model.scope,
+            decode_json(model.identity)?,
+            model.expires_at,
+            model.used,
+        );
+        __tmp.code_challenge = model.code_challenge;
+        __tmp.code_challenge_method = model.code_challenge_method;
+        __tmp.nonce = model.nonce;
+        __tmp
     })
 }
 
@@ -149,41 +204,49 @@ impl AuthorizationCodeStore for SeaOrmOpStore {
     }
 
     async fn consume_code(&mut self, code: &str) -> Result<Option<AuthorizationCode>, StoreError> {
-        // Single-use, atomically: a transaction serializes against any
-        // concurrent consumer of the same row (SQLite's writer lock makes
-        // this exact for this backend; a multi-writer backend would need a
-        // conditional UPDATE ... WHERE used = false instead, same reasoning
-        // as authkestra-store-sqlx's own consume_code).
         let txn = self.db.begin().await.map_err(db_err)?;
         let model = code::Entity::find_by_id(code)
             .one(&txn)
             .await
             .map_err(db_err)?;
-        let Some(model) = model else {
+        let Some(mut model) = model else {
             txn.rollback().await.map_err(db_err)?;
             return Ok(None);
         };
-        if model.used {
+        // Single-use, atomically: the `UPDATE ... WHERE used = false` is
+        // the actual compare-and-swap — two concurrent consumers can both
+        // reach this point having read `used: false` above, but only the
+        // one whose UPDATE affects a row (still `used = false` at write
+        // time) may treat the code as consumed. Same shape, and the same
+        // reasoning, as authkestra-store-sqlx's own consume_code; the
+        // `find_by_id` above is a read for the fields to return, not the
+        // authority on whether this call wins the race.
+        let result = code::Entity::update_many()
+            .col_expr(code::Column::Used, Expr::value(true))
+            .filter(code::Column::Code.eq(code))
+            .filter(code::Column::Used.eq(false))
+            .exec(&txn)
+            .await
+            .map_err(db_err)?;
+        if result.rows_affected != 1 {
             txn.rollback().await.map_err(db_err)?;
             return Ok(None);
         }
-        let mut active: code::ActiveModel = model.clone().into();
-        active.used = ActiveValue::Set(true);
-        active.update(&txn).await.map_err(db_err)?;
         txn.commit().await.map_err(db_err)?;
+        model.used = true;
         code_from_model(model).map(Some)
     }
 }
 
 fn refresh_token_from_model(model: refresh_token::Model) -> Result<RefreshToken, StoreError> {
-    Ok(RefreshToken {
-        token: model.token,
-        client_id: model.client_id,
-        identity: decode_json(model.identity)?,
-        scope: model.scope,
-        expires_at: model.expires_at,
-        jkt: model.jkt,
-    })
+    Ok(RefreshToken::new(
+        model.token,
+        model.client_id,
+        decode_json(model.identity)?,
+        model.scope,
+        model.expires_at,
+        model.jkt,
+    ))
 }
 
 #[async_trait]
@@ -229,10 +292,19 @@ impl RefreshTokenStore for SeaOrmOpStore {
             txn.rollback().await.map_err(db_err)?;
             return Ok(None);
         };
-        refresh_token::Entity::delete_by_id(token)
+        // The DELETE, not the `find_by_id` above, is what's atomic: two
+        // concurrent consumers can both read the row present, but only the
+        // one whose DELETE actually removes it (checked via
+        // `rows_affected`) may treat the token as consumed — same
+        // compare-and-swap reasoning as `consume_code`.
+        let result = refresh_token::Entity::delete_by_id(token)
             .exec(&txn)
             .await
             .map_err(db_err)?;
+        if result.rows_affected != 1 {
+            txn.rollback().await.map_err(db_err)?;
+            return Ok(None);
+        }
         txn.commit().await.map_err(db_err)?;
         refresh_token_from_model(model).map(Some)
     }
@@ -240,14 +312,17 @@ impl RefreshTokenStore for SeaOrmOpStore {
 
 fn device_code_from_model(model: device_code::Model) -> Result<DeviceCodeSession, StoreError> {
     let status: DeviceCodeStatus = decode_json(model.status)?;
-    Ok(DeviceCodeSession {
-        device_code: model.device_code,
-        user_code: model.user_code,
-        client_id: model.client_id,
-        scope: model.scope,
-        expires_at: model.expires_at,
-        status,
-        last_polled_at: model.last_polled_at,
+    Ok({
+        let mut __tmp = DeviceCodeSession::new(
+            model.device_code,
+            model.user_code,
+            model.client_id,
+            model.scope,
+            model.expires_at,
+            status,
+        );
+        __tmp.last_polled_at = model.last_polled_at;
+        __tmp
     })
 }
 
@@ -330,13 +405,60 @@ impl DeviceCodeStore for SeaOrmOpStore {
             txn.rollback().await.map_err(db_err)?;
             return Ok(None);
         };
-        device_code::Entity::delete_by_id(device_code)
+        // Same compare-and-swap reasoning as `consume_token`: the DELETE's
+        // `rows_affected`, not the read above, decides whether this call
+        // wins the race against a concurrent consumer of the same device
+        // code.
+        let result = device_code::Entity::delete_by_id(device_code)
             .exec(&txn)
             .await
             .map_err(db_err)?;
+        if result.rows_affected != 1 {
+            txn.rollback().await.map_err(db_err)?;
+            return Ok(None);
+        }
         txn.commit().await.map_err(db_err)?;
         device_code_from_model(model).map(Some)
     }
 }
 
 impl OpStore for SeaOrmOpStore {}
+
+#[cfg(test)]
+mod tests {
+    use super::is_private_memory_url;
+
+    #[test]
+    fn bare_memory_filename_is_private() {
+        assert!(is_private_memory_url(":memory:"));
+    }
+
+    #[test]
+    fn empty_url_is_a_private_temporary_database() {
+        assert!(is_private_memory_url(""));
+        assert!(is_private_memory_url("   "));
+    }
+
+    #[test]
+    fn file_uri_memory_form_is_private() {
+        assert!(is_private_memory_url("file::memory:"));
+        assert!(is_private_memory_url("file::memory:?cache=private"));
+    }
+
+    #[test]
+    fn named_mode_memory_uri_is_private() {
+        assert!(is_private_memory_url("file:mydb?mode=memory"));
+    }
+
+    #[test]
+    fn shared_cache_memory_uri_is_not_private() {
+        assert!(!is_private_memory_url("file::memory:?cache=shared"));
+        assert!(!is_private_memory_url("file:mydb?mode=memory&cache=shared"));
+    }
+
+    #[test]
+    fn a_real_file_path_is_not_private() {
+        assert!(!is_private_memory_url("/tmp/authkestra-example.sqlite"));
+        assert!(!is_private_memory_url("sqlite://data.db"));
+    }
+}

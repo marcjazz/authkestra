@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// enforcing single-use atomically; this struct is deliberately a plain
 /// data holder with no enforcement logic of its own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AuthorizationCode {
     /// The opaque code value handed to the client.
     pub code: String,
@@ -40,6 +41,7 @@ pub struct AuthorizationCode {
 impl AuthorizationCode {
     /// Creates a new authorization code.
     ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
     /// this crate, but `AuthorizationCodeStore` implementations must be able
     /// to reconstruct a code from their own storage — this is the seam that
     /// makes that possible (authkestra#268). `used` is a required parameter

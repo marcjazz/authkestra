@@ -52,15 +52,14 @@ async fn setup_store(
 ) {
     let mut devices =
         authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
-    let session = DeviceCodeSession {
-        device_code: "dev123".to_string(),
-        user_code: "USER123".to_string(),
-        client_id: client_id.to_string(),
-        scope: scope.to_string(),
-        expires_at: Utc::now() + Duration::seconds(600),
+    let session = DeviceCodeSession::new(
+        "dev123".to_string(),
+        "USER123".to_string(),
+        client_id.to_string(),
+        scope.to_string(),
+        Utc::now() + Duration::seconds(600),
         status,
-        last_polled_at: None,
-    };
+    );
     devices.store_device_code(session).await.unwrap();
 
     let clients =
@@ -142,15 +141,14 @@ async fn test_device_wrong_client() {
 async fn test_device_expired() {
     let mut devices =
         authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
-    let session = DeviceCodeSession {
-        device_code: "dev123".to_string(),
-        user_code: "USER123".to_string(),
-        client_id: "client1".to_string(),
-        scope: "openid".to_string(),
-        expires_at: Utc::now() - Duration::seconds(600), // Expired
-        status: DeviceCodeStatus::Approved(test_identity()),
-        last_polled_at: None,
-    };
+    let session = DeviceCodeSession::new(
+        "dev123".to_string(),
+        "USER123".to_string(),
+        "client1".to_string(),
+        "openid".to_string(),
+        Utc::now() - Duration::seconds(600), // Expired
+        DeviceCodeStatus::Approved(test_identity()),
+    );
     devices.store_device_code(session).await.unwrap();
 
     let clients =
@@ -227,15 +225,14 @@ async fn test_device_offline_access() {
 async fn test_device_concurrency() {
     let mut devices =
         authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
-    let session = DeviceCodeSession {
-        device_code: "dev123".to_string(),
-        user_code: "USER123".to_string(),
-        client_id: "client1".to_string(),
-        scope: "openid".to_string(),
-        expires_at: Utc::now() + Duration::seconds(600),
-        status: DeviceCodeStatus::Approved(test_identity()),
-        last_polled_at: None,
-    };
+    let session = DeviceCodeSession::new(
+        "dev123".to_string(),
+        "USER123".to_string(),
+        "client1".to_string(),
+        "openid".to_string(),
+        Utc::now() + Duration::seconds(600),
+        DeviceCodeStatus::Approved(test_identity()),
+    );
     devices.store_device_code(session).await.unwrap();
     let devices = std::sync::Arc::new(devices);
 

@@ -1,5 +1,6 @@
 [package]
 name = "authkestra-store-testsuite"
+description = "Generic conformance test suite for authkestra's storage traits (KvStore, OpStore, ClientAssertionStore) — proves a first- or third-party backend honors the contracts those traits require"
 edition.workspace = true
 version.workspace = true
 repository.workspace = true
@@ -10,14 +11,24 @@ readme.workspace = true
 exclude.workspace = true
 
 [dependencies]
-authkestra-engine = { path = "../authkestra-engine", features = ["redis"] }
-authkestra-op = { path = "../authkestra-op", features = ["redis"] }
-authkestra-resource = { path = "../authkestra-resource" }
+# `default-features = true` overrides the `false` set on these in
+# `[workspace.dependencies]` (there for crates that need to pick their own
+# TLS backend) — this crate has no such choice to make, so it just wants
+# each dependency's own defaults (its TLS backend included).
+authkestra-engine = { workspace = true, default-features = true }
+authkestra-op = { workspace = true, default-features = true }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 
 [dev-dependencies]
+# Only this crate's own `tests/redis_store.rs` needs the `redis` feature —
+# declaring it here (rather than in `[dependencies]`) keeps it out of the
+# feature set a consumer pulls in merely by depending on this crate, and
+# out of the feature-unification a *dev*-dependent (e.g. authkestra-engine
+# itself, which dev-depends on this crate to self-test) gets forced into.
+authkestra-engine = { workspace = true, default-features = true, features = ["redis"] }
+authkestra-op = { workspace = true, default-features = true, features = ["redis"] }
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["redis", "postgres", "mysql"] }
-authkestra-store-sqlx = { path = "../authkestra-store-sqlx", features = ["sqlite"] }
+authkestra-store-sqlx = { workspace = true, default-features = true, features = ["sqlite"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }

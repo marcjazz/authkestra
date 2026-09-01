@@ -113,17 +113,20 @@ impl CodeRow {
     }
 
     pub fn into_domain(self) -> Result<AuthorizationCode, StoreError> {
-        Ok(AuthorizationCode {
-            code: self.code,
-            client_id: self.client_id,
-            redirect_uri: self.redirect_uri,
-            scope: self.scope,
-            code_challenge: self.code_challenge,
-            code_challenge_method: self.code_challenge_method,
-            nonce: self.nonce,
-            identity: from_json(&self.identity)?,
-            expires_at: from_naive(self.expires_at),
-            used: self.used,
+        Ok({
+            let mut __tmp = AuthorizationCode::new(
+                self.code,
+                self.client_id,
+                self.redirect_uri,
+                self.scope,
+                from_json(&self.identity)?,
+                from_naive(self.expires_at),
+                self.used,
+            );
+            __tmp.code_challenge = self.code_challenge;
+            __tmp.code_challenge_method = self.code_challenge_method;
+            __tmp.nonce = self.nonce;
+            __tmp
         })
     }
 }
@@ -152,14 +155,14 @@ impl RefreshTokenRow {
     }
 
     pub fn into_domain(self) -> Result<RefreshToken, StoreError> {
-        Ok(RefreshToken {
-            token: self.token,
-            client_id: self.client_id,
-            identity: from_json(&self.identity)?,
-            scope: self.scope,
-            expires_at: from_naive(self.expires_at),
-            jkt: self.jkt,
-        })
+        Ok(RefreshToken::new(
+            self.token,
+            self.client_id,
+            from_json(&self.identity)?,
+            self.scope,
+            from_naive(self.expires_at),
+            self.jkt,
+        ))
     }
 }
 
@@ -172,6 +175,13 @@ pub struct DeviceCodeRow {
     pub scope: String,
     pub expires_at: NaiveDateTime,
     pub status: String,
+    // Without `treat_none_as_null`, the derived `AsChangeset` skips `None`
+    // fields entirely (leaves the column untouched) rather than setting
+    // them to `NULL` — so `update_device_code` could never clear an
+    // already-set `last_polled_at` back to `None` through `.set(&row)`.
+    // No current caller does that, but the column is nullable precisely
+    // so a future one (e.g. resetting a session's poll history) can.
+    #[diesel(treat_none_as_null = true)]
     pub last_polled_at: Option<NaiveDateTime>,
 }
 
@@ -190,14 +200,17 @@ impl DeviceCodeRow {
 
     pub fn into_domain(self) -> Result<DeviceCodeSession, StoreError> {
         let status: DeviceCodeStatus = from_json(&self.status)?;
-        Ok(DeviceCodeSession {
-            device_code: self.device_code,
-            user_code: self.user_code,
-            client_id: self.client_id,
-            scope: self.scope,
-            expires_at: from_naive(self.expires_at),
-            status,
-            last_polled_at: self.last_polled_at.map(from_naive),
+        Ok({
+            let mut __tmp = DeviceCodeSession::new(
+                self.device_code,
+                self.user_code,
+                self.client_id,
+                self.scope,
+                from_naive(self.expires_at),
+                status,
+            );
+            __tmp.last_polled_at = self.last_polled_at.map(from_naive);
+            __tmp
         })
     }
 }

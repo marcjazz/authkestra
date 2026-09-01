@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Represents a stored refresh token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RefreshToken {
     /// The actual token string (usually a cryptographically secure random string).
     pub token: String,
@@ -34,6 +35,7 @@ pub struct RefreshToken {
 impl RefreshToken {
     /// Creates a new refresh token.
     ///
+    /// `#[non_exhaustive]` blocks struct-literal construction from outside
     /// this crate, but `RefreshTokenStore` implementations must be able to
     /// reconstruct a token from their own storage — this is the seam that
     /// makes that possible (authkestra#268).
