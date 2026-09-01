@@ -1,11 +1,21 @@
-//! Classifying SQLite connection strings — no `sqlx`/`diesel`/`sea_orm`
-//! dependency, just URL parsing, so this lives here (always available)
-//! rather than behind any of the `sql-*` feature gates `store::sql` needs.
+//! Classifying SQLite connection strings — not a SQLite store implementation
+//! itself (see `store::sql` for that, feature-gated behind `sql-*`), just
+//! URL parsing with no `sqlx`/`diesel`/`sea_orm` dependency, so this module
+//! is named `sqlite_url` rather than `sqlite` to avoid reading as one.
 //!
 //! Every SQL-backed `OpStore` example in this workspace
 //! (`authkestra-example-diesel`, `authkestra-example-seaorm`) needs the
 //! same answer to "is this URL a private, per-connection in-memory
 //! database", so it lives here once rather than duplicated in each.
+//!
+//! Deliberately ungated (unlike `store::sql`) and `pub`: it costs nothing —
+//! no new dependency, no feature flag — to expose from an
+//! already-mandatory-dependency crate, versus the alternative of
+//! duplicating it in each example. The trade-off is that
+//! `is_private_memory_url` is now permanent public API of a published
+//! crate (`authkestra-engine`) whose only consumers today are two
+//! `publish = false` examples — it can't be removed later without a
+//! breaking release, so don't casually add more surface here.
 
 /// True if `database_url` names a private, per-connection SQLite database —
 /// one where a multi-connection pool would scatter a store's rows across

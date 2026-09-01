@@ -1,7 +1,7 @@
 use crate::models::{ClientRow, CodeRow, DeviceCodeRow, RefreshTokenRow};
 use crate::schema::{oauth_clients, oauth_codes, oauth_device_codes, oauth_refresh_tokens};
 use async_trait::async_trait;
-use authkestra_engine::store::sqlite::is_private_memory_url;
+use authkestra_engine::store::sqlite_url::is_private_memory_url;
 use authkestra_engine::store::StoreError;
 use authkestra_op::client::{ClientRegistration, ClientStore};
 use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
@@ -92,7 +92,7 @@ impl DieselOpStore {
     /// would see "no such table". A real (file-backed) database has no such
     /// problem and keeps the default pool size, since SQLite's own locking
     /// already serializes writers across connections. See
-    /// [`authkestra_engine::store::sqlite::is_private_memory_url`] for
+    /// [`authkestra_engine::store::sqlite_url::is_private_memory_url`] for
     /// exactly which URL forms count as private — shared with
     /// `authkestra-example-seaorm`'s identical guard, since both examples
     /// need to recognize the same set of SQLite spellings.

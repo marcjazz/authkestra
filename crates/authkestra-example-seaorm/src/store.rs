@@ -1,6 +1,6 @@
 use crate::entities::{client, code, device_code, refresh_token};
 use async_trait::async_trait;
-use authkestra_engine::store::sqlite::is_private_memory_url;
+use authkestra_engine::store::sqlite_url::is_private_memory_url;
 use authkestra_engine::store::StoreError;
 use authkestra_op::client::{ClientRegistration, ClientStore, GrantType, TokenEndpointAuthMethod};
 use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
@@ -51,7 +51,7 @@ impl SeaOrmOpStore {
     /// (file-backed) database has no such problem and keeps the default
     /// pool size, since SQLite's own locking already serializes writers
     /// across connections. See
-    /// [`authkestra_engine::store::sqlite::is_private_memory_url`] for
+    /// [`authkestra_engine::store::sqlite_url::is_private_memory_url`] for
     /// exactly which URL forms count as private — shared with
     /// `authkestra-example-diesel`'s identical guard, since both examples
     /// need to recognize the same set of SQLite spellings.
