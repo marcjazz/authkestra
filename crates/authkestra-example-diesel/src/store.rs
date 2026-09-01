@@ -25,19 +25,21 @@ fn diesel_err(e: diesel::result::Error) -> StoreError {
 /// one where a multi-connection pool would scatter this store's rows across
 /// several unrelated databases (see [`DieselOpStore::connect`]).
 ///
-/// Covers the bare `:memory:` filename, the URI form `file::memory:`, and
-/// `""` (a private temporary on-disk database — same per-connection
-/// isolation). `cache=shared` is the one exception: it puts an in-memory
-/// database in SQLite's shared cache instead, which every connection in the
-/// process can see, so it does not need — and should not get — the
-/// single-connection restriction the other forms do.
+/// Covers the bare `:memory:` filename, the URI forms `file::memory:` and
+/// `file:name?mode=memory` (SQLite's *named* in-memory database — distinct
+/// per name, but still private to the connection that opened it unless
+/// shared), and `""` (a private temporary on-disk database — same
+/// per-connection isolation). `cache=shared` is the one exception: it puts
+/// an in-memory database in SQLite's shared cache instead, which every
+/// connection in the process can see, so it does not need — and should not
+/// get — the single-connection restriction the other forms do.
 fn is_private_memory_url(database_url: &str) -> bool {
     let url = database_url.trim();
     if url.is_empty() {
         return true;
     }
     let lower = url.to_ascii_lowercase();
-    lower.contains(":memory:") && !lower.contains("cache=shared")
+    (lower.contains(":memory:") || lower.contains("mode=memory")) && !lower.contains("cache=shared")
 }
 
 /// A real, compiled `OpStore` implementation backed by [`diesel`] —
@@ -459,8 +461,14 @@ mod tests {
     }
 
     #[test]
+    fn named_mode_memory_uri_is_private() {
+        assert!(is_private_memory_url("file:mydb?mode=memory"));
+    }
+
+    #[test]
     fn shared_cache_memory_uri_is_not_private() {
         assert!(!is_private_memory_url("file::memory:?cache=shared"));
+        assert!(!is_private_memory_url("file:mydb?mode=memory&cache=shared"));
     }
 
     #[test]
