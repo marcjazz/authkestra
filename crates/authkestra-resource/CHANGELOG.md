@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.7.0...authkestra-resource-v0.7.1) - 2026-09-01
+
+### Added
+
+- *(resource)* let JwksCache fetch through a caller-supplied HTTP client ([#301](https://github.com/marcjazz/authkestra/pull/301))
+
 ## [0.7.0](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.6.3...authkestra-resource-v0.7.0) - 2026-08-31
 
 ### Other
