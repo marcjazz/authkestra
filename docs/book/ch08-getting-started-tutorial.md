@@ -69,7 +69,7 @@ struct AppState {
 #[tokio::main]
 async fn main() {
     // 1. Pick a storage backend. `SessionStore` is a trait, so swapping `MemoryStore`
-    //    for `RedisStore` or `SqlKvStore` is a one-line change. The explicit
+    //    for `RedisStore` is a one-line change. The explicit
     //    `Arc<dyn SessionStore>` annotation is what coerces the concrete store into
     //    the trait object `.session_store()` expects.
     let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());

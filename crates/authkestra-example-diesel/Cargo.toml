@@ -1,0 +1,32 @@
+[package]
+exclude.workspace = true
+name = "authkestra-example-diesel"
+version.workspace = true
+edition.workspace = true
+description = "Example: a real, compiled Diesel-backed OpStore implementation, proving authkestra-op's storage traits are implementable by a third-party (sync) ORM (authkestra#289)"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+publish = false
+
+[dependencies]
+authkestra-op = { workspace = true, default-features = false }
+authkestra-engine = { workspace = true, default-features = false }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+diesel = { version = "2", features = ["sqlite", "r2d2", "chrono"] }
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
+tokio = { version = "1", features = ["rt"] }
+
+[features]
+default = ["rustls-aws-lc-rs"]
+rustls-aws-lc-rs = ["authkestra-engine/rustls-aws-lc-rs", "authkestra-op/rustls-aws-lc-rs"]
+rustls-no-provider = ["authkestra-engine/rustls-no-provider", "authkestra-op/rustls-no-provider"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+authkestra-store-testsuite = { path = "../authkestra-store-testsuite" }

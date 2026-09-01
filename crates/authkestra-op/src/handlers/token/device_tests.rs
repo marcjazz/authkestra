@@ -50,7 +50,7 @@ async fn setup_store(
     authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
     authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
 ) {
-    let devices =
+    let mut devices =
         authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
     let session = DeviceCodeSession {
         device_code: "dev123".to_string(),
@@ -96,7 +96,7 @@ async fn test_device_denied() {
         req,
         None,
         &test_config(false),
-        &crate::store::CompositeOpStore::new(
+        &mut crate::store::CompositeOpStore::new(
             clients.clone(),
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -124,7 +124,7 @@ async fn test_device_wrong_client() {
         req,
         None,
         &test_config(false),
-        &crate::store::CompositeOpStore::new(
+        &mut crate::store::CompositeOpStore::new(
             clients.clone(),
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -140,7 +140,7 @@ async fn test_device_wrong_client() {
 
 #[tokio::test]
 async fn test_device_expired() {
-    let devices =
+    let mut devices =
         authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
     let session = DeviceCodeSession {
         device_code: "dev123".to_string(),
@@ -180,7 +180,7 @@ async fn test_device_expired() {
         req,
         None,
         &test_config(false),
-        &crate::store::CompositeOpStore::new(
+        &mut crate::store::CompositeOpStore::new(
             clients.clone(),
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -208,7 +208,7 @@ async fn test_device_offline_access() {
         req,
         None,
         &test_config(false),
-        &crate::store::CompositeOpStore::new(
+        &mut crate::store::CompositeOpStore::new(
             clients.clone(),
             authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
             authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
@@ -225,9 +225,8 @@ async fn test_device_offline_access() {
 
 #[tokio::test]
 async fn test_device_concurrency() {
-    let devices = std::sync::Arc::new(authkestra_engine::store::memory::MemoryStore::<
-        crate::device::DeviceCodeSession,
-    >::new());
+    let mut devices =
+        authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new();
     let session = DeviceCodeSession {
         device_code: "dev123".to_string(),
         user_code: "USER123".to_string(),
@@ -238,6 +237,7 @@ async fn test_device_concurrency() {
         last_polled_at: None,
     };
     devices.store_device_code(session).await.unwrap();
+    let devices = std::sync::Arc::new(devices);
 
     let clients = std::sync::Arc::new(authkestra_engine::store::memory::MemoryStore::<
         crate::client::ClientRegistration,
@@ -278,7 +278,7 @@ async fn test_device_concurrency() {
                 req,
                 None,
                 &config,
-                &crate::store::CompositeOpStore::new(
+                &mut crate::store::CompositeOpStore::new(
                     (*clients).clone(),
                     authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                     authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),

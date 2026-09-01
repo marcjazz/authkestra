@@ -68,16 +68,17 @@ pub async fn axum_authorize_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>: FromRef<AppState>,
     Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
     authkestra_engine::SessionConfig: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(client_id = %req.client_id, "Handling OP authorize request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let config = OpConfig::from_ref(&state);
 
     let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state) {
@@ -96,7 +97,11 @@ where
         }
     };
 
-    match handle_authorize(req, identity, &config, op_store.as_ref()).await {
+    // A fresh, owned clone for this request rather than a shared instance
+    // behind a lock — see `authkestra_op::CloneableOpStore`'s doc comment
+    // for why that matters for a pool-backed store.
+    let mut store = op_store.clone_op_store();
+    let response = match handle_authorize(req, identity, &config, &mut *store).await {
         authkestra_op::handlers::authorize::AuthorizeOutcome::Redirect(url) => {
             Redirect::to(&url).into_response()
         }
@@ -108,7 +113,8 @@ where
             })),
         )
             .into_response(),
-    }
+    };
+    response
 }
 
 /// Handler for the device authorization endpoint.
@@ -119,21 +125,23 @@ pub async fn axum_device_authorization_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device authorization request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let config = OpConfig::from_ref(&state);
 
     let auth_header = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
 
-    match handle_device_authorization(req, auth_header, &config, op_store.as_ref()).await {
+    let mut store = op_store.clone_op_store();
+    let response = match handle_device_authorization(req, auth_header, &config, &mut *store).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(err) => {
             let status = match err.error.as_str() {
@@ -142,7 +150,8 @@ where
             };
             (status, Json(err)).into_response()
         }
-    }
+    };
+    response
 }
 
 /// Reads the request's `DPoP` header (RFC 9449 §4.1: exactly one is
@@ -194,15 +203,16 @@ pub async fn axum_token_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>: FromRef<AppState>,
     Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
     tracing::debug!(grant_type = %req.grant_type, "Handling OP token request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
     let tokens = match <Result<Arc<TokenManager>, AxumError>>::from_ref(&state) {
         Ok(t) => t,
         Err(e) => return e.into_response(),
@@ -225,11 +235,12 @@ where
         Err(err) => return (StatusCode::BAD_REQUEST, Json(err)).into_response(),
     };
 
-    match handle_token_with_client_cert(
+    let mut store = op_store.clone_op_store();
+    let response = match handle_token_with_client_cert(
         req,
         auth_header,
         &config,
-        op_store.as_ref(),
+        &mut *store,
         tokens.as_ref(),
         client_cert_der.as_deref(),
         dpop_header,
@@ -244,7 +255,8 @@ where
             };
             (status, Json(err)).into_response()
         }
-    }
+    };
+    response
 }
 
 /// Handler for the userinfo endpoint.
@@ -255,7 +267,7 @@ pub async fn axum_userinfo_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>: FromRef<AppState>,
     Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
     OpConfig: FromRef<AppState>,
 {
@@ -266,10 +278,11 @@ where
     };
     // `/userinfo` is a protected resource, so a DPoP-bound token presented
     // here needs the same replay guard `/token` uses (RFC 9449 §11.1).
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
 
     let unauthorized = |scheme: &str, desc: &str| {
         (
@@ -330,7 +343,8 @@ where
 
     let config = OpConfig::from_ref(&state);
 
-    match handle_userinfo(req, &config, tokens.as_ref(), op_store.as_ref()).await {
+    let mut store = op_store.clone_op_store();
+    let response = match handle_userinfo(req, &config, tokens.as_ref(), &mut *store).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(err) => {
             let status = match err.error.as_str() {
@@ -340,7 +354,8 @@ where
             };
             (status, Json(err)).into_response()
         }
-    }
+    };
+    response
 }
 
 /// Handler for the device verify endpoint.
@@ -351,15 +366,16 @@ pub async fn axum_device_verify_handler<AppState>(
 ) -> Response
 where
     AppState: Clone + Send + Sync + 'static,
-    Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+    Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>: FromRef<AppState>,
     Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
     authkestra_engine::SessionConfig: FromRef<AppState>,
 {
     tracing::debug!("Handling OP device verify request (axum)");
-    let op_store = match <Result<Arc<dyn authkestra_op::OpStore>, AxumError>>::from_ref(&state) {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
-    };
+    let op_store =
+        match <Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>>::from_ref(&state) {
+            Ok(c) => c,
+            Err(e) => return e.into_response(),
+        };
 
     let session_store = match <Result<Arc<dyn crate::SessionStore>, AxumError>>::from_ref(&state) {
         Ok(c) => c,
@@ -377,10 +393,11 @@ where
         }
     };
 
-    match authkestra_op::handlers::device_verify::handle_device_verify(
+    let mut store = op_store.clone_op_store();
+    let response = match authkestra_op::handlers::device_verify::handle_device_verify(
         req,
         identity,
-        op_store.as_ref(),
+        &mut *store,
     )
     .await
     {
@@ -393,7 +410,8 @@ where
             })),
         )
             .into_response(),
-    }
+    };
+    response
 }
 
 /// Maps an `OpError` from the attestation ceremony to an HTTP status and an
@@ -529,7 +547,7 @@ pub trait OpExt {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>: FromRef<AppState>,
         Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
         Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
@@ -569,7 +587,7 @@ impl<T> OpExt for T {
     fn op_axum_router<AppState>(&self) -> axum::Router<AppState>
     where
         AppState: Clone + Send + Sync + 'static,
-        Result<Arc<dyn authkestra_op::OpStore>, AxumError>: FromRef<AppState>,
+        Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError>: FromRef<AppState>,
         Result<Arc<TokenManager>, AxumError>: FromRef<AppState>,
         Result<Arc<dyn crate::SessionStore>, AxumError>: FromRef<AppState>,
         authkestra_engine::SessionConfig: FromRef<AppState>,
@@ -621,14 +639,14 @@ impl<T> OpExt for T {
 use authkestra_engine::{Configured, Engine};
 pub type CompleteOp = authkestra_op::Op<
     Engine<Configured<Arc<dyn crate::SessionStore>>, Configured<Arc<TokenManager>>>,
-    Arc<dyn authkestra_op::OpStore>,
+    Arc<dyn authkestra_op::CloneableOpStore>,
 >;
 
 /// A newtype wrapper around `CompleteOp` to implement `axum::extract::FromRef` and bypass orphan rules.
 #[derive(Clone)]
 pub struct OpState(pub CompleteOp);
 
-impl FromRef<OpState> for Result<Arc<dyn authkestra_op::OpStore>, AxumError> {
+impl FromRef<OpState> for Result<Arc<dyn authkestra_op::CloneableOpStore>, AxumError> {
     fn from_ref(state: &OpState) -> Self {
         Ok(state.0.store.clone())
     }

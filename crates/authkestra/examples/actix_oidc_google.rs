@@ -53,8 +53,8 @@ async fn main() -> std::io::Result<()> {
 
     let google_provider = google_provider(client_id, client_secret, redirect_uri);
 
-    // `SessionStore` is a trait: swap `MemoryStore` for `RedisStore` or
-    // `SqlKvStore` without touching anything below this line.
+    // `SessionStore` is a trait: swap `MemoryStore` for `RedisStore`
+    // without touching anything below this line.
     let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 
     let engine = Authkestra::builder()

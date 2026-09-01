@@ -73,7 +73,7 @@ async fn main() -> std::io::Result<()> {
         .jwt_secret(b"example-only-32-byte-secret-key")
         .build();
 
-    let op_store = Arc::new(CompositeOpStore::new(
+    let op_store: Arc<dyn authkestra_op::CloneableOpStore> = Arc::new(CompositeOpStore::new(
         MemoryStore::<ClientRegistration>::new(),
         MemoryStore::<AuthorizationCode>::new(),
         MemoryStore::<RefreshToken>::new(),

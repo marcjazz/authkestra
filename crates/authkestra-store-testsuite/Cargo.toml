@@ -1,0 +1,23 @@
+[package]
+name = "authkestra-store-testsuite"
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+exclude.workspace = true
+
+[dependencies]
+authkestra-engine = { path = "../authkestra-engine", features = ["redis"] }
+authkestra-op = { path = "../authkestra-op", features = ["redis"] }
+authkestra-resource = { path = "../authkestra-resource" }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+testcontainers = "0.27.3"
+testcontainers-modules = { version = "0.15.0", features = ["redis", "postgres", "mysql"] }
+authkestra-store-sqlx = { path = "../authkestra-store-sqlx", features = ["sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }

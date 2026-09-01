@@ -34,17 +34,11 @@ base64 = "0.22.1"
 url = { workspace = true }
 sha2 = { workspace = true }
 argon2 = "0.5.3"
-sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "json", "chrono"] }
 authkestra-crypto-util.workspace = true
 
 [features]
 redis = ["dep:redis"]
 default = ["rustls-aws-lc-rs"]
-
-sqlx = ["dep:sqlx"]
-sqlx-postgres = ["sqlx", "sqlx/postgres"]
-sqlx-sqlite = ["sqlx", "sqlx/sqlite"]
-sqlx-mysql = ["sqlx", "sqlx/mysql"]
 
 # TLS backend, forwarded to authkestra-engine. See its documentation for the
 # `rustls-no-provider` contract.
@@ -59,8 +53,11 @@ rustls-no-provider = [
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+# Used by redis_store.rs's real-Redis replay-protection integration test.
+# Postgres/MySQL/SQLite went to authkestra-store-sqlx with SqlxOpStore
+# itself (authkestra#289).
 testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql", "redis"] }
+testcontainers-modules = { version = "0.15.0", features = ["redis"] }
 # Test-only: generating real EC P-256 keypairs and signing enrolment
 # challenges with them, to exercise the attestation ceremony end-to-end
 # rather than mocking the crypto away. Already present in the dependency
