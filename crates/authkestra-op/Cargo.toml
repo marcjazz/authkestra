@@ -35,7 +35,6 @@ url = { workspace = true }
 sha2 = { workspace = true }
 argon2 = "0.5.3"
 authkestra-crypto-util.workspace = true
-tokio = { version = "1", features = ["sync"] }
 
 [features]
 redis = ["dep:redis"]

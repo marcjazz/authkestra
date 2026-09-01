@@ -188,10 +188,26 @@ pub trait OpStore:
 /// request behind one `Mutex` would throw away all of the pool's own
 /// concurrency for no benefit.
 ///
+/// **`Clone` here must mean "new handle to the same state", never "new,
+/// independent copy of the state".** A handler clones the store once per
+/// request and drops the clone when the request ends, so if `Clone`
+/// duplicates the underlying data instead of sharing it, every write a
+/// handler makes vanishes with that request's clone — e.g. an
+/// `#[derive(Clone)]` over a plain `HashMap` field would compile, satisfy
+/// this trait, and then silently make every `/authorize` write invisible to
+/// the following `/token` exchange (always `invalid_grant`), with no
+/// compile error, no log, and no failing test to catch it. Share mutable
+/// state through an `Arc<Mutex<_>>`/`Arc<RwLock<_>>` field (as
+/// `MemoryClientAssertionStore` and `authkestra_engine::store::MemoryStore`
+/// do) or a connection-pool handle (`sqlx::Pool`, `deadpool`, etc.) that is
+/// already cheap-clone-shares-state by construction, not by `#[derive]`ing
+/// `Clone` over the data itself.
+///
 /// Blanket-implemented for any `OpStore + Clone` — nothing to implement by
 /// hand. `CompositeOpStore` and every first-party backend already satisfy
 /// it; a custom `OpStore` needs only `#[derive(Clone)]` (or a hand-written
-/// impl) to pick it up too.
+/// impl) to pick it up too, **provided its `Clone` shares state** as
+/// described above.
 pub trait CloneableOpStore: OpStore {
     /// Returns an owned, independent clone of this store, boxed as a plain
     /// `OpStore` trait object (not `Self` or `CloneableOpStore` again) —

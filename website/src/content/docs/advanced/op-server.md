@@ -50,6 +50,10 @@ let op_store: Arc<dyn authkestra_op::CloneableOpStore> = Arc::new(CompositeOpSto
 
 `Op::builder().store(...)` takes an `Arc<dyn CloneableOpStore>`, not a bare `Arc<dyn OpStore>` behind a lock. Because each `OpStore` method needs `&mut self`, a single shared instance can't be called concurrently — `CloneableOpStore` (blanket-implemented for any `OpStore + Clone`) lets every request clone a cheap, independent handle instead of contending on a global `Mutex`. This is why `CompositeOpStore`, `SqlxOpStore`, and `RedisStore` all implement `Clone`: cloning them clones an inner connection pool handle (e.g. `sqlx::Pool` or a Redis client), not the underlying connections themselves. A custom `OpStore` implementation needs `#[derive(Clone)]` (or a manual `Clone` impl) for the same reason.
 
+:::caution[`Clone` must share state, not copy it]
+A handler clones the store once per request and drops the clone when the request ends. `Clone` here has to mean "a new handle onto the same underlying state" — never "an independent copy of the data". A naive `#[derive(Clone)]` over a plain `HashMap` field, for example, compiles and satisfies `CloneableOpStore`, but every write a handler makes disappears with that request's clone: the code `/authorize` stores would never be visible to the following `/token` exchange, which would always fail with `invalid_grant` — no compile error, no log, no failing test. Put mutable in-memory state behind `Arc<Mutex<_>>`/`Arc<RwLock<_>>` (as `authkestra_op::MemoryClientAssertionStore` and `authkestra_engine::store::memory::MemoryStore` do), or use a connection-pool handle that is already cheap-clone-shares-state by construction.
+:::
+
 :::tip[Overriding Refresh Token Logic]
 The `OpStore` interface allows overriding `handle_refresh_token` for custom refresh token rotation or revocation policies. When the `openid` scope is requested during the refresh flow, Authkestra automatically issues an updated `id_token` alongside the new access token.
 :::

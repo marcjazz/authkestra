@@ -48,7 +48,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The only `client_assertion_type` this OP accepts (RFC 7523 §2.2).
 ///
@@ -102,10 +102,17 @@ pub struct VerifiedClientAssertion {
 /// a SQL unique index) instead. Same trade-off, and the same intended use, as
 /// `authkestra_engine::store::memory::MemoryStore`: correct for single-node
 /// and for tests, not a production cluster answer.
-#[derive(Debug, Default)]
+///
+/// The map sits behind an `Arc` (not just the `Mutex`) so this type is both
+/// `Clone` — required to satisfy `CloneableOpStore` — and *shares* its state
+/// across clones rather than forking it. See `CloneableOpStore`'s doc
+/// comment: a `Clone` impl that deep-copies instead of sharing state would
+/// compile here but silently break replay protection (each handler's
+/// per-request clone would only ever see its own copy).
+#[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct MemoryClientAssertionStore {
-    seen: Mutex<HashMap<String, DateTime<Utc>>>,
+    seen: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
 }
 
 impl MemoryClientAssertionStore {

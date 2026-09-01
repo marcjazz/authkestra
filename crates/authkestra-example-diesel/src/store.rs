@@ -21,6 +21,25 @@ fn diesel_err(e: diesel::result::Error) -> StoreError {
     StoreError::Internal(format!("diesel error: {e}"))
 }
 
+/// True if `database_url` names a private, per-connection SQLite database —
+/// one where a multi-connection pool would scatter this store's rows across
+/// several unrelated databases (see [`DieselOpStore::connect`]).
+///
+/// Covers the bare `:memory:` filename, the URI form `file::memory:`, and
+/// `""` (a private temporary on-disk database — same per-connection
+/// isolation). `cache=shared` is the one exception: it puts an in-memory
+/// database in SQLite's shared cache instead, which every connection in the
+/// process can see, so it does not need — and should not get — the
+/// single-connection restriction the other forms do.
+fn is_private_memory_url(database_url: &str) -> bool {
+    let url = database_url.trim();
+    if url.is_empty() {
+        return true;
+    }
+    let lower = url.to_ascii_lowercase();
+    lower.contains(":memory:") && !lower.contains("cache=shared")
+}
+
 /// A real, compiled `OpStore` implementation backed by [`diesel`] —
 /// authkestra#289's second proof (alongside `authkestra-example-seaorm`)
 /// that the storage traits are implementable by a third-party ORM,
@@ -49,19 +68,29 @@ impl DieselOpStore {
     /// Builds a connection pool for `database_url` (e.g. `:memory:` or a
     /// file path) and wraps it.
     ///
-    /// `:memory:` is special-cased to a single-connection pool: SQLite's
-    /// `:memory:` URI gives every connection its own private, independent
-    /// database, so a pool with r2d2's default size (10) would silently
-    /// scatter this store's rows across ten unrelated in-memory databases —
-    /// `migrate()` would create tables in whichever one it happens to check
-    /// out, and any other checkout would see "no such table". A real
-    /// (file-backed) database has no such problem and keeps the default
-    /// pool size, since SQLite's own locking already serializes writers
-    /// across connections.
+    /// A private, per-connection in-memory (or temporary) database is
+    /// special-cased to a single-connection pool: SQLite gives every such
+    /// connection its own independent database, so a pool with r2d2's
+    /// default size (10) would silently scatter this store's rows across
+    /// ten unrelated in-memory databases — `migrate()` would create tables
+    /// in whichever one it happens to check out, and any other checkout
+    /// would see "no such table". A real (file-backed) database has no such
+    /// problem and keeps the default pool size, since SQLite's own locking
+    /// already serializes writers across connections.
+    ///
+    /// SQLite accepts several spellings of "private in-memory/temporary
+    /// database" — the bare `:memory:` filename, the URI form
+    /// `file::memory:` (with or without a trailing query string, *unless*
+    /// it sets `cache=shared`, which is the actual escape hatch for sharing
+    /// one in-memory database across connections), and `""` (a private
+    /// temporary on-disk database, same per-connection isolation problem).
+    /// Matching only the exact string `":memory:"` misses the other two and
+    /// silently reintroduces the ten-independent-databases bug this guard
+    /// exists to prevent.
     pub fn connect(database_url: &str) -> Result<Self, diesel::r2d2::PoolError> {
         let manager = ConnectionManager::<SqliteConnection>::new(database_url);
         let mut builder = Pool::builder();
-        if database_url == ":memory:" {
+        if is_private_memory_url(database_url) {
             builder = builder.max_size(1);
         }
         let pool = builder.build(manager)?;
@@ -407,3 +436,36 @@ impl DeviceCodeStore for DieselOpStore {
 }
 
 impl OpStore for DieselOpStore {}
+
+#[cfg(test)]
+mod tests {
+    use super::is_private_memory_url;
+
+    #[test]
+    fn bare_memory_filename_is_private() {
+        assert!(is_private_memory_url(":memory:"));
+    }
+
+    #[test]
+    fn empty_url_is_a_private_temporary_database() {
+        assert!(is_private_memory_url(""));
+        assert!(is_private_memory_url("   "));
+    }
+
+    #[test]
+    fn file_uri_memory_form_is_private() {
+        assert!(is_private_memory_url("file::memory:"));
+        assert!(is_private_memory_url("file::memory:?cache=private"));
+    }
+
+    #[test]
+    fn shared_cache_memory_uri_is_not_private() {
+        assert!(!is_private_memory_url("file::memory:?cache=shared"));
+    }
+
+    #[test]
+    fn a_real_file_path_is_not_private() {
+        assert!(!is_private_memory_url("/tmp/authkestra-example.sqlite"));
+        assert!(!is_private_memory_url("sqlite://data.db"));
+    }
+}
