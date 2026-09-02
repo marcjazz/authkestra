@@ -125,3 +125,39 @@ asynchronous shape RFC 8935 §2 suggests, enqueue inside the handler and return 
   receiver is in, so this crate always requires it.
 - **`exp` is optional; `nbf` is ignored.** A SET describes something that already happened, so
   RFC 8417 §2.2 discourages `exp` entirely and never profiles `nbf`. Freshness comes from `iat`.
+- **An empty `jti` is refused.** RFC 8417 §2.2 makes `jti` the SET's unique identifier. An empty
+  or whitespace-only one identifies nothing, and would collapse the replay guard to one slot per
+  issuer — so it is a `400 invalid_request`.
+
+## Body size limits
+
+`PushReceiver` refuses any body larger than `DEFAULT_MAX_BODY_BYTES` (1 MiB) with
+`400 invalid_request`, before it parses anything. Change it with:
+
+```rust
+let receiver = PushReceiver::new(verifier).with_max_body_bytes(64 * 1024);
+```
+
+**Set a limit in your HTTP layer as well.** By the time `receive` is called, the body has already
+been read into memory by the framework, so this check is a second line of defence — it stops an
+oversized body reaching the parser and the signature verifier, but it cannot prevent the
+allocation. What actually bounds what gets buffered is axum's `DefaultBodyLimit`, actix's
+`PayloadConfig`, or your reverse proxy's `client_max_body_size`.
+
+## Building the models in your own tests
+
+The public models are `#[non_exhaustive]`, so they cannot be built with struct-literal syntax from
+outside the crate — but every one of them has a constructor, precisely so that the code you write
+to map a CAEP event onto your own domain stays unit-testable without minting and verifying a real
+SET:
+
+```rust
+use authkestra_ssf::{CaepMetadata, CredentialChange, CredentialType, ChangeType, SecurityEventToken};
+
+let set = SecurityEventToken::new("https://idp.example.com/", "jti-1", 1_700_000_000, events);
+let mut change = CredentialChange::new(CredentialType::Password, ChangeType::Update);
+change.metadata = CaepMetadata::empty();
+```
+
+None of these constructors validate anything: a SET your service should act on comes out of
+`SetVerifier`, never out of a constructor.

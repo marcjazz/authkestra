@@ -70,9 +70,23 @@ handful of lines today and a dedicated adapter feature in a follow-up PR.
   `application/secevent+jwt` are accepted, case-insensitively.
 - **`exp` is optional and honoured; `nbf` is parsed and ignored.** RFC 8417 §2.2 says `exp` is NOT
   RECOMMENDED in a SET and never profiles `nbf` at all.
+- **An empty or whitespace-only `jti` is refused** with `400 invalid_request`. RFC 8417 §2.2 makes
+  `jti` the SET's unique identifier; an empty one identifies nothing, and accepting it would
+  collapse the replay guard to a single slot per issuer so that the first such SET permanently
+  suppressed every later one.
+- **The request body is size-capped** at `DEFAULT_MAX_BODY_BYTES` (1 MiB), configurable with
+  `PushReceiver::with_max_body_bytes`. This is a *second* line of defence: by the time `receive`
+  is called the body is already in memory, so set your framework's own limit (axum's
+  `DefaultBodyLimit`, actix's `PayloadConfig`, or the proxy's `client_max_body_size`) too.
 - **Handlers run before the response.** This crate has no store of its own, so a handler *is* the
   persistence step RFC 8935 §2 asks for before acknowledging. Enqueue-and-return inside a handler
   if you want the RFC's asynchronous shape.
+- **The public models are `#[non_exhaustive]` but constructible.** `SecurityEventToken::new`,
+  `TokenClaimsChange::new`, `CredentialChange::new`, `AssuranceLevelChange::new`,
+  `DeviceComplianceChange::new`, `CaepMetadata::empty` and `SessionRevoked::default` exist so a
+  downstream crate can build fixtures for its own tests without minting and verifying a real SET
+  (the problem reported for `devsig`'s `DeviceIdentity` in authkestra#282). None of them validate
+  anything.
 
 ## License
 

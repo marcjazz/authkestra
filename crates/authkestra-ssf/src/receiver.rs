@@ -30,6 +30,14 @@ pub const ERROR_CONTENT_LANGUAGE: &str = "en";
 /// The `Content-Type` RFC 8935 §2.3 requires on a failure response body.
 pub const ERROR_CONTENT_TYPE: &str = "application/json";
 
+/// The default ceiling on a SET Transmission Request body, in bytes.
+///
+/// RFC 8935 sets no limit — it says only that the body "MUST consist of the SET itself" (§2.1) —
+/// so one has to be chosen. 1 MiB is roughly two orders of magnitude above any realistic signed
+/// SET (RFC 8935 §2.1's own example is a few hundred bytes) while still being small enough that
+/// a flood of oversized bodies cannot exhaust memory through this path.
+pub const DEFAULT_MAX_BODY_BYTES: usize = 1024 * 1024;
+
 /// Why a [`SetHandler`] could not process an event.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum HandlerError {
@@ -171,6 +179,7 @@ impl PushResponse {
 pub struct PushReceiver {
     verifier: Arc<SetVerifier>,
     handlers: Vec<Arc<dyn SetHandler>>,
+    max_body_bytes: usize,
 }
 
 impl PushReceiver {
@@ -180,7 +189,27 @@ impl PushReceiver {
         Self {
             verifier,
             handlers: Vec::new(),
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
         }
+    }
+
+    /// Caps the request body at `max_body_bytes`; anything larger is refused with
+    /// `400 invalid_request` before it is parsed. Defaults to [`DEFAULT_MAX_BODY_BYTES`].
+    ///
+    /// **This is a second line of defence, not the first one.** By the time `receive` is called
+    /// the body has already been read into memory by the HTTP layer, so this check cannot
+    /// prevent that allocation — it only stops an oversized body from reaching the parser and
+    /// the signature verifier. The framework's own limit (axum's `DefaultBodyLimit`, actix's
+    /// `PayloadConfig`, or the reverse proxy's `client_max_body_size`) is what actually bounds
+    /// what gets buffered, and it should be set too.
+    pub fn with_max_body_bytes(mut self, max_body_bytes: usize) -> Self {
+        self.max_body_bytes = max_body_bytes;
+        self
+    }
+
+    /// The configured body ceiling, in bytes.
+    pub fn max_body_bytes(&self) -> usize {
+        self.max_body_bytes
     }
 
     /// Adds a handler. Handlers run in the order they were added, and every handler sees every
@@ -195,7 +224,11 @@ impl PushReceiver {
     ///
     /// `content_type` is the request's `Content-Type` header, if any, and `body` its raw bytes.
     ///
-    /// Two deliberate decisions:
+    /// Three deliberate decisions:
+    ///
+    /// - **The body is size-capped before anything else happens** — see
+    ///   [`PushReceiver::with_max_body_bytes`] for why that is a second line of defence rather
+    ///   than the primary one.
     ///
     /// - **A replayed SET answers `202`, not an error.** RFC 8935 §2 is explicit: "The SET
     ///   Transmitter MAY transmit the same SET to the SET Recipient multiple times... The SET
@@ -208,6 +241,25 @@ impl PushReceiver {
     ///   durability that nothing delivered. A deployment that wants the RFC's asynchronous shape
     ///   writes a handler that enqueues and returns immediately.
     pub async fn receive(&self, content_type: Option<&str>, body: &[u8]) -> PushResponse {
+        // Before the content type, and long before any parsing: the cheapest possible rejection
+        // for the cheapest possible attack.
+        if body.len() > self.max_body_bytes {
+            tracing::warn!(
+                target: "authkestra_ssf",
+                body_len = body.len(),
+                max_body_bytes = self.max_body_bytes,
+                "rejecting SET delivery: body exceeds the configured maximum"
+            );
+            return PushResponse::error(
+                SetErrorCode::InvalidRequest,
+                format!(
+                    "request body of {} bytes exceeds the maximum of {} bytes",
+                    body.len(),
+                    self.max_body_bytes
+                ),
+            );
+        }
+
         if let Err(response) = check_content_type(content_type) {
             return response;
         }
@@ -419,6 +471,43 @@ mod tests {
             payload: serde_json::json!({}),
         };
         assert!(LoggingHandler.handle(&set, &event).await.is_ok());
+    }
+
+    #[test]
+    fn body_cap_defaults_to_one_mebibyte_and_is_configurable() {
+        let verifier = Arc::new(
+            SetVerifier::builder("https://idp/")
+                .algorithms([jsonwebtoken::Algorithm::HS256])
+                .key(jsonwebtoken::DecodingKey::from_secret(b"s"))
+                .build()
+                .unwrap(),
+        );
+        let receiver = PushReceiver::new(verifier.clone());
+        assert_eq!(receiver.max_body_bytes(), DEFAULT_MAX_BODY_BYTES);
+        assert_eq!(DEFAULT_MAX_BODY_BYTES, 1024 * 1024);
+
+        let receiver = PushReceiver::new(verifier).with_max_body_bytes(16);
+        assert_eq!(receiver.max_body_bytes(), 16);
+    }
+
+    #[tokio::test]
+    async fn an_oversized_body_is_refused_before_the_content_type_is_looked_at() {
+        let verifier = Arc::new(
+            SetVerifier::builder("https://idp/")
+                .algorithms([jsonwebtoken::Algorithm::HS256])
+                .key(jsonwebtoken::DecodingKey::from_secret(b"s"))
+                .build()
+                .unwrap(),
+        );
+        let receiver = PushReceiver::new(verifier).with_max_body_bytes(4);
+
+        // Oversized *and* wrong content type: the size check must be the one that fires, which
+        // is what proves it runs first.
+        let response = receiver.receive(Some("application/json"), b"12345").await;
+        assert_eq!(response.status(), 400);
+        assert_eq!(response.error_code(), Some(SetErrorCode::InvalidRequest));
+        let body = String::from_utf8_lossy(response.body()).to_string();
+        assert!(body.contains("exceeds the maximum"), "{body}");
     }
 
     #[test]

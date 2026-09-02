@@ -125,7 +125,7 @@ impl SetVerifier {
     ///    unverified token are attacker-controlled strings, so no rejection above this line may
     ///    depend on them, and the key is resolved for the *configured* issuer rather than the
     ///    token's self-asserted `iss`.
-    /// 3. **Claims** — issuer, audience, freshness, non-empty `events`.
+    /// 3. **Claims** — issuer, audience, freshness, non-empty `jti`, non-empty `events`.
     /// 4. **Replay** — last, so a SET rejected for any other reason does not consume its `jti`
     ///    and thereby stop a corrected retransmission from being processed.
     pub async fn verify_at(&self, token: &str, now: i64) -> Result<SecurityEventToken, SetError> {
@@ -162,6 +162,12 @@ impl SetVerifier {
         self.check_issuer(&set).map_err(reject)?;
         self.check_audience(&set).map_err(reject)?;
         self.check_freshness(&set, now).map_err(reject)?;
+        // Checked here rather than in the claim model, which only knows `jti` is a string: a
+        // present-but-empty `jti` parses fine and would then silently defeat the replay guard
+        // below, since every such SET from an issuer hashes to the same key.
+        if set.jti.trim().is_empty() {
+            return Err(reject(SetError::EmptyJti));
+        }
         if set.events.is_empty() {
             return Err(reject(SetError::EmptyEvents));
         }

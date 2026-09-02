@@ -81,6 +81,7 @@ impl Audience {
 /// - **Freshness comes from `iat`, not `exp`** — see [`crate::SetVerifier`] for the leeway and
 ///   maximum-age checks that replace expiry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SecurityEventToken {
     /// REQUIRED (§2.2). The service provider publishing the SET.
     ///
@@ -144,6 +145,38 @@ pub struct SecurityEventToken {
 }
 
 impl SecurityEventToken {
+    /// Builds a SET from the four claims RFC 8417 §2.2 makes REQUIRED, leaving every optional
+    /// claim empty.
+    ///
+    /// **This exists so consumers can construct one in their own tests** — a `#[non_exhaustive]`
+    /// output type with no constructor is unusable downstream, which is exactly the problem
+    /// reported for `authkestra-devsig`'s `DeviceIdentity` in
+    /// [authkestra#282](https://github.com/marcjazz/authkestra/issues/282). It performs **no
+    /// validation whatsoever**: nothing here checks that `iss` is a URI, that `jti` is non-empty,
+    /// or that `events` conforms to anything. A SET that a receiver should trust comes out of
+    /// [`crate::SetVerifier`], never out of this constructor.
+    pub fn new(
+        iss: impl Into<String>,
+        jti: impl Into<String>,
+        iat: i64,
+        events: BTreeMap<String, Value>,
+    ) -> Self {
+        Self {
+            iss: iss.into(),
+            jti: jti.into(),
+            iat,
+            aud: None,
+            sub: None,
+            sub_id: None,
+            txn: None,
+            toe: None,
+            exp: None,
+            nbf: None,
+            events,
+            additional: Map::new(),
+        }
+    }
+
     /// Decodes every entry of [`SecurityEventToken::events`] into a typed [`CaepEvent`].
     ///
     /// Fails on the first event whose type is modelled but whose payload does not conform;

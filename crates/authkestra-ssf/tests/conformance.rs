@@ -17,11 +17,13 @@ use jsonwebtoken::{Algorithm, DecodingKey};
 use serde_json::json;
 
 use authkestra_ssf::{
-    AssuranceLevel, CaepEvent, ChangeDirection, ChangeType, ComplianceStatus, CredentialType,
-    HandlerError, InMemorySetReplayGuard, InitiatingEntity, LoggingHandler, PushReceiver,
-    PushResponse, SecurityEventToken, SetError, SetErrorCode, SetHandler, SetVerifier,
-    StaticKeyResolver, SubjectIdentifier, EVENT_TYPE_ASSURANCE_LEVEL_CHANGE,
-    EVENT_TYPE_CREDENTIAL_CHANGE, EVENT_TYPE_DEVICE_COMPLIANCE_CHANGE, EVENT_TYPE_SESSION_REVOKED,
+    AssuranceLevel, AssuranceLevelChange, CaepEvent, CaepMetadata, ChangeDirection, ChangeType,
+    ComplianceStatus, CredentialChange, CredentialType, DeviceComplianceChange, HandlerError,
+    InMemorySetReplayGuard, InitiatingEntity, LoggingHandler, PushReceiver, PushResponse,
+    SecurityEventToken, SessionRevoked, SetError, SetErrorCode, SetHandler, SetVerifier,
+    StaticKeyResolver, SubjectIdentifier, TokenClaimsChange, DEFAULT_MAX_BODY_BYTES,
+    EVENT_TYPE_ASSURANCE_LEVEL_CHANGE, EVENT_TYPE_CREDENTIAL_CHANGE,
+    EVENT_TYPE_DEVICE_COMPLIANCE_CHANGE, EVENT_TYPE_SESSION_REVOKED,
     EVENT_TYPE_TOKEN_CLAIMS_CHANGE, SET_MEDIA_TYPE,
 };
 
@@ -885,4 +887,172 @@ async fn the_verifier_is_debug_printable_without_leaking_keys() {
 fn decoding_key_helper_is_usable_standalone() {
     // Guards against the fixture drifting from `DecodingKey::from_secret`.
     let _: DecodingKey = decoding_key();
+}
+
+// ---------------------------------------------------------------------------
+// Consumer ergonomics: every `#[non_exhaustive]` model must still be buildable
+// from *outside* this crate, or a downstream service cannot unit-test the code
+// that maps these types onto its own domain (authkestra#282).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_consumer_can_construct_every_public_model() {
+    let mut events = std::collections::BTreeMap::new();
+    events.insert(EVENT_TYPE_SESSION_REVOKED.to_string(), json!({}));
+    let mut set = SecurityEventToken::new(ISSUER, "jti-1", NOW, events);
+    set.sub_id = Some(SubjectIdentifier::Email {
+        email: "user@example.com".to_string(),
+    });
+    assert_eq!(set.iss, ISSUER);
+    assert_eq!(set.jti, "jti-1");
+    assert_eq!(set.iat, NOW);
+    assert!(set.contains_event(EVENT_TYPE_SESSION_REVOKED));
+    assert!(set.aud.is_none());
+
+    let mut metadata = CaepMetadata::empty();
+    metadata.event_timestamp = Some(NOW);
+    metadata.initiating_entity = Some(InitiatingEntity::Policy);
+    assert_eq!(metadata.event_timestamp, Some(NOW));
+
+    let mut revoked = SessionRevoked::default();
+    revoked.metadata = metadata.clone();
+    assert_eq!(
+        revoked.metadata.initiating_entity,
+        Some(InitiatingEntity::Policy)
+    );
+
+    let mut claims = serde_json::Map::new();
+    claims.insert("role".to_string(), json!("ro-admin"));
+    let mut token_claims_change = TokenClaimsChange::new(claims);
+    token_claims_change.metadata = metadata.clone();
+    assert_eq!(token_claims_change.claims["role"], "ro-admin");
+
+    let mut credential_change = CredentialChange::new(CredentialType::Password, ChangeType::Update);
+    credential_change.friendly_name = Some("Work laptop".to_string());
+    assert_eq!(credential_change.change_type, ChangeType::Update);
+    assert!(credential_change.x509_issuer.is_none());
+
+    let assurance_change = AssuranceLevelChange::new(
+        AssuranceLevel::Aal1,
+        AssuranceLevel::Aal2,
+        ChangeDirection::Decrease,
+    );
+    assert_eq!(assurance_change.current_level, AssuranceLevel::Aal1);
+
+    let compliance_change =
+        DeviceComplianceChange::new(ComplianceStatus::Compliant, ComplianceStatus::NotCompliant);
+    assert_eq!(
+        compliance_change.current_status,
+        ComplianceStatus::NotCompliant
+    );
+
+    // The constructed values still round-trip through serde, so a consumer can use them as
+    // fixtures for its own wire-level tests.
+    for value in [
+        serde_json::to_value(&revoked).unwrap(),
+        serde_json::to_value(&token_claims_change).unwrap(),
+        serde_json::to_value(&credential_change).unwrap(),
+        serde_json::to_value(&assurance_change).unwrap(),
+        serde_json::to_value(&compliance_change).unwrap(),
+        serde_json::to_value(&set).unwrap(),
+    ] {
+        assert!(value.is_object());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// jti must actually identify something (RFC 8417 section 2.2)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rejects_an_empty_or_whitespace_only_jti() {
+    for jti in ["", " ", "\t\n  "] {
+        let token = sign(&with_claim(session_revoked_claims(), "jti", json!(jti)));
+        let err = verifier().verify_at(&token, NOW).await.unwrap_err();
+        assert_eq!(err, SetError::EmptyJti, "jti {jti:?} must be refused");
+        assert_eq!(err.code(), SetErrorCode::InvalidRequest);
+    }
+}
+
+#[tokio::test]
+async fn an_empty_jti_cannot_poison_the_replay_guard() {
+    // The point of the check: without it, the first empty-jti SET would occupy the issuer's
+    // only "" slot and every later one would look like a replay.
+    let verifier = SetVerifier::builder(ISSUER)
+        .audience(AUDIENCE)
+        .algorithms([Algorithm::HS256])
+        .key(decoding_key())
+        .replay_guard(Arc::new(InMemorySetReplayGuard::new(Duration::from_secs(
+            3600,
+        ))))
+        .build()
+        .unwrap();
+
+    let empty = sign(&with_claim(session_revoked_claims(), "jti", json!("")));
+    assert_eq!(
+        verifier.verify_at(&empty, NOW).await.unwrap_err(),
+        SetError::EmptyJti
+    );
+
+    let good = sign(&session_revoked_claims());
+    assert!(verifier.verify_at(&good, NOW).await.is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// Body size cap
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_body_cap_accepts_exactly_the_limit_and_refuses_one_byte_more() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let token = sign(&with_claim(session_revoked_claims(), "iat", json!(now)));
+    let len = token.len();
+
+    let at_limit = PushReceiver::new(Arc::new(verifier())).with_max_body_bytes(len);
+    let response = at_limit
+        .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+        .await;
+    assert_eq!(
+        response.status(),
+        202,
+        "a body of exactly max_body_bytes must be accepted"
+    );
+
+    let one_short = PushReceiver::new(Arc::new(verifier())).with_max_body_bytes(len - 1);
+    let response = one_short
+        .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+        .await;
+    assert_eq!(response.status(), 400);
+    assert_eq!(response.error_code(), Some(SetErrorCode::InvalidRequest));
+    assert_eq!(error_body(&response)["err"], "invalid_request");
+    assert!(error_body(&response)["description"]
+        .as_str()
+        .unwrap()
+        .contains("exceeds the maximum"));
+}
+
+#[tokio::test]
+async fn the_default_body_cap_lets_a_real_set_through() {
+    let receiver = PushReceiver::new(Arc::new(verifier()));
+    assert_eq!(receiver.max_body_bytes(), DEFAULT_MAX_BODY_BYTES);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let token = sign(&with_claim(session_revoked_claims(), "iat", json!(now)));
+    assert!(token.len() < DEFAULT_MAX_BODY_BYTES);
+    assert!(receiver
+        .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+        .await
+        .is_accepted());
+
+    // A body over the default is refused without the verifier ever being consulted.
+    let oversized = vec![b'a'; DEFAULT_MAX_BODY_BYTES + 1];
+    let response = receiver.receive(Some(SET_MEDIA_TYPE), &oversized).await;
+    assert_eq!(response.status(), 400);
+    assert_eq!(response.error_code(), Some(SetErrorCode::InvalidRequest));
 }

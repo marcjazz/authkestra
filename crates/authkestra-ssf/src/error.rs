@@ -161,6 +161,15 @@ pub enum SetError {
         now: i64,
     },
 
+    /// The `jti` claim is present but empty (or only whitespace).
+    ///
+    /// RFC 8417 §2.2 makes `jti` "a unique identifier for the SET" that a client "MAY use to
+    /// track whether a particular SET has already been received". An empty string identifies
+    /// nothing: accepting it would collapse the replay guard to a single slot per issuer, so
+    /// the first empty-`jti` SET from an issuer would permanently suppress every subsequent one.
+    #[error("empty jti claim: a SET's jti must uniquely identify it (RFC 8417 §2.2)")]
+    EmptyJti,
+
     /// The `events` claim is present but empty. RFC 8417 §2.2 defines `events` as "a set of
     /// event statements"; a SET conveying none of them describes nothing and cannot be acted on.
     #[error("empty events claim: a SET must convey at least one event (RFC 8417 §2.2)")]
@@ -200,6 +209,7 @@ impl SetError {
             | SetError::IatInFuture { .. }
             | SetError::TooOld { .. }
             | SetError::Expired { .. }
+            | SetError::EmptyJti
             | SetError::EmptyEvents
             | SetError::EventPayload(_) => SetErrorCode::InvalidRequest,
             SetError::DisallowedAlgorithm(_) | SetError::KeyResolution(_) => {
@@ -303,6 +313,7 @@ mod tests {
                 SetError::Expired { exp: 0, now: 10 },
                 SetErrorCode::InvalidRequest,
             ),
+            (SetError::EmptyJti, SetErrorCode::InvalidRequest),
             (SetError::EmptyEvents, SetErrorCode::InvalidRequest),
             (
                 SetError::EventPayload(EventDecodeError::new("uri", "boom")),

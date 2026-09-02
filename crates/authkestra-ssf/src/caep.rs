@@ -227,6 +227,7 @@ pub type LocalizedMessage = BTreeMap<String, String>;
 /// The claims CAEP 1.0 §2 defines for every event type, all optional unless an event definition
 /// says otherwise.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CaepMetadata {
     /// When the event described by this SET occurred, as seconds since the Unix epoch.
     ///
@@ -267,6 +268,7 @@ pub struct CaepMetadata {
 /// Has no event-specific claims — the subject *is* the payload. When `event_timestamp` is
 /// present it is the time the revocation occurred.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SessionRevoked {
     /// Claims common to every CAEP event.
     #[serde(flatten)]
@@ -275,6 +277,7 @@ pub struct SessionRevoked {
 
 /// Token Claims Change (CAEP 1.0 §3.2): a claim in a token identified by the subject changed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TokenClaimsChange {
     /// REQUIRED: one or more claims with their new value(s).
     pub claims: Map<String, Value>,
@@ -285,6 +288,7 @@ pub struct TokenClaimsChange {
 
 /// Credential Change (CAEP 1.0 §3.3): a credential was created, changed, revoked or deleted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CredentialChange {
     /// REQUIRED: the kind of credential that changed.
     pub credential_type: CredentialType,
@@ -309,6 +313,7 @@ pub struct CredentialChange {
 
 /// Assurance Level Change (CAEP 1.0 §3.4): the authentication method changed since login.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AssuranceLevelChange {
     /// REQUIRED: the current NIST AAL.
     pub current_level: AssuranceLevel,
@@ -323,6 +328,7 @@ pub struct AssuranceLevelChange {
 
 /// Device Compliance Change (CAEP 1.0 §3.5): a device's compliance status changed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeviceComplianceChange {
     /// REQUIRED: the compliance status prior to the change.
     pub previous_status: ComplianceStatus,
@@ -331,6 +337,107 @@ pub struct DeviceComplianceChange {
     /// Claims common to every CAEP event.
     #[serde(flatten)]
     pub metadata: CaepMetadata,
+}
+
+impl CaepMetadata {
+    /// An empty set of common claims.
+    ///
+    /// **Exists so consumers can construct one in their own tests.** A `#[non_exhaustive]` claims
+    /// bag with no constructor cannot be built downstream at all, which is the problem reported
+    /// against `authkestra-devsig`'s `DeviceIdentity` in
+    /// [authkestra#282](https://github.com/marcjazz/authkestra/issues/282). It performs **no
+    /// validation**: these claims are all OPTIONAL per CAEP 1.0 §2, so an empty bag is
+    /// a legal, if uninformative, value.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+}
+
+impl TokenClaimsChange {
+    /// Builds a Token Claims Change event carrying `claims` (CAEP 1.0 §3.2.1: REQUIRED).
+    ///
+    /// **Exists so consumers can construct one in their own tests.** A `#[non_exhaustive]` event
+    /// type with no constructor cannot be built downstream at all, which is the problem reported
+    /// against `authkestra-devsig`'s `DeviceIdentity` in
+    /// [authkestra#282](https://github.com/marcjazz/authkestra/issues/282). It performs **no
+    /// validation**: an event a receiver should act on comes out of [`CaepEvent::decode`] behind
+    /// [`crate::SetVerifier`], never out of this constructor.
+    pub fn new(claims: Map<String, Value>) -> Self {
+        Self {
+            claims,
+            metadata: CaepMetadata::default(),
+        }
+    }
+}
+
+impl CredentialChange {
+    /// Builds a Credential Change event from the two claims CAEP 1.0 §3.3.1 makes REQUIRED.
+    ///
+    /// **Exists so consumers can construct one in their own tests.** A `#[non_exhaustive]` event
+    /// type with no constructor cannot be built downstream at all, which is the problem reported
+    /// against `authkestra-devsig`'s `DeviceIdentity` in
+    /// [authkestra#282](https://github.com/marcjazz/authkestra/issues/282). It performs **no
+    /// validation**: an event a receiver should act on comes out of [`CaepEvent::decode`] behind
+    /// [`crate::SetVerifier`], never out of this constructor.
+    pub fn new(credential_type: CredentialType, change_type: ChangeType) -> Self {
+        Self {
+            credential_type,
+            change_type,
+            friendly_name: None,
+            x509_issuer: None,
+            x509_serial: None,
+            fido2_aaguid: None,
+            metadata: CaepMetadata::default(),
+        }
+    }
+}
+
+impl AssuranceLevelChange {
+    /// Builds an Assurance Level Change event from the three claims CAEP 1.0 §3.4.1 makes
+    /// REQUIRED.
+    ///
+    /// **Exists so consumers can construct one in their own tests.** A `#[non_exhaustive]` event
+    /// type with no constructor cannot be built downstream at all, which is the problem reported
+    /// against `authkestra-devsig`'s `DeviceIdentity` in
+    /// [authkestra#282](https://github.com/marcjazz/authkestra/issues/282). It performs **no
+    /// validation**: an event a receiver should act on comes out of [`CaepEvent::decode`] behind
+    /// [`crate::SetVerifier`], never out of this constructor.
+    ///
+    /// Note in particular that nothing here checks that `change_direction` agrees with the two
+    /// levels: a transmitter that sends `increase` alongside a decrease is describing something
+    /// self-contradictory, and it is the receiver's policy, not this type, that decides what to
+    /// do about it.
+    pub fn new(
+        current_level: AssuranceLevel,
+        previous_level: AssuranceLevel,
+        change_direction: ChangeDirection,
+    ) -> Self {
+        Self {
+            current_level,
+            previous_level,
+            change_direction,
+            metadata: CaepMetadata::default(),
+        }
+    }
+}
+
+impl DeviceComplianceChange {
+    /// Builds a Device Compliance Change event from the two claims CAEP 1.0 §3.5.1 makes
+    /// REQUIRED.
+    ///
+    /// **Exists so consumers can construct one in their own tests.** A `#[non_exhaustive]` event
+    /// type with no constructor cannot be built downstream at all, which is the problem reported
+    /// against `authkestra-devsig`'s `DeviceIdentity` in
+    /// [authkestra#282](https://github.com/marcjazz/authkestra/issues/282). It performs **no
+    /// validation**: an event a receiver should act on comes out of [`CaepEvent::decode`] behind
+    /// [`crate::SetVerifier`], never out of this constructor.
+    pub fn new(previous_status: ComplianceStatus, current_status: ComplianceStatus) -> Self {
+        Self {
+            previous_status,
+            current_status,
+            metadata: CaepMetadata::default(),
+        }
+    }
 }
 
 /// One decoded entry of a SET's `events` claim.
