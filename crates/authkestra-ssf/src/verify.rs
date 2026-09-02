@@ -744,7 +744,9 @@ mod tests {
         ));
         let json_error = serde_json::from_str::<i32>("not a number").unwrap_err();
         assert!(matches!(
-            map_jwt_error(Error::from(ErrorKind::Json(std::sync::Arc::new(json_error)))),
+            map_jwt_error(Error::from(ErrorKind::Json(std::sync::Arc::new(
+                json_error
+            )))),
             SetError::InvalidClaims(_)
         ));
         assert!(matches!(
