@@ -20,6 +20,16 @@ pub use authkestra_engine as token;
 #[cfg(feature = "oidc")]
 pub use authkestra_oidc as oidc;
 
+/// Cedar policy engine — **proof of concept**, see
+/// [authkestra#21](https://github.com/marcjazz/authkestra/issues/21) and
+/// `docs/rfc-005-policy-engine.md`.
+///
+/// Re-exported so it can be tried behind one feature flag, but it is not wired into any guard,
+/// extractor, or middleware yet: enabling `policy` adds an authorization engine you call
+/// yourself, it does not change how any existing route is protected.
+#[cfg(feature = "policy")]
+pub use authkestra_policy as policy;
+
 #[cfg(feature = "axum")]
 pub use authkestra_axum as axum;
 

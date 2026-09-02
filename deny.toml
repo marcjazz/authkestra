@@ -115,6 +115,16 @@ exceptions = [
     # Each entry is the crate and version constraint, and its specific allow
     # list
     #{ allow = ["Zlib"], crate = "adler32" },
+
+    # `ar_archive_writer` is a *build*-dependency of `psm`'s build script
+    # (psm <- stacker <- cedar-policy-core <- cedar-policy <-
+    # authkestra-policy); no code from it is linked into any shipped artifact.
+    # `stacker` is a non-optional dependency of `cedar-policy-core`, so this
+    # cannot be dropped by turning cedar-policy features off. The license is
+    # Apache-2.0 (already on the allow list) *plus* the LLVM exception, which
+    # only removes restrictions, but cargo-deny matches the full SPDX
+    # expression, hence the per-crate entry. Introduced by authkestra#21.
+    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "ar_archive_writer" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,

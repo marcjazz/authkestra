@@ -106,6 +106,8 @@ The RFC-001 consolidation is done; these are the crates that actually exist toda
 - `authkestra-op/` — OpenID Provider (authorization server)
 - `authkestra-devsig/` — device-bound signature authentication
 - `authkestra-crypto-util/` — shared strict signature/key verification helpers
+- `authkestra-policy/` — **proof of concept**: AWS Cedar authorization policies (see
+  [rfc-005-policy-engine.md](./rfc-005-policy-engine.md)); nothing calls it yet
 - `authkestra-axum/`, `authkestra-actix/` — framework adapters
 - `authkestra-macros/` — `AxumState` / `ActixState` / `KvStore` derives
 
