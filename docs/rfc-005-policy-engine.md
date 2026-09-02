@@ -318,20 +318,22 @@ The `max` column is omitted above because it is dominated by one-off allocator b
 
 ## 8. Testing
 
-`crates/authkestra-policy` ships 45 tests (plus the `#[ignore]`d `perf_smoke`): allow, default deny, a `permit` conditioned on
+`crates/authkestra-policy` ships 48 tests (plus the `#[ignore]`d `perf_smoke`): allow, default deny, a `permit` conditioned on
 context, a `forbid` overriding a `permit`, an unknown principal denied with empty diagnostics, a
 policy erroring on a missing attribute (surfaced in `Decision::errors()`, logged at `warn`),
 schema validation rejecting an invalid policy at load, `reload` with bad syntax and with a
 schema violation both keeping the old policy set, `reload` with a good policy taking effect on
 the next request, a loader failure surfacing as `PolicyError::Loader` rather than a deny, and a
 multi-threaded test hammering `is_authorized` from 8 tasks while 8 more reload (half of them
-with deliberately broken policy text).
+with deliberately broken policy text); plus, for §4.3's id rules, the rejection of a reserved
+`@id("policy0")`, the acceptance of a near-miss such as `policy-admin-override`, and the
+positional fallback for un-annotated policies.
 
 Line coverage of the crate's own sources, from `cargo llvm-cov -p authkestra-policy
---all-features`: **98.14%** overall (`engine.rs` 96.17%, `error.rs` 100%, `loader.rs` 99.17%,
-`request.rs` 100%). The six uncovered lines are two `tracing::debug!` field closures — they only
-execute with a subscriber installed — and the error arm of adding a Cedar template to a fresh
-policy set, which cannot fail for a set that just parsed.
+--all-features`: **98.14%** overall (`engine.rs` 96.70%, `error.rs` 100%, `loader.rs` 98.79%,
+`request.rs` 100%). The seven uncovered lines are field closures inside `tracing` macros — they
+only execute with a subscriber installed — and the error arm of adding a Cedar template to a
+fresh policy set, which cannot fail for a set that just parsed.
 
 ## 9. Dependency and licensing note
 
