@@ -272,11 +272,9 @@ mod tests {
 
     #[tokio::test]
     async fn static_loader_wraps_an_already_built_entity_set() {
-        let entities = Entities::from_entities(
-            [Entity::with_uid(uid(r#"User::"alice""#))],
-            None::<&Schema>,
-        )
-        .expect("valid entity set");
+        let entities =
+            Entities::from_entities([Entity::with_uid(uid(r#"User::"alice""#))], None::<&Schema>)
+                .expect("valid entity set");
         let loader = StaticResourceLoader::new(entities);
 
         let loaded = loader

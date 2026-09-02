@@ -36,7 +36,10 @@ This roadmap outlines the evolution of Authkestra into a next-generation identit
 - *(shipped)* `authkestra-op`, `authkestra-devsig`, `authkestra-oidc`, `authkestra-providers`,
   `authkestra-resource`, `authkestra-crypto-util`.
 - *(planned)* `authkestra-vc`: Verifiable Credentials & OIDC4VP implementation.
-- *(planned)* `authkestra-policy`: Fine-grained ReBAC/ABAC enforcement.
+- *(proof of concept)* `authkestra-policy`: fine-grained ReBAC/ABAC enforcement with AWS Cedar.
+  The engine evaluates policies and reloads them at runtime, but nothing calls it yet — see
+  [rfc-005-policy-engine.md](./rfc-005-policy-engine.md) and
+  [authkestra#21](https://github.com/marcjazz/authkestra/issues/21).
 - *(planned)* `authkestra-ssf`: Shared Signals Framework receiver/transmitter.
 - *(planned)* PQC-ready hardware-backed authentication; WebAuthn ships today inside
   `authkestra-engine` behind the `webauthn` feature.
