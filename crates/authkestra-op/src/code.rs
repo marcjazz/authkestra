@@ -19,7 +19,11 @@ pub struct AuthorizationCode {
     /// The client this code was issued to.
     pub client_id: String,
     /// The exact redirect_uri presented at `/authorize`; `/token` must
-    /// receive the same value.
+    /// receive the same value. For a loopback IP redirect this is the URI
+    /// *with* the ephemeral port the client actually bound, not the portless
+    /// registered form it was matched against (RFC 8252 §7.3,
+    /// authkestra#291), which is what keeps `/token`'s exact comparison
+    /// (RFC 6749 §4.1.3) both correct and unchanged.
     pub redirect_uri: String,
     /// Space-delimited scopes granted.
     pub scope: String,
