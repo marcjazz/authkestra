@@ -22,7 +22,8 @@ use crate::request::{AuthorizationRequest, Decision};
 /// survives reordering and a reload. Policies with no `@id` keep Cedar's generated id.
 ///
 /// Two policies sharing one `@id` are rejected here rather than one silently displacing the
-/// other.
+/// other, and an `@id` of the form `policy0`, `policy1`, … is rejected outright
+/// ([`PolicyError::ReservedPolicyId`]) because that shape is what un-annotated policies get.
 ///
 /// Split out of the engine so that a caller can validate operator-supplied policy text (an admin
 /// API, a config reload hook) *before* handing it to [`PolicyEngine::reload`] and having to
@@ -41,6 +42,9 @@ pub fn parse_policies(cedar_source: &str) -> Result<PolicySet, PolicyError> {
     }
     for policy in parsed.policies() {
         let policy = match policy.annotation("id") {
+            Some(id) if is_reserved_policy_id(id) => {
+                return Err(PolicyError::ReservedPolicyId(id.to_string()))
+            }
             Some(id) => policy.new_id(PolicyId::new(id)),
             None => policy.clone(),
         };
@@ -52,6 +56,19 @@ pub fn parse_policies(cedar_source: &str) -> Result<PolicySet, PolicyError> {
         })?;
     }
     Ok(renamed)
+}
+
+/// Whether `id` collides with the ids Cedar generates for un-annotated policies.
+///
+/// Cedar numbers policies `policy0`, `policy1`, … *by source position*, and this crate keeps
+/// those ids for policies with no `@id`. So an explicit `@id("policy0")` on the third policy in a
+/// file silently claims the name the first policy is already using — which surfaces as a
+/// baffling "duplicate id" error, or, worse, as a diagnostic naming the wrong rule if the
+/// annotated policy happens to be the one at position 0. Reserving the whole shape is the only
+/// check that does not depend on where in the file the annotation sits.
+fn is_reserved_policy_id(id: &str) -> bool {
+    id.strip_prefix("policy")
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Parse a Cedar schema in the human-readable Cedar schema format.
@@ -447,6 +464,65 @@ mod tests {
         );
         // The un-annotated policy keeps Cedar's positional id.
         assert!(ids.contains(&"policy1".to_string()), "{ids:?}");
+    }
+
+    #[test]
+    fn un_annotated_policies_keep_cedars_positional_id() {
+        // Documented fallback: the id is Cedar's *source position*, not a count of un-annotated
+        // policies. The bare policy below is second in the file, so it is `policy1` — never
+        // `policy0` — which is exactly why `policy0` must not be claimable via `@id`.
+        let policies = parse_policies(
+            r#"
+            @id("named")
+            permit(principal, action, resource);
+
+            permit(principal, action == Action::"read", resource);
+
+            forbid(principal, action == Action::"delete", resource);
+            "#,
+        )
+        .expect("parses");
+
+        let mut ids: Vec<String> = policies.policies().map(|p| p.id().to_string()).collect();
+        ids.sort();
+        assert_eq!(ids, ["named", "policy1", "policy2"]);
+    }
+
+    #[test]
+    fn an_id_annotation_in_cedars_reserved_shape_is_rejected() {
+        for reserved in [r#"@id("policy0")"#, r#"@id("policy12")"#] {
+            let source = format!(
+                r#"
+                permit(principal, action, resource);
+
+                {reserved}
+                forbid(principal, action, resource);
+                "#
+            );
+            let error = parse_policies(&source).expect_err("a reserved id is rejected");
+            assert_eq!(error.code(), "reserved_policy_id");
+            assert!(error.to_string().contains("reserved"), "{error}");
+        }
+    }
+
+    #[test]
+    fn ids_that_merely_start_with_policy_are_allowed() {
+        // Only the exact `policy<digits>` shape is reserved; real-world names such as
+        // `policy-admin-override` must keep working.
+        let policies = parse_policies(
+            r#"
+            @id("policy-admin-override")
+            permit(principal, action, resource);
+
+            @id("policy")
+            forbid(principal, action == Action::"delete", resource);
+            "#,
+        )
+        .expect("parses");
+
+        let mut ids: Vec<String> = policies.policies().map(|p| p.id().to_string()).collect();
+        ids.sort();
+        assert_eq!(ids, ["policy", "policy-admin-override"]);
     }
 
     #[test]

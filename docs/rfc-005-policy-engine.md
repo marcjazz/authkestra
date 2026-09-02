@@ -131,6 +131,13 @@ policy's `@id("...")` annotation as its id where one is present (Cedar's generat
 and rejects two policies claiming the same id. This is a deliberate deviation from the upstream
 default and the only one.
 
+Because the fallback is *positional* — the third policy in a file is `policy2` whether or not the
+two above it are annotated — the `policy<digits>` shape is reserved: an `@id("policy0")` is
+rejected at parse time with `PolicyError::ReservedPolicyId` rather than being allowed to collide
+with whichever bare policy happens to occupy that position. Two names are then impossible to
+confuse: an id is either operator-chosen and meaningful, or Cedar-generated and positional. Ids
+that merely begin with `policy` (`policy-admin-override`) are unaffected.
+
 ### 4.4 Runtime updates
 
 ```rust,ignore

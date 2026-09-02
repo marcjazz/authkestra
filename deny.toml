@@ -124,7 +124,13 @@ exceptions = [
     # Apache-2.0 (already on the allow list) *plus* the LLVM exception, which
     # only removes restrictions, but cargo-deny matches the full SPDX
     # expression, hence the per-crate entry. Introduced by authkestra#21.
-    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "ar_archive_writer" },
+    #
+    # Pinned to the exact version on purpose: an unversioned entry would keep
+    # passing silently if a future `psm`/`stacker` bump pulled in an
+    # `ar_archive_writer` under different licence terms. Bumping that chain is
+    # therefore meant to fail this check loudly, so the new version's licence
+    # gets re-reviewed before the exception is widened.
+    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "ar_archive_writer@0.5.3" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,

@@ -27,6 +27,15 @@ pub enum PolicyError {
     #[error("schema_parse: {0}")]
     SchemaParse(String),
 
+    /// A policy's `@id` annotation claims a name Cedar reserves for its own positional ids
+    /// (`policy0`, `policy1`, …).
+    ///
+    /// Its own variant rather than a [`PolicyError::PolicyParse`] because the policy text is
+    /// perfectly well-formed — the *name* is the problem, and an admin API accepting
+    /// operator-authored policies wants to say so precisely.
+    #[error("reserved_policy_id: `@id(\"{0}\")` is reserved: Cedar names un-annotated policies `policy0`, `policy1`, … by source position, so an explicit id of that shape would collide with whichever policy happens to land on that line")]
+    ReservedPolicyId(String),
+
     /// The policy set parsed, but does not validate against the configured schema (e.g. it
     /// references an entity type or action the schema does not declare).
     #[error("validation: {0}")]
@@ -62,6 +71,7 @@ impl PolicyError {
         match self {
             PolicyError::PolicyParse(_) => "policy_parse",
             PolicyError::SchemaParse(_) => "schema_parse",
+            PolicyError::ReservedPolicyId(_) => "reserved_policy_id",
             PolicyError::Validation(_) => "validation",
             PolicyError::InvalidRequest(_) => "invalid_request",
             PolicyError::Entities(_) => "entities",
@@ -95,6 +105,7 @@ mod tests {
         let errors = [
             PolicyError::PolicyParse("x".into()),
             PolicyError::SchemaParse("x".into()),
+            PolicyError::ReservedPolicyId("policy0".into()),
             PolicyError::Validation("x".into()),
             PolicyError::InvalidRequest("x".into()),
             PolicyError::Entities("x".into()),
@@ -107,6 +118,7 @@ mod tests {
             [
                 "policy_parse",
                 "schema_parse",
+                "reserved_policy_id",
                 "validation",
                 "invalid_request",
                 "entities",

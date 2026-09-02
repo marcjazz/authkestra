@@ -100,6 +100,13 @@ parser names them `policy0`, `policy1`, … by source order, which means inserti
 top of a file renumbers everything below it. This crate uses a policy's `@id("...")` annotation
 as its id when present, so an audit log entry names the *rule* and keeps meaning across edits.
 
+A policy with no `@id` keeps Cedar's positional id — `policy2` for the third policy in the file,
+whether or not the two above it are annotated. Because those names are handed out positionally,
+**`@id("policy0")`, `@id("policy7")` and anything else matching `policy<digits>` are rejected**
+(`PolicyError::ReservedPolicyId`): such an id would collide with whichever un-annotated policy
+happens to land on that line, and a diagnostic naming the wrong rule is worse than no diagnostic.
+Names that merely start with `policy`, like `policy-admin-override`, are fine.
+
 ### Schema validation (optional)
 
 Supplying a Cedar schema via `.schema(..)` turns on two things: policies are validated at load

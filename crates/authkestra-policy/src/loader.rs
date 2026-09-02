@@ -218,22 +218,56 @@ impl ResourceLoader for MemoryResourceLoader {
                 // rejects such a hierarchy when it computes the transitive closure below, but
                 // only if we get that far — without this check the walk itself would hang.
                 if !seen.insert(uid.clone()) {
+                    tracing::debug!(
+                        entity = %uid,
+                        "entity already hydrated for this request; not walking its parents again"
+                    );
                     continue;
                 }
                 // A UID with no record is not an error: Cedar tolerates absent entities, and a
                 // request naming an unknown principal must reach the authorizer so that it
                 // produces a *default deny with diagnostics* rather than a loader failure.
                 let Some(record) = store.get(&uid) else {
+                    // Worth a log line even though it is legal: an unknown principal or
+                    // resource is the most common reason a request comes back denied with no
+                    // reason policies at all, and that is otherwise invisible.
+                    tracing::debug!(
+                        entity = %uid,
+                        "no record for entity; continuing with it absent from the entity store"
+                    );
                     continue;
                 };
                 queue.extend(record.parents.iter().cloned());
-                selected.push(record.to_entity()?);
+                // The `warn!` carries the UID only. The attribute *values* stay in the returned
+                // error, which goes to the caller who owns the data; a log sink is a different
+                // trust boundary and may be holding whatever an attribute happens to contain.
+                let entity = record.to_entity().inspect_err(|e| {
+                    tracing::warn!(
+                        entity = %uid,
+                        error_code = e.code(),
+                        "entity could not be converted for evaluation; abandoning this request"
+                    );
+                })?;
+                selected.push(entity);
             }
         }
 
         let count = selected.len();
-        Entities::from_entities(selected, None)
-            .map_err(|e| PolicyError::Entities(format!("could not assemble {count} entities: {e}")))
+        tracing::debug!(
+            entity_count = count,
+            principal = %request.principal,
+            action = %request.action,
+            resource = %request.resource,
+            "hydrated entity store for request"
+        );
+        Entities::from_entities(selected, None).map_err(|e| {
+            tracing::warn!(
+                entity_count = count,
+                error = %e,
+                "hydrated entities do not form a valid store (duplicate uid, or a membership cycle)"
+            );
+            PolicyError::Entities(format!("could not assemble {count} entities: {e}"))
+        })
     }
 }
 

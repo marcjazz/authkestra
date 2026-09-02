@@ -104,7 +104,10 @@ Cedar is **deny by default** and **forbid overrides permit**: a request is allow
 - `decision.is_allowed()` — the answer.
 - `decision.reasons()` — the ids of the policies that decided it. Empty on a deny means *no rule
   allowed it* (the default deny); non-empty means a `forbid` matched. Name your rules with
-  `@id("...")` so these stay stable when you reorder a policy file.
+  `@id("...")` so these stay stable when you reorder a policy file. A policy without one keeps
+  Cedar's positional id (`policy2` for the third policy in the file), and because those are handed
+  out by position, `@id("policy0")` and anything else of the form `policy<digits>` is rejected at
+  load time — it would name the wrong rule. `policy-admin-override` and the like are fine.
 - `decision.errors()` — policies that failed to evaluate (a missing attribute, a type error).
   Cedar skips those and carries on, so a non-empty list means the decision was made on only part
   of your rule set. They are logged at `warn`.

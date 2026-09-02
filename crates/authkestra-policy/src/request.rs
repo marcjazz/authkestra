@@ -140,7 +140,7 @@ impl AuthorizationRequestBuilder {
 /// The outcome of evaluating one [`AuthorizationRequest`].
 ///
 /// The diagnostics are carried as `String`s rather than `cedar_policy::PolicyId` /
-/// `AuthorizationError` for the same API-stability reason described in [`crate::error`], and
+/// `AuthorizationError` for the same API-stability reason described on [`PolicyError`], and
 /// because both are headed for a log line or an audit record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
