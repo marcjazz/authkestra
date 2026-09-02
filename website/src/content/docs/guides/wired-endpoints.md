@@ -13,13 +13,13 @@ If you are using a stateful session store, the easiest way to get started is by 
 
 The auto-wired router generates three standard endpoints, all resolving the provider at runtime:
 
-#### 1. `GET /auth/login/{provider_id}`
+#### 1. `GET /auth/login/{provider}`
 This endpoint **initiates the OAuth2/OIDC flow**. 
 - It constructs the authorization URL using the provider's configuration.
 - It generates a cryptographically secure `state` and `nonce`, storing them in an encrypted, HTTP-only cookie.
 - Finally, it returns an HTTP 302 Redirect to send the user to the provider (e.g., Google or GitHub).
 
-#### 2. `GET /auth/callback/{provider_id}`
+#### 2. `GET /auth/callback/{provider}`
 This endpoint **handles the provider's redirect callback**.
 - It verifies that the `state` parameter matches the one in the secure cookie (preventing CSRF attacks).
 - It exchanges the authorization code for an Access Token (and optionally an ID Token).
@@ -45,6 +45,6 @@ If you need absolute control over the HTTP response (e.g. to append headers, wri
 
 ## Multiple Providers
 
-Authkestra's routing is deeply dynamic. The `{provider_id}` path parameter is resolved at runtime against the providers registered in the engine. 
+Authkestra's routing is deeply dynamic. The `{provider}` path parameter is resolved at runtime against the providers registered in the engine. 
 
 If you register multiple providers (e.g., `.provider(OAuth2Flow::new(github)).provider(OAuth2Flow::new(google))`), the same routes handle *both* providers dynamically based on whether you call `/auth/login/github` or `/auth/login/google`. Each provider's `provider_id()` is what the path segment is matched against.
