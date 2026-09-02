@@ -9,7 +9,7 @@ We provide first-class integration layers for:
 - **Axum** (`authkestra-axum`)
 - **Actix Web** (`authkestra-actix`)
 
-These are not just loose helpers, but robust, native-feeling extensions providing middleware, extractors, and routing guards. They map standard `AuthContext` requests into the framework's native HTTP response types.
+These are not just loose helpers, but robust, native-feeling extensions providing middleware, extractors, and routing guards. Each maps the engine's framework-neutral results — an `Identity`, a `Session`, a `Claims` — into the framework's own request and response types, via extractors (`AuthSession`, `AuthToken`, `Auth<I>`, `Jwt<T>`) and pre-wired routers (`axum_router()` / `actix_scope()`).
 
 ### Supported Session Providers
 
@@ -21,7 +21,7 @@ All three live in `authkestra-engine`'s `store` module, behind features on that 
 
 ## Database Adapters
 
-For session storage and user data, adapters rely strictly on traits (`SessionStore`, etc), ensuring developers can plug their existing databases directly into Authkestra via feature-flagged implementations or custom code.
+For session and protocol state, adapters rely strictly on traits (`SessionStore`, `KvStore`, `CredentialStore`), so you can plug an existing database straight in via a feature-flagged implementation or your own. User and account records are **not** among them — see Chapter 2.
 
 ## Device-Bound Signature Authentication (`authkestra-devsig`)
 
@@ -128,4 +128,4 @@ self-contained, runnable walkthrough of enrolment and re-issuance end to end
 ### Architectural Decisions & Future Direction
 
 - **Extractors vs Middleware:** In Axum and Actix, both serve different purposes and we must provide both. Custom extractors (`async fn handler(user: Identity)`) provide the best developer experience (DX) for route-specific logic. Middleware is better suited for global URL protection rules.
-- **Database Schema:** Enforcing a specific database schema is a fatal mistake that alienates 90% of developers who have existing databases. We must provide traits (e.g., `UserStore`), allowing developers to map their existing tables to our interfaces instead of forcing migrations.
+- **Database Schema:** Enforcing a specific database schema is a fatal mistake that alienates 90% of developers who have existing databases. So persistence is expressed as traits (`KvStore`/`SessionStore`, `CredentialStore`, `authkestra-op`'s `OpStore`) that you map onto your existing tables, rather than migrations we impose. Note this stops short of user data: there is no `UserStore` trait, because Authkestra does not own the `users` table at all — see Chapter 2, "The Identity Handoff".

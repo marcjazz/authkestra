@@ -14,19 +14,14 @@ Our testing philosophy is built on three pillars:
 
 The `authkestra-engine` crate is tested using standard Rust unit tests. We focus on:
 
-- **Policy Evaluation**: Ensuring that complex authorization rules evaluate correctly under various user contexts.
 - **Cryptographic Operations**: Verifying token generation, signature validation, and hashing algorithms function correctly.
 - **State Machine Transitions**: Testing the logical steps of authentication flows (e.g., ensuring an authorization code can only be exchanged once).
+- **Protocol conformance**: `crates/authkestra-engine/tests/` holds standalone suites for the
+  OAuth2, device, and client-credentials (including `private_key_jwt`) flows.
 
-```rust
-// Example: Testing an authorization policy
-#[test]
-fn test_admin_policy_grants_access() {
-    let policy = AdminOnlyPolicy::new();
-    let admin_user = UserContext::new().with_role("admin");
-    assert!(policy.evaluate(&admin_user).is_granted());
-}
-```
+Authorization *policy* evaluation is deliberately absent from this list: there is no policy engine
+to test (see Chapter 5). What exists is the `Guard` + `AuthenticationStrategy` chain, tested in
+`authkestra-resource`.
 
 ## Mocking External Providers with Wiremock
 
@@ -42,7 +37,16 @@ Authkestra integrates with numerous external OAuth/OIDC providers (GitHub, Googl
 Integration tests ensure that the various components of Authkestra (Core, Adapters, Framework Integrations) work together correctly.
 
 - **Database Adapters**: We use `testcontainers` to run tests against real database instances (Postgres, MySQL and Redis spun up via Docker) to verify schema migrations, queries, and data persistence. `docker-compose.yml` at the repository root provides the same services for local runs.
-- **Framework Integration (Axum/Actix)**: We use the testing utilities provided by the respective web frameworks (e.g., `axum::test_helpers` or `reqwest` against a local test server) to simulate full HTTP request lifecycles. This tests route mounting, middleware execution, and cookie handling.
+- **Framework Integration (Axum/Actix)**: Each adapter carries its own integration suite that drives the built `Engine` through the framework's own test harness — `tower::ServiceExt::oneshot` for Axum, `actix_web::test` for Actix — so route mounting, middleware, extractors and cookie handling are all exercised over real HTTP request/response types. They live at:
+  - `crates/authkestra-axum/tests/engine_session_integration.rs` and `engine_token_integration.rs`
+  - `crates/authkestra-actix/tests/engine_session_integration.rs`, `engine_token_integration.rs` and `auth_extensions_integration.rs`
+  - `crates/authkestra-{axum,actix}/tests/devsig_test.rs` for device-bound signatures
+
+  Between them they cover the full login → callback → session → logout round trip, `AuthSession` /
+  `AuthToken` extraction, and the CSRF-state, missing-cookie and provider-failure rejection paths.
+- **Examples as tests**: `crates/authkestra/tests/examples_e2e.rs` spawns each OAuth example binary
+  against a `wiremock` stand-in for the upstream provider and asserts the login redirect, so an
+  example that stops wiring together fails CI rather than rotting silently.
 
 ## Continuous Integration (CI)
 
@@ -53,8 +57,8 @@ on stable Rust:
 - **`cargo clippy --workspace --all-features -- -D warnings`**: idiomatic Rust practices, warnings
   treated as errors.
 - **`cargo fmt --all -- --check`**: strict code formatting.
-- **Coverage**: `cargo llvm-cov --workspace --all-features --fail-under-lines 78` — the build
-  fails below the line-coverage threshold.
+- **Coverage**: `cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 84`
+  — the build fails below the line-coverage threshold.
 - **Dependency policy**: `cargo-deny` enforces the licence, advisory and source rules in
   `deny.toml`.
 

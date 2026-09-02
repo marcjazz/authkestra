@@ -16,7 +16,7 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 # Use the facade with the features you need
-authkestra = { version = "0.6", features = ["axum", "github"] }
+authkestra = { version = "0.7", features = ["axum", "github"] }
 ```
 
 For advanced users, individual crates are still available and can be used independently if preferred.
@@ -38,7 +38,7 @@ provider yourself:
 
 ```toml
 [dependencies]
-authkestra = { version = "0.6", default-features = false, features = ["axum", "github", "rustls-no-provider"] }
+authkestra = { version = "0.7", default-features = false, features = ["axum", "github", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 ```
 
@@ -60,7 +60,7 @@ check with `cargo tree -i aws-lc-rs -e features`.
 - **Modular & Unified Core**: Following our RFC-001 architecture, core concerns are unified in `authkestra-engine` while adapters like `authkestra-axum` and `authkestra-actix` provide seamless framework integrations.
 - **Stateless OAuth**: OAuth `state` and `nonce` are stored securely in encrypted cookies—never in your database—keeping your architecture clean and horizontally scalable.
 - **Performant OIDC Discovery**: OIDC discovery documents are cached via background `tokio::spawn` tasks, completely eliminating per-request latency for fetching keys.
-- **Database Agnostic**: Authkestra never enforces schemas. All data access is strictly defined via traits (e.g., `UserStore`, `SessionStore`), allowing you to use any database or ORM.
+- **Database Agnostic**: Authkestra never enforces schemas. All data access is strictly defined via traits (`KvStore`, `SessionStore`, `CredentialStore`, and `authkestra-op`'s `OpStore`), allowing you to use any database or ORM. There is deliberately no user/account table and no `UserStore` trait — your application owns that data (see `docs/book/ch02-core-engine-and-identity.md`).
 - **Flexible Chaining**: Chain multiple authentication strategies (Token, Session, Basic, Custom) seamlessly.
 - **OpenID Connect Provider (OP)**: Build your own identity provider and authorization server using `authkestra-op`.
 - **Session Management**: Built-in support for in-memory, Redis, and SQL via `sqlx`.
@@ -125,14 +125,24 @@ own module docs list the environment variables it needs.
 | Axum OP server with device attestation | `cargo run -p authkestra --example axum_op_server_attestation --features full` |
 | Axum MFA server (TOTP + WebAuthn) | `cargo run -p authkestra --example axum_mfa_server --all-features` |
 | Axum device-bound signatures | `cargo run -p authkestra --example axum_devsig --all-features` |
+| Axum data-layer macros (`KvStore` derive) | `cargo run -p authkestra --example axum_data_layer_macros --all-features` |
+| Axum OP server with a custom grant | `cargo run -p authkestra --example axum_op_server_custom_grant --all-features` |
+| Axum resource server with chained strategies | `cargo run -p authkestra --example axum_resource_server_strategy --all-features` |
 
-The Actix counterparts follow the same naming (`actix_oauth2_github`, `actix_op_server`,
-`actix_devsig`, …). Three protocol-level examples live in `authkestra-engine` instead, because
-they need no web framework at all:
+Most of these have an Actix counterpart under the same name with the `actix_` prefix —
+`actix_basic_setup`, `actix_oauth2_github`, `actix_oidc_google`, `actix_oauth_stateless`,
+`actix_op_server`, `actix_op_server_sqlx`, `actix_op_server_custom_grant`,
+`actix_op_server_attestation`, `actix_resource_server_strategy`, `actix_devsig`. Five scenarios
+are Axum-only today and have **no** Actix twin: `axum_mfa_server`, `axum_session_redis`,
+`axum_sql_store`, `axum_data_layer_macros`, and `axum_resource_server`.
+
+Four protocol-level examples live in `authkestra-engine` instead, because they need no web
+framework at all:
 
 - [Client Credentials Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/client_credentials.rs): `cargo run -p authkestra-engine --example client_credentials`
 - [Device Flow](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/device_flow.rs): `cargo run -p authkestra-engine --example device_flow`
 - [SD-JWT (Selective Disclosure)](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/sd_jwt.rs): `cargo run -p authkestra-engine --example sd_jwt`
+- [TOTP enrolment and verification](https://github.com/marcjazz/authkestra/blob/main/crates/authkestra-engine/examples/totp_webauthn.rs) (named `totp_webauthn`, but it exercises the TOTP path only): `cargo run -p authkestra-engine --example totp_webauthn --features totp,sql-sqlite`
 
 ## 🏗️ Technical Design Principles
 

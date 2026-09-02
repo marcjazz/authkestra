@@ -1,28 +1,43 @@
 # Chapter 9: Security & Threat Model
 
-Authkestra is designed to resist the security challenges of the next decade, including the threat of quantum computing and the limitations of point-in-time authentication.
+Authkestra is designed to resist the security challenges of the next decade, including the threat
+of quantum computing and the limitations of point-in-time authentication.
 
-## 1. Quantum Resilience (PQC)
-We are transitioning our cryptographic foundation to **Post-Quantum Cryptography** to mitigate "harvest now, decrypt later" attacks.
-- **ML-DSA (FIPS 204)**: Our primary signature algorithm for tokens and internal credentials.
-- **SLH-DSA (FIPS 205)**: Used as a stateless, hash-based backup for high-security environments.
+Sections 4 and 5 describe properties of the code as it ships today. Sections 1, 2 and 3 are
+RFC-002 roadmap targets and are marked as such — treat them as intent, never as guarantees you can
+rely on in a deployment.
 
-## 2. Continuous Session Security (CAEP)
-Legacy bearer tokens are a significant vulnerability. Authkestra mitigates this by shifting to **Continuous Access Evaluation**.
-- **SSF Event Stream**: We integrate with the Shared Signals Framework to receive real-time risk telemetry.
-- **Immediate Invalidation**: Sessions can be killed globally in milliseconds if an account compromise or device posture change is detected.
+## 1. Quantum Resilience (PQC) *(planned — not implemented)*
+> **No post-quantum algorithm is implemented anywhere in the workspace.** Tokens are signed with
+> the classical `jsonwebtoken` algorithm set (RSA, ECDSA, EdDSA). A deployment today has no
+> "harvest now, decrypt later" protection beyond what those give.
 
-## 3. Privacy-Preserving Identity
-To prevent user tracking and correlation between services:
-- **BBS+ Signatures**: Allow for zero-knowledge proofs of identity attributes.
-- **Unlinkability**: Every presentation of a credential is cryptographically unique, ensuring Identity Providers and Relying Parties cannot collude to track user behavior.
+The intended direction: **ML-DSA (FIPS 204)** as the primary signature algorithm, with
+**SLH-DSA (FIPS 205)** as a stateless hash-based backup for high-security environments.
 
-## 4. Modern Hardened Defaults
-- **PKCE Mandatory**: No OAuth flows without Proof Key for Code Exchange.
-- **Exact Redirect Matching**: Preventing open redirector vulnerabilities.
-- **Sender-Constrained Tokens**: Using DPoP to bind tokens to the client's cryptographic key.
+## 2. Continuous Session Security (CAEP) *(planned — not implemented)*
+> **There is no SSF/CAEP receiver or transmitter.** Session invalidation today is whatever your
+> `SessionStore` supports: `delete_session` on a known session id, plus the store's own TTL. There
+> is no global kill-switch and no risk-telemetry ingestion.
 
-## 5. SD-JWT: Fail-Closed Disclosure Verification
+The intended direction: consume Shared Signals Framework events so that a compromised account or a
+device posture change attenuates or revokes sessions in near real time.
+
+## 3. Privacy-Preserving Identity *(partially shipped)*
+- **SD-JWT selective disclosure** *(shipped)*: the holder chooses, per verifier, which claims to
+  reveal — see section 5 for exactly what is and is not covered.
+- **BBS+ signatures / unlinkability** *(planned — not implemented)*: there is no BBS+ code in the
+  workspace. Two SD-JWT presentations of the same token carry the same issuer signature, so they
+  **are** correlatable by a colluding verifier. Do not rely on unlinkability today.
+
+## 4. Modern Hardened Defaults *(shipped)*
+- **PKCE on by default**: `OAuth2Flow` enables PKCE unless explicitly disabled.
+- **Exact Redirect Matching**: `authkestra-op` matches a client's registered `redirect_uris` exactly — no prefix or wildcard matching — and refuses to redirect at all when the check fails, preventing open redirectors.
+- **Sender-Constrained Tokens**: DPoP (RFC 9449) and mutual-TLS (RFC 8705) binding, both fail-closed
+  when their replay/binding stores are not wired — see Chapter 4 §1.
+- **Stateless OAuth state/nonce**: carried in encrypted cookies, never in the database.
+
+## 5. SD-JWT: Fail-Closed Disclosure Verification *(shipped)*
 `authkestra-engine`'s SD-JWT support (`token::sd_jwt`) is deliberately fail-closed rather than lenient, on four specific points:
 - **`_sd_alg` is never silently defaulted.** An absent `_sd_alg` defaults to `sha-256` per spec, but a *present-and-different* value is rejected outright rather than coerced — an unrecognized digest algorithm being treated as "must mean sha-256" is exactly the kind of algorithm-confusion bug that lets an attacker steer a verifier onto a weaker hash while it still believes it's checking sha-256.
 - **An unmatched Disclosure digest fails the whole verification**, not just that one claim. A Disclosure whose digest isn't in the signed `_sd[]` is a claim the issuer never vouched for; accepting it would let a holder (or a network attacker appending to the compact form) inject arbitrary claims.

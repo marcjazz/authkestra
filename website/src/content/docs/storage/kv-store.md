@@ -13,9 +13,9 @@ as features of its own, so depend on the engine directly for these:
 
 ```toml
 [dependencies]
-authkestra = { version = "0.6", features = ["axum", "session"] }
+authkestra = { version = "0.7", features = ["axum", "session"] }
 # Example: Using Redis and SQLite KV stores
-authkestra-engine = { version = "0.6", features = ["session", "redis", "sql-sqlite"] }
+authkestra-engine = { version = "0.7", features = ["session", "redis", "sql-sqlite"] }
 ```
 
 ### 1. Memory Store (`memory`)

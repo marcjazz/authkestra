@@ -1,5 +1,9 @@
 # Chapter 7: Admin API and AI Layer
 
+> **Status: design document — none of this is implemented.** There is no `authkestra-admin` crate,
+> no Admin API router, no declarative YAML/JSON configuration loader, and no telemetry or risk
+> scoring pipeline. This chapter is roadmap Phase 4.
+
 A modern identity solution often requires administrative oversight and intelligent monitoring. Authkestra's vision extends into AI-driven generation and declarative configuration, distinguishing it from legacy monolithic systems.
 
 ## The Admin API

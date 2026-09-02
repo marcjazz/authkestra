@@ -1,5 +1,10 @@
 # Chapter 1: Vision and Architecture
 
+> **Status: design document, not a description of shipped code.** This chapter describes the
+> direction set by [RFC-002](../rfc-002-next-gen-identity.md). Where it is silent about
+> availability, assume the feature is **not implemented**. For what actually exists today, see
+> [`docs/roadmap.md`](../roadmap.md) and `cargo doc -p authkestra-engine --open`.
+
 Welcome to the Authkestra internals guide! This book provides the definitive roadmap for Authkestra's transition into a next-generation identity ecosystem.
 
 ## The Vision: Beyond Traditional Auth

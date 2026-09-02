@@ -1,5 +1,11 @@
 # Chapter 5: Authorization and Policies
 
+> **Status: design document — none of this is implemented.** There is no `PolicyEngine` trait, no
+> ReBAC/Zanzibar tuple store, no Cedar integration, and no SSF/CAEP receiver anywhere in the
+> workspace. Authorization today means the `Guard` + `AuthenticationStrategy` chain in
+> `authkestra-resource` (see Chapter 6 and the Resource Server guide), plus whatever your own code
+> does with the claims it returns. This chapter is roadmap Phase 3.
+
 Authentication answers "Who are you?". Authorization answers "What are you allowed to do?". In Authkestra, we decouple this logic entirely from your application using **Policy-as-Code**.
 
 ## 1. Relationship-Based Access Control (ReBAC)
