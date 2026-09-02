@@ -85,14 +85,38 @@ An OAuth 2.0 authorization code is a one-shot bearer string. A GNAP grant
 request is a server-side object with an explicit state machine (§1.5):
 
 ```
-                 need interaction        continue
-  ---request---> processing -----------> pending -----.
-                    |  ^                   |  ^-------'
-                    |  '---- finish -------'  |
-   no interaction   |                         | cancel
-                    v                         v
-                 approved --------------> finalized
+                                                   .-----.
+                                                  |       |
+                                           +------+--+    | continue
+                  .---need interaction---->|         |    |
+                 /                         | pending |<--'
+                /   .--finish interaction--+         |
+               /   /    (approve/deny)     +----+----+
+              /   /                             |
+             /   /                              | cancel
+            /   v                               v
+         +-+----------+                   +===========+
+         |            |                   |           |
+---req-->| processing +------finalize---->| finalized |
+         |            |                   |           |
+         +-+----------+                   +===========+
+            \    ^                              ^
+             \    \                             | revoke or
+              \    \                            | finalize
+               \    \                     +-----+----+
+                \    '-----update---------+          |
+                 \                        | approved |<--.
+                  '----no interaction---->|          |    |
+                                          +-------+--+    | continue
+                                                  |       |
+                                                   '-----'
 ```
+
+(Redrawn from RFC 9635 §1.5, Figure 2. Note the two `continue` self-loops —
+polling or continuing a grant leaves it in the same state — the direct
+_processing_ → _finalized_ edge taken on timeout or unrecoverable error, and
+that _approved_ → _finalized_ happens on either revocation or normal
+finalisation.)
 
 The AS hands the client a `continue` object (§3.1) containing a `uri`, an
 optional `wait` (seconds; absent means five, and SHOULD NOT be below five),
@@ -199,7 +223,7 @@ Implementors in the entire workspace:
 | Implementor | Location | Notes |
 | --- | --- | --- |
 | `OAuth2Flow<P, M>` | `crates/authkestra-engine/src/flow/oauth2.rs:17-46` | The callback branch is a stub that returns `AuthError::Token("Direct Flow execution not updated for encrypted state")` (`oauth2.rs:29-31`) |
-| `MockFlow` | `crates/authkestra-engine/src/tests.rs:41-52` | Test double |
+| `MockFlow` | `crates/authkestra-engine/src/tests.rs:41-54` | Test double |
 
 `DeviceFlow` (`crates/authkestra-engine/src/flow/device_flow.rs:32`) and
 `ClientCredentialsFlow`
@@ -313,6 +337,19 @@ pub trait GnapAuthorizationServer: Send + Sync {
 **Breaking for existing implementors: no.** Nothing about `Flow`,
 `FlowContext`, `FlowResult`, `OAuth2Flow`, `DeviceFlow`,
 `ClientCredentialsFlow`, `Engine`, or the adapters changes.
+
+**New dependency required.** `ProofContext` above names `http::Method`,
+`http::Uri` and `http::HeaderMap`, and `authkestra-op` has **no direct
+`http` dependency** today — it only sees the crate transitively. Route A
+therefore adds `http = "1"` to `crates/authkestra-op/Cargo.toml`, matching
+the pin `authkestra-engine` already uses. This is additive and breaks no
+implementor, but it is a new direct dependency and so needs a
+`cargo deny check` pass (AGENTS.md, Pull Request Checks). Route B does not
+incur it: `RequestParts` lives in `authkestra-engine`, which already
+depends on `http = "1"`. The alternative — borrowing `&str` and
+`&[(&str, &str)]` instead of the `http` types — avoids the dependency at
+the cost of re-deriving values the adapters already hold parsed, and is
+not recommended.
 
 Cost: GNAP and OAuth2 do not share an abstraction, so a future "run any
 protocol through one pipeline" story (middleware, tracing, rate limiting)
@@ -459,6 +496,17 @@ RFC deliberately does not implement.
 
 ### 6.1. Placement and feature name
 
+**This plan is written in Route A's shape (§5) as a non-blocking default —
+not as an answer to Q1.** Route A is picked for the prototype solely
+because it is the non-breaking option: it adds new types in
+`authkestra-op` and touches nothing that already exists, so building it
+commits the project to nothing. If the maintainer later chooses Route B,
+the same `GrantOperation` / `GrantResponse` / `GnapGrantStore` types are
+layered *under* a `Flow` implementation rather than rewritten — the GNAP
+protocol logic is identical either way, and only the trait it is reached
+through differs. **Q1 remains the maintainer's call** (§8). Stages G0–G5
+below are unaffected by the answer; only **G6** depends on it.
+
 - **Crate**: `authkestra-op`, new module `src/gnap/`. Rationale: `Op` is
   already "Authkestra as an authorization server", already owns
   `ClientStore`/`DeviceCodeStore`/`OpStore`, and already has both adapters
@@ -513,7 +561,17 @@ permits (`manage` is OPTIONAL).
   Appendix B.3: `POST /gnap` with `client.key`, no `interact`, straight to
   _approved_, single access token issued via the existing `TokenManager`.
   This is the smallest end-to-end path and exercises G1–G6 of §4.2 without
-  any interaction machinery.
+  any interaction machinery. It is also the first stage with something
+  runnable to show, so it carries the **facade example** required by
+  AGENTS.md ("Examples Live in the Facade"): `axum_gnap_grant.rs` in
+  `crates/authkestra/examples/`, declared with
+  `required-features = ["gnap"]` and run as
+  `cargo run -p authkestra --example axum_gnap_grant --all-features`,
+  mirroring the existing `axum_op_server.rs`. One example is the budget —
+  RFC-003 §9 spent the same on the entire OP — and an
+  `actix_gnap_grant.rs` counterpart is deferred until the feature
+  stabilises. The actix *routes* are still wired in the same PR, per the
+  AGENTS.md Framework Wiring DoD; it is only the example that waits.
 - **G3 — `user_code` interaction + polling.** Reuses the existing device
   flow verification handler and `DeviceCodeStore` shape
   (`crates/authkestra-op/src/handlers/device_verify.rs`). Covers §2.5.1.3,
@@ -530,12 +588,21 @@ permits (`manage` is OPTIONAL).
 
 Stubbing these is what keeps the prototype small enough to be honest:
 
-- **Key proofing (§7.3).** Implement `jwsd` only — it is closest to the
-  DPoP verification the workspace already has
-  (`crates/authkestra-engine/src/token/dpop.rs`). Reject `httpsig`,
-  `mtls`, and `jws` with `invalid_request` and advertise only `jwsd` in
-  the §9 discovery document. `httpsig` needs an RFC 9421 implementation
-  that does not exist here yet (§3.5) and should be its own ticket.
+- **Key proofing (§7.3).** *Recommended* prototype stub, **pending the
+  maintainer's answer to Q5** (§8): implement `jwsd` only, reject
+  `httpsig`, `mtls` and `jws` with `invalid_request`, and advertise only
+  `jwsd` in the §9 discovery document. The recommendation rests purely on
+  proximity to code that already exists — `jwsd` is closest to the DPoP
+  verification in `crates/authkestra-engine/src/token/dpop.rs`, whereas
+  `httpsig` needs an RFC 9421 implementation that is nowhere in this
+  workspace (§3.5). **Shipping `jwsd` first does not answer the strategic
+  question.** GNAP's own examples and interop profiles centre on
+  `httpsig`, and if the maintainer decides `httpsig` is what Authkestra
+  should lead with, `jwsd` becomes throwaway scaffolding and this stub
+  should be revisited before G2 rather than after. Because the §9
+  discovery document advertises only what is actually verifiable, swapping
+  the method later is a contained code change; committing to it in a
+  release note or public documentation is not.
 - **Token management API (§6).** Omit `manage` entirely.
 - **Request modification (§5.3, `PATCH`).** Return `invalid_continuation`.
 - **Subject information (§2.2 / §3.4).** Support only
