@@ -13,7 +13,7 @@ There is nothing to implement yet, and the blocker sits one layer below `webauth
 
 1. The COSE code points exist and are stable (`ML-DSA-44 = -48`, `-49`, `-50`, RFC 9964).
 2. But **WebAuthn itself does not use them**. WebAuthn Level 3 reached W3C Recommendation on 2026-08-25 with no post-quantum content; the only WebAuthn/ML-DSA binding is an *individual* IETF draft with no working group behind it; FIDO has a PQC *study group* rather than a CTAP profile.
-3. `webauthn-rs` has no ML-DSA support, no PQC issue, no PQC branch, and — critically — **no extension point**: `COSEAlgorithm` is a closed `#[repr(i32)]` enum and `COSEKeyTypeId` has no `AKP` variant, so an ML-DSA credential is rejected during CBOR parsing at *registration*, long before any signature-verification hook could be reached.
+3. `webauthn-rs` has no ML-DSA support, no PQC issue, no PQC branch, and — critically — **no extension point**: `COSEAlgorithm` is a closed `#[repr(i32)]` enum and `COSEKeyTypeId` has no `AKP` variant, so an ML-DSA credential is rejected during CBOR parsing at *registration*, long before any signature-verification hook could be reached. Verifying ML-DSA outside `webauthn-rs` is therefore **possible, but only by duplicating most of its registration pipeline** — which makes it the highest-risk option rather than the pragmatic middle one; see [§5](#5-recommendation).
 4. Rust ML-DSA crates are license-clean and healthy, but all of them are unaudited — and that is the smallest of the four problems.
 5. The "fragmented CTAP-HID payloads" item in #275 is an authenticator↔client transport concern. Authkestra is a server-side library that never sees a CTAP-HID frame. It is **out of scope**.
 
@@ -42,7 +42,8 @@ MPL-2.0 is on this repo's `deny.toml` allow-list, so a fork would not fail `carg
 ### 1.2 Search for PQC work upstream
 
 - GitHub issue/PR search across `repo:kanidm/webauthn-rs` for `ML-DSA OR Dilithium OR post-quantum OR PQC`: **1 hit**, a false positive — [PR #581 "Credential ID Length Limited to 4096 Bytes"](https://github.com/kanidm/webauthn-rs/pull/581) (merged 2026-08-19), which caps *credential IDs*, not public keys or signatures. Incidentally that cap would not block ML-DSA: public keys are 1312–2592 bytes and signatures 2420–4627 bytes, and neither travels in the credential ID.
-- The same search across all of `org:kanidm`: 5 hits, all Dependabot "Bump the all group" PRs.
+- The same search across all of `org:kanidm`: **7 hits, none of them PQC work on WebAuthn** — PR #581 again, 5 Dependabot "Bump the all group" PRs, and [kanidm/kanidm#4091](https://github.com/kanidm/kanidm/issues/4091), a human-authored Kerberos ticket-authentication design issue that matches only on a passing "post-quantum" mention and has nothing to do with `webauthn-rs`.
+  <br>*(Correction: an earlier revision of this document reported 5 hits, all Dependabot. That query carried an `in:title,body` qualifier which narrowed the result; the unqualified search returns 7. The conclusion is unchanged, but the count and characterisation were wrong.)*
 - Branches on `kanidm/webauthn-rs`: `master`, `4.8-release`, `4.9-release`, `6.0-dev-drop-openssl`, `219-add-hybrid-transport`, `20250829-drop-openssl-redux`. None is PQC work. (`219-add-hybrid-transport` is caBLE/hybrid *transport*, unrelated to post-quantum "hybrid" signatures — an easy false lead.)
 
 **Conclusion: no roadmap, no branch, no issue, no discussion. Upstream is not working on this and nobody has asked them to.**
@@ -80,7 +81,7 @@ RFC 9964 puts ML-DSA keys under a **new** COSE key type, `AKP` (Algorithm Key Pa
 `webauthn-rs-core/src/crypto.rs` (0.5.5): `COSEKey::try_from` reads the CBOR map, does
 `COSEAlgorithm::try_from(content_type).map_err(|_| WebauthnError::COSEKeyInvalidAlgorithm)?`, then matches on `(key_type, type_)` pairs. Verification is `pkey_verify_signature`, a private free function with a hard-coded `match` over `ES256 / RS256 / EDDSA / INSECURE_RS1` dispatching to `openssl::sign::Verifier`, with a catch-all arm returning `WebauthnError::COSEKeyInvalidType`.
 
-**The decisive consequence:** an ML-DSA credential is rejected inside `finish_passkey_registration`, at CBOR key parsing. It can never be stored, so an assertion-time hook would never be reached. Any "intercept the verification step for ML-DSA credentials" design is therefore unavailable — there is no credential object to intercept for.
+**The decisive consequence:** an ML-DSA credential is rejected inside `finish_passkey_registration`, at CBOR key parsing. It can never become a stored `Passkey`, so no assertion-time hook would ever be reached for one. This does not make independent verification *impossible* — it makes it expensive: because the rejection happens at registration rather than at verification, there is no seam to hook, and covering ML-DSA outside `webauthn-rs` means **duplicating most of its registration pipeline** rather than substituting a single verification step. That cost, not impossibility, is what rules the option out; see [§5](#5-recommendation).
 
 ### 1.4 Extension points that do and do not exist
 
@@ -120,7 +121,7 @@ Sizes (RFC 9964; the private seed is always 32 bytes):
 
 This is the only part of the stack that is genuinely ready.
 
-> Side observation, flagged as not fully run down: the IANA registry currently shows `ES256` and `EdDSA` with Recommended = **Deprecated**, referencing RFC 9864 (fully-specified algorithms). If that reading is correct it is a separate, larger and much more actionable piece of crypto-agility work than ML-DSA — but it should be confirmed against RFC 9864 directly before anyone acts on it. Out of scope for #275.
+> Side observation, **since confirmed against RFC 9864 by an independent review of this document**: the IANA registry shows `ES256` and `EdDSA` with Recommended = **Deprecated**, because RFC 9864 (fully-specified algorithms) defines fully-specified replacements and marks the polymorphic originals Deprecated. This matters because `webauthn-rs`'s default `secure_algs()` is exactly `[ES256, RS256]`. It is a separate, larger and considerably more actionable piece of crypto-agility work than ML-DSA — but it is **out of scope for #275**, and whether to open an issue for it is a maintainer decision (§6.8), not an action this spike takes.
 
 ### 2.2 WebAuthn / CTAP / FIDO — not ready
 
@@ -159,7 +160,7 @@ If a choice ever has to be made, **`ml-dsa` (RustCrypto) is the one to pick**: p
 
 ## 4. What the engine actually does today
 
-`crates/authkestra-engine/src/auth/webauthn.rs` (197 lines, feature `webauthn`, `webauthn-rs = { version = "0.5.0", features = ["danger-allow-state-serialisation"] }`):
+`crates/authkestra-engine/src/auth/webauthn.rs` (263 lines total — 197 lines of implementation plus tests, which start at the `#[cfg(test)]` on line 199; feature `webauthn`, `webauthn-rs = { version = "0.5.0", features = ["danger-allow-state-serialisation"] }`):
 
 - Uses only the **high-level** `webauthn_rs::prelude` API: `WebauthnBuilder`, `start_passkey_registration`, `finish_passkey_registration`, `start_passkey_authentication`, `finish_passkey_authentication`, plus the `Passkey` / `AuthenticationResult` / `PasskeyRegistration` / `PasskeyAuthentication` types.
 - Never touches `webauthn-rs-core`, `COSEAlgorithm`, `COSEKey`, or any crypto primitive. `Passkey` is opaque: stored as `serde_json::Value` through `CredentialStore` (`crates/authkestra-engine/src/store/sql/credential.rs`), matched by `passkey.cred_id()`, counter-updated via `update_credential(&auth_result)`.
@@ -177,7 +178,7 @@ Two grounded implications:
 
 ### Wait for upstream. Track, do not build.
 
-Concretely: keep #275 open as a tracking issue, strike the CTAP-HID item as out of scope, and re-evaluate on a defined trigger rather than on a schedule.
+Concretely, the technical conclusion is: build nothing now, and re-evaluate on a defined trigger rather than on a schedule. What to do with the *issue* — keep #275 open as a tracker versus close it, and whether to strike the CTAP-HID item — is proposed but not decided here; those are §6.2 and §6.3.
 
 ### Why not the other three options
 
@@ -196,7 +197,7 @@ Concretely: keep #275 open as a tracking issue, strike the CTAP-HID item as out 
 
 ### Staged plan
 
-**Stage 0 — bookkeeping (this PR plus a maintainer pass, ~1 h).** Land this document. Retitle/relabel #275 as a tracking issue (`blocked: upstream`), remove the CTAP-HID checkbox with a link to §2.3, and correct the issue's "pinned at 0.5.0" note to "resolves to 0.5.5; still no ML-DSA".
+**Stage 0 — bookkeeping (this PR plus a maintainer pass, ~1 h).** Land this document. The rest of this stage is **conditional on the maintainer's answers to §6.2 and §6.3 and is not assumed here** — if they decide to keep #275 as a tracker and to drop the out-of-scope item, the mechanical follow-through is: relabel #275 `blocked: upstream`, remove the CTAP-HID checkbox with a link to §2.3, and correct the issue's "pinned at 0.5.0" note to "resolves to 0.5.5; still no ML-DSA". Only the last of those three is a plain factual fix and safe to make either way. If instead the maintainer closes #275, stages 1–4 fall away with it.
 
 **Stage 1 — monitoring (~1 h to set up, ~15 min/quarter).** Record four trip-wires on #275 and check them quarterly:
 
@@ -226,37 +227,30 @@ This spike deliberately stops short of these; each is a judgement call, not a de
 5. **Is upstream contribution (stage 3) something this project wants to spend weeks of maintainer-paced effort on**, versus simply waiting for kanidm?
 6. **Risk appetite for unaudited PQC crypto**, whenever it becomes relevant. `ml-dsa` (RustCrypto) is the recommended crate, but "no independent audit" is a standing acceptance no spike can make on the maintainer's behalf.
 7. **Should the `webauthn-rs` requirement be written as `"0.5.5"` instead of `"0.5.0"`** to match what `Cargo.lock` resolves? Cosmetic and unrelated to PQC — flagged only because the audit surfaced it.
-8. **Follow up on the IANA `ES256`/`EdDSA` "Deprecated" observation (§2.1)?** If real, it is a bigger and more immediate crypto-agility question than ML-DSA, and deserves its own issue.
+8. **Follow up on the IANA `ES256`/`EdDSA` "Deprecated" finding (§2.1)?** Now confirmed against RFC 9864, so the question is no longer whether it is real but whether to act: it is a bigger and more immediate crypto-agility question than ML-DSA, it touches `webauthn-rs`'s default `secure_algs()`, and it arguably deserves its own issue. Opening one is the maintainer's call, not this spike's.
 
 ---
 
 ## 7. Draft comment for #275
 
-> Not posted by this spike. Maintainer to post if they agree with it.
+> Not posted by this spike — the maintainer posts it if they agree.
+>
+> **Keep this section in sync with the document.** It is a summary of §§1–6, and a reviewer should treat any divergence between the two as a defect in this section. It is deliberately short: the doc is the artifact, this is the pointer to it.
 
 ---
 
-Research spike complete — recommendation: **wait for upstream**. Full findings: `docs/research/webauthn-pqc-spike.md`.
+Research spike done — recommendation: **wait for upstream, track rather than build**. Full findings with citations: `docs/research/webauthn-pqc-spike.md`.
 
-Short version: the blocker is a layer below `webauthn-rs`, and the ecosystem isn't there yet.
+The decisive fact is that the blocker sits *below* `webauthn-rs`, not inside it. `COSEAlgorithm` is a closed `#[repr(i32)]` enum, `COSEKeyTypeId` has no `AKP = 7`, and `COSEKey::try_from` rejects an unknown `alg` **during CBOR parsing at registration** — so an ML-DSA credential never becomes a stored `Passkey`. Verifying ML-DSA outside `webauthn-rs` is still possible, but only by duplicating most of its registration pipeline (attested credential data parsing, clientData/origin/challenge checks, RP ID hash, flags, counters, attestation). That makes it the highest-risk option, not the pragmatic middle one. Fork-and-patch fares no better: `master` is mid-rewrite from OpenSSL onto `crypto-glue`, so the patches would need redoing wholesale at 0.6.
 
-**1. The COSE code points are the only settled part.** RFC 9964 registers `ML-DSA-44 = -48`, `ML-DSA-65 = -49`, `ML-DSA-87 = -50` (all "Recommended: Yes" in the IANA registry) under a new COSE key type `AKP = 7`.
+And there is nothing to implement against anyway. RFC 9964 settles the COSE code points (`-48/-49/-50`, new key type `AKP = 7`), but WebAuthn L3 reached W3C Recommendation on 2026-08-25 (date independently confirmed) and — on a full-document search, so read this as "none found" rather than a proof of absence — contains no post-quantum content. The only WebAuthn/ML-DSA binding is an individual IETF draft with no working group; FIDO has a PQC study group but no CTAP profile. No authenticator emits an ML-DSA credential and no browser sends one.
 
-**2. WebAuthn itself has no PQC.** WebAuthn Level 3 reached W3C Recommendation on 2026-08-25 with zero post-quantum content. The only WebAuthn/ML-DSA binding is `draft-vitap-ml-dsa-webauthn-04`, an individual IETF submission with no working group. FIDO has a PQC *study group* and a 2024 white paper, but no CTAP PQC profile. No authenticator produces an ML-DSA credential and no browser sends one — so there is no wire format to implement, and a "mock PQC authenticator" test would only assert our own invention back to us.
+Two corrections to the issue while I'm here:
 
-**3. `webauthn-rs` has no PQC work and no extension point.** Searching the repo (and all of `org:kanidm`) for ML-DSA/Dilithium/post-quantum/PQC returns no genuine hits — no issue, no PR, no branch. More importantly there is nothing to hook: `COSEAlgorithm` is a closed `#[repr(i32)]` enum (not `#[non_exhaustive]`, no catch-all), `COSEKeyTypeId` has no `AKP = 7`, and `COSEKey::try_from` rejects an unknown `alg` with `COSEKeyInvalidAlgorithm` *during CBOR parsing at registration*. So an ML-DSA credential can never be stored, and "intercept verification for ML-DSA credentials" isn't available — there would be no credential to intercept. Verifying independently would mean rebuilding the security-critical half of `webauthn-rs` (attested credential data parsing, clientData/origin/challenge checks, RP ID hash, flags, counters, attestation) for a credential type that doesn't exist. That's the highest-risk option, not the safe middle one.
+- **`"0.5.0"` is a caret range and `Cargo.lock` already resolves to 0.5.5**, the current max stable. Not a staleness problem — 0.5.5 has no ML-DSA either.
+- **The CTAP-HID item looks out of scope.** The ~7.6 KB message ceiling is real (`64 - 7 + 128*(64 - 5)` = 7609 bytes; arithmetic independently confirmed, though sourced from the CTAP 2.0 / U2F HID framing because the CTAP 2.2 spec fetch failed — the scope argument doesn't depend on the exact number). But fragmentation happens between authenticator and client platform; Authkestra receives base64url JSON over HTTPS and has no HID or CTAP code. That work belongs to `fido-hid-rs` / browsers / FIDO.
 
-One useful signal: the `6.0-dev-drop-openssl` branch is rewriting `crypto.rs` from OpenSSL onto `crypto-glue` (RustCrypto). That's where PQC would eventually land — and it means anything built against 0.5.x's OpenSSL internals today gets thrown away.
-
-**4. Rust ML-DSA crates are fine, and that's the smallest problem.** `ml-dsa` (RustCrypto) 0.1.1 is the pick when the time comes: `Apache-2.0 OR MIT` (clean under our `deny.toml`), actively released, runs NIST ACVP vectors in-tree, pure Rust, and the same ecosystem as `crypto-glue`. `fips204` hasn't shipped since Dec 2024; `pqcrypto-mldsa` drags in vendored C. None of them is independently audited.
-
-**5. The CTAP-HID item is out of scope.** CTAP-HID caps a message at `64 - 7 + 128*(64 - 5)` = 7609 bytes, so the size concern is real — but fragmentation happens between the *authenticator and the client platform*. Authkestra receives base64url JSON over HTTPS from the browser and has no HID or CTAP transport code. That work belongs to `fido-hid-rs` / `webauthn-authenticator-rs` / browsers / FIDO, never to this crate. Suggest striking that checkbox rather than leaving an unachievable criterion on the issue.
-
-**Also a correction to the issue body:** `"0.5.0"` is a caret range and `Cargo.lock` already resolves to 0.5.5 (the current max stable). So this isn't a staleness problem — 0.5.5 has no ML-DSA either.
-
-**Proposed plan:** keep this open as a tracking issue labelled `blocked: upstream`; drop the CTAP-HID checkbox; check four trip-wires quarterly (a W3C draft containing ML-DSA / a FIDO CTAP PQC profile / PQC activity in `webauthn-rs` or `crypto-glue` / a shipping authenticator or browser), and act when a spec **and** something real to test against both exist. If forward motion is wanted sooner, the genuinely useful work isn't ML-DSA — it's a thin facade over the ~8 `webauthn-rs` calls in `auth/webauthn.rs` plus a stored-credential type discriminator, which pays for itself on the 0.5→0.6 `webauthn-rs` migration regardless. Explicitly do not add an ML-DSA dependency until there is something to verify.
-
-Decisions left open in the doc: accept "wait" or override it; keep vs close this issue; whether to drop the CTAP-HID checkbox; whether to fund the crypto-agility facade now; whether to invest upstream effort in `kanidm/webauthn-rs`; and risk appetite for unaudited PQC crypto.
+§5 of the doc has a staged plan (quarterly trip-wires; an optional crypto-agility facade that pays for itself on the 0.5→0.6 `webauthn-rs` migration regardless of PQC; upstream contribution only once a spec exists). §6 lists what I've deliberately left to you — including whether to keep this issue open as a tracker or close it, and whether to strike the CTAP-HID checkbox.
 
 ---
 
@@ -286,10 +280,10 @@ Fetched and verified on 2026-09-02:
 
 ### Not verified in this spike
 
-- The **CTAP 2.2 Proposed Standard could not be fetched** (the request failed). The 7609-byte CTAP-HID ceiling and its formula come from the FIDO CTAP 2.0 and U2F HID transport specs, which define the same framing; the claim that CTAP 2.3 shipped without breaking changes versus 2.2 is secondary-source only. The scope argument in §2.3 does not depend on the exact number.
-- The **absence** of PQC terms in WebAuthn L3 rests on a single full-document fetch, not an exhaustive re-read.
+- The **CTAP 2.2 Proposed Standard could not be fetched** (the request failed). The 7609-byte CTAP-HID ceiling and its formula come from the FIDO CTAP 2.0 and U2F HID transport specs, which define the same framing; the **arithmetic was independently confirmed** by a review of this document, but the *provenance* caveat stands — it is not sourced from CTAP 2.2 itself. The claim that CTAP 2.3 shipped without breaking changes versus 2.2 remains secondary-source only. The scope argument in §2.3 does not depend on the exact number.
+- The **absence** of PQC terms in WebAuthn L3 rests on a single full-document fetch, not an exhaustive re-read. The L3 **Recommendation date (2026-08-25) was independently confirmed**; the absence claim was not, and should be read as "none found" rather than proof of absence.
 - `pqcrypto-mldsa`'s **vendored C source licensing** and its `cargo deny` behaviour were not checked — the crate is not recommended, so this was not run down.
 - `aws-lc-rs` ML-DSA availability and its unstable-flag status are **secondary-source only**; the API was not inspected.
-- The IANA `ES256`/`EdDSA` "Deprecated" / RFC 9864 observation in §2.1 was **not confirmed against RFC 9864 itself**.
+- ~~The IANA `ES256`/`EdDSA` "Deprecated" / RFC 9864 observation in §2.1 was not confirmed against RFC 9864 itself.~~ **Resolved:** confirmed against RFC 9864 by an independent review of this document. It remains a maintainer decision (§6.8), not an action.
 - FIDO PQC Study Group details come from FIDO event and speaker pages, not from a published charter.
 - No claim here rests on running `cargo` — this spike changed no code and built nothing.
