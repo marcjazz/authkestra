@@ -273,8 +273,28 @@ fn loopback_match(registered: &str, presented: &str) -> bool {
 /// Deliberately not `Ipv4Addr::is_loopback()`: that accepts all of
 /// `127.0.0.0/8`, and §7.3 enumerates the two addresses rather than the
 /// ranges. `Host::Domain` is always false — that is what keeps `localhost`
-/// out, per §8.3, since resolving it depends on a name service the app does
-/// not control.
+/// out, since resolving it depends on a name service the app does not
+/// control.
+///
+/// Two of the exclusions here are narrower than the RFC and are **meant to
+/// stay that way** — neither is an oversight to be tidied up later:
+///
+/// - **IPv4-mapped IPv6 loopback (`http://[::ffff:127.0.0.1]/cb`) is not
+///   exempt.** `Ipv6Addr::LOCALHOST` is `::1`, so the mapped form compares
+///   unequal and falls through to exact `==`. It is a second spelling of an
+///   address §7.3 already covers in two canonical forms, no OS hands one to
+///   an app that binds `127.0.0.1:0` or `[::1]:0`, and admitting it would
+///   mean either accepting a third literal or normalising mapped to plain
+///   IPv4 — the latter being exactly the kind of pre-comparison rewriting
+///   that redirect-URI matching should not be doing. Add it only with a test
+///   that pins which spellings become equivalent to which.
+/// - **`localhost` is refused outright**, which is stricter than §8.3: the
+///   RFC says NOT RECOMMENDED, not MUST NOT. The stricter line is chosen
+///   because the whole security argument for this exemption is that the host
+///   is unambiguously the user's own machine; `localhost` reaches that host
+///   only via a resolver the app does not control, and it is `Host::Domain`
+///   here, so it can never be told apart from any other name. Relaxing it
+///   would need a fresh argument, not just a citation of §8.3's wording.
 fn is_loopback_ip(host: &Host<&str>) -> bool {
     match host {
         Host::Ipv4(addr) => *addr == Ipv4Addr::LOCALHOST,
@@ -469,7 +489,10 @@ mod tests {
         assert!(registered_localhost.allows_redirect_uri("http://localhost/cb"));
     }
 
-    /// §7.3 names `127.0.0.1`, not `127.0.0.0/8`.
+    /// §7.3 names `127.0.0.1`, not `127.0.0.0/8` — and names it in that one
+    /// spelling, so the IPv4-mapped IPv6 form is out too. Both exclusions are
+    /// deliberate; see `is_loopback_ip` for why, and change this test only
+    /// alongside that reasoning.
     #[test]
     fn other_addresses_in_127_slash_8_never_qualify() {
         let client = client_with_redirect_uris(&["http://127.0.0.2/cb"]);
@@ -477,6 +500,14 @@ mod tests {
 
         let client = client_with_redirect_uris(&["http://127.0.0.1/cb"]);
         assert!(!client.allows_redirect_uri("http://127.0.0.2:54321/cb"));
+
+        // IPv4-mapped IPv6 loopback: not `::1`, so no exemption in either
+        // position. Exact `==` still works, as for any other URI.
+        assert!(!client.allows_redirect_uri("http://[::ffff:127.0.0.1]:54321/cb"));
+        let client = client_with_redirect_uris(&["http://[::ffff:127.0.0.1]/cb"]);
+        assert!(!client.allows_redirect_uri("http://[::ffff:127.0.0.1]:54321/cb"));
+        assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/cb"));
+        assert!(client.allows_redirect_uri("http://[::ffff:127.0.0.1]/cb"));
     }
 
     #[test]
