@@ -467,6 +467,7 @@ dependencies = [
  "authkestra-op",
  "authkestra-providers",
  "authkestra-resource",
+ "authkestra-ssf",
  "authkestra-store-sqlx",
  "axum",
  "base64 0.22.1",
@@ -744,6 +745,20 @@ dependencies = [
  "tracing",
  "url",
  "wiremock",
+]
+
+[[package]]
+name = "authkestra-ssf"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "jsonwebtoken",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

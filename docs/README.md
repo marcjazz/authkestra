@@ -106,6 +106,8 @@ The RFC-001 consolidation is done; these are the crates that actually exist toda
 - `authkestra-op/` — OpenID Provider (authorization server)
 - `authkestra-devsig/` — device-bound signature authentication
 - `authkestra-crypto-util/` — shared strict signature/key verification helpers
+- `authkestra-ssf/` — Shared Signals Framework: SET (RFC 8417) ingestion, CAEP 1.0 events, and the
+  RFC 8935 push receiver
 - `authkestra-axum/`, `authkestra-actix/` — framework adapters
 - `authkestra-macros/` — `AxumState` / `ActixState` / `KvStore` derives
 
