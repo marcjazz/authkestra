@@ -141,6 +141,29 @@ impl SetVerifier {
         &self.issuer
     }
 
+    /// Gives back the replay slot that [`SetVerifier::verify_at`] took for this SET, so a
+    /// retransmission is verified and dispatched again instead of being acknowledged as a
+    /// duplicate. A no-op when no replay guard is configured.
+    ///
+    /// Call this — and only this — when the SET was verified successfully but could *not* be
+    /// processed for a reason the transmitter should retry: a handler whose datastore was
+    /// unreachable, a queue that refused the write. [`crate::PushReceiver`] does it on the
+    /// [`crate::HandlerError::Internal`] path, immediately before answering 500.
+    ///
+    /// Do **not** call it after a rejection the transmitter will not retry (a refused event, a
+    /// policy denial answered with 400): releasing there would let a re-send of the same rejected
+    /// SET run the handlers again for no benefit.
+    ///
+    /// Public because [`SetVerifier::verify_at`] is: anything that drives verification itself and
+    /// dispatches on its own has exactly the same obligation, and without this it would have no
+    /// way to meet it. See [`SetReplayGuard::release`] for the idempotency requirement this puts
+    /// on handlers and for the window it does not close.
+    pub async fn release_replay_slot(&self, jti: &str, iss: &str) {
+        if let Some(guard) = &self.replay_guard {
+            guard.release(jti, iss).await;
+        }
+    }
+
     /// Verifies `token` against the current system clock.
     pub async fn verify(&self, token: &str) -> Result<VerifiedSet, SetError> {
         self.verify_at(token, current_unix_time()).await

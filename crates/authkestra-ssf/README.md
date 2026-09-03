@@ -90,6 +90,14 @@ handful of lines today and a dedicated adapter feature in a follow-up PR.
 - **Handlers run before the response.** This crate has no store of its own, so a handler *is* the
   persistence step RFC 8935 §2 asks for before acknowledging. Enqueue-and-return inside a handler
   if you want the RFC's asynchronous shape.
+- **Handlers must be idempotent.** A `HandlerError::Internal` answers 500 and releases the SET's
+  replay slot so the transmitter's retry is genuinely dispatched rather than acknowledged as a
+  duplicate — which means the retry re-runs *every* handler for *every* event in the SET,
+  including the handlers that already succeeded before the one that failed. A
+  `HandlerError::Rejected` (400) keeps the slot, because the transmitter is not going to retry.
+  One window stays open by design: a concurrent duplicate arriving between the record and the
+  release is answered 202 without dispatch, but the retry of the failed delivery still delivers
+  the event, so nothing is lost.
 - **The public models are `#[non_exhaustive]` but constructible.** `SecurityEventToken::new`,
   `TokenClaimsChange::new`, `CredentialChange::new`, `AssuranceLevelChange::new`,
   `DeviceComplianceChange::new`, `CaepMetadata::empty` and `SessionRevoked::default` exist so a

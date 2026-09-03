@@ -45,11 +45,19 @@ pub enum HandlerError {
     /// downstream call timed out. Surfaced as a 5xx, because RFC 8935 §2.4's error codes all
     /// describe something *wrong with the SET*, and telling a transmitter its perfectly good SET
     /// was invalid would make it stop retrying the one thing that could still succeed.
+    ///
+    /// Returning this releases the SET's replay slot, so the retry is dispatched rather than
+    /// acknowledged as a duplicate — which means every handler runs again from the start. Return
+    /// it only when the event genuinely was not processed.
     #[error("handler failed: {0}")]
     Internal(String),
 
     /// The handler refuses this SET from this transmitter (an unrecognised subject, a tenant the
     /// transmitter may not signal for). Maps to `access_denied`.
+    ///
+    /// Unlike [`HandlerError::Internal`], this keeps the replay slot: a 400 tells the transmitter
+    /// not to retry, so nothing is waiting on the slot, and a re-send of an already-refused SET
+    /// should not run the handlers a second time.
     #[error("handler rejected the event: {0}")]
     Rejected(String),
 }
@@ -62,6 +70,10 @@ pub enum HandlerError {
 #[async_trait]
 pub trait SetHandler: Send + Sync + 'static {
     /// Handles one event from `set`.
+    ///
+    /// **Must be idempotent.** A [`HandlerError::Internal`] anywhere in the delivery causes the
+    /// whole SET to be re-dispatched when the transmitter retries, so this may be called more
+    /// than once for the same `(set, event)` pair — see [`PushReceiver::receive`].
     async fn handle(&self, set: &SecurityEventToken, event: &CaepEvent)
         -> Result<(), HandlerError>;
 }
@@ -240,6 +252,22 @@ impl PushReceiver {
     ///   own, so the handler *is* the persistence step; a 202 sent before it ran would promise
     ///   durability that nothing delivered. A deployment that wants the RFC's asynchronous shape
     ///   writes a handler that enqueues and returns immediately.
+    ///
+    /// # Handlers must be idempotent
+    ///
+    /// A [`HandlerError::Internal`] answers 500 and asks the transmitter to send the SET again,
+    /// and the replay slot is released so that the retry is actually dispatched rather than
+    /// acknowledged as a duplicate (see [`crate::SetReplayGuard::release`]). The retry replays the whole
+    /// delivery: every event in the SET, through every handler, **including the handlers that
+    /// already succeeded before the one that failed**. A handler that is not safe to run twice
+    /// will double-count.
+    ///
+    /// The release leaves one window open, deliberately. A *concurrent* duplicate that arrives
+    /// between the record and the release is answered 202 without dispatch, as a duplicate should
+    /// be; if the original then fails, that duplicate has already been answered, but the
+    /// transmitter's retry of the failed delivery still finds the slot free and delivers the
+    /// event. Holding the slot across dispatch instead would close the window at the cost of
+    /// losing events on every handler failure, which is the worse trade.
     pub async fn receive(&self, content_type: Option<&str>, body: &[u8]) -> PushResponse {
         // Before the content type, and long before any parsing: the cheapest possible rejection
         // for the cheapest possible attack.
@@ -313,6 +341,9 @@ impl PushReceiver {
                 match handler.handle(&set, event).await {
                     Ok(()) => {}
                     Err(HandlerError::Rejected(reason)) => {
+                        // The slot stays taken. A 400 tells the transmitter not to retry, so
+                        // nothing is waiting on it, and re-sending a SET this receiver has
+                        // already refused should not re-run the handlers.
                         tracing::warn!(
                             target: "authkestra_ssf",
                             jti = %set.jti,
@@ -323,12 +354,18 @@ impl PushReceiver {
                         return PushResponse::error(SetErrorCode::AccessDenied, reason);
                     }
                     Err(HandlerError::Internal(reason)) => {
+                        // The event was *not* processed and the transmitter is being asked to
+                        // send it again, so the replay slot has to go back before the 500 —
+                        // otherwise the retry looks like a duplicate, gets a 202, and the event
+                        // is lost until the entry expires.
+                        self.verifier.release_replay_slot(&set.jti, &set.iss).await;
                         tracing::error!(
                             target: "authkestra_ssf",
                             jti = %set.jti,
                             event_type = %event.event_type_uri(),
                             reason = %reason,
-                            "handler failed; answering 500 so the transmitter retries"
+                            "handler failed; released the replay slot and answering 500 so the \
+                             transmitter retries"
                         );
                         return PushResponse::internal_error();
                     }

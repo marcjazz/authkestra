@@ -1397,3 +1397,194 @@ async fn a_verified_set_carries_its_decoded_events() {
     assert_eq!(set.iss, ISSUER);
     assert_eq!(events.len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// A handler failure must give the replay slot back (PR #309 re-review, P1)
+// ---------------------------------------------------------------------------
+
+/// A handler that fails for the first `fail_first` calls and succeeds afterwards, recording every
+/// event it was handed. Models the realistic case: the datastore is down, the transmitter
+/// retries, the datastore is back.
+struct FlakyHandler {
+    fail_first: AtomicUsize,
+    seen: Mutex<Vec<String>>,
+}
+
+impl FlakyHandler {
+    fn failing_once() -> Self {
+        Self {
+            fail_first: AtomicUsize::new(1),
+            seen: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.seen.lock().unwrap().len()
+    }
+}
+
+#[async_trait]
+impl SetHandler for FlakyHandler {
+    async fn handle(
+        &self,
+        _set: &SecurityEventToken,
+        event: &CaepEvent,
+    ) -> Result<(), HandlerError> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push(event.event_type_uri().to_string());
+        if self
+            .fail_first
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(HandlerError::Internal("session store unreachable".into()));
+        }
+        Ok(())
+    }
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+#[tokio::test]
+async fn a_handler_failure_releases_the_slot_so_the_retry_is_dispatched() {
+    // The bug this guards: the replay slot is taken during verification, so if a handler fails
+    // after that point and the receiver answers 500, the transmitter's retry (RFC 8935 §4) would
+    // hit the recorded slot, be acknowledged 202 as a duplicate, and the event would never be
+    // processed by anyone.
+    let handler = Arc::new(FlakyHandler::failing_once());
+    let guard = Arc::new(InMemorySetReplayGuard::new(Duration::from_secs(3600)));
+    let verifier = SetVerifier::builder(ISSUER)
+        .audience(AUDIENCE)
+        .algorithms([Algorithm::HS256])
+        .key(decoding_key())
+        .replay_guard(guard.clone())
+        .build()
+        .unwrap();
+    let receiver = PushReceiver::new(Arc::new(verifier)).with_handler(handler.clone());
+
+    let token = sign(&with_claim(
+        session_revoked_claims(),
+        "iat",
+        json!(now_secs()),
+    ));
+
+    let first = receiver
+        .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+        .await;
+    assert_eq!(first.status(), 500, "a handler failure asks for a retry");
+    assert_eq!(first.error_code(), None);
+    assert_eq!(handler.calls(), 1);
+    assert!(
+        guard.is_empty(),
+        "the slot must be given back before the 500, or the retry cannot be dispatched"
+    );
+
+    // The retransmission: byte-for-byte the same SET, same jti.
+    let retry = receiver
+        .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+        .await;
+    assert_eq!(retry.status(), 202);
+    // *This* is the load-bearing assertion. Without the release, the retry is still answered 202
+    // — by the replay path, with the handler never invoked and the event silently dropped.
+    assert_eq!(
+        handler.calls(),
+        2,
+        "the retry must actually reach the handler, not be swallowed as a duplicate"
+    );
+    assert_eq!(
+        handler.seen.lock().unwrap().as_slice(),
+        [EVENT_TYPE_SESSION_REVOKED, EVENT_TYPE_SESSION_REVOKED]
+    );
+    assert_eq!(
+        guard.len(),
+        1,
+        "a delivery that succeeded must leave the slot recorded"
+    );
+
+    // And once it has succeeded, the slot is held again: a third delivery is a real duplicate.
+    let third = receiver
+        .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+        .await;
+    assert_eq!(third.status(), 202);
+    assert_eq!(
+        handler.calls(),
+        2,
+        "a duplicate after a successful delivery must not re-dispatch"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_event_keeps_the_slot() {
+    // The other half of the decision: a 400 tells the transmitter not to retry, so nothing is
+    // waiting on the slot and a re-send of an already-refused SET must not run the handlers again.
+    let handler = Arc::new(FailingHandler {
+        error: HandlerError::Rejected("unknown tenant".to_string()),
+        calls: AtomicUsize::new(0),
+    });
+    let receiver =
+        PushReceiver::new(Arc::new(verifier_with_replay_guard())).with_handler(handler.clone());
+
+    let token = sign(&with_claim(
+        session_revoked_claims(),
+        "iat",
+        json!(now_secs()),
+    ));
+
+    let first = receiver
+        .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+        .await;
+    assert_eq!(first.status(), 400);
+    assert_eq!(first.error_code(), Some(SetErrorCode::AccessDenied));
+    assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
+
+    let resend = receiver
+        .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+        .await;
+    assert_eq!(
+        resend.status(),
+        202,
+        "the slot was kept, so this is a duplicate"
+    );
+    assert_eq!(
+        handler.calls.load(Ordering::SeqCst),
+        1,
+        "a rejected SET must not be dispatched again"
+    );
+}
+
+#[tokio::test]
+async fn releasing_a_slot_that_was_never_taken_is_harmless() {
+    // Two shapes of "unknown": a verifier with a guard that has no such entry, and a verifier
+    // with no guard configured at all.
+    let guarded = verifier_with_replay_guard();
+    guarded.release_replay_slot("never-recorded", ISSUER).await;
+
+    let token = sign(&session_revoked_claims());
+    assert!(
+        guarded.verify_at(&token, NOW).await.is_ok(),
+        "a spurious release must not disturb the guard"
+    );
+    guarded
+        .release_replay_slot("24c63fb56e5a2d77a6b512616ca9fa24", "https://someone-else/")
+        .await;
+    assert!(
+        matches!(
+            guarded.verify_at(&token, NOW).await,
+            Err(SetError::Replay { .. })
+        ),
+        "releasing a different issuer's entry must not free this one"
+    );
+
+    let guardless = verifier();
+    guardless.release_replay_slot("anything", ISSUER).await;
+    assert!(guardless.verify_at(&token, NOW).await.is_ok());
+}

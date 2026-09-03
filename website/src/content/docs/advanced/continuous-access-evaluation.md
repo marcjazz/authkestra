@@ -114,6 +114,26 @@ Returning `HandlerError::Rejected` answers the transmitter with `400 access_deni
 the response is produced, because this crate has no store of its own — if you want the
 asynchronous shape RFC 8935 §2 suggests, enqueue inside the handler and return immediately.
 
+### Your handlers must be idempotent
+
+The replay slot for a SET is taken during verification, before any handler runs — that is what
+makes two *concurrent* deliveries of the same SET dispatch only once. When a handler returns
+`HandlerError::Internal`, the receiver gives that slot back before answering 500, so the
+transmitter's retry is actually verified and dispatched instead of being acknowledged as a
+duplicate and dropped.
+
+The consequence is that a retry replays the **whole** delivery: every event in the SET, through
+every handler, including the ones that already succeeded before the one that failed. Write
+handlers that can run twice — key your writes on `set.jti`, or make them upserts.
+
+`HandlerError::Rejected` keeps the slot, since a `400` tells the transmitter not to retry.
+
+One window is left open deliberately: a concurrent duplicate that arrives between the record and
+the release is answered `202` without dispatch. If the original delivery then fails, that
+particular duplicate has already been answered — but the transmitter's retry of the failed
+delivery finds the slot free and delivers the event, so it is not lost. Holding the slot across
+dispatch instead would close the window at the cost of losing an event on every handler failure.
+
 ## Behaviours that surprise people
 
 - **A retransmitted SET is answered `202`, not an error.** RFC 8935 §2 requires the recipient to

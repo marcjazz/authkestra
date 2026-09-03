@@ -27,7 +27,39 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait SetReplayGuard: Send + Sync + 'static {
     /// Atomically records `(iss, jti)` if absent, and reports whether it was newly recorded.
+    ///
+    /// The check and the record must be a single atomic operation (Redis `SET key val NX PX ttl`,
+    /// an `INSERT` against a unique index, a `HashMap` under one lock). Reading first and writing
+    /// second lets two concurrent deliveries of the same SET both observe "absent" and both
+    /// dispatch.
     async fn check_and_record(&self, jti: &str, iss: &str) -> bool;
+
+    /// Forgets `(iss, jti)`, so that a subsequent [`SetReplayGuard::check_and_record`] for the
+    /// same pair reports it as new again.
+    ///
+    /// Releasing an entry that is absent — never recorded, or already expired — is a no-op, not
+    /// an error.
+    ///
+    /// **Why this exists.** The slot is taken during verification, before any handler runs,
+    /// because that is what makes two concurrent deliveries of the same SET dispatch exactly
+    /// once. But some rejections only become knowable *after* dispatch has started: a handler
+    /// that cannot reach its database has not processed the event, and [`crate::PushReceiver`]
+    /// answers 500 so the transmitter retries. Without a way to give the slot back, that retry
+    /// would hit the recorded entry, be acknowledged with 202 as a duplicate, and the event would
+    /// be lost until the entry expired. The receiver therefore releases the slot on that path
+    /// before answering 500.
+    ///
+    /// **Handlers must therefore be idempotent.** A released SET is re-verified and
+    /// re-dispatched from the beginning, which re-runs *every* handler — including the ones that
+    /// already succeeded before the failing one — for *every* event in the SET.
+    ///
+    /// **There is a window.** Between the record and the release, a concurrent duplicate delivery
+    /// is answered 202 without dispatch, exactly as a duplicate should be. If the original then
+    /// fails and releases, that particular duplicate has already been answered — but the
+    /// transmitter's retry of the *failed* delivery still arrives, finds the slot free, and
+    /// delivers the event, so it is not lost. Closing the window entirely would mean holding the
+    /// slot across dispatch, which is the bug this method exists to avoid.
+    async fn release(&self, jti: &str, iss: &str);
 }
 
 /// A `HashMap`-backed [`SetReplayGuard`] with a fixed entry TTL.
@@ -93,6 +125,18 @@ impl SetReplayGuard for InMemorySetReplayGuard {
         seen.insert(key, now);
         true
     }
+
+    async fn release(&self, jti: &str, iss: &str) {
+        let mut seen = self.seen.lock().expect("replay guard mutex poisoned");
+        if seen.remove(&(iss.to_string(), jti.to_string())).is_some() {
+            tracing::debug!(
+                target: "authkestra_ssf",
+                jti = %jti,
+                iss = %iss,
+                "released the SET replay slot; a retransmission will be dispatched again"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -117,6 +161,39 @@ mod tests {
             "the same jti from a different feed is a different SET (RFC 8417 §2.2)"
         );
         assert_eq!(guard.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn release_makes_a_recorded_jti_acceptable_again() {
+        let guard = InMemorySetReplayGuard::new(Duration::from_secs(60));
+        assert!(guard.check_and_record("jti-1", "https://idp/").await);
+        assert!(!guard.check_and_record("jti-1", "https://idp/").await);
+
+        guard.release("jti-1", "https://idp/").await;
+        assert!(guard.is_empty());
+        assert!(
+            guard.check_and_record("jti-1", "https://idp/").await,
+            "after a release the same SET must be dispatchable again"
+        );
+    }
+
+    #[tokio::test]
+    async fn releasing_an_unknown_entry_is_a_no_op() {
+        let guard = InMemorySetReplayGuard::new(Duration::from_secs(60));
+
+        // Never recorded at all.
+        guard.release("never-seen", "https://idp/").await;
+        assert!(guard.is_empty());
+
+        // And it must not disturb an unrelated entry, including one that differs only by issuer.
+        assert!(guard.check_and_record("jti-1", "https://a/").await);
+        guard.release("jti-1", "https://b/").await;
+        guard.release("other-jti", "https://a/").await;
+        assert_eq!(guard.len(), 1);
+        assert!(
+            !guard.check_and_record("jti-1", "https://a/").await,
+            "the surviving entry must still be recorded"
+        );
     }
 
     #[tokio::test]
