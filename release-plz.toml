@@ -57,3 +57,7 @@ version_group = "authkestra"
 [[package]]
 name = "authkestra-store-testsuite"
 version_group = "authkestra"
+
+[[package]]
+name = "authkestra-ssf"
+version_group = "authkestra"
