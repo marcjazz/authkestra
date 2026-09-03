@@ -87,3 +87,38 @@ impl AuthorizationCode {
         now >= self.expires_at
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn code_expiring_in(seconds: i64) -> AuthorizationCode {
+        AuthorizationCode::new(
+            "code1".into(),
+            "client1".into(),
+            "http://cb".into(),
+            "openid".into(),
+            Identity {
+                provider_id: "local".into(),
+                external_id: "user1".into(),
+                email: Some("user1@example.com".to_string()),
+                username: None,
+                attributes: Default::default(),
+            },
+            Utc::now() + chrono::Duration::seconds(seconds),
+            false,
+        )
+    }
+
+    // Store/consume/single-use behavior is exercised generically by
+    // authkestra-store-testsuite's run_authorization_code_store_tests
+    // against every backend (including this exact MemoryStore blanket
+    // impl) — `is_expired` is a plain method on the domain type itself and
+    // has no other coverage.
+    #[test]
+    fn is_expired_reports_true_only_once_expires_at_has_passed() {
+        let code = code_expiring_in(60);
+        assert!(!code.is_expired(Utc::now()));
+        assert!(code.is_expired(Utc::now() + chrono::Duration::seconds(120)));
+    }
+}

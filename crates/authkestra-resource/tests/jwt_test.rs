@@ -25,7 +25,7 @@ use rsa::RsaPrivateKey;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1328,5 +1328,75 @@ async fn dpop_htu_check_rejects_when_configured_origin_url_mismatches() {
         result.is_none(),
         "a proof minted for a different resource server's URL must be refused once \
          dpop_resource_origin is configured"
+    );
+}
+
+/// `JwksCache::with_client` must actually route the JWKS fetch through the supplied client.
+///
+/// The motivating shape is a resource server whose issuer publishes its JWKS inside the cluster
+/// under a private CA: the default client trusts only the platform store, so the endpoint is
+/// unreachable and the deployment is pushed toward dialling the public hostname (leaving and
+/// re-entering the network to fetch keys) or toward `SSL_CERT_FILE`, which swaps the trust store
+/// for every outbound connection in the process rather than this one fetch.
+///
+/// TLS itself is not what this asserts -- standing up a private CA and an HTTPS mock would test
+/// rustls, not this crate. What must be proven is the seam: that the injected client, and not an
+/// internally-constructed default, issues the request. A required header stands in for the
+/// client-carried configuration, since it is observable at the mock without any TLS setup.
+#[tokio::test]
+async fn with_client_routes_the_jwks_fetch_through_the_supplied_client() {
+    let key = generate_rsa_key(Some("client-injection"));
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/.well-known/jwks.json"))
+        .and(header("x-authkestra-client", "injected"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&JwksBody {
+            keys: vec![key.jwk.clone()],
+        }))
+        .mount(&server)
+        .await;
+
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        "x-authkestra-client",
+        http::HeaderValue::from_static("injected"),
+    );
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("a client with a static default header always builds");
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(300)).with_client(client);
+
+    let jwks = cache
+        .get_jwks()
+        .await
+        .expect("the mock only answers a request carrying the injected client's header");
+    assert_eq!(jwks.keys.len(), 1);
+}
+
+/// The control for the test above: without `with_client`, the default client sends no such header,
+/// so the same mock does not match and the fetch fails. Without this, the test above would still
+/// pass if `with_client` stored the client and `refresh` quietly ignored it -- the mock would be
+/// unmatched either way only if the header were genuinely required, and this proves it is.
+#[tokio::test]
+async fn default_client_does_not_carry_the_injected_configuration() {
+    let key = generate_rsa_key(Some("client-injection-control"));
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/.well-known/jwks.json"))
+        .and(header("x-authkestra-client", "injected"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&JwksBody {
+            keys: vec![key.jwk.clone()],
+        }))
+        .mount(&server)
+        .await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(300));
+
+    assert!(
+        cache.get_jwks().await.is_err(),
+        "the default client sends no injected header, so the mock must not match -- if this \
+         passes, the header is not actually discriminating and the sibling test proves nothing"
     );
 }

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2](https://github.com/marcjazz/authkestra/compare/authkestra-devsig-v0.7.1...authkestra-devsig-v0.7.2) - 2026-09-03
+
+### Added
+
+- *(devsig)* add DeviceIdentity::new so consumers can unit-test their principal mapping ([#308](https://github.com/marcjazz/authkestra/pull/308))
+
 ## [0.6.2](https://github.com/marcjazz/authkestra/compare/authkestra-devsig-v0.6.1...authkestra-devsig-v0.6.2) - 2026-08-28
 
 ### Other

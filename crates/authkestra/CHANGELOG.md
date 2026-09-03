@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2](https://github.com/marcjazz/authkestra/compare/authkestra-v0.7.1...authkestra-v0.7.2) - 2026-09-03
+
+### Other
+
+- refresh engine guides, provider docs and the book against current code ([#305](https://github.com/marcjazz/authkestra/pull/305))
+
 ## [0.7.0](https://github.com/marcjazz/authkestra/compare/authkestra-v0.6.3...authkestra-v0.7.0) - 2026-08-31
 
 ### Other

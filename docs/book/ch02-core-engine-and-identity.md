@@ -2,49 +2,52 @@
 
 The `Engine` is the heart of Authkestra. It orchestrates the various components (session stores, auth methods) and produces a unified, verifiable `Identity`.
 
-## Identity and Verifiable Claims
+## Identity (as shipped)
 
-In the next-gen architecture, an `Identity` is more than a database ID. It represents a cryptographically verifiable subject, potentially backed by a Decentralized Identifier (DID).
+`authkestra_engine::Identity` is what a `Flow` or an `AuthMethod` hands back on success, and what
+gets stored inside a `Session`. It is deliberately small — everything provider-specific lands in
+`attributes`:
 
 ```rust
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
-    /// The canonical subject identifier (could be a DID, email, or UUID)
-    pub sub: String,
-    /// Optional DID if the identity is decentralized
-    pub did: Option<String>,
-    /// The provider that established this identity context
-    pub provider: String,
-    /// Verifiable claims associated with this session
-    pub claims: Claims,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Claims {
-    // Standard JWT/OIDC Claims
-    pub iss: String,
-    pub aud: String,
-    pub exp: i64,
-    pub iat: i64,
-    
-    // Support for Selective Disclosure (SD-JWT)
-    pub _sd: Option<Vec<String>>,
-    
-    // Generic storage for non-standard or custom attributes
-    pub extra: HashMap<String, serde_json::Value>,
+    /// The provider identifier (e.g., "github", "google")
+    pub provider_id: String,
+    /// The unique ID of the user within the provider's system
+    pub external_id: String,
+    /// The user's email address, if available and authorized
+    pub email: Option<String>,
+    /// The user's username or display name, if available
+    pub username: Option<String>,
+    /// Additional provider-specific attributes
+    pub attributes: HashMap<String, String>,
 }
 ```
 
+Token claims are a separate type, `authkestra_engine::Claims`, minted by `TokenManager` — an
+`Identity` does not embed them.
+
+> **Planned, not implemented.** Earlier drafts of this chapter showed an `Identity` with `sub`,
+> `did` and an embedded `claims` field, describing a decentralized-identifier-backed subject. No
+> such shape exists: there is no DID support, no `did` field, and no verifiable-credential type in
+> the workspace. Selective disclosure *is* shipped, but as `TokenManager::issue_sd_jwt` /
+> `validate_sd_jwt` operating on `Claims` — see Chapter 4 §5 for what it does and does not cover.
+
 ## The Engine (Orchestrator)
 
-The `Engine` uses the **Typestate Builder Pattern** to ensure that critical components (like a `SessionStore` or `TokenService`) are configured at compile-time before the engine can be used.
+The `Engine` uses the **Typestate Builder Pattern** so that its two optional halves — a session
+store and a token manager — are resolved at compile time. `Engine<S, T>`'s two generic parameters
+are each either `Missing` or `Configured<_>`, and the aliases `AkWebAppEngine` (sessions only),
+`AkApiEngine` (tokens only) and `AkEngine` (both) name the combinations you store in application
+state. Calling a session API on an engine built without `.session_store()` is a compile error, not
+a runtime panic.
 
-### Quantum Readiness
+### Quantum readiness — planned
 
-The `Engine` is designed to be **PQC-ready**. This means the `TokenService` and `Authenticator` traits are defined to handle larger signature and key sizes associated with Module-Lattice-Based algorithms like **ML-DSA** (FIPS 204).
+> **Not implemented.** RFC-002 calls for PQC-ready token issuance (ML-DSA / FIPS 204), which would
+> arrive as a `TokenService` abstraction generic over signature size. Today `TokenManager` is a
+> concrete type over `jsonwebtoken`'s classical algorithm set (RSA, ECDSA, EdDSA). There is no
+> `TokenService` trait and no ML-DSA support in the workspace. See Chapter 3, "Planned traits".
 
 ## Architectural Decisions
 
@@ -64,14 +67,15 @@ This architectural separation is deliberate:
 ### The Separation of Persistence
 
 **What Authkestra Owns (`KvStore`)**:
-Authkestra only persists ephemeral, protocol-specific state:
+Authkestra only persists ephemeral, protocol-specific state — plus, if you enable them,
+TOTP/WebAuthn credentials via `CredentialStore`:
 - `authorization_code`s (10-minute expiry)
 - `refresh_token`s
 - `device_code`s
 - `OP_Session`s (the cryptographic cookies proving authentication to the OpenID Provider)
 
 **What Your Application Owns**:
-Your application completely owns the `users` and `accounts` tables. Authkestra has no `UserRepository` or `AccountRepository` trait. 
+Your application completely owns the `users` and `accounts` tables. Authkestra has no `UserRepository`, `AccountRepository`, or `UserStore` trait — if you find one named in older documentation, it does not exist. 
 
 ### The Identity Handoff
 

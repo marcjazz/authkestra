@@ -1,5 +1,7 @@
 # RFC-001: Authkestra Architecture Migration to Next-Gen Unified Framework
 
+> **Status: Accepted and implemented.** The consolidation described here is complete - `authkestra-core`, `authkestra-flow`, `authkestra-token` and `authkestra-session` no longer exist. This document is kept as a historical design record; for the current crate layout see [`docs/README.md`](./README.md).
+
 ## 1. Summary
 
 This document proposes a comprehensive migration plan to transition Authkestra from its current multi-crate, loosely coupled structure into a unified, modular authentication and authorization engine (`authkestra-engine`). The target architecture will support both embedded application integration (similar to `better-auth`) and standalone server deployment (similar to `Keycloak`), while remaining highly composable, safe for AI-generated integrations, and developer-friendly.

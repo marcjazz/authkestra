@@ -30,9 +30,9 @@ workspace behind feature flags; you also want `authkestra-engine` directly for t
 
 ```toml
 [dependencies]
-authkestra = { version = "0.6", features = ["axum", "session"] }
-authkestra-axum = { version = "0.6", features = ["macros", "session"] }
-authkestra-engine = { version = "0.6", features = ["session", "memory"] }
+authkestra = { version = "0.7", features = ["axum", "session"] }
+authkestra-axum = { version = "0.7", features = ["macros", "session"] }
+authkestra-engine = { version = "0.7", features = ["session", "memory"] }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower-cookies = "0.11"
@@ -153,7 +153,7 @@ let engine = Authkestra::builder()
     .build();
 ```
 
-Add `authkestra = { version = "0.6", features = ["axum", "session", "github"] }` to pull in the
+Add `authkestra = { version = "0.7", features = ["axum", "session", "github"] }` to pull in the
 provider. Registering a second provider is another `.provider(...)` call — the same two routes
 serve both, resolved at runtime.
 

@@ -76,8 +76,24 @@ pub struct Jwks {
 }
 
 impl Jwks {
+    /// Fetches a JWKS with a default [`reqwest::Client`], i.e. the platform trust store.
+    ///
+    /// Use [`Jwks::fetch_with`] when the endpoint is served by a CA the platform store does
+    /// not carry -- a JWKS published inside a cluster under a private CA, for example.
     pub async fn fetch(jwks_uri: &str) -> Result<Self, ValidationError> {
-        let client = reqwest::Client::new();
+        Self::fetch_with(&reqwest::Client::new(), jwks_uri).await
+    }
+
+    /// Fetches a JWKS with a caller-supplied [`reqwest::Client`].
+    ///
+    /// The client carries the TLS trust configuration, proxy settings and timeouts, so this is
+    /// the seam for reaching a JWKS endpoint whose certificate chains to a CA that is not in
+    /// the platform trust store. `reqwest::Error` is already part of this crate's public API
+    /// via [`ValidationError::Http`], so accepting a client here adds no new coupling.
+    pub async fn fetch_with(
+        client: &reqwest::Client,
+        jwks_uri: &str,
+    ) -> Result<Self, ValidationError> {
         let jwks = client.get(jwks_uri).send().await?.json::<Jwks>().await?;
         Ok(jwks)
     }
@@ -96,6 +112,10 @@ pub struct JwksCache {
     jwks: RwLock<Option<(Jwks, Instant)>>,
     ttl: Duration,
     require_kid: bool,
+    /// HTTP client used by [`JwksCache::refresh`]. Held for the cache's lifetime rather than
+    /// rebuilt per refresh, so the connection pool survives across refreshes, and settable via
+    /// [`JwksCache::with_client`] so a JWKS behind a private CA is reachable.
+    client: reqwest::Client,
 }
 
 impl JwksCache {
@@ -105,7 +125,33 @@ impl JwksCache {
             jwks: RwLock::new(None),
             ttl: refresh_interval,
             require_kid: false,
+            client: reqwest::Client::new(),
         }
+    }
+
+    /// Replaces the HTTP client used to fetch the JWKS.
+    ///
+    /// The default client trusts only the platform certificate store, which makes a JWKS served
+    /// under a private CA unreachable -- the common shape being a resource server validating
+    /// tokens against an issuer published inside its own cluster, where dialling the public
+    /// hostname means leaving and re-entering the network just to fetch keys. Supplying a client
+    /// built with that CA added (`reqwest::ClientBuilder::add_root_certificate`) keeps the trust
+    /// change scoped to this one fetch, rather than pushing it onto the whole process through
+    /// `SSL_CERT_FILE`, which replaces the trust store for every outbound connection.
+    ///
+    /// Mirrors [`Self::require_kid`]'s consuming-builder shape:
+    ///
+    /// ```no_run
+    /// # use authkestra_resource::jwt::JwksCache;
+    /// # use std::time::Duration;
+    /// # fn client() -> reqwest::Client { reqwest::Client::new() }
+    /// let cache = JwksCache::new("https://idp.internal/jwks".to_string(), Duration::from_secs(300))
+    ///     .with_client(client())
+    ///     .require_kid(true);
+    /// ```
+    pub fn with_client(mut self, client: reqwest::Client) -> Self {
+        self.client = client;
+        self
     }
 
     /// When set to `true`, tokens presented without a `kid` header will be rejected
@@ -149,7 +195,7 @@ impl JwksCache {
 
     pub async fn refresh(&self) -> Result<Jwks, ValidationError> {
         let mut write_guard = self.jwks.write().await;
-        let jwks = Jwks::fetch(&self.jwks_uri).await?;
+        let jwks = Jwks::fetch_with(&self.client, &self.jwks_uri).await?;
         *write_guard = Some((jwks.clone(), Instant::now()));
         Ok(jwks)
     }

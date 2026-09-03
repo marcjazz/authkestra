@@ -18,10 +18,10 @@ Like the OP Server, the Resource Server is an advanced component and is not incl
 
 ```toml
 [dependencies]
-authkestra-resource = "0.6"
-authkestra-axum = { version = "0.6", features = ["resource"] }
+authkestra-resource = "0.7"
+authkestra-axum = { version = "0.7", features = ["resource"] }
 # Or if using Actix:
-# authkestra-actix = { version = "0.6", features = ["resource"] }
+# authkestra-actix = { version = "0.7", features = ["resource"] }
 ```
 
 ### TLS Backend Selection
@@ -30,7 +30,7 @@ Outbound HTTP requests for JWKS discovery require a TLS backend. Authkestra enab
 
 ```toml
 [dependencies]
-authkestra-resource = { version = "0.6", default-features = false, features = ["rustls-no-provider"] }
+authkestra-resource = { version = "0.7", default-features = false, features = ["rustls-no-provider"] }
 ```
 
 ## Building with Authkestra Guard
@@ -69,6 +69,83 @@ let advanced_config = ValidationConfig::builder()
     .audiences(["admin_portal", "mobile_app"])
     .require_kid(true) // Reject tokens without a 'kid' header
     .build();
+```
+
+:::caution[`build()` panics on misconfiguration, deliberately]
+`ValidationConfig::builder().build()` panics if neither `jwks_url` nor any `trusted_issuer` was
+set (there would be no key material at all), and if `dpop_resource_origin` is not a bare
+`scheme://host` — no path, no query, no trailing slash. Both are startup-time failures by design:
+the alternative is a resource server that boots fine and then rejects every request for reasons
+indistinguishable from an attack.
+:::
+
+### Accepting several issuers
+
+One verifier can accept tokens from several issuers, each with its own JWKS endpoint. The token's
+`iss` claim selects which JWKS verifies it:
+
+```rust
+let config = ValidationConfig::builder()
+    .trusted_issuer("https://tenant-a.example", "https://tenant-a.example/.well-known/jwks.json")
+    .trusted_issuer("https://tenant-b.example", "https://tenant-b.example/.well-known/jwks.json")
+    .audience("my-app")
+    .build();
+```
+
+Once any trust-map entry is present the verifier is in multi-issuer mode: an `iss` outside the map
+is rejected outright and a token with no `iss` at all is rejected too. There is deliberately **no**
+fallback endpoint — a default JWKS for unknown issuers is issuer confusion. For issuers only known
+at runtime, implement `JwksResolver` and use `JwtStrategy::with_resolver(config, resolver)`; the
+same rule applies, your implementation must reject issuers it does not recognise.
+
+### Sender-constrained tokens (DPoP and mTLS)
+
+Two optional checks bind an access token to the client that was issued it, so a stolen token is
+not usable on its own. Both are **off by default**, and both are no-ops for a token that carries no
+binding claim at all:
+
+- `.require_cert_binding(true)` — RFC 8705 mutual-TLS binding: a token with `cnf.x5t#S256` is only
+  accepted if the request's client certificate matches.
+- `.require_dpop(true)` — RFC 9449 DPoP: a token with `cnf.jkt` is only accepted if the request
+  carries a `DPoP` proof header for the same key, bound (`ath`) to this token and not seen before.
+  Optionally add `.dpop_resource_origin("https://api.example.com")` to also check the proof's `htu`
+  against this server's own origin.
+
+```rust
+use std::sync::Arc;
+
+let config = ValidationConfig::builder()
+    .jwks_url("https://idp.example/jwks")
+    .require_dpop(true)
+    .dpop_resource_origin("https://api.example.com") // scheme + host only
+    .build();
+
+let strategy = JwtStrategy::<UserIdentity>::new(config)
+    // Required: the default `NoDpopReplayStore` refuses every DPoP-bound token.
+    .with_dpop_replay_store(Arc::new(my_replay_store));
+```
+
+:::caution[`require_dpop` without a replay store rejects everything]
+`JwtStrategy` starts with the fail-closed `NoDpopReplayStore`, which refuses every proof. That is
+intentional — DPoP without single-use `jti` tracking gives no replay protection while looking like
+it does — but it means `require_dpop(true)` on its own turns every DPoP-bound token into a `401`.
+Always pair it with `.with_dpop_replay_store(...)`.
+:::
+
+### JWKS behind a private CA
+
+`JwksCache` fetches with a `reqwest::Client` that trusts only the platform certificate store, which
+makes a JWKS published under a private CA unreachable — the common shape being a resource server
+validating tokens against an issuer inside its own cluster. Supply your own client instead of
+replacing the whole process's trust store via `SSL_CERT_FILE`:
+
+```rust
+use authkestra_resource::jwt::JwksCache;
+use std::time::Duration;
+
+let cache = JwksCache::new("https://idp.internal/jwks".to_string(), Duration::from_secs(300))
+    .with_client(my_client_with_private_ca) // reqwest::ClientBuilder::add_root_certificate(...)
+    .require_kid(true);
 ```
 
 ### 2. Flexible Strategy Chaining

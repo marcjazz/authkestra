@@ -305,6 +305,7 @@ fn is_loopback_ip(host: &Host<&str>) -> bool {
 #[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod tests {
     use super::*;
+    use argon2::password_hash::PasswordHasher;
 
     fn client_with_redirect_uris(uris: &[&str]) -> ClientRegistration {
         ClientRegistration {
@@ -451,5 +452,93 @@ mod tests {
         let client = client_with_redirect_uris(&["not a url"]);
         assert!(client.allows_redirect_uri("not a url"));
         assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/cb"));
+    }
+
+    #[test]
+    fn test_verify_secret_valid() {
+        let password_hash = argon2::Argon2::default()
+            .hash_password(b"super_secret")
+            .unwrap()
+            .to_string();
+
+        let client = ClientRegistration {
+            client_id: "test".to_string(),
+            client_secret_hash: Some(password_hash),
+            redirect_uris: vec![],
+            grant_types: vec![],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
+        };
+
+        assert!(client.verify_secret("super_secret"));
+    }
+
+    #[test]
+    fn test_verify_secret_invalid() {
+        let password_hash = argon2::Argon2::default()
+            .hash_password(b"super_secret")
+            .unwrap()
+            .to_string();
+
+        let client = ClientRegistration {
+            client_id: "test".to_string(),
+            client_secret_hash: Some(password_hash),
+            redirect_uris: vec![],
+            grant_types: vec![],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
+        };
+
+        assert!(!client.verify_secret("wrong_secret"));
+    }
+
+    #[test]
+    fn test_verify_secret_public_client() {
+        let client = ClientRegistration {
+            client_id: "test".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
+        };
+
+        assert!(!client.verify_secret("some_secret"));
+    }
+
+    #[test]
+    fn test_grant_type_serialization() {
+        let client = ClientRegistration {
+            client_id: "test".to_string(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            grant_types: vec![
+                GrantType::ClientCredentials,
+                GrantType::AuthorizationCode,
+                GrantType::Custom("my_custom_grant".to_string()),
+            ],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
+        };
+
+        let serialized = serde_json::to_string(&client).unwrap();
+        let deserialized: ClientRegistration = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(client.grant_types, deserialized.grant_types);
+        assert!(serialized.contains("\"client_credentials\""));
+        assert!(serialized.contains("\"authorization_code\""));
+        assert!(serialized.contains("\"my_custom_grant\""));
     }
 }

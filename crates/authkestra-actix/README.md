@@ -20,8 +20,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-actix = { version = "0.6", features = ["session", "token"] }
-authkestra-engine = { version = "0.6", features = ["session", "memory"] }
+authkestra-actix = { version = "0.7", features = ["session", "token"] }
+authkestra-engine = { version = "0.7", features = ["session", "memory"] }
 actix-web = "4"
 ```
 
@@ -220,8 +220,8 @@ network call.
 
 ```toml
 [dependencies]
-authkestra-actix = { version = "0.6", features = ["devsig"] }
-authkestra-devsig = "0.6"
+authkestra-actix = { version = "0.7", features = ["devsig"] }
+authkestra-devsig = "0.7"
 ```
 
 ```rust,ignore

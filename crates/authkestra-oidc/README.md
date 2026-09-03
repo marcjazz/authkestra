@@ -18,8 +18,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-oidc = "0.6"
-authkestra-engine = "0.6"
+authkestra-oidc = "0.7"
+authkestra-engine = "0.7"
 ```
 
 ### Example
