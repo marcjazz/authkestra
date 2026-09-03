@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.7.2...authkestra-axum-v0.8.0) - 2026-09-03
+
+### Other
+
+- Merge next into main: storage rework, DPoP, PKCE/scope hardening ([#300](https://github.com/marcjazz/authkestra/pull/300))
+
 ## [0.7.2](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.7.1...authkestra-axum-v0.7.2) - 2026-09-03
 
 ### Other
