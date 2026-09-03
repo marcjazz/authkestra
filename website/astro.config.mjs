@@ -48,6 +48,7 @@ export default defineConfig({
 						{ label: 'Resource Server (API)', slug: 'advanced/resource-server' },
 						{ label: 'OpenID Provider (OP)', slug: 'advanced/op-server' },
 						{ label: 'Device Attestation', slug: 'guides/device-attestation' },
+						{ label: 'Continuous Access Evaluation (CAEP/SSF)', slug: 'advanced/continuous-access-evaluation' },
 					],
 				},
 				{

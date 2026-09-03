@@ -80,6 +80,7 @@ check with `cargo tree -i aws-lc-rs -e features`.
 | [`authkestra-op`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-op)               | OpenID Connect Provider (OP) implementation.                              |
 | [`authkestra-devsig`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-devsig)       | Device-bound signature authentication (proof-of-possession + Issuer attestation). |
 | [`authkestra-crypto-util`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-crypto-util) | Shared strict signature/key verification helpers used by the OP and devsig crates. |
+| [`authkestra-ssf`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-ssf)             | Shared Signals Framework: Security Event Token (RFC 8417) ingestion and CAEP events. |
 | [`authkestra-macros`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-macros)       | Procedural macros for simplifying Authkestra integration.                 |
 
 ## 🛠️ Usage

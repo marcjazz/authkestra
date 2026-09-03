@@ -17,6 +17,7 @@ authkestra-axum = { workspace = true, optional = true, default-features = false 
 authkestra-actix = { workspace = true, optional = true, default-features = false }
 authkestra-providers = { workspace = true, optional = true, default-features = false }
 authkestra-resource = { workspace = true, optional = true, default-features = false }
+authkestra-ssf = { workspace = true, optional = true, default-features = false }
 
 [dev-dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
@@ -90,6 +91,9 @@ session = ["authkestra-engine/session"]
 token = ["authkestra-engine/token"]
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
+# Shared Signals Framework / CAEP ingestion. No adapter feature to forward: `authkestra-ssf` is
+# framework-agnostic and ships no axum/actix wiring yet (see authkestra#25).
+ssf = ["dep:authkestra-ssf"]
 
 # Web frameworks
 axum = ["dep:authkestra-axum", "authkestra-axum/macros", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
