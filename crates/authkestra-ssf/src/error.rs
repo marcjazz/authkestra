@@ -139,7 +139,12 @@ pub enum SetError {
     /// `iat` is further in the future than the configured leeway allows. A SET describes
     /// something that has *already happened* (RFC 8417 §2.2), so an `iat` in the future is
     /// either clock skew — hence the leeway — or a forgery attempt.
-    #[error("iat {iat} is {} seconds in the future, beyond the configured leeway of {leeway}s", iat - now)]
+    ///
+    /// As with [`SetError::IssuerMismatch`], the `Display` text names no numbers: it reaches an
+    /// unauthenticated caller through the RFC 8935 §2.3 `description`, and the configured leeway
+    /// is deployment policy rather than something a transmitter needs to be told. All three
+    /// values stay in the struct and are logged as structured fields on rejection.
+    #[error("iat is too far in the future")]
     IatInFuture {
         /// The `iat` the SET carried.
         iat: i64,
@@ -150,7 +155,10 @@ pub enum SetError {
     },
 
     /// `iat` is older than the configured maximum age.
-    #[error("SET is {} seconds old, exceeding the configured maximum age of {max_age}s", now - iat)]
+    ///
+    /// As with [`SetError::IatInFuture`], the configured maximum age is kept out of the `Display`
+    /// text because it is returned to an unauthenticated caller.
+    #[error("SET is too old")]
     TooOld {
         /// The `iat` the SET carried.
         iat: i64,
@@ -347,19 +355,40 @@ mod tests {
     }
 
     #[test]
-    fn arithmetic_in_display_messages_is_correct() {
+    fn freshness_errors_keep_their_values_but_never_display_them() {
+        // The numbers are exactly what an operator needs and what an unauthenticated caller must
+        // not be handed: `leeway` and `max_age` are deployment policy. They live in the variant
+        // (and in the verifier's structured tracing fields), never in `Display`.
         let err = SetError::IatInFuture {
             iat: 130,
             now: 100,
             leeway: 5,
         };
-        assert!(err.to_string().contains("30 seconds in the future"));
+        match &err {
+            SetError::IatInFuture { iat, now, leeway } => {
+                assert_eq!((*iat, *now, *leeway), (130, 100, 5));
+            }
+            other => panic!("unexpected variant {other:?}"),
+        }
+        let message = err.to_string();
+        for leaked in ["130", "100", "5"] {
+            assert!(!message.contains(leaked), "{message} leaked {leaked}");
+        }
 
         let err = SetError::TooOld {
             iat: 100,
             now: 400,
             max_age: 60,
         };
-        assert!(err.to_string().contains("300 seconds old"));
+        match &err {
+            SetError::TooOld { iat, now, max_age } => {
+                assert_eq!((*iat, *now, *max_age), (100, 400, 60));
+            }
+            other => panic!("unexpected variant {other:?}"),
+        }
+        let message = err.to_string();
+        for leaked in ["100", "400", "60"] {
+            assert!(!message.contains(leaked), "{message} leaked {leaked}");
+        }
     }
 }

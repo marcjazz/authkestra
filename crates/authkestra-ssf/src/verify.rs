@@ -431,10 +431,11 @@ impl SetVerifierBuilder {
 /// Logs every rejection uniformly, so no branch of the algorithm can go unobserved in production
 /// (the workspace `AGENTS.md` tracing Definition of Done).
 fn reject(err: SetError) -> SetError {
-    // The issuer/audience variants are logged with their values as structured fields rather than
-    // through `Display`, because `Display` is what the RFC 8935 §2.3 failure body returns to an
-    // unauthenticated caller and must not disclose the deployment's configuration. Operators
-    // still get the full picture here, where the log is trusted.
+    // The issuer, audience and freshness variants are logged with their values as structured
+    // fields rather than through `Display`, because `Display` is what the RFC 8935 §2.3 failure
+    // body returns to an unauthenticated caller and must not disclose the deployment's
+    // configuration — its trusted issuer, its audience identifiers, its clock leeway or its
+    // maximum accepted age. Operators still get the full picture here, where the log is trusted.
     match &err {
         SetError::IssuerMismatch { expected, found } => tracing::warn!(
             target: "authkestra_ssf",
@@ -453,6 +454,24 @@ fn reject(err: SetError) -> SetError {
                 "rejecting SET"
             )
         }
+        SetError::IatInFuture { iat, now, leeway } => tracing::warn!(
+            target: "authkestra_ssf",
+            code = %err.code(),
+            error = %err,
+            iat = iat,
+            now = now,
+            leeway_secs = leeway,
+            "rejecting SET"
+        ),
+        SetError::TooOld { iat, now, max_age } => tracing::warn!(
+            target: "authkestra_ssf",
+            code = %err.code(),
+            error = %err,
+            iat = iat,
+            now = now,
+            max_age_secs = max_age,
+            "rejecting SET"
+        ),
         _ => tracing::warn!(
             target: "authkestra_ssf",
             code = %err.code(),

@@ -1245,6 +1245,81 @@ async fn failure_bodies_do_not_disclose_the_configured_issuer_or_audience() {
     }
 }
 
+#[tokio::test]
+async fn failure_bodies_do_not_disclose_the_configured_freshness_policy() {
+    // The sibling of `failure_bodies_do_not_disclose_the_configured_issuer_or_audience`, for the
+    // other two settings that used to reach the unauthenticated RFC 8935 §2.3 `description`: how
+    // much clock skew this receiver tolerates, and how old a SET it will still accept. Both are
+    // deployment policy, and knowing them tells a prober exactly which `iat` values slip through.
+    const LEEWAY_SECS: u64 = 37;
+    const MAX_AGE_SECS: u64 = 91;
+
+    let verifier = SetVerifier::builder(ISSUER)
+        .audience(AUDIENCE)
+        .algorithms([Algorithm::HS256])
+        .key(decoding_key())
+        .iat_leeway(Duration::from_secs(LEEWAY_SECS))
+        .max_age(Duration::from_secs(MAX_AGE_SECS))
+        .build()
+        .unwrap();
+    let receiver = PushReceiver::new(Arc::new(verifier));
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let cases: Vec<(&str, String)> = vec![
+        (
+            "iat beyond the leeway",
+            sign(&with_claim(
+                session_revoked_claims(),
+                "iat",
+                json!(now + LEEWAY_SECS as i64 + 60),
+            )),
+        ),
+        (
+            "iat older than the maximum age",
+            sign(&with_claim(
+                session_revoked_claims(),
+                "iat",
+                json!(now - (MAX_AGE_SECS + LEEWAY_SECS) as i64 - 60),
+            )),
+        ),
+    ];
+
+    for (label, token) in cases {
+        let response = receiver
+            .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+            .await;
+        assert_eq!(response.status(), 400, "{label}");
+        assert_eq!(
+            response.error_code(),
+            Some(SetErrorCode::InvalidRequest),
+            "{label}"
+        );
+
+        let body = String::from_utf8(response.body().to_vec()).expect("the body is UTF-8 JSON");
+        for (what, secret) in [
+            ("leeway", LEEWAY_SECS.to_string()),
+            ("maximum age", MAX_AGE_SECS.to_string()),
+        ] {
+            assert!(
+                !body.contains(&secret),
+                "{label}: the failure body leaked the configured {what} ({secret}): {body}"
+            );
+        }
+
+        // Still a usable failure response: the registered code and a non-empty description.
+        let parsed = error_body(&response);
+        assert_eq!(parsed["err"], "invalid_request", "{label}");
+        assert!(
+            !parsed["description"].as_str().unwrap().is_empty(),
+            "{label}"
+        );
+    }
+}
+
 #[test]
 fn the_redacted_errors_still_carry_their_values_for_the_caller() {
     // Redaction is on `Display` only. A caller driving `SetVerifier` directly — and the crate's
@@ -1275,6 +1350,28 @@ fn the_redacted_errors_still_carry_their_values_for_the_caller() {
         expected: vec![AUDIENCE.to_string()],
     };
     assert!(!err.to_string().contains(AUDIENCE));
+
+    let err = SetError::IatInFuture {
+        iat: NOW + 900,
+        now: NOW,
+        leeway: 37,
+    };
+    match &err {
+        SetError::IatInFuture { leeway, .. } => assert_eq!(*leeway, 37),
+        other => panic!("unexpected variant {other:?}"),
+    }
+    assert!(!err.to_string().contains("37"));
+
+    let err = SetError::TooOld {
+        iat: NOW - 900,
+        now: NOW,
+        max_age: 91,
+    };
+    match &err {
+        SetError::TooOld { max_age, .. } => assert_eq!(*max_age, 91),
+        other => panic!("unexpected variant {other:?}"),
+    }
+    assert!(!err.to_string().contains("91"));
 }
 
 // ---------------------------------------------------------------------------

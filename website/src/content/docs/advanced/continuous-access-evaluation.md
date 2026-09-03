@@ -125,9 +125,10 @@ asynchronous shape RFC 8935 §2 suggests, enqueue inside the handler and return 
   get a `400 invalid_request`, the replay slot stays free, and the corrected retransmission under
   the same `jti` is processed normally instead of being mistaken for a duplicate.
 - **Error responses do not echo your configuration.** A wrong-issuer or wrong-audience SET gets
-  `invalid_issuer` / `audience mismatch` and nothing more: the push endpoint is unauthenticated,
-  so the expected values stay in your logs (as structured tracing fields) rather than going back
-  to whoever POSTed.
+  `invalid_issuer` / `audience mismatch` and nothing more, and a stale or future-dated one does
+  not reveal your `iat_leeway` or `max_age`: the push endpoint is unauthenticated, so anything
+  that describes your policy stays in your logs (as structured tracing fields) rather than going
+  back to whoever POSTed.
 - **Explicit typing is mandatory here.** RFC 8417 §2.3 only requires `typ: secevent+jwt` when a
   SET could be confused with another kind of JWT — which is exactly the situation a general
   receiver is in, so this crate always requires it.
