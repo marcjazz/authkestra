@@ -1,0 +1,44 @@
+[package]
+exclude.workspace = true
+name = "authkestra-store-sqlx"
+version.workspace = true
+edition.workspace = true
+description = "Native SQL-backed OpenID Provider storage for authkestra, via sqlx (Postgres/MySQL/SQLite)"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+
+[dependencies]
+authkestra-op = { workspace = true, default-features = false }
+authkestra-engine = { workspace = true, default-features = false }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1.0"
+tracing = "0.1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "json", "chrono"] }
+
+[features]
+default = ["rustls-aws-lc-rs"]
+postgres = ["sqlx/postgres"]
+sqlite = ["sqlx/sqlite"]
+mysql = ["sqlx/mysql"]
+
+# TLS backend, forwarded to authkestra-engine/authkestra-op. See
+# authkestra-engine's documentation for the `rustls-no-provider` contract.
+rustls-aws-lc-rs = ["authkestra-engine/rustls-aws-lc-rs", "authkestra-op/rustls-aws-lc-rs"]
+rustls-no-provider = ["authkestra-engine/rustls-no-provider", "authkestra-op/rustls-no-provider"]
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+# `migrate` only, not a full `sqlx` re-declaration: Cargo unifies this with
+# the main dependency `sqlx` above for test/bench/example builds only, so
+# downstream consumers never get this feature. Used exclusively by a
+# regression test reproducing a host application's own `sqlx::migrate!`
+# running against the same pool as `SqlxOpStore::migrate` (authkestra#290)
+# — the collision that motivated moving `SqlxOpStore` off `sqlx::migrate!`
+# entirely in favor of introspection-guarded ALTERs.
+sqlx = { version = "0.8", features = ["migrate"] }
+testcontainers = "0.27.3"
+testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql"] }

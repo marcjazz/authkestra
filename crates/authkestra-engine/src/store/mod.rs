@@ -99,3 +99,5 @@ pub mod redis;
     feature = "sql-mysql"
 ))]
 pub mod sql;
+pub mod sqlite_url;
+pub mod traits;

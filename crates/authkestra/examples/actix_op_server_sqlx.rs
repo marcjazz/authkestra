@@ -5,7 +5,7 @@
 //!
 //! Unlike `actix_op_server.rs` (which composes four `KvStore`s), `SqlxOpStore`
 //! is a single normalised schema with foreign keys and `ON DELETE CASCADE` —
-//! prefer it for OP data; `SqlKvStore` is deprecated for this purpose.
+//! prefer it for OP data over composing generic KV stores by hand.
 //!
 //! ```sh
 //! cargo run -p authkestra --example actix_op_server_sqlx --all-features
@@ -20,7 +20,7 @@ use authkestra_actix::{ActixState, OpExt};
 use authkestra_engine::store::memory::MemoryStore;
 use authkestra_engine::{AkEngine, SessionConfig, SessionStore, TokenManager};
 use authkestra_op::config::OpConfig;
-use authkestra_op::sqlx_store::SqlxOpStore;
+use authkestra_store_sqlx::SqlxOpStore;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ struct AppState {
     auth: AkEngine,
 
     #[authkestra(store)]
-    op_store: Arc<dyn authkestra_op::OpStore>,
+    op_store: Arc<dyn authkestra_op::CloneableOpStore>,
 
     #[authkestra(store)]
     config: OpConfig,
@@ -56,8 +56,16 @@ async fn main() -> std::io::Result<()> {
         Some(issuer.clone()),
     ));
 
-    // Create a SQLite connection pool (in-memory for the example, but can be a file path)
+    // Create a SQLite connection pool (in-memory for the example, but can be a file path).
+    // Capped to a single connection: SQLite's `:memory:` URI gives every
+    // connection its own private, independent database, so a multi-connection
+    // pool would scatter this store's rows across several unrelated
+    // in-memory databases — `migrate()` would create tables in whichever one
+    // it happens to check out, and a second concurrent request could hit a
+    // different, un-migrated connection and see "no such table". A real
+    // (file-backed) database has no such problem and should drop this.
     let pool = SqlitePoolOptions::new()
+        .max_connections(1)
         .connect("sqlite::memory:")
         .await
         .unwrap();
@@ -88,7 +96,7 @@ async fn main() -> std::io::Result<()> {
     .await
     .unwrap();
 
-    let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(sqlx_store);
+    let op_store: Arc<dyn authkestra_op::CloneableOpStore> = Arc::new(sqlx_store);
 
     let config = OpConfig {
         issuer: issuer.clone(),

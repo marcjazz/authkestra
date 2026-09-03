@@ -33,7 +33,7 @@ struct AppState {
     auth: AkEngine,
 
     #[authkestra(store)]
-    op_store: Arc<dyn authkestra_op::OpStore>,
+    op_store: Arc<dyn authkestra_op::CloneableOpStore>,
 
     #[authkestra(store)]
     config: OpConfig,
@@ -94,7 +94,7 @@ async fn main() {
     let refresh_tokens = RedisStore::with_client(redis_client.clone(), "op_refresh".into());
     let device_codes = RedisStore::with_client(redis_client.clone(), "op_device".into());
 
-    let op_store: Arc<dyn authkestra_op::OpStore> =
+    let op_store: Arc<dyn authkestra_op::CloneableOpStore> =
         Arc::new(authkestra_op::store::CompositeOpStore::new(
             clients,
             auth_codes,

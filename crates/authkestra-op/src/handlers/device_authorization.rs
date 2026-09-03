@@ -57,7 +57,7 @@ pub async fn handle_device_authorization(
     req: DeviceAuthorizationRequest,
     auth_header: Option<&str>,
     config: &OpConfig,
-    op_store: &dyn OpStore,
+    op_store: &mut dyn OpStore,
 ) -> Result<DeviceAuthorizationResponse, DeviceAuthorizationErrorResponse> {
     use crate::handlers::token::{authenticate_client, extract_credential, resolve_client_id};
 
@@ -133,15 +133,14 @@ pub async fn handle_device_authorization(
     // Simple 8-character alphanumeric string
     let user_code = uuid::Uuid::new_v4().to_string()[0..8].to_uppercase();
 
-    let session = DeviceCodeSession {
-        device_code: device_code.clone(),
-        user_code: user_code.clone(),
-        client_id: client_id.clone(),
+    let session = DeviceCodeSession::new(
+        device_code.clone(),
+        user_code.clone(),
+        client_id.clone(),
         scope,
-        expires_at: Utc::now() + Duration::seconds(config.device_code_ttl_secs as i64),
-        status: DeviceCodeStatus::Pending,
-        last_polled_at: None,
-    };
+        Utc::now() + Duration::seconds(config.device_code_ttl_secs as i64),
+        DeviceCodeStatus::Pending,
+    );
 
     if op_store.store_device_code(session).await.is_err() {
         return Err(DeviceAuthorizationErrorResponse {
@@ -194,7 +193,7 @@ mod tests {
         let clients = authkestra_engine::store::memory::MemoryStore::<
             crate::client::ClientRegistration,
         >::new();
-        let devices = authkestra_engine::store::memory::MemoryStore::<
+        let mut devices = authkestra_engine::store::memory::MemoryStore::<
             crate::device::DeviceCodeSession,
         >::new();
         let refresh_tokens =
@@ -235,7 +234,7 @@ mod tests {
             req,
             None,
             &config,
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 refresh_tokens.clone(),
@@ -274,7 +273,7 @@ mod tests {
             token_req.clone(),
             None,
             &config,
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 refresh_tokens.clone(),
@@ -309,7 +308,7 @@ mod tests {
             token_req,
             None,
             &config,
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients.clone(),
                 codes.clone(),
                 refresh_tokens.clone(),
@@ -366,7 +365,7 @@ mod tests {
             req,
             None,
             &config,
-            &crate::store::CompositeOpStore::new(
+            &mut crate::store::CompositeOpStore::new(
                 clients,
                 authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new(),
                 authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),

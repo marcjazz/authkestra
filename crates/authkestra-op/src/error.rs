@@ -139,3 +139,66 @@ pub enum OpError {
     #[error("principal is revoked or inactive")]
     PrincipalRevoked,
 }
+
+impl From<authkestra_engine::store::StoreError> for OpError {
+    fn from(err: authkestra_engine::store::StoreError) -> Self {
+        use authkestra_engine::store::traits::{
+            CLIENT_ASSERTION_REPLAY_PROTECTION_UNAVAILABLE, DPOP_REPLAY_PROTECTION_UNAVAILABLE,
+        };
+        use authkestra_engine::store::StoreError;
+
+        // `NoClientAssertionStore`/`NoDpopReplayStore` fail with these exact
+        // `Internal` payloads specifically so this impl can recover the
+        // distinct variant below, rather than every missing-replay-store
+        // misconfiguration collapsing into the same opaque `OpError::Storage`
+        // a genuine backend failure would produce.
+        match &err {
+            StoreError::Internal(msg) if msg == CLIENT_ASSERTION_REPLAY_PROTECTION_UNAVAILABLE => {
+                return OpError::ReplayProtectionUnavailable;
+            }
+            StoreError::Internal(msg) if msg == DPOP_REPLAY_PROTECTION_UNAVAILABLE => {
+                return OpError::DpopReplayProtectionUnavailable;
+            }
+            _ => {}
+        }
+        tracing::error!("StoreError: {}", err);
+        OpError::Storage
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OpError;
+    use authkestra_engine::store::StoreError;
+
+    /// `NoClientAssertionStore`/`NoDpopReplayStore` (in `authkestra-engine`)
+    /// and this `From` impl (in `authkestra-op`) agree on these two exact
+    /// strings across the crate boundary via shared `pub const`s — this
+    /// pins that the mapping actually recovers the distinct variants,
+    /// rather than silently falling through to the generic
+    /// `OpError::Storage` every other `StoreError` produces.
+    #[test]
+    fn a_missing_client_assertion_store_is_distinguishable_from_a_generic_storage_error() {
+        let err: OpError = StoreError::Internal(
+            authkestra_engine::store::traits::CLIENT_ASSERTION_REPLAY_PROTECTION_UNAVAILABLE
+                .to_string(),
+        )
+        .into();
+        assert!(matches!(err, OpError::ReplayProtectionUnavailable));
+    }
+
+    #[test]
+    fn a_missing_dpop_replay_store_is_distinguishable_from_a_generic_storage_error() {
+        let err: OpError = StoreError::Internal(
+            authkestra_engine::store::traits::DPOP_REPLAY_PROTECTION_UNAVAILABLE.to_string(),
+        )
+        .into();
+        assert!(matches!(err, OpError::DpopReplayProtectionUnavailable));
+    }
+
+    #[test]
+    fn an_unrelated_storage_error_stays_generic() {
+        let err: OpError = StoreError::Internal("some other backend failure".to_string()).into();
+        assert!(matches!(err, OpError::Storage));
+    }
+}

@@ -32,7 +32,7 @@ device posture change attenuates or revokes sessions in near real time.
 
 ## 4. Modern Hardened Defaults *(shipped)*
 - **PKCE on by default**: `OAuth2Flow` enables PKCE unless explicitly disabled.
-- **Exact Redirect Matching**: `authkestra-op` matches a client's registered `redirect_uris` exactly — no prefix or wildcard matching — and refuses to redirect at all when the check fails, preventing open redirectors.
+- **Exact Redirect Matching**: `authkestra-op` matches a client's registered `redirect_uris` exactly — no prefix or wildcard matching — and refuses to redirect at all when the check fails, preventing open redirectors. The only relaxation is the one RFC 8252 §7.3 requires: a registered loopback IP redirect URI (`http://127.0.0.1/...`, `http://[::1]/...`) matches on any port, since a native app is handed an ephemeral port by the OS at request time. Everything else about the URI still has to match exactly, `localhost` is not accepted as a substitute for the IP literal (§8.3), and the exemption cannot reach a non-loopback host — so it does not widen the open-redirect surface.
 - **Sender-Constrained Tokens**: DPoP (RFC 9449) and mutual-TLS (RFC 8705) binding, both fail-closed
   when their replay/binding stores are not wired — see Chapter 4 §1.
 - **Stateless OAuth state/nonce**: carried in encrypted cookies, never in the database.

@@ -33,18 +33,11 @@ rand = { workspace = true }
 base64 = "0.22.1"
 url = { workspace = true }
 sha2 = { workspace = true }
-argon2 = "0.5.3"
-sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "json", "chrono"] }
 authkestra-crypto-util.workspace = true
 
 [features]
 redis = ["dep:redis"]
 default = ["rustls-aws-lc-rs"]
-
-sqlx = ["dep:sqlx"]
-sqlx-postgres = ["sqlx", "sqlx/postgres"]
-sqlx-sqlite = ["sqlx", "sqlx/sqlite"]
-sqlx-mysql = ["sqlx", "sqlx/mysql"]
 
 # TLS backend, forwarded to authkestra-engine. See its documentation for the
 # `rustls-no-provider` contract.
@@ -59,8 +52,17 @@ rustls-no-provider = [
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+# Test-only: `handlers/token/client_auth_tests.rs` hashes a client_secret
+# to exercise `client_secret_basic`/`client_secret_post` verification.
+# Version pinned to match authkestra-engine's own (non-dev) `argon2`
+# dependency (which backs `ClientRegistration::verify_secret`) so cargo
+# resolves one shared copy instead of linking two.
+argon2 = { version = "0.6.0", features = ["password-hash"] }
+# Used by redis_store.rs's real-Redis replay-protection integration test.
+# Postgres/MySQL/SQLite went to authkestra-store-sqlx with SqlxOpStore
+# itself (authkestra#289).
 testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["postgres", "mysql", "redis"] }
+testcontainers-modules = { version = "0.15.0", features = ["redis"] }
 # Test-only: generating real EC P-256 keypairs and signing enrolment
 # challenges with them, to exercise the attestation ceremony end-to-end
 # rather than mocking the crypto away. Already present in the dependency

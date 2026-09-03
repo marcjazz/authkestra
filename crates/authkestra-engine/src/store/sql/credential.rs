@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(passkeys[0]["id"].as_str().unwrap(), "passkey1");
 
         // 4. Update Webauthn
-        let new_data = json!({"id": "passkey1", "foo": "baz"});
+        let _new_data = json!({"id": "passkey1", "foo": "baz"});
         // Need the credential_id to update (it generates UUID for password/totp if not set, but Webauthn usually passes it, wait... no, save_credential extracts `credential_id` from data if present. Let's see.)
         // wait, we don't know the generated ID for webauthn unless it's in the payload?
         // Actually `save_credential` creates a UUID if not provided in `credential_id` field.

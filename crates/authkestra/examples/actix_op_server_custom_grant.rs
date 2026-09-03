@@ -24,7 +24,7 @@ struct AppState {
     auth: authkestra_engine::AkEngine,
 
     #[authkestra(store)]
-    op_store: Arc<dyn authkestra_op::OpStore>,
+    op_store: Arc<dyn authkestra_op::CloneableOpStore>,
 
     #[authkestra(store)]
     config: OpConfig,
@@ -34,6 +34,7 @@ struct AppState {
 // CUSTOM GRANT TYPE EXAMPLE
 // We wrap `CompositeOpStore` so we can override `handle_custom_grant`.
 // -------------------------------------------------------------------------
+#[derive(Clone)]
 struct MyCustomOpStore<C, A, R, D> {
     inner: authkestra_op::store::CompositeOpStore<C, A, R, D>,
 }
@@ -43,10 +44,12 @@ impl<C: ClientStore + Send + Sync, A: Send + Sync, R: Send + Sync, D: Send + Syn
     for MyCustomOpStore<C, A, R, D>
 {
     async fn find_client(
-        &self,
+        &mut self,
         client_id: &str,
-    ) -> Result<Option<authkestra_op::client::ClientRegistration>, authkestra_op::error::OpError>
-    {
+    ) -> Result<
+        Option<authkestra_op::client::ClientRegistration>,
+        authkestra_engine::store::StoreError,
+    > {
         self.inner.find_client(client_id).await
     }
 }
@@ -56,15 +59,16 @@ impl<C: Send + Sync, A: AuthorizationCodeStore + Send + Sync, R: Send + Sync, D:
     AuthorizationCodeStore for MyCustomOpStore<C, A, R, D>
 {
     async fn store_code(
-        &self,
+        &mut self,
         code: authkestra_op::code::AuthorizationCode,
-    ) -> Result<(), authkestra_op::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         self.inner.store_code(code).await
     }
     async fn consume_code(
-        &self,
+        &mut self,
         code: &str,
-    ) -> Result<Option<authkestra_op::code::AuthorizationCode>, authkestra_op::error::OpError> {
+    ) -> Result<Option<authkestra_op::code::AuthorizationCode>, authkestra_engine::store::StoreError>
+    {
         self.inner.consume_code(code).await
     }
 }
@@ -74,24 +78,29 @@ impl<C: Send + Sync, A: Send + Sync, R: RefreshTokenStore + Send + Sync, D: Send
     RefreshTokenStore for MyCustomOpStore<C, A, R, D>
 {
     async fn store_token(
-        &self,
+        &mut self,
         token: authkestra_op::refresh::RefreshToken,
-    ) -> Result<(), authkestra_op::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         self.inner.store_token(token).await
     }
     async fn consume_token(
-        &self,
+        &mut self,
         token: &str,
-    ) -> Result<Option<authkestra_op::refresh::RefreshToken>, authkestra_op::error::OpError> {
+    ) -> Result<Option<authkestra_op::refresh::RefreshToken>, authkestra_engine::store::StoreError>
+    {
         self.inner.consume_token(token).await
     }
     async fn get_token(
-        &self,
+        &mut self,
         token: &str,
-    ) -> Result<Option<authkestra_op::refresh::RefreshToken>, authkestra_op::error::OpError> {
+    ) -> Result<Option<authkestra_op::refresh::RefreshToken>, authkestra_engine::store::StoreError>
+    {
         self.inner.get_token(token).await
     }
-    async fn revoke_token(&self, token: &str) -> Result<(), authkestra_op::error::OpError> {
+    async fn revoke_token(
+        &mut self,
+        token: &str,
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         self.inner.revoke_token(token).await
     }
 }
@@ -101,42 +110,48 @@ impl<C: Send + Sync, A: Send + Sync, R: Send + Sync, D: DeviceCodeStore + Send +
     DeviceCodeStore for MyCustomOpStore<C, A, R, D>
 {
     async fn store_device_code(
-        &self,
+        &mut self,
         session: authkestra_op::device::DeviceCodeSession,
-    ) -> Result<(), authkestra_op::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         self.inner.store_device_code(session).await
     }
     async fn get_device_code(
-        &self,
+        &mut self,
         device_code: &str,
-    ) -> Result<Option<authkestra_op::device::DeviceCodeSession>, authkestra_op::error::OpError>
-    {
+    ) -> Result<
+        Option<authkestra_op::device::DeviceCodeSession>,
+        authkestra_engine::store::StoreError,
+    > {
         self.inner.get_device_code(device_code).await
     }
     async fn get_by_user_code(
-        &self,
+        &mut self,
         user_code: &str,
-    ) -> Result<Option<authkestra_op::device::DeviceCodeSession>, authkestra_op::error::OpError>
-    {
+    ) -> Result<
+        Option<authkestra_op::device::DeviceCodeSession>,
+        authkestra_engine::store::StoreError,
+    > {
         self.inner.get_by_user_code(user_code).await
     }
     async fn update_device_code(
-        &self,
+        &mut self,
         session: authkestra_op::device::DeviceCodeSession,
-    ) -> Result<(), authkestra_op::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         self.inner.update_device_code(session).await
     }
     async fn delete_device_code(
-        &self,
+        &mut self,
         device_code: &str,
-    ) -> Result<(), authkestra_op::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         self.inner.delete_device_code(device_code).await
     }
     async fn consume_device_code(
-        &self,
+        &mut self,
         device_code: &str,
-    ) -> Result<Option<authkestra_op::device::DeviceCodeSession>, authkestra_op::error::OpError>
-    {
+    ) -> Result<
+        Option<authkestra_op::device::DeviceCodeSession>,
+        authkestra_engine::store::StoreError,
+    > {
         self.inner.consume_device_code(device_code).await
     }
 }
@@ -150,7 +165,7 @@ impl<
     > OpStore for MyCustomOpStore<C, A, R, D>
 {
     async fn handle_custom_grant(
-        &self,
+        &mut self,
         grant_type: &str,
         _req: authkestra_op::handlers::token::TokenRequest,
         client_id: String,
@@ -235,7 +250,7 @@ async fn main() -> std::io::Result<()> {
     let refresh_tokens = MemoryStore::new();
     let device_codes = MemoryStore::new();
 
-    let op_store: Arc<dyn authkestra_op::OpStore> = Arc::new(MyCustomOpStore {
+    let op_store: Arc<dyn authkestra_op::CloneableOpStore> = Arc::new(MyCustomOpStore {
         inner: authkestra_op::store::CompositeOpStore::new(
             clients,
             auth_codes,
@@ -262,7 +277,7 @@ async fn main() -> std::io::Result<()> {
 
     // TIP: authkestra uses traits (like `SessionStore`) for storage.
     // This makes it easy to swap out backends! You could easily replace `MemoryStore`
-    // with `SqlKvStore` or `RedisStore` simply by changing the struct instantiated here.
+    // with `RedisStore` simply by changing the struct instantiated here.
     let auth = Authkestra::builder()
         .session_store(Arc::new(
             authkestra_engine::store::memory::MemoryStore::new(),

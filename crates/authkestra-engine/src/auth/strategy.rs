@@ -285,12 +285,12 @@ mod tests {
     #[tokio::test]
     async fn test_basic_strategy() {
         let strategy = BasicStrategy::new(DummyBasic);
-        let mut req = Request::builder().uri("/").body(()).unwrap();
+        let req = Request::builder().uri("/").body(()).unwrap();
 
         let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
         assert_eq!(res, None);
 
-        let mut req2 = Request::builder()
+        let req2 = Request::builder()
             .uri("/")
             .header(AUTHORIZATION, "Basic dXNlcjpwYXNz")
             .body(())
@@ -302,12 +302,12 @@ mod tests {
     #[tokio::test]
     async fn test_token_strategy() {
         let strategy = TokenStrategy::new(DummyToken);
-        let mut req = Request::builder().uri("/").body(()).unwrap();
+        let req = Request::builder().uri("/").body(()).unwrap();
 
         let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
         assert_eq!(res, None);
 
-        let mut req2 = Request::builder()
+        let req2 = Request::builder()
             .uri("/")
             .header(AUTHORIZATION, "Bearer valid_token")
             .body(())
@@ -328,12 +328,12 @@ mod tests {
                 }
             },
         );
-        let mut req = Request::builder().uri("/").body(()).unwrap();
+        let req = Request::builder().uri("/").body(()).unwrap();
 
         let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
         assert_eq!(res, None);
 
-        let mut req2 = Request::builder()
+        let req2 = Request::builder()
             .uri("/")
             .header("x-api-key", "secret")
             .body(())
@@ -345,12 +345,12 @@ mod tests {
     #[tokio::test]
     async fn test_session_strategy() {
         let strategy = SessionStrategy::new(DummySession, "sid");
-        let mut req = Request::builder().uri("/").body(()).unwrap();
+        let req = Request::builder().uri("/").body(()).unwrap();
 
         let res = strategy.authenticate(&req.into_parts().0).await.unwrap();
         assert_eq!(res, None);
 
-        let mut req2 = Request::builder()
+        let req2 = Request::builder()
             .uri("/")
             .header(COOKIE, "sid=valid_sid")
             .body(())

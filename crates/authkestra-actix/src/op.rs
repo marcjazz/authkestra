@@ -35,7 +35,7 @@ pub async fn actix_discovery_handler(config: web::Data<OpConfig>) -> impl Respon
 }
 
 pub async fn actix_authorize_handler(
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::CloneableOpStore>>,
     config: web::Data<OpConfig>,
     auth_session: Option<crate::AuthSession>,
     req: web::Query<AuthorizeRequest>,
@@ -54,14 +54,11 @@ pub async fn actix_authorize_handler(
         }
     };
 
-    match handle_authorize(
-        req.into_inner(),
-        identity,
-        config.get_ref(),
-        op_store.get_ref().as_ref(),
-    )
-    .await
-    {
+    // A fresh, owned clone for this request rather than a shared instance
+    // behind a lock — see `authkestra_op::CloneableOpStore`'s doc comment
+    // for why that matters for a pool-backed store.
+    let mut store = op_store.get_ref().clone_op_store();
+    match handle_authorize(req.into_inner(), identity, config.get_ref(), &mut *store).await {
         AuthorizeOutcome::Redirect(url) => HttpResponse::Found()
             .insert_header(("Location", url))
             .finish(),
@@ -75,7 +72,7 @@ pub async fn actix_authorize_handler(
 pub async fn actix_device_authorization_handler(
     http_req: HttpRequest,
     req: web::Form<DeviceAuthorizationRequest>,
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::CloneableOpStore>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
     tracing::debug!("Handling OP device authorization request (actix)");
@@ -85,13 +82,9 @@ pub async fn actix_device_authorization_handler(
         .get(actix_web::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
 
-    match handle_device_authorization(
-        req.into_inner(),
-        auth_header,
-        config.get_ref(),
-        op_store.get_ref().as_ref(),
-    )
-    .await
+    let mut store = op_store.get_ref().clone_op_store();
+    match handle_device_authorization(req.into_inner(), auth_header, config.get_ref(), &mut *store)
+        .await
     {
         Ok(resp) => HttpResponse::Ok().json(resp),
         Err(err) => {
@@ -151,7 +144,7 @@ fn extract_dpop_header(
 pub async fn actix_token_handler(
     http_req: HttpRequest,
     req: web::Form<TokenRequest>,
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::CloneableOpStore>>,
     tokens: web::Data<Arc<TokenManager>>,
     config: web::Data<OpConfig>,
 ) -> impl Responder {
@@ -177,11 +170,12 @@ pub async fn actix_token_handler(
         Err(err) => return HttpResponse::BadRequest().json(err),
     };
 
+    let mut store = op_store.get_ref().clone_op_store();
     match handle_token_with_client_cert(
         req.into_inner(),
         auth_header,
         config.get_ref(),
-        op_store.get_ref().as_ref(),
+        &mut *store,
         tokens.get_ref().as_ref(),
         client_cert_der.as_deref(),
         dpop_header,
@@ -205,7 +199,7 @@ pub async fn actix_userinfo_handler(
     tokens: web::Data<Arc<TokenManager>>,
     // `/userinfo` is a protected resource, so a DPoP-bound token presented
     // here needs the same replay guard `/token` uses (RFC 9449 §11.1).
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::CloneableOpStore>>,
 ) -> impl Responder {
     tracing::debug!("Handling OP userinfo request (actix)");
 
@@ -261,11 +255,12 @@ pub async fn actix_userinfo_handler(
         UserInfoRequest::new(token.to_string())
     };
 
-    match handle_userinfo(
+    let mut store = op_store.get_ref().clone_op_store();
+    let response = match handle_userinfo(
         req,
         config.get_ref(),
         tokens.get_ref().as_ref(),
-        op_store.get_ref().as_ref(),
+        &mut *store,
     )
     .await
     {
@@ -278,12 +273,13 @@ pub async fn actix_userinfo_handler(
             };
             HttpResponse::build(status).json(err)
         }
-    }
+    };
+    response
 }
 
 pub async fn actix_device_verify_handler(
     req: web::Form<authkestra_op::handlers::device_verify::DeviceVerifyRequest>,
-    op_store: web::Data<Arc<dyn authkestra_op::OpStore>>,
+    op_store: web::Data<Arc<dyn authkestra_op::CloneableOpStore>>,
     auth_session: Option<crate::AuthSession>,
 ) -> actix_web::HttpResponse {
     tracing::debug!("Handling OP device verify request (actix)");
@@ -298,10 +294,11 @@ pub async fn actix_device_verify_handler(
         }
     };
 
+    let mut store = op_store.get_ref().clone_op_store();
     match authkestra_op::handlers::device_verify::handle_device_verify(
         req.into_inner(),
         identity,
-        op_store.get_ref().as_ref(),
+        &mut *store,
     )
     .await
     {
@@ -448,7 +445,7 @@ impl<T> OpExt for T {
 use authkestra_engine::{Configured, Engine};
 type CompleteOp = authkestra_op::Op<
     Engine<Configured<Arc<dyn crate::SessionStore>>, Configured<Arc<TokenManager>>>,
-    Arc<dyn authkestra_op::OpStore>,
+    Arc<dyn authkestra_op::CloneableOpStore>,
 >;
 
 pub trait OpActixExt {

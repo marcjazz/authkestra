@@ -4,6 +4,13 @@ use redis::AsyncCommands;
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
 
+/// `redis::Client` is a thin, cheaply-`Clone`-able handle (connection info
+/// plus lazy connection setup, no open socket of its own), so deriving
+/// `Clone` here costs nothing and lets a `RedisStore` be shared across
+/// concurrent tasks by value — needed by, e.g., the conformance suite's
+/// `insert_if_absent` concurrency test, which spawns many tasks each
+/// holding their own clone of the same store.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct RedisStore {
     client: redis::Client,
@@ -311,7 +318,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> IndexedKvStore<T> 
     }
 }
 
-#[cfg(all(test, feature = "redis"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::store::{AtomicConsume, IndexedKvStore, KvStore};

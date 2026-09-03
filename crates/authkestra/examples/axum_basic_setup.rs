@@ -50,8 +50,8 @@ async fn main() {
         .init();
 
     // 1. Pick a storage backend. `SessionStore` is a trait, so swapping
-    //    `MemoryStore` for `RedisStore` or `SqlKvStore` is a one-line change
-    //    (see `axum_session_redis.rs` / `axum_sql_store.rs`).
+    //    `MemoryStore` for `RedisStore` is a one-line change
+    //    (see `axum_session_redis.rs`).
     let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 
     // 2. Build the engine. The typestate builder only exposes session APIs

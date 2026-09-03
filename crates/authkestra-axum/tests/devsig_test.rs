@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use authkestra_axum::devsig::DeviceSignatureLayer;
-use authkestra_devsig::{DeviceIdentity, IssuerJwks, ReplayError, ReplayStore, VerifierConfig};
+use authkestra_devsig::{IssuerJwks, ReplayError, ReplayStore, VerifierConfig};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
-    response::Response,
     routing::get,
     Router,
 };

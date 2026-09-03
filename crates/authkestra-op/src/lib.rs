@@ -25,8 +25,7 @@ pub use client::{ClientRegistration, ClientStore, GrantType, TokenEndpointAuthMe
 /// assertion verification and the replay tracking it depends on.
 pub mod client_assertion;
 pub use client_assertion::{
-    ClientAssertionStore, MemoryClientAssertionStore, NoClientAssertionStore,
-    CLIENT_ASSERTION_TYPE_JWT_BEARER,
+    MemoryClientAssertionStore, NoClientAssertionStore, CLIENT_ASSERTION_TYPE_JWT_BEARER,
 };
 
 /// Authorization codes issued during the `/authorize` step and consumed at
@@ -70,15 +69,11 @@ pub mod refresh;
 
 /// Unified OpStore trait.
 pub mod store;
-pub use store::OpStore;
+pub use store::{CloneableOpStore, OpStore};
 
 #[cfg(feature = "redis")]
 /// Redis-backed implementations.
 pub mod redis_store;
-
-#[cfg(feature = "sqlx")]
-/// Native SQL implementations using sqlx.
-pub mod sqlx_store;
 
 /// Provider-level configuration (issuer URL, supported scopes/response
 /// types).

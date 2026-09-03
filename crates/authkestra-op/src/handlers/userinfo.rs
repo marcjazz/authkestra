@@ -70,7 +70,7 @@ pub async fn handle_userinfo<S: OpStore + ?Sized>(
     req: UserInfoRequest,
     _config: &OpConfig,
     tokens: &TokenManager,
-    op_store: &S,
+    op_store: &mut S,
 ) -> Result<UserInfoResponse, UserInfoErrorResponse> {
     tracing::debug!("Processing userinfo request");
 
@@ -158,7 +158,7 @@ fn dpop_bound_jkt(cnf: Option<&serde_json::Value>) -> Option<&str> {
 async fn verify_dpop_binding<S: OpStore + ?Sized>(
     req: &UserInfoRequest,
     cnf: Option<&serde_json::Value>,
-    op_store: &S,
+    op_store: &mut S,
 ) -> Result<(), UserInfoErrorResponse> {
     let bound_jkt = dpop_bound_jkt(cnf);
 
@@ -373,7 +373,7 @@ mod tests {
 
         let req = UserInfoRequest::new(access_token);
 
-        let result = handle_userinfo(req, &config, &tokens, &test_store()).await;
+        let result = handle_userinfo(req, &config, &tokens, &mut test_store()).await;
         assert_eq!(result.unwrap_err().error, "insufficient_scope");
     }
 
@@ -384,7 +384,7 @@ mod tests {
 
         let req = UserInfoRequest::new("invalid.token.here".to_string());
 
-        let result = handle_userinfo(req, &config, &tokens, &test_store()).await;
+        let result = handle_userinfo(req, &config, &tokens, &mut test_store()).await;
         assert_eq!(result.unwrap_err().error, "invalid_token");
     }
 
@@ -405,7 +405,7 @@ mod tests {
 
         let req = UserInfoRequest::new(access_token);
 
-        let result = handle_userinfo(req, &config, &tokens, &test_store())
+        let result = handle_userinfo(req, &config, &tokens, &mut test_store())
             .await
             .unwrap();
         assert_eq!(result.sub, "user-123");
@@ -430,7 +430,7 @@ mod tests {
 
         let req = UserInfoRequest::new(access_token);
 
-        let result = handle_userinfo(req, &config, &tokens, &test_store())
+        let result = handle_userinfo(req, &config, &tokens, &mut test_store())
             .await
             .unwrap();
         assert_eq!(result.sub, "user-123");
@@ -534,7 +534,7 @@ mod tests {
             authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
             authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>,
             authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
-            crate::client_assertion::NoClientAssertionStore,
+            authkestra_engine::store::traits::NoClientAssertionStore,
             authkestra_engine::store::memory::MemoryStore<crate::dpop::DpopJtiRecord>,
         >;
 
@@ -559,7 +559,7 @@ mod tests {
                 UserInfoRequest::new(token),
                 &test_config(),
                 &tokens,
-                &store_with_replay(),
+                &mut store_with_replay(),
             )
             .await
             .expect_err("a bound token must not be accepted as Bearer");
@@ -592,7 +592,7 @@ mod tests {
                 ),
                 &test_config(),
                 &tokens,
-                &store_with_replay(),
+                &mut store_with_replay(),
             )
             .await
             .expect_err("the DPoP scheme must not be accepted for an unbound token");
@@ -617,7 +617,7 @@ mod tests {
                 ),
                 &test_config(),
                 &tokens,
-                &store_with_replay(),
+                &mut store_with_replay(),
             )
             .await
             .expect("a bound token with a matching proof must be accepted");
@@ -643,7 +643,7 @@ mod tests {
                 ),
                 &test_config(),
                 &tokens,
-                &store_with_replay(),
+                &mut store_with_replay(),
             )
             .await
             .expect_err("a proof for another key must be refused");
@@ -670,7 +670,7 @@ mod tests {
                 ),
                 &test_config(),
                 &tokens,
-                &store_with_replay(),
+                &mut store_with_replay(),
             )
             .await
             .expect_err("a proof bound to a different access token must be refused");
@@ -684,7 +684,7 @@ mod tests {
             let seed = ResourceProof::with_key_seed(7, "j6", None);
             let token = bound_token(&tokens, &seed.jkt());
             let proof = ResourceProof::new("j6", &token).build();
-            let store = store_with_replay();
+            let mut store = store_with_replay();
 
             let first = handle_userinfo(
                 UserInfoRequest::new_dpop(
@@ -695,7 +695,7 @@ mod tests {
                 ),
                 &test_config(),
                 &tokens,
-                &store,
+                &mut store,
             )
             .await;
             assert!(first.is_ok(), "first presentation must succeed");
@@ -704,7 +704,7 @@ mod tests {
                 UserInfoRequest::new_dpop(token, Some(proof), Some("GET".to_string()), None),
                 &test_config(),
                 &tokens,
-                &store,
+                &mut store,
             )
             .await
             .expect_err("replaying the same proof must be refused");
@@ -725,7 +725,7 @@ mod tests {
                 UserInfoRequest::new_dpop(token, Some(proof), Some("GET".to_string()), None),
                 &test_config(),
                 &tokens,
-                &test_store(),
+                &mut test_store(),
             )
             .await
             .expect_err("must fail closed");

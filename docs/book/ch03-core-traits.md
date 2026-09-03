@@ -155,7 +155,7 @@ pub trait IndexedKvStore<T>: KvStore<T> {
 
 `SessionStore` sits on top of these, and there is a **blanket impl** of `SessionStore` for any
 `KvStore<Session>` — so implementing `KvStore` gets you a session store for free, which is exactly
-how `MemoryStore`, `RedisStore` and `SqlKvStore` all qualify:
+how `MemoryStore` and `RedisStore` both qualify:
 
 ```rust
 #[async_trait]

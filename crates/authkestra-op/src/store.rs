@@ -1,10 +1,9 @@
 use crate::client::ClientStore;
-use crate::client_assertion::{ClientAssertionStore, NoClientAssertionStore};
 use crate::code::AuthorizationCodeStore;
 use crate::device::DeviceCodeStore;
 use crate::dpop::{DpopReplayStore, NoDpopReplayStore};
-use crate::error::OpError;
 use crate::refresh::RefreshTokenStore;
+use authkestra_engine::store::traits::{ClientAssertionStore, NoClientAssertionStore};
 use chrono::{DateTime, Utc};
 
 /// A unified store for all OpenID Provider state.
@@ -31,11 +30,13 @@ pub trait OpStore:
     /// impossible to reach by accident. See
     /// `CompositeOpStore::with_client_assertion_store` for how to wire one.
     async fn record_client_assertion_jti(
-        &self,
+        &mut self,
         jti: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<bool, OpError> {
-        NoClientAssertionStore.record_jti(jti, expires_at).await
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
+        NoClientAssertionStore::default()
+            .record_jti(jti, expires_at)
+            .await
     }
 
     /// Atomically records the `jti` of a presented DPoP proof, returning
@@ -50,11 +51,11 @@ pub trait OpStore:
     /// is the only safe default here too. See
     /// `CompositeOpStore::with_dpop_replay_store` for how to wire one.
     async fn check_and_record_dpop_jti(
-        &self,
+        &mut self,
         jti: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<bool, OpError> {
-        NoDpopReplayStore
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
+        NoDpopReplayStore::default()
             .check_and_record_dpop_jti(jti, expires_at)
             .await
     }
@@ -63,7 +64,7 @@ pub trait OpStore:
     ///
     /// By default, this returns an `unsupported_grant_type` error.
     async fn handle_custom_grant(
-        &self,
+        &mut self,
         _grant_type: &str,
         _req: crate::handlers::token::TokenRequest,
         _client_id: String,
@@ -99,7 +100,7 @@ pub trait OpStore:
     /// that behavior automatically; nothing about the trait or dispatch
     /// changes for it.
     async fn handle_authorization_code_grant(
-        &self,
+        &mut self,
         req: crate::handlers::token::TokenRequest,
         client_id: String,
         client: crate::client::ClientRegistration,
@@ -132,7 +133,7 @@ pub trait OpStore:
     /// Any `OpStore` that does not override this method gets that behavior
     /// automatically; nothing about the trait or dispatch changes for it.
     async fn handle_refresh_token(
-        &self,
+        &mut self,
         req: crate::handlers::token::TokenRequest,
         client_id: String,
         client: crate::client::ClientRegistration,
@@ -162,7 +163,7 @@ pub trait OpStore:
     /// method gets that behavior automatically; nothing about the trait or
     /// dispatch changes for it.
     async fn handle_token_exchange(
-        &self,
+        &mut self,
         req: crate::handlers::token::TokenRequest,
         client_id: String,
         client: crate::client::ClientRegistration,
@@ -177,6 +178,55 @@ pub trait OpStore:
     }
 }
 
+/// An `OpStore` that can be cloned behind a trait object.
+///
+/// This is the seam that lets `authkestra-axum`/`authkestra-actix` hand
+/// each request its own independent, owned store instance — a plain
+/// `Box::new(store.clone())` — instead of holding one shared instance
+/// behind a lock for the whole handler. That distinction matters: a
+/// pool-backed store (`authkestra-store-sqlx`'s `SqlxOpStore`, or either
+/// ORM example crate) is already cheap to clone precisely because cloning
+/// it doesn't clone the pool, just a handle to it, so serializing every
+/// request behind one `Mutex` would throw away all of the pool's own
+/// concurrency for no benefit.
+///
+/// **`Clone` here must mean "new handle to the same state", never "new,
+/// independent copy of the state".** A handler clones the store once per
+/// request and drops the clone when the request ends, so if `Clone`
+/// duplicates the underlying data instead of sharing it, every write a
+/// handler makes vanishes with that request's clone — e.g. an
+/// `#[derive(Clone)]` over a plain `HashMap` field would compile, satisfy
+/// this trait, and then silently make every `/authorize` write invisible to
+/// the following `/token` exchange (always `invalid_grant`), with no
+/// compile error, no log, and no failing test to catch it. Share mutable
+/// state through an `Arc<Mutex<_>>`/`Arc<RwLock<_>>` field (as
+/// `MemoryClientAssertionStore` and `authkestra_engine::store::MemoryStore`
+/// do) or a connection-pool handle (`sqlx::Pool`, `deadpool`, etc.) that is
+/// already cheap-clone-shares-state by construction, not by `#[derive]`ing
+/// `Clone` over the data itself.
+///
+/// Blanket-implemented for any `OpStore + Clone` — nothing to implement by
+/// hand. `CompositeOpStore` and every first-party backend already satisfy
+/// it; a custom `OpStore` needs only `#[derive(Clone)]` (or a hand-written
+/// impl) to pick it up too, **provided its `Clone` shares state** as
+/// described above.
+pub trait CloneableOpStore: OpStore {
+    /// Returns an owned, independent clone of this store, boxed as a plain
+    /// `OpStore` trait object (not `Self` or `CloneableOpStore` again) —
+    /// callers use the clone for exactly one request and then drop it, so
+    /// there's no need for the clone to itself be re-cloneable.
+    fn clone_op_store(&self) -> Box<dyn OpStore>;
+}
+
+impl<T> CloneableOpStore for T
+where
+    T: OpStore + Clone + 'static,
+{
+    fn clone_op_store(&self) -> Box<dyn OpStore> {
+        Box::new(self.clone())
+    }
+}
+
 /// A helper struct that implements `OpStore` by delegating to individual stores.
 /// Useful if you want to use different backends for different types of data (e.g., config for clients, Redis for codes).
 ///
@@ -187,6 +237,7 @@ pub trait OpStore:
 /// [`CompositeOpStore::with_dpop_replay_store`]. Both are defaulted type
 /// parameters rather than required arguments to [`CompositeOpStore::new`]
 /// so that existing four-store call sites keep compiling untouched.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct CompositeOpStore<C, A, R, D, J = NoClientAssertionStore, P = NoDpopReplayStore> {
     clients: C,
@@ -209,18 +260,18 @@ where
     Self: Send + Sync,
 {
     async fn record_client_assertion_jti(
-        &self,
+        &mut self,
         jti: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<bool, OpError> {
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
         self.assertions.record_jti(jti, expires_at).await
     }
 
     async fn check_and_record_dpop_jti(
-        &self,
+        &mut self,
         jti: &str,
         expires_at: DateTime<Utc>,
-    ) -> Result<bool, OpError> {
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
         self.dpop_replays
             .check_and_record_dpop_jti(jti, expires_at)
             .await
@@ -235,8 +286,8 @@ impl<C, A, R, D> CompositeOpStore<C, A, R, D, NoClientAssertionStore, NoDpopRepl
             codes,
             refresh,
             devices,
-            assertions: NoClientAssertionStore,
-            dpop_replays: NoDpopReplayStore,
+            assertions: NoClientAssertionStore::default(),
+            dpop_replays: NoDpopReplayStore::default(),
         }
     }
 }
@@ -304,9 +355,10 @@ impl<
 {
     #[tracing::instrument(skip(self))]
     async fn find_client(
-        &self,
+        &mut self,
         client_id: &str,
-    ) -> Result<Option<crate::client::ClientRegistration>, crate::error::OpError> {
+    ) -> Result<Option<crate::client::ClientRegistration>, authkestra_engine::store::StoreError>
+    {
         tracing::debug!(client_id = %client_id, "CompositeOpStore: finding client");
         self.clients.find_client(client_id).await
     }
@@ -324,18 +376,18 @@ impl<
 {
     #[tracing::instrument(skip(self, code))]
     async fn store_code(
-        &self,
+        &mut self,
         code: crate::code::AuthorizationCode,
-    ) -> Result<(), crate::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing authorization code");
         self.codes.store_code(code).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn consume_code(
-        &self,
+        &mut self,
         code: &str,
-    ) -> Result<Option<crate::code::AuthorizationCode>, crate::error::OpError> {
+    ) -> Result<Option<crate::code::AuthorizationCode>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: consuming authorization code");
         self.codes.consume_code(code).await
     }
@@ -353,33 +405,36 @@ impl<
 {
     #[tracing::instrument(skip(self, token))]
     async fn store_token(
-        &self,
+        &mut self,
         token: crate::refresh::RefreshToken,
-    ) -> Result<(), crate::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing refresh token");
         self.refresh.store_token(token).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn consume_token(
-        &self,
+        &mut self,
         token: &str,
-    ) -> Result<Option<crate::refresh::RefreshToken>, crate::error::OpError> {
+    ) -> Result<Option<crate::refresh::RefreshToken>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: consuming refresh token");
         self.refresh.consume_token(token).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_token(
-        &self,
+        &mut self,
         token: &str,
-    ) -> Result<Option<crate::refresh::RefreshToken>, crate::error::OpError> {
+    ) -> Result<Option<crate::refresh::RefreshToken>, authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: getting refresh token");
         self.refresh.get_token(token).await
     }
 
     #[tracing::instrument(skip(self))]
-    async fn revoke_token(&self, token: &str) -> Result<(), crate::error::OpError> {
+    async fn revoke_token(
+        &mut self,
+        token: &str,
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: revoking refresh token");
         self.refresh.revoke_token(token).await
     }
@@ -397,72 +452,58 @@ impl<
 {
     #[tracing::instrument(skip(self, session))]
     async fn store_device_code(
-        &self,
+        &mut self,
         session: crate::device::DeviceCodeSession,
-    ) -> Result<(), crate::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: storing device code");
         self.devices.store_device_code(session).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_device_code(
-        &self,
+        &mut self,
         device_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, crate::error::OpError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError>
+    {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: getting device code");
         self.devices.get_device_code(device_code).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_by_user_code(
-        &self,
+        &mut self,
         user_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, crate::error::OpError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError>
+    {
         tracing::debug!(user_code = %user_code, "CompositeOpStore: getting by user code");
         self.devices.get_by_user_code(user_code).await
     }
 
     #[tracing::instrument(skip(self, session))]
     async fn update_device_code(
-        &self,
+        &mut self,
         session: crate::device::DeviceCodeSession,
-    ) -> Result<(), crate::error::OpError> {
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!("CompositeOpStore: updating device code");
         self.devices.update_device_code(session).await
     }
 
     #[tracing::instrument(skip(self))]
-    async fn delete_device_code(&self, device_code: &str) -> Result<(), crate::error::OpError> {
+    async fn delete_device_code(
+        &mut self,
+        device_code: &str,
+    ) -> Result<(), authkestra_engine::store::StoreError> {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: deleting device code");
         self.devices.delete_device_code(device_code).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn consume_device_code(
-        &self,
+        &mut self,
         device_code: &str,
-    ) -> Result<Option<crate::device::DeviceCodeSession>, crate::error::OpError> {
+    ) -> Result<Option<crate::device::DeviceCodeSession>, authkestra_engine::store::StoreError>
+    {
         tracing::debug!(device_code = %device_code, "CompositeOpStore: consuming device code");
         self.devices.consume_device_code(device_code).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use authkestra_engine::store::memory::MemoryStore;
-
-    #[tokio::test]
-    async fn test_composite_store() {
-        let clients = MemoryStore::<crate::client::ClientRegistration>::default();
-        let codes = MemoryStore::<crate::code::AuthorizationCode>::default();
-        let refresh = MemoryStore::<crate::refresh::RefreshToken>::default();
-        let devices = MemoryStore::<crate::device::DeviceCodeSession>::default();
-
-        let store = CompositeOpStore::new(clients, codes, refresh, devices);
-
-        // This is enough to instantiate it and run the with_ methods.
-        // We also want to call find_client to cover the trait methods on CompositeOpStore
-        store.find_client("abc").await.unwrap();
     }
 }

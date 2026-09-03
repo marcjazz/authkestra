@@ -40,7 +40,7 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     // 1. Pick a storage backend. `SessionStore` is a trait, so swapping
-    //    `MemoryStore` for `RedisStore` or `SqlKvStore` is a one-line change.
+    //    `MemoryStore` for `RedisStore` is a one-line change.
     let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
 
     // 2. Build the engine. The typestate builder only exposes session APIs

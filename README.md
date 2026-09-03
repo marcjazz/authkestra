@@ -118,7 +118,6 @@ own module docs list the environment variables it needs.
 | Axum with Google OIDC | `cargo run -p authkestra --example axum_oidc_google --all-features` |
 | Axum stateless OAuth (JWT callback) | `cargo run -p authkestra --example axum_oauth_stateless --all-features` |
 | Axum with Redis session | `cargo run -p authkestra --example axum_session_redis --all-features` |
-| Axum with SQL store | `cargo run -p authkestra --example axum_sql_store --all-features` |
 | Axum resource server | `cargo run -p authkestra --example axum_resource_server --all-features` |
 | Axum OP server | `cargo run -p authkestra --example axum_op_server --all-features` |
 | Axum OP server on SQLx | `cargo run -p authkestra --example axum_op_server_sqlx --all-features` |
@@ -132,9 +131,9 @@ own module docs list the environment variables it needs.
 Most of these have an Actix counterpart under the same name with the `actix_` prefix —
 `actix_basic_setup`, `actix_oauth2_github`, `actix_oidc_google`, `actix_oauth_stateless`,
 `actix_op_server`, `actix_op_server_sqlx`, `actix_op_server_custom_grant`,
-`actix_op_server_attestation`, `actix_resource_server_strategy`, `actix_devsig`. Five scenarios
+`actix_op_server_attestation`, `actix_resource_server_strategy`, `actix_devsig`. Four scenarios
 are Axum-only today and have **no** Actix twin: `axum_mfa_server`, `axum_session_redis`,
-`axum_sql_store`, `axum_data_layer_macros`, and `axum_resource_server`.
+`axum_data_layer_macros`, and `axum_resource_server`.
 
 Four protocol-level examples live in `authkestra-engine` instead, because they need no web
 framework at all:

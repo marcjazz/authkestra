@@ -25,17 +25,17 @@ authkestra-axum = { version = "0.7", features = ["op"] }
 
 To run an OP Server, you need to persist four specific types of records: Clients, Auth Codes, Refresh Tokens, and Device Codes. 
 
-In Authkestra, this is handled through the unified `OpStore` supertrait. `OpStore` aggregates the four granular storage traits, and adds a handful of **defaulted** methods on top:
+In Authkestra, this is handled through the unified `OpStore` supertrait. `OpStore` aggregates the four granular storage traits, each of whose methods take `&mut self` rather than `&self` — a pool-backed implementation typically borrows a single connection for the duration of the call — and adds a handful of **defaulted** methods on top:
 
 ```rust
 pub trait OpStore:
     ClientStore + AuthorizationCodeStore + RefreshTokenStore + DeviceCodeStore + Send + Sync
 {
     // All defaulted — override only what you need.
-    async fn record_client_assertion_jti(&self, jti: &str, expires_at: DateTime<Utc>)
-        -> Result<bool, OpError>;      // RFC 7523 private_key_jwt replay guard
-    async fn check_and_record_dpop_jti(&self, jti: &str, expires_at: DateTime<Utc>)
-        -> Result<bool, OpError>;      // RFC 9449 DPoP proof replay guard
+    async fn record_client_assertion_jti(&mut self, jti: &str, expires_at: DateTime<Utc>)
+        -> Result<bool, StoreError>;   // RFC 7523 private_key_jwt replay guard
+    async fn check_and_record_dpop_jti(&mut self, jti: &str, expires_at: DateTime<Utc>)
+        -> Result<bool, StoreError>;   // RFC 9449 DPoP proof replay guard
     async fn handle_custom_grant(/* ... */) -> Result<TokenResponse, TokenErrorResponse>;
     async fn handle_refresh_token(/* ... */) -> Result<TokenResponse, TokenErrorResponse>;
 }
@@ -54,14 +54,21 @@ You can implement `OpStore` directly on a single monolithic database struct (e.g
 
 ```rust
 use authkestra_op::store::CompositeOpStore;
+use std::sync::Arc;
 
-let op_store = CompositeOpStore::new(
+let op_store: Arc<dyn authkestra_op::CloneableOpStore> = Arc::new(CompositeOpStore::new(
     client_store, // e.g., PostgreSQL for persistent clients
     auth_code_store, // e.g., Redis for short-lived codes
     refresh_token_store,
     device_code_store,
-);
+));
 ```
+
+`Op::builder().store(...)` takes an `Arc<dyn CloneableOpStore>`, not a bare `Arc<dyn OpStore>` behind a lock. Because each `OpStore` method needs `&mut self`, a single shared instance can't be called concurrently — `CloneableOpStore` (blanket-implemented for any `OpStore + Clone`) lets every request clone a cheap, independent handle instead of contending on a global `Mutex`. This is why `CompositeOpStore`, `SqlxOpStore`, and `RedisStore` all implement `Clone`: cloning them clones an inner connection pool handle (e.g. `sqlx::Pool` or a Redis client), not the underlying connections themselves. A custom `OpStore` implementation needs `#[derive(Clone)]` (or a manual `Clone` impl) for the same reason.
+
+:::caution[`Clone` must share state, not copy it]
+A handler clones the store once per request and drops the clone when the request ends. `Clone` here has to mean "a new handle onto the same underlying state" — never "an independent copy of the data". A naive `#[derive(Clone)]` over a plain `HashMap` field, for example, compiles and satisfies `CloneableOpStore`, but every write a handler makes disappears with that request's clone: the code `/authorize` stores would never be visible to the following `/token` exchange, which would always fail with `invalid_grant` — no compile error, no log, no failing test. Put mutable in-memory state behind `Arc<Mutex<_>>`/`Arc<RwLock<_>>` (as `authkestra_op::MemoryClientAssertionStore` and `authkestra_engine::store::memory::MemoryStore` do), or use a connection-pool handle that is already cheap-clone-shares-state by construction.
+:::
 
 `CompositeOpStore` carries two further, optional slots for the replay guards above — supply them
 with `.with_client_assertion_store(...)` and `.with_dpop_replay_store(...)`. Left unset they resolve

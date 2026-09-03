@@ -25,7 +25,7 @@ pub struct DeviceVerifyResponse {
 pub async fn handle_device_verify(
     req: DeviceVerifyRequest,
     identity: Identity,
-    devices: &dyn DeviceCodeStore,
+    devices: &mut dyn DeviceCodeStore,
 ) -> Result<DeviceVerifyResponse, OpError> {
     let mut session = match devices.get_by_user_code(&req.user_code).await {
         Ok(Some(s)) => s,
@@ -58,18 +58,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_device_verify_approve() {
-        let devices = authkestra_engine::store::memory::MemoryStore::<
+        let mut devices = authkestra_engine::store::memory::MemoryStore::<
             crate::device::DeviceCodeSession,
         >::new();
-        let session = DeviceCodeSession {
-            device_code: "dev123".to_string(),
-            user_code: "USER123".to_string(),
-            client_id: "client1".to_string(),
-            scope: "openid".to_string(),
-            expires_at: Utc::now() + Duration::seconds(600),
-            status: DeviceCodeStatus::Pending,
-            last_polled_at: None,
-        };
+        let session = DeviceCodeSession::new(
+            "dev123".to_string(),
+            "USER123".to_string(),
+            "client1".to_string(),
+            "openid".to_string(),
+            Utc::now() + Duration::seconds(600),
+            DeviceCodeStatus::Pending,
+        );
         devices.store_device_code(session).await.unwrap();
 
         let identity = Identity {
@@ -85,7 +84,9 @@ mod tests {
             approve: true,
         };
 
-        let res = handle_device_verify(req, identity, &devices).await.unwrap();
+        let res = handle_device_verify(req, identity, &mut devices)
+            .await
+            .unwrap();
         assert!(res.success);
 
         let updated = devices.get_device_code("dev123").await.unwrap().unwrap();

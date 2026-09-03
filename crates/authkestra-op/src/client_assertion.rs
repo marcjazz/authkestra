@@ -32,6 +32,15 @@ use crate::attestation::parse_public_jwk;
 use crate::client::ClientRegistration;
 use crate::error::OpError;
 use async_trait::async_trait;
+/// Records that a client assertion's `jti` has been spent.
+///
+/// `record_jti` **must** be atomic — a `get`-then-`set` implemented as two
+/// separate storage calls is a TOCTOU race, and the race is precisely the
+/// replay this trait exists to prevent: two concurrent presentations of the
+/// same captured assertion would both observe "not yet seen". Same
+/// requirement, and the same reasoning, as
+/// `AuthorizationCodeStore::consume_code`.
+pub use authkestra_engine::store::traits::{ClientAssertionStore, NoClientAssertionStore};
 use base64::Engine;
 use chrono::{DateTime, TimeZone, Utc};
 use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk};
@@ -39,7 +48,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The only `client_assertion_type` this OP accepts (RFC 7523 §2.2).
 ///
@@ -84,46 +93,6 @@ pub struct VerifiedClientAssertion {
     pub expires_at: DateTime<Utc>,
 }
 
-/// Records that a client assertion's `jti` has been spent.
-///
-/// `record_jti` **must** be atomic — a `get`-then-`set` implemented as two
-/// separate storage calls is a TOCTOU race, and the race is precisely the
-/// replay this trait exists to prevent: two concurrent presentations of the
-/// same captured assertion would both observe "not yet seen". Same
-/// requirement, and the same reasoning, as
-/// `AuthorizationCodeStore::consume_code`.
-#[async_trait]
-pub trait ClientAssertionStore: Send + Sync {
-    /// Atomically records `jti` as spent until `expires_at`.
-    ///
-    /// Returns `Ok(true)` if this is its first use (accept the assertion) and
-    /// `Ok(false)` if it was already recorded (a replay — reject).
-    async fn record_jti(&self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, OpError>;
-}
-
-/// The fail-closed default: refuses every assertion.
-///
-/// A deployment that has not wired replay tracking cannot provide the
-/// single-use guarantee RFC 7523 §3 requires, and accepting assertions
-/// without it would be strictly worse than not supporting the method —
-/// clients would believe they had proof-of-possession authentication while a
-/// captured assertion stayed replayable for its whole lifetime. So the
-/// default refuses rather than silently degrades.
-#[derive(Debug, Clone, Copy, Default)]
-#[non_exhaustive]
-pub struct NoClientAssertionStore;
-
-#[async_trait]
-impl ClientAssertionStore for NoClientAssertionStore {
-    async fn record_jti(&self, _jti: &str, _expires_at: DateTime<Utc>) -> Result<bool, OpError> {
-        tracing::error!(
-            "a private_key_jwt assertion was presented but no ClientAssertionStore is wired; \
-             refusing it rather than accepting an assertion that could be replayed"
-        );
-        Err(OpError::ReplayProtectionUnavailable)
-    }
-}
-
 /// Single-process, in-memory replay tracking.
 ///
 /// Atomic **within one process** — the map is behind a single `Mutex`, so the
@@ -133,10 +102,17 @@ impl ClientAssertionStore for NoClientAssertionStore {
 /// a SQL unique index) instead. Same trade-off, and the same intended use, as
 /// `authkestra_engine::store::memory::MemoryStore`: correct for single-node
 /// and for tests, not a production cluster answer.
-#[derive(Debug, Default)]
+///
+/// The map sits behind an `Arc` (not just the `Mutex`) so this type is both
+/// `Clone` — required to satisfy `CloneableOpStore` — and *shares* its state
+/// across clones rather than forking it. See `CloneableOpStore`'s doc
+/// comment: a `Clone` impl that deep-copies instead of sharing state would
+/// compile here but silently break replay protection (each handler's
+/// per-request clone would only ever see its own copy).
+#[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct MemoryClientAssertionStore {
-    seen: Mutex<HashMap<String, DateTime<Utc>>>,
+    seen: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
 }
 
 impl MemoryClientAssertionStore {
@@ -147,16 +123,23 @@ impl MemoryClientAssertionStore {
 }
 
 #[async_trait]
-impl ClientAssertionStore for MemoryClientAssertionStore {
-    async fn record_jti(&self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, OpError> {
+impl authkestra_engine::store::traits::ClientAssertionStore for MemoryClientAssertionStore {
+    async fn record_jti(
+        &mut self,
+        jti: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<bool, authkestra_engine::store::StoreError> {
         let now = Utc::now();
+        if expires_at <= now {
+            return Ok(false);
+        }
         let mut seen = self.seen.lock().map_err(|_| {
             // A poisoned mutex means a previous holder panicked mid-update, so
             // the map's contents can no longer be trusted to be complete —
             // and an incomplete replay set is indistinguishable from no
             // replay protection. Refuse rather than guess.
             tracing::error!("client assertion replay map is poisoned; refusing the assertion");
-            OpError::Storage
+            authkestra_engine::store::StoreError::Internal("poisoned".into())
         })?;
 
         // Expired entries can never cause a rejection again (the assertion
@@ -924,7 +907,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn memory_store_spends_a_jti_exactly_once() {
-        let store = MemoryClientAssertionStore::new();
+        let mut store = MemoryClientAssertionStore::new();
         let exp = Utc::now() + chrono::Duration::seconds(60);
 
         assert!(store.record_jti("jti-1", exp).await.unwrap());
@@ -934,12 +917,18 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn no_store_refuses_rather_than_permitting_replay() {
-        let store = NoClientAssertionStore;
+        let mut store = authkestra_engine::store::traits::NoClientAssertionStore::default();
         let exp = Utc::now() + chrono::Duration::seconds(60);
-        assert!(matches!(
-            store.record_jti("jti-1", exp).await,
-            Err(OpError::ReplayProtectionUnavailable)
-        ));
+        // No store configured is a hard error, not `Ok(false)` — same
+        // shape as `NoDpopReplayStore`, and distinguishable from a real
+        // replay by anything downstream that inspects the error rather
+        // than just the bool (`authenticate_client` in `handlers/token.rs`
+        // currently collapses both to the same `invalid_client` response,
+        // but the distinction is preserved for anyone who wants it).
+        store
+            .record_jti("jti-1", exp)
+            .await
+            .expect_err("no store configured must fail closed, not silently succeed");
     }
 
     #[test]

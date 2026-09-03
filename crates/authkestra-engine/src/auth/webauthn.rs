@@ -202,7 +202,6 @@ mod tests {
 
     use crate::auth::WebAuthnStarter;
     use std::sync::Arc;
-    use webauthn_rs::prelude::*;
 
     struct DummyCredentialStore;
     #[async_trait]
@@ -247,7 +246,7 @@ mod tests {
         let enrolled = method.has_enrolled("user-1").await.unwrap();
         assert!(!enrolled);
 
-        let (challenge, passkey_reg) = method.start_register("user-1", "user-1").unwrap();
+        let (challenge, _passkey_reg) = method.start_register("user-1", "user-1").unwrap();
         assert_eq!(challenge.public_key.rp.id, "localhost");
 
         let _ = method.start_authentication(&[]).unwrap();

@@ -20,10 +20,9 @@ const CLIENT_ID: &str = "svc-1";
 const SECRET: &str = "correct-horse-battery-staple";
 
 fn hash_secret(secret: &str) -> String {
-    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
-    let salt = SaltString::generate(&mut OsRng);
+    use argon2::password_hash::PasswordHasher;
     argon2::Argon2::default()
-        .hash_password(secret.as_bytes(), &salt)
+        .hash_password(secret.as_bytes())
         .unwrap()
         .to_string()
 }
@@ -135,7 +134,7 @@ async fn store_without_replay_protection(
 #[tokio::test]
 async fn private_key_jwt_client_gets_a_token() {
     let key = generate_test_key(None);
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::PrivateKeyJwt),
         None,
         Some(jwks_of(&[&key])),
@@ -147,7 +146,7 @@ async fn private_key_jwt_client_gets_a_token() {
         with_assertion(bare_request(), &assertion),
         None,
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await;
@@ -162,7 +161,7 @@ async fn private_key_jwt_client_gets_a_token() {
 #[tokio::test]
 async fn private_key_jwt_client_is_refused_a_valid_client_secret() {
     let key = generate_test_key(None);
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::PrivateKeyJwt),
         Some(hash_secret(SECRET)),
         Some(jwks_of(&[&key])),
@@ -172,7 +171,7 @@ async fn private_key_jwt_client_is_refused_a_valid_client_secret() {
     let mut req = bare_request();
     req.client_secret = Some(SECRET.to_string());
 
-    let err = handle_token(req, None, &test_config(false), &store, &test_tokens())
+    let err = handle_token(req, None, &test_config(false), &mut store, &test_tokens())
         .await
         .expect_err("a private_key_jwt client must not be authenticable with its secret");
     assert_eq!(err.error, "invalid_client");
@@ -182,7 +181,7 @@ async fn private_key_jwt_client_is_refused_a_valid_client_secret() {
         bare_request(),
         Some(&basic_header(CLIENT_ID, SECRET)),
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -196,7 +195,7 @@ async fn private_key_jwt_client_is_refused_a_valid_client_secret() {
 #[tokio::test]
 async fn client_secret_client_is_refused_a_valid_assertion() {
     let key = generate_test_key(None);
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::ClientSecretBasic),
         Some(hash_secret(SECRET)),
         Some(jwks_of(&[&key])),
@@ -208,7 +207,7 @@ async fn client_secret_client_is_refused_a_valid_assertion() {
         with_assertion(bare_request(), &assertion),
         None,
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -221,7 +220,7 @@ async fn client_secret_client_is_refused_a_valid_assertion() {
         bare_request(),
         Some(&basic_header(CLIENT_ID, SECRET)),
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -234,14 +233,14 @@ async fn client_secret_client_is_refused_a_valid_assertion() {
 #[tokio::test]
 async fn a_registration_without_an_auth_method_is_never_accepted_by_assertion() {
     let key = generate_test_key(None);
-    let store = store_with(registration(None, None, Some(jwks_of(&[&key])))).await;
+    let mut store = store_with(registration(None, None, Some(jwks_of(&[&key])))).await;
 
     let assertion = sign_assertion(&key, None, good_claims(), Algorithm::ES256);
     let err = handle_token(
         with_assertion(bare_request(), &assertion),
         None,
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -254,7 +253,7 @@ async fn a_registration_without_an_auth_method_is_never_accepted_by_assertion() 
 /// methods, and the registration named one of them.
 #[tokio::test]
 async fn the_secret_transport_is_bound_too() {
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::ClientSecretBasic),
         Some(hash_secret(SECRET)),
         None,
@@ -264,7 +263,7 @@ async fn the_secret_transport_is_bound_too() {
     let mut req = bare_request();
     req.client_secret = Some(SECRET.to_string());
 
-    let err = handle_token(req, None, &test_config(false), &store, &test_tokens())
+    let err = handle_token(req, None, &test_config(false), &mut store, &test_tokens())
         .await
         .expect_err("client_secret_post is not client_secret_basic");
     assert_eq!(err.error, "invalid_client");
@@ -273,7 +272,7 @@ async fn the_secret_transport_is_bound_too() {
 #[tokio::test]
 async fn a_replayed_assertion_is_refused() {
     let key = generate_test_key(None);
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::PrivateKeyJwt),
         None,
         Some(jwks_of(&[&key])),
@@ -286,7 +285,7 @@ async fn a_replayed_assertion_is_refused() {
         with_assertion(bare_request(), &assertion),
         None,
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -296,7 +295,7 @@ async fn a_replayed_assertion_is_refused() {
         with_assertion(bare_request(), &assertion),
         None,
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -312,7 +311,7 @@ async fn a_replayed_assertion_is_refused() {
         with_assertion(bare_request(), &fresh),
         None,
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -324,7 +323,7 @@ async fn a_replayed_assertion_is_refused() {
 #[tokio::test]
 async fn assertions_are_refused_when_no_replay_store_is_wired() {
     let key = generate_test_key(None);
-    let store = store_without_replay_protection(registration(
+    let mut store = store_without_replay_protection(registration(
         Some(TokenEndpointAuthMethod::PrivateKeyJwt),
         None,
         Some(jwks_of(&[&key])),
@@ -336,7 +335,7 @@ async fn assertions_are_refused_when_no_replay_store_is_wired() {
         with_assertion(bare_request(), &assertion),
         None,
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -350,7 +349,7 @@ async fn assertions_are_refused_when_no_replay_store_is_wired() {
 #[tokio::test]
 async fn two_credentials_in_one_request_are_refused() {
     let key = generate_test_key(None);
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::PrivateKeyJwt),
         Some(hash_secret(SECRET)),
         Some(jwks_of(&[&key])),
@@ -361,7 +360,7 @@ async fn two_credentials_in_one_request_are_refused() {
     let mut req = with_assertion(bare_request(), &assertion);
     req.client_secret = Some(SECRET.to_string());
 
-    let err = handle_token(req, None, &test_config(false), &store, &test_tokens())
+    let err = handle_token(req, None, &test_config(false), &mut store, &test_tokens())
         .await
         .expect_err("two credentials in one request is a malformed request");
     assert_eq!(err.error, "invalid_request");
@@ -370,7 +369,7 @@ async fn two_credentials_in_one_request_are_refused() {
 #[tokio::test]
 async fn an_unsupported_client_assertion_type_is_refused() {
     let key = generate_test_key(None);
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::PrivateKeyJwt),
         None,
         Some(jwks_of(&[&key])),
@@ -382,7 +381,7 @@ async fn an_unsupported_client_assertion_type_is_refused() {
     req.client_assertion = Some(assertion);
     req.client_assertion_type = Some("urn:example:not-a-real-assertion-type".to_string());
 
-    let err = handle_token(req, None, &test_config(false), &store, &test_tokens())
+    let err = handle_token(req, None, &test_config(false), &mut store, &test_tokens())
         .await
         .expect_err("only the RFC 7523 jwt-bearer assertion type is accepted");
     assert_eq!(err.error, "invalid_request");
@@ -393,7 +392,7 @@ async fn an_unsupported_client_assertion_type_is_refused() {
 #[tokio::test]
 async fn client_id_may_be_omitted_alongside_an_assertion() {
     let key = generate_test_key(None);
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::PrivateKeyJwt),
         None,
         Some(jwks_of(&[&key])),
@@ -405,7 +404,7 @@ async fn client_id_may_be_omitted_alongside_an_assertion() {
     req.client_id = None;
 
     assert!(
-        handle_token(req, None, &test_config(false), &store, &test_tokens())
+        handle_token(req, None, &test_config(false), &mut store, &test_tokens())
             .await
             .is_ok()
     );
@@ -418,7 +417,7 @@ async fn client_id_may_be_omitted_alongside_an_assertion() {
 async fn an_assertion_cannot_be_pointed_at_another_clients_registration() {
     let victim_key = generate_test_key(None);
     let attacker_key = generate_test_key(None);
-    let store = store_with(registration(
+    let mut store = store_with(registration(
         Some(TokenEndpointAuthMethod::PrivateKeyJwt),
         None,
         Some(jwks_of(&[&victim_key])),
@@ -431,7 +430,7 @@ async fn an_assertion_cannot_be_pointed_at_another_clients_registration() {
         with_assertion(bare_request(), &assertion),
         None,
         &test_config(false),
-        &store,
+        &mut store,
         &test_tokens(),
     )
     .await
@@ -443,23 +442,23 @@ async fn an_assertion_cannot_be_pointed_at_another_clients_registration() {
 /// must behave exactly as they did before this change.
 #[tokio::test]
 async fn existing_behaviour_is_unchanged_for_registrations_without_a_method() {
-    let public = store_with(registration(None, None, None)).await;
+    let mut public = store_with(registration(None, None, None)).await;
     assert!(handle_token(
         bare_request(),
         None,
         &test_config(false),
-        &public,
+        &mut public,
         &test_tokens(),
     )
     .await
     .is_ok());
 
-    let confidential = store_with(registration(None, Some(hash_secret(SECRET)), None)).await;
+    let mut confidential = store_with(registration(None, Some(hash_secret(SECRET)), None)).await;
     let err = handle_token(
         bare_request(),
         None,
         &test_config(false),
-        &confidential,
+        &mut confidential,
         &test_tokens(),
     )
     .await
@@ -474,7 +473,7 @@ async fn existing_behaviour_is_unchanged_for_registrations_without_a_method() {
         post,
         None,
         &test_config(false),
-        &confidential,
+        &mut confidential,
         &test_tokens(),
     )
     .await
@@ -483,7 +482,7 @@ async fn existing_behaviour_is_unchanged_for_registrations_without_a_method() {
         bare_request(),
         Some(&basic_header(CLIENT_ID, SECRET)),
         &test_config(false),
-        &confidential,
+        &mut confidential,
         &test_tokens(),
     )
     .await

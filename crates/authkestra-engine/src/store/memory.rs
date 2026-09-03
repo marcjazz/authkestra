@@ -58,12 +58,12 @@ impl<T> MemoryStore<T> {
     }
 }
 
-#[cfg(test)]
 impl<T> MemoryStore<T> {
     /// Test-only introspection: the number of entries currently held,
     /// expired or not. Used to prove `insert_if_absent`'s opportunistic
     /// sweep actually shrinks the map, not just that expired entries are
     /// unreachable through the public API.
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.data.lock().unwrap().len()
     }
