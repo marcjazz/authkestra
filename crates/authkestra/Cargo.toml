@@ -17,6 +17,7 @@ authkestra-axum = { workspace = true, optional = true, default-features = false 
 authkestra-actix = { workspace = true, optional = true, default-features = false }
 authkestra-providers = { workspace = true, optional = true, default-features = false }
 authkestra-resource = { workspace = true, optional = true, default-features = false }
+authkestra-policy = { workspace = true, optional = true, default-features = false }
 
 [dev-dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
@@ -90,6 +91,10 @@ session = ["authkestra-engine/session"]
 token = ["authkestra-engine/token"]
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
+
+# Cedar policy engine (authkestra#21). Proof of concept: it evaluates policies, but nothing in
+# the adapters or in `authkestra-resource` calls it yet. See docs/rfc-005-policy-engine.md.
+policy = ["dep:authkestra-policy"]
 
 # Web frameworks
 axum = ["dep:authkestra-axum", "authkestra-axum/macros", "authkestra-axum/session", "authkestra-axum/token", "authkestra-axum/resource"]
