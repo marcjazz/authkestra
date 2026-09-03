@@ -15,6 +15,7 @@ use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::caep::CaepEvent;
 use crate::error::SetError;
 use crate::keys::{SetKeyResolver, SingleKeyResolver};
 use crate::replay::SetReplayGuard;
@@ -41,6 +42,43 @@ pub enum SetVerifierError {
     /// Neither [`SetVerifierBuilder::key`] nor [`SetVerifierBuilder::key_resolver`] was called.
     #[error("a SET verifier needs either a decoding key or a key resolver")]
     MissingKeySource,
+}
+
+/// A SET that passed every check in [`SetVerifier::verify_at`], together with its decoded events.
+///
+/// The events travel with the token rather than being decoded by the caller afterwards, and that
+/// is the whole point of the type: event-payload decoding is one of the checks that decides
+/// whether a SET is acceptable, so it has to happen *before* the replay slot for `(iss, jti)` is
+/// taken. A caller that received a bare `SecurityEventToken` and then called
+/// [`SecurityEventToken::caep_events`] itself would be rejecting the SET after the verifier had
+/// already recorded it — and RFC 8935 §2 lets the transmitter fix the payload and retransmit
+/// under the same `jti`, which would then be silently swallowed as a replay.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct VerifiedSet {
+    /// The validated token and its claims.
+    pub set: SecurityEventToken,
+    /// Every entry of the token's `events` claim, decoded. Never empty: an empty `events` claim
+    /// is refused as [`SetError::EmptyEvents`] before this is built.
+    pub events: Vec<CaepEvent>,
+}
+
+impl VerifiedSet {
+    /// Pairs a token with its decoded events.
+    ///
+    /// **Exists so consumers can construct one in their own tests** — sealing an output type with
+    /// no way to build it is the problem reported against `authkestra-devsig`'s `DeviceIdentity`
+    /// in [authkestra#282](https://github.com/marcjazz/authkestra/issues/282). It performs **no
+    /// validation and no decoding**: the name is not a promise, and a `VerifiedSet` built here
+    /// has been verified by nobody. Only [`SetVerifier::verify_at`] produces a trustworthy one.
+    pub fn new(set: SecurityEventToken, events: Vec<CaepEvent>) -> Self {
+        Self { set, events }
+    }
+
+    /// Consumes the wrapper, yielding the token and its events.
+    pub fn into_parts(self) -> (SecurityEventToken, Vec<CaepEvent>) {
+        (self.set, self.events)
+    }
 }
 
 /// Validates Security Event Tokens against one transmitter's configuration.
@@ -104,7 +142,7 @@ impl SetVerifier {
     }
 
     /// Verifies `token` against the current system clock.
-    pub async fn verify(&self, token: &str) -> Result<SecurityEventToken, SetError> {
+    pub async fn verify(&self, token: &str) -> Result<VerifiedSet, SetError> {
         self.verify_at(token, current_unix_time()).await
     }
 
@@ -126,9 +164,15 @@ impl SetVerifier {
     ///    depend on them, and the key is resolved for the *configured* issuer rather than the
     ///    token's self-asserted `iss`.
     /// 3. **Claims** — issuer, audience, freshness, non-empty `jti`, non-empty `events`.
-    /// 4. **Replay** — last, so a SET rejected for any other reason does not consume its `jti`
+    /// 4. **Event payloads** — every entry of `events` is decoded here, not by the caller
+    ///    afterwards. A modelled event type whose payload does not conform is an
+    ///    `invalid_request` rejection just like a bad claim, so it has to be discovered before
+    ///    the `jti` is spent; decoding it after this function returned would burn the slot on a
+    ///    SET that is then refused, and RFC 8935 §2 retransmission of the corrected SET under
+    ///    the same `jti` would be swallowed as a replay.
+    /// 5. **Replay** — last, so a SET rejected for any other reason does not consume its `jti`
     ///    and thereby stop a corrected retransmission from being processed.
-    pub async fn verify_at(&self, token: &str, now: i64) -> Result<SecurityEventToken, SetError> {
+    pub async fn verify_at(&self, token: &str, now: i64) -> Result<VerifiedSet, SetError> {
         tracing::debug!(target: "authkestra_ssf", issuer = %self.issuer, "verifying SET");
 
         // --- Step 1: header, typ, alg (raw JSON, pre-`jsonwebtoken`) ---
@@ -172,7 +216,10 @@ impl SetVerifier {
             return Err(reject(SetError::EmptyEvents));
         }
 
-        // --- Step 4: replay ---
+        // --- Step 4: event payloads, before the replay slot is spent ---
+        let events = set.caep_events().map_err(SetError::from).map_err(reject)?;
+
+        // --- Step 5: replay ---
         if let Some(guard) = &self.replay_guard {
             if !guard.check_and_record(&set.jti, &set.iss).await {
                 return Err(reject(SetError::Replay {
@@ -186,10 +233,10 @@ impl SetVerifier {
             target: "authkestra_ssf",
             iss = %set.iss,
             jti = %set.jti,
-            events = set.events.len(),
+            events = events.len(),
             "accepted SET"
         );
-        Ok(set)
+        Ok(VerifiedSet { set, events })
     }
 
     fn check_algorithm(&self, header: &Value) -> Result<Algorithm, SetError> {
@@ -384,12 +431,35 @@ impl SetVerifierBuilder {
 /// Logs every rejection uniformly, so no branch of the algorithm can go unobserved in production
 /// (the workspace `AGENTS.md` tracing Definition of Done).
 fn reject(err: SetError) -> SetError {
-    tracing::warn!(
-        target: "authkestra_ssf",
-        code = %err.code(),
-        error = %err,
-        "rejecting SET"
-    );
+    // The issuer/audience variants are logged with their values as structured fields rather than
+    // through `Display`, because `Display` is what the RFC 8935 §2.3 failure body returns to an
+    // unauthenticated caller and must not disclose the deployment's configuration. Operators
+    // still get the full picture here, where the log is trusted.
+    match &err {
+        SetError::IssuerMismatch { expected, found } => tracing::warn!(
+            target: "authkestra_ssf",
+            code = %err.code(),
+            error = %err,
+            expected_issuer = %expected,
+            found_issuer = %found,
+            "rejecting SET"
+        ),
+        SetError::MissingAudience { expected } | SetError::AudienceMismatch { expected } => {
+            tracing::warn!(
+                target: "authkestra_ssf",
+                code = %err.code(),
+                error = %err,
+                expected_audiences = ?expected,
+                "rejecting SET"
+            )
+        }
+        _ => tracing::warn!(
+            target: "authkestra_ssf",
+            code = %err.code(),
+            error = %err,
+            "rejecting SET"
+        ),
+    }
     err
 }
 

@@ -18,7 +18,7 @@ use thiserror::Error;
 use crate::caep::CaepEvent;
 use crate::error::{SetError, SetErrorCode};
 use crate::set::{SecurityEventToken, SET_MEDIA_TYPE};
-use crate::verify::SetVerifier;
+use crate::verify::{SetVerifier, VerifiedSet};
 
 /// The `Content-Language` RFC 8935 §2.3 requires on a failure response.
 ///
@@ -279,8 +279,8 @@ impl PushReceiver {
             }
         };
 
-        let set = match self.verifier.verify(token).await {
-            Ok(set) => set,
+        let verified = match self.verifier.verify(token).await {
+            Ok(verified) => verified,
             Err(SetError::Replay { jti, iss }) => {
                 tracing::info!(
                     target: "authkestra_ssf",
@@ -302,18 +302,11 @@ impl PushReceiver {
             }
         };
 
-        let events = match set.caep_events() {
-            Ok(events) => events,
-            Err(err) => {
-                tracing::warn!(
-                    target: "authkestra_ssf",
-                    jti = %set.jti,
-                    error = %err,
-                    "rejecting SET delivery: event payload does not conform"
-                );
-                return PushResponse::error(SetErrorCode::InvalidRequest, err.to_string());
-            }
-        };
+        // Already decoded by the verifier, and deliberately so: decoding here instead would mean
+        // rejecting a SET whose `jti` the replay guard had already recorded, so the transmitter's
+        // corrected retransmission (RFC 8935 §2) would come back as a replay and never reach a
+        // handler. See `SetVerifier::verify_at` step 4.
+        let VerifiedSet { set, events } = verified;
 
         for event in &events {
             for handler in &self.handlers {

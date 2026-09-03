@@ -120,6 +120,14 @@ asynchronous shape RFC 8935 §2 suggests, enqueue inside the handler and return 
   respond to a repeat transmission exactly as it would to a first one, so replay detection
   suppresses handler dispatch, not the acknowledgement.
 - **`Content-Type` must be `application/secevent+jwt`.** Anything else is a `400 invalid_request`.
+- **A malformed event payload is refused without spending the `jti`.** Events are decoded as part
+  of verification, so if a transmitter sends a `credential-change` missing its required claims you
+  get a `400 invalid_request`, the replay slot stays free, and the corrected retransmission under
+  the same `jti` is processed normally instead of being mistaken for a duplicate.
+- **Error responses do not echo your configuration.** A wrong-issuer or wrong-audience SET gets
+  `invalid_issuer` / `audience mismatch` and nothing more: the push endpoint is unauthenticated,
+  so the expected values stay in your logs (as structured tracing fields) rather than going back
+  to whoever POSTed.
 - **Explicit typing is mandatory here.** RFC 8417 §2.3 only requires `typ: secevent+jwt` when a
   SET could be confused with another kind of JWT — which is exactly the situation a general
   receiver is in, so this crate always requires it.

@@ -62,6 +62,15 @@ handful of lines today and a dedicated adapter feature in a follow-up PR.
 - **A retransmitted SET is answered `202`, not `400`.** RFC 8935 §2 requires the recipient to
   respond to a repeat transmission exactly as it would to a first one. The replay guard therefore
   suppresses handler dispatch, not the acknowledgement.
+- **Event payloads are decoded during verification, not after it.** `SetVerifier::verify` returns
+  a `VerifiedSet { set, events }`, and a modelled event whose payload does not conform is refused
+  *before* the `(iss, jti)` replay slot is taken. Decoding afterwards would burn the `jti` on a
+  SET that is then rejected, so the transmitter's corrected retransmission under the same `jti`
+  would come back `202` from the replay path and never reach a handler.
+- **Failure descriptions never echo the configured issuer or audience.** The RFC 8935 §2.3
+  `description` goes to an unauthenticated caller — the push endpoint has no authentication of its
+  own — so `invalid_issuer` and `invalid_audience` responses say only that, and the expected
+  values are logged as structured tracing fields instead.
 - **`alg: none` is rejected by name**, before any typed parsing, because RFC 8417 §2.4's own
   worked example is an unsecured JWT.
 - **Explicit typing is required.** RFC 8417 §2.3 makes `typ: secevent+jwt` conditional; a

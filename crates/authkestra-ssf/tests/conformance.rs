@@ -21,7 +21,7 @@ use authkestra_ssf::{
     ComplianceStatus, CredentialChange, CredentialType, DeviceComplianceChange, HandlerError,
     InMemorySetReplayGuard, InitiatingEntity, LoggingHandler, PushReceiver, PushResponse,
     SecurityEventToken, SessionRevoked, SetError, SetErrorCode, SetHandler, SetVerifier,
-    StaticKeyResolver, SubjectIdentifier, TokenClaimsChange, DEFAULT_MAX_BODY_BYTES,
+    StaticKeyResolver, SubjectIdentifier, TokenClaimsChange, VerifiedSet, DEFAULT_MAX_BODY_BYTES,
     EVENT_TYPE_ASSURANCE_LEVEL_CHANGE, EVENT_TYPE_CREDENTIAL_CHANGE,
     EVENT_TYPE_DEVICE_COMPLIANCE_CHANGE, EVENT_TYPE_SESSION_REVOKED,
     EVENT_TYPE_TOKEN_CLAIMS_CHANGE, SET_MEDIA_TYPE,
@@ -49,10 +49,11 @@ fn verifier() -> SetVerifier {
 #[tokio::test]
 async fn accepts_a_well_formed_set() {
     let token = sign(&session_revoked_claims());
-    let set = verifier()
+    let verified = verifier()
         .verify_at(&token, NOW)
         .await
         .expect("a conformant SET must be accepted");
+    let set = verified.set;
 
     assert_eq!(set.iss, ISSUER);
     assert_eq!(set.jti, "24c63fb56e5a2d77a6b512616ca9fa24");
@@ -340,7 +341,7 @@ async fn accepts_and_ignores_an_nbf_claim() {
         "nbf",
         json!(NOW + 86_400),
     ));
-    let set = verifier().verify_at(&token, NOW).await.unwrap();
+    let set = verifier().verify_at(&token, NOW).await.unwrap().set;
     assert_eq!(set.nbf, Some(NOW + 86_400));
 }
 
@@ -377,7 +378,7 @@ async fn parses_the_sub_id_claim() {
         "sub_id",
         json!({ "format": "iss_sub", "iss": ISSUER, "sub": "145234573" }),
     );
-    let set = verifier().verify_at(&sign(&claims), NOW).await.unwrap();
+    let set = verifier().verify_at(&sign(&claims), NOW).await.unwrap().set;
     assert_eq!(
         set.sub_id,
         Some(SubjectIdentifier::IssSub {
@@ -462,11 +463,11 @@ async fn a_rejected_set_does_not_consume_its_jti() {
 
 async fn decode_single_event(events: serde_json::Value) -> CaepEvent {
     let token = sign(&with_events(session_revoked_claims(), events));
-    let set = verifier()
+    let mut decoded = verifier()
         .verify_at(&token, NOW)
         .await
-        .expect("fixture SET must verify");
-    let mut decoded = set.caep_events().expect("event payloads must decode");
+        .expect("fixture SET must verify")
+        .events;
     assert_eq!(decoded.len(), 1);
     decoded.remove(0)
 }
@@ -557,8 +558,7 @@ async fn preserves_an_unknown_event_alongside_a_known_one() {
             risc: { "reason": "hijacking" }
         }),
     ));
-    let set = verifier().verify_at(&token, NOW).await.unwrap();
-    let events = set.caep_events().unwrap();
+    let events = verifier().verify_at(&token, NOW).await.unwrap().events;
 
     assert_eq!(events.len(), 2);
     assert!(events
@@ -1055,4 +1055,248 @@ async fn the_default_body_cap_lets_a_real_set_through() {
     let response = receiver.receive(Some(SET_MEDIA_TYPE), &oversized).await;
     assert_eq!(response.status(), 400);
     assert_eq!(response.error_code(), Some(SetErrorCode::InvalidRequest));
+}
+
+// ---------------------------------------------------------------------------
+// A rejected event payload must not spend the jti (PR #309 review, P1)
+// ---------------------------------------------------------------------------
+
+/// A verifier with replay protection on, for the jti-consumption tests.
+fn verifier_with_replay_guard() -> SetVerifier {
+    SetVerifier::builder(ISSUER)
+        .audience(AUDIENCE)
+        .algorithms([Algorithm::HS256])
+        .key(decoding_key())
+        .replay_guard(Arc::new(InMemorySetReplayGuard::new(Duration::from_secs(
+            3600,
+        ))))
+        .build()
+        .expect("fixture verifier configuration is complete")
+}
+
+/// Claims carrying a `credential-change` event with an empty payload: authentic, correctly
+/// signed, and invalid only because CAEP 1.0 §3.3.1 makes `credential_type` and `change_type`
+/// REQUIRED.
+fn claims_with_a_malformed_event(jti: &str, iat: i64) -> serde_json::Value {
+    let claims = with_events(
+        session_revoked_claims(),
+        json!({ EVENT_TYPE_CREDENTIAL_CHANGE: {} }),
+    );
+    let claims = with_claim(claims, "jti", json!(jti));
+    with_claim(claims, "iat", json!(iat))
+}
+
+#[tokio::test]
+async fn a_malformed_event_payload_is_refused_before_the_replay_guard_runs() {
+    let verifier = verifier_with_replay_guard();
+    let jti = "same-jti-across-both-transmissions";
+
+    let broken = sign(&claims_with_a_malformed_event(jti, NOW));
+    let err = verifier.verify_at(&broken, NOW).await.unwrap_err();
+    match &err {
+        SetError::EventPayload(inner) => assert_eq!(inner.uri(), EVENT_TYPE_CREDENTIAL_CHANGE),
+        other => panic!("expected EventPayload, got {other:?}"),
+    }
+    assert_eq!(err.code(), SetErrorCode::InvalidRequest);
+
+    // The decisive assertion: the slot was never taken, so the corrected SET is accepted rather
+    // than mistaken for a retransmission of something already ingested.
+    let fixed = with_claim(session_revoked_claims(), "jti", json!(jti));
+    assert!(
+        verifier.verify_at(&sign(&fixed), NOW).await.is_ok(),
+        "a SET refused for a malformed event payload must not consume its jti"
+    );
+}
+
+#[tokio::test]
+async fn a_corrected_retransmission_still_reaches_the_handlers() {
+    // The end-to-end shape of the same bug: RFC 8935 §2 lets a transmitter retransmit under the
+    // same jti, so if the first (invalid) delivery recorded the jti, the corrected one would come
+    // back 202 from the replay path with the event never dispatched.
+    let handler = Arc::new(RecordingHandler::default());
+    let receiver =
+        PushReceiver::new(Arc::new(verifier_with_replay_guard())).with_handler(handler.clone());
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let jti = "same-jti-across-both-transmissions";
+
+    let broken = sign(&claims_with_a_malformed_event(jti, now));
+    let response = receiver
+        .receive(Some(SET_MEDIA_TYPE), broken.as_bytes())
+        .await;
+    assert_eq!(response.status(), 400);
+    assert_eq!(response.error_code(), Some(SetErrorCode::InvalidRequest));
+    assert!(
+        handler.seen.lock().unwrap().is_empty(),
+        "nothing should have been dispatched from a SET with a malformed event payload"
+    );
+
+    let fixed = with_claim(
+        with_claim(session_revoked_claims(), "jti", json!(jti)),
+        "iat",
+        json!(now),
+    );
+    let response = receiver
+        .receive(Some(SET_MEDIA_TYPE), sign(&fixed).as_bytes())
+        .await;
+    assert_eq!(response.status(), 202);
+    assert_eq!(
+        handler.seen.lock().unwrap().as_slice(),
+        [EVENT_TYPE_SESSION_REVOKED],
+        "the corrected retransmission must be dispatched, not swallowed as a replay"
+    );
+}
+
+#[tokio::test]
+async fn a_pre_signature_rejection_also_leaves_the_jti_free() {
+    // The sibling of `a_rejected_set_does_not_consume_its_jti`, which only covers a wrong-`typ`
+    // rejection in step 1. This one covers a rejection that happens *after* the signature has
+    // been verified and the claims parsed, which is where the ordering is easy to get wrong.
+    let verifier = verifier_with_replay_guard();
+    let jti = "jti-for-the-post-signature-path";
+
+    let stale = with_claim(
+        with_claim(session_revoked_claims(), "jti", json!(jti)),
+        "iat",
+        json!(NOW + 10_000),
+    );
+    assert!(matches!(
+        verifier.verify_at(&sign(&stale), NOW).await.unwrap_err(),
+        SetError::IatInFuture { .. }
+    ));
+
+    let good = with_claim(session_revoked_claims(), "jti", json!(jti));
+    assert!(
+        verifier.verify_at(&sign(&good), NOW).await.is_ok(),
+        "a freshness rejection must not consume the jti either"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Failure bodies must not disclose deployment configuration (PR #309 review, P2)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn failure_bodies_do_not_disclose_the_configured_issuer_or_audience() {
+    let receiver = PushReceiver::new(Arc::new(verifier()));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let fresh = |claims: serde_json::Value| with_claim(claims, "iat", json!(now));
+
+    let cases: Vec<(&str, String, SetErrorCode)> = vec![
+        (
+            "wrong issuer",
+            sign(&fresh(with_claim(
+                session_revoked_claims(),
+                "iss",
+                json!("https://evil.example.com/"),
+            ))),
+            SetErrorCode::InvalidIssuer,
+        ),
+        (
+            "wrong audience",
+            sign(&fresh(with_claim(
+                session_revoked_claims(),
+                "aud",
+                json!("https://someone-elses-receiver.example.com/"),
+            ))),
+            SetErrorCode::InvalidAudience,
+        ),
+        (
+            "missing audience",
+            sign(&fresh(with_claim(
+                session_revoked_claims(),
+                "aud",
+                json!(null),
+            ))),
+            SetErrorCode::InvalidAudience,
+        ),
+    ];
+
+    for (label, token, expected_code) in cases {
+        let response = receiver
+            .receive(Some(SET_MEDIA_TYPE), token.as_bytes())
+            .await;
+        assert_eq!(response.status(), 400, "{label}");
+        assert_eq!(response.error_code(), Some(expected_code), "{label}");
+
+        let body = String::from_utf8(response.body().to_vec()).expect("the body is UTF-8 JSON");
+        assert!(
+            !body.contains(ISSUER),
+            "{label}: the failure body leaked the configured issuer: {body}"
+        );
+        assert!(
+            !body.contains(AUDIENCE),
+            "{label}: the failure body leaked the configured audience: {body}"
+        );
+
+        // Still useful to a human: the registered code plus a non-empty description.
+        let parsed = error_body(&response);
+        assert_eq!(parsed["err"], expected_code.as_str(), "{label}");
+        assert!(
+            !parsed["description"].as_str().unwrap().is_empty(),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn the_redacted_errors_still_carry_their_values_for_the_caller() {
+    // Redaction is on `Display` only. A caller driving `SetVerifier` directly — and the crate's
+    // own tracing — still get the values as structured data.
+    let err = SetError::IssuerMismatch {
+        expected: ISSUER.to_string(),
+        found: "https://evil.example.com/".to_string(),
+    };
+    match &err {
+        SetError::IssuerMismatch { expected, found } => {
+            assert_eq!(expected, ISSUER);
+            assert_eq!(found, "https://evil.example.com/");
+        }
+        other => panic!("unexpected variant {other:?}"),
+    }
+    assert!(!err.to_string().contains(ISSUER));
+
+    let err = SetError::AudienceMismatch {
+        expected: vec![AUDIENCE.to_string()],
+    };
+    match &err {
+        SetError::AudienceMismatch { expected } => assert_eq!(expected, &[AUDIENCE.to_string()]),
+        other => panic!("unexpected variant {other:?}"),
+    }
+    assert!(!err.to_string().contains(AUDIENCE));
+
+    let err = SetError::MissingAudience {
+        expected: vec![AUDIENCE.to_string()],
+    };
+    assert!(!err.to_string().contains(AUDIENCE));
+}
+
+// ---------------------------------------------------------------------------
+// VerifiedSet
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_verified_set_carries_its_decoded_events() {
+    let token = sign(&session_revoked_claims());
+    let verified = verifier().verify_at(&token, NOW).await.unwrap();
+
+    assert_eq!(verified.set.jti, "24c63fb56e5a2d77a6b512616ca9fa24");
+    assert_eq!(verified.events.len(), 1);
+    assert_eq!(
+        verified.events[0].event_type_uri(),
+        EVENT_TYPE_SESSION_REVOKED
+    );
+
+    let rebuilt = VerifiedSet::new(verified.set.clone(), verified.events.clone());
+    assert_eq!(rebuilt, verified);
+
+    let (set, events) = verified.into_parts();
+    assert_eq!(set.iss, ISSUER);
+    assert_eq!(events.len(), 1);
 }

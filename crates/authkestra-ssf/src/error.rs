@@ -102,7 +102,13 @@ pub enum SetError {
     InvalidClaims(String),
 
     /// `iss` does not equal the issuer this verifier was configured for.
-    #[error("invalid issuer: expected {expected:?}, got {found:?}")]
+    ///
+    /// The `Display` text deliberately names neither value. It reaches an unauthenticated caller
+    /// through the RFC 8935 §2.3 `description` member — the push endpoint has no authentication
+    /// of its own — so echoing the configured issuer back would let anyone POST a bogus SET and
+    /// enumerate the deployment's trust configuration. Both values are still carried in the
+    /// struct, and [`crate::SetVerifier`] logs them as structured fields on rejection.
+    #[error("invalid issuer")]
     IssuerMismatch {
         /// The issuer the verifier was configured with.
         expected: String,
@@ -111,14 +117,20 @@ pub enum SetError {
     },
 
     /// The verifier expects an audience but the SET has no `aud` claim.
-    #[error("missing aud claim: this receiver requires one of {expected:?}")]
+    ///
+    /// As with [`SetError::IssuerMismatch`], the expected values are kept out of the `Display`
+    /// text because it is returned to an unauthenticated caller.
+    #[error("missing aud claim")]
     MissingAudience {
         /// The audience values that would have been accepted.
         expected: Vec<String>,
     },
 
     /// The SET's `aud` does not include any audience this verifier accepts.
-    #[error("invalid audience: none of {expected:?} present in the SET's aud")]
+    ///
+    /// As with [`SetError::IssuerMismatch`], the expected values are kept out of the `Display`
+    /// text because it is returned to an unauthenticated caller.
+    #[error("audience mismatch")]
     AudienceMismatch {
         /// The audience values that would have been accepted.
         expected: Vec<String>,

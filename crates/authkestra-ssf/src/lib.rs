@@ -89,4 +89,4 @@ pub use receiver::{
 pub use replay::{InMemorySetReplayGuard, SetReplayGuard};
 pub use set::{Audience, SecurityEventToken, SET_MEDIA_TYPE, SET_TYP};
 pub use subject::SubjectIdentifier;
-pub use verify::{SetVerifier, SetVerifierBuilder, SetVerifierError};
+pub use verify::{SetVerifier, SetVerifierBuilder, SetVerifierError, VerifiedSet};
