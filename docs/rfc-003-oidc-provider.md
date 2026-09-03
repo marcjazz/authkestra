@@ -96,6 +96,7 @@ pub struct ClientRegistration {
     pub client_id: String,
     pub client_secret_hash: String, // never store plaintext
     pub redirect_uris: Vec<String>, // exact-match only; no wildcard/prefix matching
+                                    // (except a loopback IP URI's port — see §7)
     pub grant_types: Vec<GrantType>,
     pub scopes: Vec<String>,
 }
@@ -137,6 +138,17 @@ pluggable backends, in-memory implementation ships first).
   string match** against the client's registered URIs — no partial or
   prefix matching. This is the single most common OAuth implementation bug
   (open redirect).
+  - **Amended by authkestra#291**: one carve-out, which RFC 8252 §7.3 makes a
+    MUST — a registered **loopback IP** redirect URI (`http://127.0.0.1/...`
+    or `http://[::1]/...`) matches on **any** port, because a native app takes
+    an ephemeral port from the OS at request time and cannot register it.
+    Only the port is ignored; scheme, host, userinfo, path, query and fragment
+    must still be equal, and the host must be the IP literal — `localhost` is
+    excluded per §8.3, as is the rest of `127.0.0.0/8`. This applies to the
+    registration check at `/authorize` only. The `/token` comparison of the
+    request's `redirect_uri` against the one recorded on the authorization
+    code stays an exact string match (RFC 6749 §4.1.3): the recorded value
+    already carries the concrete port the client used.
 - PKCE (`code_challenge`/`code_verifier`) is mandatory for public clients
   and recommended for all clients, per OAuth 2.1.
 - Authorization codes are single-use and short-lived (recommend ≤60s); the

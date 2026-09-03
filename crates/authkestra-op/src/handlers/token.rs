@@ -878,7 +878,16 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
         });
     }
 
-    // 5. Validate redirect_uri matches
+    // 5. Validate redirect_uri matches. Deliberately an exact string
+    // comparison, and deliberately *not* routed through
+    // `ClientRegistration::allows_redirect_uri`: RFC 6749 §4.1.3 requires the
+    // token request to repeat the identical value from the authorization
+    // request, which is a different question from whether the client was
+    // allowed to use it at all. The RFC 8252 §7.3 loopback any-port carve-out
+    // (authkestra#291) has no business here — `auth_code.redirect_uri` already
+    // holds the concrete port the client presented at `/authorize`, so
+    // ignoring the port would only let one loopback port be swapped for
+    // another mid-flow.
     if auth_code.redirect_uri != req_redirect_uri {
         tracing::warn!(
             expected_uri = %auth_code.redirect_uri,
