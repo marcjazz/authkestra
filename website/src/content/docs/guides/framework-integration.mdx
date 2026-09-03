@@ -15,7 +15,7 @@ Ensure you have enabled the correct web framework feature on the `authkestra` cr
 
 ```toml
 [dependencies]
-authkestra = { version = "0.6", features = ["axum", "session"] }
+authkestra = { version = "0.7", features = ["axum", "session"] }
 ```
 
   </TabItem>
@@ -23,11 +23,33 @@ authkestra = { version = "0.6", features = ["axum", "session"] }
 
 ```toml
 [dependencies]
-authkestra = { version = "0.6", features = ["actix", "session"] }
+authkestra = { version = "0.7", features = ["actix", "session"] }
 ```
 
   </TabItem>
 </Tabs>
+
+## Which extractor needs which engine
+
+Both extractors below read what they need out of your **router state**, not out of a global. On
+Axum that is a compile-time requirement: the `AxumState` derive (see *Router Setup*) generates the
+`FromRef` impls, and it only generates the ones your engine's typestate actually has. So the
+engine alias you store in state decides which extractor compiles:
+
+| Engine alias | `.session_store()` | `.jwt_secret()` / `.token_manager()` | `AuthSession` | `AuthToken` |
+| --- | --- | --- | --- | --- |
+| `AkWebAppEngine` | ✅ | — | ✅ | ❌ compile error |
+| `AkApiEngine` | — | ✅ | ❌ compile error | ✅ |
+| `AkEngine` | ✅ | ✅ | ✅ | ✅ |
+
+Using `AuthToken` with an `AkWebAppEngine` state fails with
+`the trait bound Result<Arc<TokenManager>, AxumError>: FromRef<AppState> is not satisfied` — the
+fix is to build the engine with a token manager and store it as `AkApiEngine` or `AkEngine`, not to
+change the handler.
+
+On Actix the same requirement exists but is resolved at *runtime* from `app_data`: a handler taking
+`Option<AuthToken>` compiles against any state and simply always yields `None` when no
+`TokenManager` was registered.
 
 ## The `AuthSession` Extractor
 
@@ -134,6 +156,13 @@ async fn get_protected(token: Option<AuthToken>) -> impl Responder {
 
 To wire up standard authentication endpoints automatically, use `axum_router()` / `axum_router_stateless()` for Axum, or `actix_scope()` / `actix_scope_stateless()` for Actix-web on the built `Engine`. The Axum methods return an `axum::Router`; the Actix methods return an `actix_web::Scope` you mount with `.service(...)`.
 
+:::note[The stateless routers live on their own traits]
+`axum_router()` comes from `AxumExt` and `actix_scope()` from `ActixExt`, but their stateless
+counterparts come from **`AxumStatelessExt`** and **`ActixStatelessExt`**. Importing only
+`AxumExt` and then calling `axum_router_stateless()` fails with "no method named
+`axum_router_stateless` found". See [Stateless OAuth2](/providers/oauth2/) for the full wiring.
+:::
+
 <Tabs>
   <TabItem label="Axum" icon="seti:rust">
 
@@ -151,11 +180,14 @@ struct AppState {
 
 let state = AppState { auth: auth_engine.clone() };
 
-let app = Router::new()
+let app: Router = Router::new()
     .merge(auth_engine.axum_router())
     .layer(CookieManagerLayer::new())
     .with_state(state);
 ```
+
+`.with_state(state)` is not optional decoration: `axum_router()` returns a `Router<AppState>`, and
+the extractors resolve their dependencies out of that `AppState`. A `Router<()>` will not compile.
 
   </TabItem>
   <TabItem label="Actix-web" icon="seti:rust">

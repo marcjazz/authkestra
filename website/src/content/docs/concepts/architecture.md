@@ -11,7 +11,7 @@ Our system is split into three distinct zones, ensuring clear boundaries and pre
 
 ### 1. Engine (The Core)
 The **`authkestra-engine`** crate is the brain of the system. It is entirely framework-agnostic and contains pure Rust logic.
-- **Responsibilities**: Defines identity modeling, standard traits (`Provider`, `SessionStore`), protocol helpers (like PKCE and OIDC discovery), and the central `Engine` orchestrator.
+- **Responsibilities**: Defines identity modeling, standard traits (`Provider`, `OAuthProvider`, `AuthMethod`, `Flow`, `SessionStore`, `KvStore`), protocol helpers (like PKCE and OIDC discovery), and the central `Engine` orchestrator.
 - **Why?**: By decoupling the engine from any specific web server (like Axum or Actix), we ensure your authentication logic is portable, highly testable, and isolated from HTTP request intricacies.
 
 ### 2. Extensions (Plugins)
@@ -28,6 +28,6 @@ Framework-specific wrappers that embed the engine into your web application.
 
 1. **Typestate Builder Pattern**: The `Authkestra::builder()` utilizes Rust's typestate pattern to enforce configuration validity at compile-time. Misconfigurations are compile errors, not runtime panics.
 2. **Stateless OAuth by Default**: OAuth `state` and `nonce` parameters are stored in securely encrypted cookies rather than a database. This guarantees horizontal scalability.
-3. **Database Agnostic**: Authkestra never enforces schemas. All data access occurs through traits like `SessionStore` and `UserStore`, allowing you to use SQLx, Diesel, Redis, or purely in-memory solutions.
+3. **Database Agnostic**: Authkestra never enforces schemas. All data access occurs through traits — `KvStore`/`SessionStore` for protocol state, `CredentialStore` for TOTP/WebAuthn secrets, and `authkestra-op`'s `OpStore` for OAuth clients, codes and tokens — allowing you to use SQLx, Diesel, Redis, or purely in-memory solutions. Note there is deliberately **no** user or account trait: your application owns those tables outright.
 4. **Trait Objects over Generics**: For I/O-bound paths, we prefer dynamic dispatch (`Box<dyn Trait>`) to optimize compilation times and improve Developer Experience without sacrificing noticeable runtime performance.
 5. **Observability**: Every handler and endpoint is deeply instrumented via the `tracing` crate, providing granular visibility into authentication flows in production.

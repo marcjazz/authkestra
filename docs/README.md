@@ -6,9 +6,9 @@ Welcome to the Authkestra documentation! This guide will help contributors and u
 
 To help navigate the various documentation surfaces, please adhere to the following hierarchy of truth:
 
-1. **RFCs (`docs/rfc-*.md`)**: These are the definitive design records. They represent the finalized, agreed-upon architecture and protocol specifications that the codebase must conform to.
+1. **RFCs (`docs/rfc-*.md`)**: These are the definitive design records — the finalized, agreed-upon architecture and protocol specifications the codebase aims at. They record *accepted design*, not shipped state: RFC-001 and RFC-003 are implemented, RFC-002 is largely not. Each RFC carries a status line at the top saying which.
 2. **`roadmap.md`**: This file tracks what is *actually* being built next. It reflects the immediate implementation priorities and active development phases.
-3. **`book/` (mdBook)**: This contains the user-facing tutorials and guides. Because the project is evolving rapidly, **the book may lag behind the RFCs and current codebase**. It is best effort documentation for end-users, not the architectural source of truth.
+3. **`book/` (mdBook)**: This contains the user-facing tutorials and guides. Because the project is evolving rapidly, **the book may lag behind the RFCs and current codebase**. It is best effort documentation for end-users, not the architectural source of truth. Its sections are labelled *(shipped)* or *(planned — not implemented)* so a reader can tell which is which; see [`book/README.md`](./book/README.md).
 4. **`research/`**: Contains raw research dumps and reference materials used during the design phases (e.g., `deep-search.md`). These are not authored documentation.
 
 ---
@@ -62,20 +62,26 @@ Authkestra is a modular auth platform, not a monolith or a simple library. It is
 ### Layered Structure
 
 ```
-┌──────────────────────────────┐
-│        SDK / CLI / AI        │
-├──────────────────────────────┤
-│   actix / axum adapters      │
-├──────────────────────────────┤
-│        Auth Engine           │
-├──────────────────────────────┤
-│ flows | providers | guards   │
-├──────────────────────────────┤
-│ token | session | identity   │
-├──────────────────────────────┤
-│          core                │
-└──────────────────────────────┘
+┌───────────────────────────────────────────────┐
+│  your application                             │
+├───────────────────────────────────────────────┤
+│  authkestra              (facade + examples)  │
+├───────────────────────────────────────────────┤
+│  authkestra-axum  |  authkestra-actix         │  adapters
+├───────────────────────────────────────────────┤
+│  authkestra-op    |  authkestra-resource      │  issuing / enforcing
+│  authkestra-oidc  |  authkestra-providers     │  relying-party clients
+│  authkestra-devsig                            │  device-bound signatures
+├───────────────────────────────────────────────┤
+│  authkestra-engine                            │
+│    Engine · flows · providers · auth methods  │
+│    identity · sessions · tokens · stores      │
+└───────────────────────────────────────────────┘
 ```
+
+The bottom box is one crate, not a stack of them: RFC-001 folded the former `core`, `flow`,
+`token` and `session` crates into `authkestra-engine`. The `SDK / CLI / AI` layer sketched in
+earlier versions of this diagram is roadmap Phase 4 and does not exist.
 
 ---
 

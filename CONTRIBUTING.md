@@ -62,7 +62,7 @@ Thank you for your interest in contributing to Authkestra! We welcome contributi
     CI additionally enforces a line-coverage floor and the `deny.toml` dependency policy:
 
     ```bash
-    cargo llvm-cov --workspace --all-features --fail-under-lines 78
+    cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 84
     cargo deny check
     ```
 

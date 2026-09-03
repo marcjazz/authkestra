@@ -17,9 +17,9 @@ re-export the relevant derive behind their own `macros` feature.
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.6", features = ["macros"] }
+authkestra-axum = { version = "0.7", features = ["macros"] }
 # or, to depend on the macros directly:
-authkestra-macros = "0.6"
+authkestra-macros = "0.7"
 ```
 
 ### AxumState / ActixState

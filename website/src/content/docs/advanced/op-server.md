@@ -15,24 +15,40 @@ Because OP Servers are an advanced use case, the OP logic is not included in the
 
 ```toml
 [dependencies]
-authkestra-op = "0.6"
-authkestra-axum = { version = "0.6", features = ["op"] }
+authkestra-op = "0.7"
+authkestra-axum = { version = "0.7", features = ["op"] }
 # Or if using Actix:
-# authkestra-actix = { version = "0.6", features = ["op"] }
+# authkestra-actix = { version = "0.7", features = ["op"] }
 ```
 
 ## The OpStore Interface
 
 To run an OP Server, you need to persist four specific types of records: Clients, Auth Codes, Refresh Tokens, and Device Codes. 
 
-In Authkestra, this is handled through the unified `OpStore` supertrait. `OpStore` aggregates the four granular storage traits:
+In Authkestra, this is handled through the unified `OpStore` supertrait. `OpStore` aggregates the four granular storage traits, and adds a handful of **defaulted** methods on top:
 
 ```rust
 pub trait OpStore:
     ClientStore + AuthorizationCodeStore + RefreshTokenStore + DeviceCodeStore + Send + Sync
 {
+    // All defaulted — override only what you need.
+    async fn record_client_assertion_jti(&self, jti: &str, expires_at: DateTime<Utc>)
+        -> Result<bool, OpError>;      // RFC 7523 private_key_jwt replay guard
+    async fn check_and_record_dpop_jti(&self, jti: &str, expires_at: DateTime<Utc>)
+        -> Result<bool, OpError>;      // RFC 9449 DPoP proof replay guard
+    async fn handle_custom_grant(/* ... */) -> Result<TokenResponse, TokenErrorResponse>;
+    async fn handle_refresh_token(/* ... */) -> Result<TokenResponse, TokenErrorResponse>;
 }
 ```
+
+:::caution[The two replay guards default to *refusing*]
+`record_client_assertion_jti` and `check_and_record_dpop_jti` are defaulted so that adding replay
+tracking did not break every existing `OpStore` — but their defaults **reject every assertion and
+every proof**. That is deliberate: a `private_key_jwt` or DPoP deployment without single-use `jti`
+tracking would let a captured assertion or proof stay replayable for its whole lifetime, which is
+strictly worse than not offering the feature. If you enable either mechanism you *must* wire a real
+store, or every such request will be refused.
+:::
 
 You can implement `OpStore` directly on a single monolithic database struct (e.g., your main Postgres pool struct). Alternatively, if you want to use different backends for different types of data (e.g., config for clients, Redis for codes), you can use the `CompositeOpStore` helper to delegate to four individual store implementations:
 
@@ -46,6 +62,11 @@ let op_store = CompositeOpStore::new(
     device_code_store,
 );
 ```
+
+`CompositeOpStore` carries two further, optional slots for the replay guards above — supply them
+with `.with_client_assertion_store(...)` and `.with_dpop_replay_store(...)`. Left unset they resolve
+to `NoClientAssertionStore` / `NoDpopReplayStore`, which are the fail-closed defaults described in
+the caution box.
 
 :::tip[Overriding Refresh Token Logic]
 The `OpStore` interface allows overriding `handle_refresh_token` for custom refresh token rotation or revocation policies. When the `openid` scope is requested during the refresh flow, Authkestra automatically issues an updated `id_token` alongside the new access token.
@@ -104,7 +125,8 @@ let config = OpConfig {
 let op = Op::builder()
     .engine(auth_engine)
     .config(config)
-    .store(op_store)
+    // `.store()` takes `Arc<dyn OpStore>`, not a bare store — wrap it.
+    .store(Arc::new(op_store))
     .build();
 ```
 
@@ -163,3 +185,98 @@ let app = Router::new()
 
 On Actix, `op_actix_scope()` wires all of them together and resolves each attestation dependency
 from `app_data`, leaving the optional `AttestationStatusProvider` as `None` when it is absent.
+
+## Device/Service Attestation Issuance
+
+Beyond the standard OIDC surface, `authkestra-op` can issue **device/service attestations**:
+short-lived, `cnf.jkt`-bound JWS tokens that let a mobile device or a backend service prove
+possession of a key it enrolled. This is the *issuing* side of device-bound signature
+authentication; the verifying side is [`authkestra-devsig`](/providers/device-signatures/). A
+step-by-step client walkthrough lives in the [Device Attestation guide](/guides/device-attestation/).
+
+### The three routes
+
+| Route | Purpose |
+| --- | --- |
+| `POST /enrol` | Validate the caller's public key and second factor, then issue a single-use proof-of-possession challenge. |
+| `POST /enrol/complete` | Consume the challenge, verify the signature came from the enrolled key, compute `cnf.jkt` from that key (never from caller input), and mint the attestation. |
+| `POST /reissue` | Silently renew a near-expiry attestation by re-proving possession of the same key. No second factor — continuity of the key stands in for it. |
+
+### `AttestationConfig`
+
+`AttestationConfig` is `#[non_exhaustive]`, so build it with `new()` (or `Default`) and adjust the
+fields you care about — a struct literal will not compile from outside the crate. The defaults are
+24h / 12h / 5min:
+
+```rust
+use authkestra_op::attestation::AttestationConfig;
+
+let mut attestation_config = AttestationConfig::new();
+attestation_config.attestation_ttl_secs = 86_400;           // how long an attestation is valid
+attestation_config.attestation_reissue_after_secs = 43_200; // returned as `reissue_after`
+attestation_config.challenge_ttl_secs = 300;                // a PoP nonce, not a session
+```
+
+### The two pluggable hooks
+
+`authkestra-op` deliberately hardcodes neither a telecom integration nor an attribute/revocation
+store, so the host application supplies both:
+
+- **`SecondFactorVerifier`** (required to enrol) — verifies whatever `SecondFactorProof`
+  (`{ kind, value }`, opaque to the OP) the caller submits at enrolment. An SMS/TOTP check for a
+  device; an out-of-band admin approval or one-time bootstrap secret for a service principal,
+  which has no phone to text. Any `Err` surfaces as `OpError::SecondFactorFailed`, so log your own
+  specifics rather than leaking them into the response.
+
+  ```rust
+  #[async_trait::async_trait]
+  impl SecondFactorVerifier for MyVerifier {
+      async fn verify(
+          &self,
+          subject: &str,
+          principal_type: PrincipalType,
+          proof: &SecondFactorProof,
+      ) -> Result<(), OpError> { /* ... */ }
+  }
+  ```
+
+- **`AttestationStatusProvider`** (optional) — consulted at re-issuance. Return
+  `Ok(Some(attributes))` to renew with (possibly updated) attributes, or `Ok(None)` to refuse a
+  revoked principal, which fails with `OpError::PrincipalRevoked`. **If you do not configure one,
+  re-issuance copies the previous attestation's attributes forward unchanged** — so an application
+  that revokes devices out-of-band needs this hook, or a revoked device keeps renewing.
+
+The challenge store is an `EnrolmentChallengeStore`, which has a blanket impl over any
+`KvStore` + `AtomicConsume` backend — the same mechanism session and OP data already use, so
+memory/Redis/SQL all work unchanged.
+
+### Wiring
+
+```rust
+let op = Op::builder()
+    .engine(engine)
+    .config(op_config)
+    .store(Arc::new(op_store))
+    .challenge_store(Arc::new(MemoryStore::<EnrolmentChallenge>::new()))
+    .second_factor_verifier(Arc::new(MyVerifier))
+    .attestation_config(AttestationConfig::new())
+    // .status_provider(Arc::new(MyStatusProvider)) // optional
+    .build();
+
+// Axum: a router separate from op_axum_router(), so an OIDC-only app never has to
+// supply attestation dependencies just to compile.
+let app: axum::Router<()> = op
+    .op_axum_attestation_router()
+    .with_state(authkestra_axum::op::OpState(op));
+```
+
+On Actix there is no split: `op_actix_scope()` wires the standard endpoints and the three
+attestation routes together, resolving each dependency from `app_data`.
+
+Runnable end-to-end versions (server plus a client that enrols and then re-issues, no external
+services needed):
+
+```bash
+cargo run -p authkestra --example axum_op_server_attestation --features full
+cargo run -p authkestra --example actix_op_server_attestation --features full
+```

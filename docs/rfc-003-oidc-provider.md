@@ -1,5 +1,7 @@
 # RFC-003: OpenID Provider (OP) Support
 
+> **Status: Accepted and implemented** as the `authkestra-op` crate. Kept as a historical design record; the reference documentation is the OP Server page on the documentation site.
+
 ## 1. Summary
 
 This RFC proposes adding OpenID Provider (OP) capability to Authkestra: the

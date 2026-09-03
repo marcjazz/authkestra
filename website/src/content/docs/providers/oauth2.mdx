@@ -18,7 +18,7 @@ If you are using multiple OAuth providers (e.g., GitHub and Google), enable thei
 
 ```toml
 [dependencies]
-authkestra = { version = "0.6", features = ["axum", "token", "github", "google"] }
+authkestra = { version = "0.7", features = ["axum", "token", "github", "google"] }
 ```
 
 ## Stateless Engine Configuration
@@ -55,21 +55,48 @@ cargo run -p authkestra --example axum_oauth_stateless --all-features
 
 ## Wiring the Routes
 
-Because we are not using sessions, we use the stateless router counterpart: `auth_engine.axum_router_stateless()` for Axum or `auth_engine.actix_scope_stateless()` for Actix-web.
+Because we are not using sessions, we use the stateless router counterpart: `auth_engine.axum_router_stateless()` for Axum or `auth_engine.actix_scope_stateless()` for Actix-web. These live on
+`AxumStatelessExt` / `ActixStatelessExt`, **not** on `AxumExt` / `ActixExt` — importing the wrong
+trait is the usual cause of "no method named `axum_router_stateless` found".
 
 <Tabs>
 <TabItem label="Axum">
 ```rust
-use authkestra::axum::AxumStatelessExt;
+use authkestra::axum::{AxumState, AxumStatelessExt};
+use authkestra::core::AkApiEngine;
 
-let app = axum::Router::new().merge(auth_engine.axum_router_stateless());
+// The router's state must carry the token-configured engine; the derive generates the
+// `FromRef` impls `axum_router_stateless()` requires. A bare `Router<()>` will not compile.
+#[derive(Clone, AxumState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkApiEngine,
+}
+
+let state = AppState { auth: auth_engine.clone() };
+
+let app: axum::Router = axum::Router::new()
+    .merge(auth_engine.axum_router_stateless())
+    .with_state(state);
 ```
 </TabItem>
 <TabItem label="Actix Web">
 ```rust
-use authkestra::actix::ActixStatelessExt;
+use authkestra::actix::{ActixState, ActixStatelessExt};
+use authkestra::core::AkApiEngine;
 
-let app = actix_web::App::new().service(auth_engine.actix_scope_stateless());
+#[derive(Clone, ActixState)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: AkApiEngine,
+}
+
+let state = AppState { auth: auth_engine.clone() };
+
+let app = actix_web::App::new()
+    // `configure_authkestra` registers the token manager as app data so `AuthToken` resolves.
+    .configure(move |cfg| state.configure_authkestra(cfg))
+    .service(auth_engine.actix_scope_stateless());
 ```
 </TabItem>
 </Tabs>

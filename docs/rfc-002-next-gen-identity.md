@@ -1,5 +1,7 @@
 # RFC-002: Next-Generation Identity Architecture
 
+> **Status: Accepted as direction; largely unimplemented.** Of the pillars below, SD-JWT selective disclosure and DPoP sender-constraining have shipped. GNAP, post-quantum cryptography, Verifiable Credentials / OIDC4VP, BBS+, and SSF/CAEP have **not** - see [`docs/roadmap.md`](./roadmap.md) for what is actually being built next. Kept as a historical design record.
+
 ## 1. Summary
 This RFC builds upon **RFC-001** by defining the functional transition of Authkestra into a "Next-Gen" identity platform. It introduces support for **GNAP**, **Post-Quantum Cryptography (PQC)**, **Verifiable Credentials**, and **Continuous Access Evaluation (CAEP)**.
 
