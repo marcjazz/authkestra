@@ -34,7 +34,19 @@ authkestra-engine = { workspace = true, default-features = true, features = ["re
 authkestra-op = { workspace = true, default-features = true, features = ["redis"] }
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["redis", "postgres", "mysql"] }
-authkestra-store-sqlx = { workspace = true, default-features = true, features = ["sqlite"] }
+# Deliberately path-only, no version (not `workspace = true`, which would
+# inherit one): a dev-dependency *with* a version isn't stripped from the
+# published manifest, so `cargo package` needs it already on crates.io.
+# authkestra-store-sqlx is published for the first time in the same
+# release batch as this crate, so at packaging time it never is yet —
+# "no matching package named `authkestra-store-sqlx` found" (authkestra
+# release-plz run, 2026-09-03). Version-less path dev-deps are dropped
+# from the published manifest entirely, sidestepping the whole problem;
+# the only cost is that `tests/sqlx_store.rs` can't run against a copy
+# installed from crates.io, which was never a supported use case anyway.
+authkestra-store-sqlx = { path = "../authkestra-store-sqlx", default-features = true, features = [
+    "sqlite",
+] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 # This crate's own tests/*.rs use #[tokio::test], which needs "macros" —
 # declared explicitly rather than relying on it arriving via
