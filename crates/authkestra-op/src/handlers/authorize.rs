@@ -14,7 +14,10 @@ use rand::RngCore;
 pub struct AuthorizeRequest {
     /// Client ID requesting authorization.
     pub client_id: String,
-    /// Exact match redirect URI.
+    /// The redirect URI the client is asking to be sent back to. Matched
+    /// against the registration by
+    /// [`crate::client::ClientRegistration::allows_redirect_uri`] — exactly,
+    /// save for a loopback IP URI's port (RFC 8252 §7.3).
     pub redirect_uri: String,
     /// Response type (must be "code").
     pub response_type: String,
@@ -68,7 +71,12 @@ pub async fn handle_authorize(
         }
     };
 
-    // 2. Validate exact redirect_uri
+    // 2. Validate the redirect_uri against the registration. Exact, except
+    // for a loopback IP URI's port (RFC 8252 §7.3, authkestra#291) — the
+    // carve-out lives in `allows_redirect_uri`, not here. Everything
+    // downstream (the redirect built below, and the value recorded on the
+    // code) uses the URI *as presented*, so the ephemeral port survives to
+    // `/token`.
     if !client.allows_redirect_uri(&req.redirect_uri) {
         tracing::warn!(
             client_id = %req.client_id,
@@ -532,6 +540,76 @@ mod tests {
         } else {
             panic!("Expected Redirect");
         }
+    }
+
+    /// authkestra#291, end to end: a native app registered
+    /// `http://127.0.0.1/callback` and binds whatever ephemeral port the OS
+    /// hands it. RFC 8252 §7.3 makes accepting that a MUST, and before the fix
+    /// this request could only ever be a `DirectError(RedirectUriMismatch)`.
+    ///
+    /// The second half of the assertion matters as much as the first: the
+    /// browser is redirected to — and the code is persisted with — the
+    /// *presented* URI including its port, not the registered portless one.
+    /// That is what keeps `/token`'s exact `auth_code.redirect_uri !=
+    /// req_redirect_uri` comparison (RFC 6749 §4.1.3) correct and untouched.
+    #[tokio::test]
+    async fn loopback_redirect_on_an_ephemeral_port_is_accepted() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "native-app",
+                ClientRegistration {
+                    client_id: "native-app".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["http://127.0.0.1/callback".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        let config = test_config();
+
+        let req = AuthorizeRequest {
+            client_id: "native-app".to_string(),
+            redirect_uri: "http://127.0.0.1:54321/callback".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid".to_string(),
+            state: Some("abc".to_string()),
+            code_challenge: Some("s256challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            nonce: None,
+        };
+
+        let outcome = handle_authorize(req, test_identity(), &config, &crate::store::CompositeOpStore::new(clients, codes.clone(), authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
+
+        let AuthorizeOutcome::Redirect(url) = outcome else {
+            panic!("expected a Redirect, got {outcome:?}");
+        };
+        assert!(
+            url.starts_with("http://127.0.0.1:54321/callback?code="),
+            "redirect must go to the presented port, got {url}"
+        );
+
+        let code_val = url
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap();
+        let persisted = codes.consume_code(code_val).await.unwrap().unwrap();
+        assert_eq!(persisted.redirect_uri, "http://127.0.0.1:54321/callback");
     }
 
     /// authkestra#280: an omitted `scope` (RFC 6749 §3.3 makes this legal)

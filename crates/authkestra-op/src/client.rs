@@ -5,6 +5,8 @@ use argon2::{
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::net::{Ipv4Addr, Ipv6Addr};
+use url::{Host, Url};
 
 /// OAuth2/OIDC grant types a client may be permitted to use.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,7 +90,9 @@ pub enum TokenEndpointAuthMethod {
 ///
 /// `redirect_uris` are matched **exactly** (no prefix/wildcard matching) —
 /// see RFC-003 §7. This is the single most important invariant in this
-/// type; do not relax it for convenience.
+/// type; do not relax it for convenience. The one exception, which RFC 8252
+/// §7.3 makes mandatory, is the port of a loopback IP redirect URI; see
+/// [`ClientRegistration::allows_redirect_uri`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientRegistration {
     /// Public client identifier.
@@ -97,6 +101,15 @@ pub struct ClientRegistration {
     /// `None` for public clients (e.g. SPAs, native apps using PKCE).
     pub client_secret_hash: Option<String>,
     /// Exact-match redirect URIs this client is permitted to use.
+    ///
+    /// One entry, one URI, compared byte-for-byte — with a single exception:
+    /// registering a loopback IP URI (`http://127.0.0.1/...` or
+    /// `http://[::1]/...`) means "this client may redirect to that host and
+    /// path on **any** port", because RFC 8252 §7.3 requires it for native
+    /// apps that take an ephemeral port from the OS at request time. Whatever
+    /// port is written here is therefore not binding, and writing one is only
+    /// a documentation aid. See
+    /// [`ClientRegistration::allows_redirect_uri`] (authkestra#291).
     pub redirect_uris: Vec<String>,
     /// Grant types this client is permitted to use.
     pub grant_types: Vec<GrantType>,
@@ -142,11 +155,42 @@ pub struct ClientRegistration {
 }
 
 impl ClientRegistration {
-    /// Returns true if `redirect_uri` exactly matches one of this client's
-    /// registered URIs. Intentionally a plain `==` comparison — no
-    /// normalization, no prefix matching.
+    /// Returns true if `redirect_uri` matches one of this client's registered
+    /// URIs.
+    ///
+    /// The first and normal check is a plain `==` comparison — no
+    /// normalization, no prefix matching. That exactness is the defence
+    /// against open redirects and is not negotiable for ordinary URIs.
+    ///
+    /// The one relaxation is the port of a **loopback IP** redirect URI, which
+    /// RFC 8252 §7.3 makes a MUST: a native app binds `127.0.0.1:0`, gets a
+    /// kernel-assigned port, and cannot possibly have registered it. So a
+    /// registered `http://127.0.0.1/cb` also matches
+    /// `http://127.0.0.1:54321/cb`. Only the port is ignored; scheme, host,
+    /// userinfo, path, query and fragment must still be equal, and both sides
+    /// must be `http` on the IP literal `127.0.0.1` or `::1`. The name
+    /// `localhost` deliberately does **not** qualify (RFC 8252 §8.3: it
+    /// resolves through a name service the app does not control), nor does any
+    /// other address in `127.0.0.0/8`. Since the exemption cannot apply to a
+    /// non-loopback host, it does not widen the open-redirect surface: an
+    /// attacker able to bind a port on the user's own loopback interface
+    /// already has code execution there. See authkestra#291.
     pub fn allows_redirect_uri(&self, redirect_uri: &str) -> bool {
-        self.redirect_uris.iter().any(|u| u == redirect_uri)
+        self.redirect_uris.iter().any(|registered| {
+            if registered == redirect_uri {
+                return true;
+            }
+            if loopback_match(registered, redirect_uri) {
+                tracing::debug!(
+                    client_id = %self.client_id,
+                    registered_uri = %registered,
+                    presented_uri = %redirect_uri,
+                    "redirect_uri accepted on the RFC 8252 §7.3 loopback any-port exemption"
+                );
+                return true;
+            }
+            false
+        })
     }
 
     /// Checks if the client is allowed to use a specific grant type.
@@ -181,6 +225,81 @@ impl ClientRegistration {
             // No secret stored means public client; shouldn't be used for confidential flows
             false
         }
+    }
+}
+
+/// RFC 8252 §7.3: compares a registered against a presented redirect URI on
+/// every component **except** the port, and only when both are loopback IP
+/// URIs. Returns false for anything else, so the caller's exact `==` remains
+/// the only path by which a non-loopback URI can match.
+///
+/// Both sides are re-checked independently and symmetrically on purpose: a
+/// loopback *registration* must not let a non-loopback URI through, and a
+/// loopback URI presented against a non-loopback registration must not match
+/// either. Everything the URI carries other than the port — including
+/// userinfo, which no legitimate loopback redirect uses — has to be equal, so
+/// the only authority this grants a caller is "some port on the user's own
+/// machine".
+fn loopback_match(registered: &str, presented: &str) -> bool {
+    let (Ok(registered), Ok(presented)) = (Url::parse(registered), Url::parse(presented)) else {
+        // A URI that does not parse cannot be reasoned about; it can still
+        // match byte-for-byte at the call site, but never here.
+        return false;
+    };
+
+    if registered.scheme() != "http" || presented.scheme() != "http" {
+        return false;
+    }
+
+    let (Some(registered_host), Some(presented_host)) = (registered.host(), presented.host())
+    else {
+        return false;
+    };
+    if !is_loopback_ip(&registered_host) || !is_loopback_ip(&presented_host) {
+        return false;
+    }
+
+    registered_host == presented_host
+        && registered.path() == presented.path()
+        && registered.query() == presented.query()
+        && registered.fragment() == presented.fragment()
+        && registered.username() == presented.username()
+        && registered.password() == presented.password()
+}
+
+/// True only for the two IP literals RFC 8252 §7.3 names: `127.0.0.1` and
+/// `::1`.
+///
+/// Deliberately not `Ipv4Addr::is_loopback()`: that accepts all of
+/// `127.0.0.0/8`, and §7.3 enumerates the two addresses rather than the
+/// ranges. `Host::Domain` is always false — that is what keeps `localhost`
+/// out, since resolving it depends on a name service the app does not
+/// control.
+///
+/// Two of the exclusions here are narrower than the RFC and are **meant to
+/// stay that way** — neither is an oversight to be tidied up later:
+///
+/// - **IPv4-mapped IPv6 loopback (`http://[::ffff:127.0.0.1]/cb`) is not
+///   exempt.** `Ipv6Addr::LOCALHOST` is `::1`, so the mapped form compares
+///   unequal and falls through to exact `==`. It is a second spelling of an
+///   address §7.3 already covers in two canonical forms, no OS hands one to
+///   an app that binds `127.0.0.1:0` or `[::1]:0`, and admitting it would
+///   mean either accepting a third literal or normalising mapped to plain
+///   IPv4 — the latter being exactly the kind of pre-comparison rewriting
+///   that redirect-URI matching should not be doing. Add it only with a test
+///   that pins which spellings become equivalent to which.
+/// - **`localhost` is refused outright**, which is stricter than §8.3: the
+///   RFC says NOT RECOMMENDED, not MUST NOT. The stricter line is chosen
+///   because the whole security argument for this exemption is that the host
+///   is unambiguously the user's own machine; `localhost` reaches that host
+///   only via a resolver the app does not control, and it is `Host::Domain`
+///   here, so it can never be told apart from any other name. Relaxing it
+///   would need a fresh argument, not just a citation of §8.3's wording.
+fn is_loopback_ip(host: &Host<&str>) -> bool {
+    match host {
+        Host::Ipv4(addr) => *addr == Ipv4Addr::LOCALHOST,
+        Host::Ipv6(addr) => *addr == Ipv6Addr::LOCALHOST,
+        Host::Domain(_) => false,
     }
 }
 
@@ -312,5 +431,152 @@ mod tests {
         assert!(serialized.contains("\"client_credentials\""));
         assert!(serialized.contains("\"authorization_code\""));
         assert!(serialized.contains("\"my_custom_grant\""));
+    }
+
+    fn client_with_redirect_uris(uris: &[&str]) -> ClientRegistration {
+        ClientRegistration {
+            client_id: "native-app".to_string(),
+            client_secret_hash: None,
+            redirect_uris: uris.iter().map(|u| (*u).to_string()).collect(),
+            grant_types: vec![GrantType::AuthorizationCode],
+            scopes: vec![],
+            require_pkce: false,
+            allowed_audiences: vec![],
+            token_endpoint_auth_method: None,
+            jwks: None,
+        }
+    }
+
+    /// The authkestra#291 regression: a native app binds an ephemeral port it
+    /// could not have registered, and RFC 8252 §7.3 makes accepting it a MUST.
+    #[test]
+    fn loopback_registration_accepts_any_ephemeral_port() {
+        let client = client_with_redirect_uris(&["http://127.0.0.1/cb"]);
+        assert!(client.allows_redirect_uri("http://127.0.0.1:54321/cb"));
+        assert!(client.allows_redirect_uri("http://127.0.0.1:1/cb"));
+        // The registered value itself must keep working.
+        assert!(client.allows_redirect_uri("http://127.0.0.1/cb"));
+    }
+
+    /// A port written at registration time is not binding — §7.3 is about the
+    /// port being unknowable, so a registered port is documentation, not a
+    /// constraint.
+    #[test]
+    fn loopback_registration_with_a_port_accepts_a_different_port() {
+        let client = client_with_redirect_uris(&["http://127.0.0.1:8080/cb"]);
+        assert!(client.allows_redirect_uri("http://127.0.0.1:9090/cb"));
+        assert!(client.allows_redirect_uri("http://127.0.0.1/cb"));
+    }
+
+    #[test]
+    fn ipv6_loopback_literal_gets_the_same_exemption() {
+        let client = client_with_redirect_uris(&["http://[::1]/cb"]);
+        assert!(client.allows_redirect_uri("http://[::1]:54321/cb"));
+    }
+
+    /// RFC 8252 §8.3: `localhost` resolves through a name service the app does
+    /// not control, so it never earns the exemption — in either position.
+    #[test]
+    fn localhost_never_qualifies() {
+        let registered_localhost = client_with_redirect_uris(&["http://localhost/cb"]);
+        assert!(!registered_localhost.allows_redirect_uri("http://localhost:54321/cb"));
+        assert!(!registered_localhost.allows_redirect_uri("http://127.0.0.1:54321/cb"));
+
+        let registered_ip = client_with_redirect_uris(&["http://127.0.0.1/cb"]);
+        assert!(!registered_ip.allows_redirect_uri("http://localhost:54321/cb"));
+
+        // Exact equality still applies to `localhost`, as to anything else.
+        assert!(registered_localhost.allows_redirect_uri("http://localhost/cb"));
+    }
+
+    /// §7.3 names `127.0.0.1`, not `127.0.0.0/8` — and names it in that one
+    /// spelling, so the IPv4-mapped IPv6 form is out too. Both exclusions are
+    /// deliberate; see `is_loopback_ip` for why, and change this test only
+    /// alongside that reasoning.
+    #[test]
+    fn other_addresses_in_127_slash_8_never_qualify() {
+        let client = client_with_redirect_uris(&["http://127.0.0.2/cb"]);
+        assert!(!client.allows_redirect_uri("http://127.0.0.2:54321/cb"));
+
+        let client = client_with_redirect_uris(&["http://127.0.0.1/cb"]);
+        assert!(!client.allows_redirect_uri("http://127.0.0.2:54321/cb"));
+
+        // IPv4-mapped IPv6 loopback: not `::1`, so no exemption in either
+        // position. Exact `==` still works, as for any other URI.
+        assert!(!client.allows_redirect_uri("http://[::ffff:127.0.0.1]:54321/cb"));
+        let client = client_with_redirect_uris(&["http://[::ffff:127.0.0.1]/cb"]);
+        assert!(!client.allows_redirect_uri("http://[::ffff:127.0.0.1]:54321/cb"));
+        assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/cb"));
+        assert!(client.allows_redirect_uri("http://[::ffff:127.0.0.1]/cb"));
+    }
+
+    #[test]
+    fn scheme_must_match_and_must_be_http() {
+        let client = client_with_redirect_uris(&["https://127.0.0.1/cb"]);
+        assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/cb"));
+        assert!(!client.allows_redirect_uri("https://127.0.0.1:54321/cb"));
+
+        let client = client_with_redirect_uris(&["http://127.0.0.1/cb"]);
+        assert!(!client.allows_redirect_uri("https://127.0.0.1:54321/cb"));
+    }
+
+    #[test]
+    fn only_the_port_is_ignored() {
+        let client = client_with_redirect_uris(&["http://127.0.0.1/cb?x=1#frag"]);
+        // Different path.
+        assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/other?x=1#frag"));
+        // Different query.
+        assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/cb?x=2#frag"));
+        // Missing query.
+        assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/cb#frag"));
+        // Different fragment.
+        assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/cb?x=1#other"));
+        // Only the port differs.
+        assert!(client.allows_redirect_uri("http://127.0.0.1:54321/cb?x=1#frag"));
+    }
+
+    #[test]
+    fn userinfo_must_match() {
+        let client = client_with_redirect_uris(&["http://127.0.0.1/cb"]);
+        assert!(!client.allows_redirect_uri("http://attacker@127.0.0.1:54321/cb"));
+        assert!(!client.allows_redirect_uri("http://:secret@127.0.0.1:54321/cb"));
+    }
+
+    /// The exemption must not leak into ordinary URIs: for anything that is
+    /// not loopback, the port is part of the exact match as it always was.
+    #[test]
+    fn non_loopback_uris_still_match_exactly_including_the_port() {
+        let client = client_with_redirect_uris(&["https://app.example.com/cb"]);
+        assert!(!client.allows_redirect_uri("https://app.example.com:8443/cb"));
+        assert!(client.allows_redirect_uri("https://app.example.com/cb"));
+
+        let client = client_with_redirect_uris(&["http://app.example.com:8080/cb"]);
+        assert!(!client.allows_redirect_uri("http://app.example.com:9090/cb"));
+    }
+
+    /// A loopback registration must not become a wildcard for other hosts.
+    #[test]
+    fn loopback_registration_does_not_admit_a_non_loopback_uri() {
+        let client = client_with_redirect_uris(&["http://127.0.0.1/cb"]);
+        assert!(!client.allows_redirect_uri("http://evil.example.com/cb"));
+        assert!(!client.allows_redirect_uri("http://evil.example.com:54321/cb"));
+        assert!(!client.allows_redirect_uri("http://127.0.0.1.evil.example.com:54321/cb"));
+    }
+
+    #[test]
+    fn malformed_presented_uri_does_not_match() {
+        let client = client_with_redirect_uris(&["http://127.0.0.1/cb"]);
+        assert!(!client.allows_redirect_uri("not a url"));
+        assert!(!client.allows_redirect_uri("127.0.0.1:54321/cb"));
+        assert!(!client.allows_redirect_uri(""));
+    }
+
+    /// A registration that does not parse as a URL is still usable through the
+    /// exact `==` path; it just never reaches the loopback comparison.
+    #[test]
+    fn unparseable_registration_still_matches_exactly() {
+        let client = client_with_redirect_uris(&["not a url"]);
+        assert!(client.allows_redirect_uri("not a url"));
+        assert!(!client.allows_redirect_uri("http://127.0.0.1:54321/cb"));
     }
 }

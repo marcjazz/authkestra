@@ -7,9 +7,12 @@ pub enum OpError {
     #[error("unknown client: {0}")]
     UnknownClient(String),
 
-    /// The provided redirect_uri does not exactly match a registered URI
-    /// for this client. Always treat this as a hard failure — never fall
-    /// back to a "closest match" or prefix comparison.
+    /// The provided redirect_uri does not match a registered URI for this
+    /// client — exactly, or, for a loopback IP URI, on every component but
+    /// the port (RFC 8252 §7.3; see
+    /// [`crate::client::ClientRegistration::allows_redirect_uri`]). Always
+    /// treat this as a hard failure — never fall back to a "closest match"
+    /// or prefix comparison.
     #[error("redirect_uri does not match a registered URI for this client")]
     RedirectUriMismatch,
 

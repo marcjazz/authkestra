@@ -19,7 +19,7 @@ To prevent user tracking and correlation between services:
 
 ## 4. Modern Hardened Defaults
 - **PKCE Mandatory**: No OAuth flows without Proof Key for Code Exchange.
-- **Exact Redirect Matching**: Preventing open redirector vulnerabilities.
+- **Exact Redirect Matching**: Preventing open redirector vulnerabilities. The only relaxation is the one RFC 8252 §7.3 requires: a registered loopback IP redirect URI (`http://127.0.0.1/...`, `http://[::1]/...`) matches on any port, since a native app is handed an ephemeral port by the OS at request time. Everything else about the URI still has to match exactly, `localhost` is not accepted as a substitute for the IP literal (§8.3), and the exemption cannot reach a non-loopback host — so it does not widen the open-redirect surface.
 - **Sender-Constrained Tokens**: Using DPoP to bind tokens to the client's cryptographic key.
 
 ## 5. SD-JWT: Fail-Closed Disclosure Verification
