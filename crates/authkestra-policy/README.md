@@ -80,6 +80,24 @@ Ok(())
 }
 ```
 
+### Evaluation errors: a skipped `forbid` is refused, not allowed
+
+Cedar skips a policy that raises an evaluation error (a missing attribute, a type error) and
+finishes the request with the rest. If the skipped policy is a `forbid`, the naive result is an
+`Allow` that was only reached because the denying rule never ran — a fail-open that
+`is_allowed() == true` gives the caller no way to notice.
+
+So this crate refuses to answer instead:
+
+| decision | erroring policies | you get |
+| --- | --- | --- |
+| `Allow` | at least one `forbid` | `Err(PolicyError::UnreliableDecision { errors })` |
+| `Allow` | `permit`s only | `Ok(allow)` — another permit matched; errors in `Decision::errors()` |
+| `Deny` | any | `Ok(deny)` — nothing skipped could have turned a Deny into an Allow |
+
+Every evaluation error is logged at `warn` with the policy id either way, so a rule that has
+quietly stopped evaluating is visible before it becomes an outage.
+
 ### Runtime reload
 
 `PolicyEngine::reload(&self, cedar_source: &str)` swaps the policy set in place, so an operator

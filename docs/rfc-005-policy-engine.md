@@ -155,6 +155,36 @@ started with.
 chosen to avoid a dependency for a swap that happens once per policy deploy rather than once per
 request. If §7's read-path cost ever matters, this is a one-line change.
 
+### 4.5 Evaluation-error semantics: fail closed on a skipped `forbid`
+
+Cedar does not abort a request when one policy raises an evaluation error (reading an attribute
+an entity does not have, a type error). It **skips that policy** and finishes with the rest,
+reporting the error in the response diagnostics.
+
+For a `permit` that is safe: a skipped permit can only ever cost an Allow. For a `forbid` it is a
+fail-open — the single rule that would have denied the request never ran, and the caller receives
+a plain `Allow`. Since `Decision::is_allowed()` is a `bool`, a caller has no way to notice, and
+"check `errors()` too" is exactly the sort of discipline that is right in review and forgotten in
+production.
+
+The engine therefore refuses to answer rather than answering unsafely:
+
+| decision | erroring policies | result |
+|---|---|---|
+| `Allow` | at least one `forbid` | `Err(PolicyError::UnreliableDecision { errors })` |
+| `Allow` | `permit`s only | `Ok(allow)` — some other permit matched; errors in `Decision::errors()` |
+| `Deny` | any | `Ok(deny)` — a skipped policy cannot have turned a Deny into an Allow |
+
+Each errored policy id is looked up in the policy set that produced the response to find the
+effect that was lost. An id that cannot be resolved back to a policy counts as a `forbid`: it
+cannot be *proven* harmless, so it fails closed.
+
+This is a second deliberate departure from bare `cedar_policy` behaviour (the first is §4.3), and
+it is the one with security consequences, so it is stated here rather than only in the API docs.
+The alternative designs — a third `Decision` state, or a `Decision::is_reliable()` the caller must
+remember to consult — were rejected for the same reason: they are opt-in safety, and the failure
+mode of forgetting them is a silent authorization bypass.
+
 ## 5. Proposed integration (not built)
 
 ### 5.1 Deriving Cedar entities from an authenticated identity
@@ -316,9 +346,15 @@ database**. Two conclusions:
 The `max` column is omitted above because it is dominated by one-off allocator behaviour
 (4.4 ms debug / 5.3 ms release on the first non-warmed iteration), not by policy evaluation.
 
+Because hydration is the expensive half, `is_authorized` does the two cheap, purely local
+rejections first — converting the context, and checking the request itself against the schema —
+and calls the loader only once the request is known to be answerable. A malformed or
+schema-violating request therefore costs no database round trip at all, which matters most under
+exactly the conditions that produce them (a misconfigured client retrying).
+
 ## 8. Testing
 
-`crates/authkestra-policy` ships 48 tests (plus the `#[ignore]`d `perf_smoke`): allow, default deny, a `permit` conditioned on
+`crates/authkestra-policy` ships 51 tests (plus the `#[ignore]`d `perf_smoke`): allow, default deny, a `permit` conditioned on
 context, a `forbid` overriding a `permit`, an unknown principal denied with empty diagnostics, a
 policy erroring on a missing attribute (surfaced in `Decision::errors()`, logged at `warn`),
 schema validation rejecting an invalid policy at load, `reload` with bad syntax and with a
@@ -327,7 +363,14 @@ the next request, a loader failure surfacing as `PolicyError::Loader` rather tha
 multi-threaded test hammering `is_authorized` from 8 tasks while 8 more reload (half of them
 with deliberately broken policy text); plus, for §4.3's id rules, the rejection of a reserved
 `@id("policy0")`, the acceptance of a near-miss such as `policy-admin-override`, and the
-positional fallback for un-annotated policies.
+positional fallback for un-annotated policies; and, for §4.5, all three rows of the
+evaluation-error table (a skipped `forbid` under an Allow refused, a skipped `permit` under an
+Allow tolerated, a skipped policy under a Deny tolerated).
+
+Two of those tests are ordering assertions rather than behaviour assertions: a counting
+`ResourceLoader` proves the loader is *not* called when a request is rejected by the schema or by
+context conversion (§7), which is the only way that short-circuit stays true as the function
+changes.
 
 Line coverage of the crate's own sources, from `cargo llvm-cov -p authkestra-policy
 --all-features`: **98.14%** overall (`engine.rs` 96.70%, `error.rs` 100%, `loader.rs` 98.79%,

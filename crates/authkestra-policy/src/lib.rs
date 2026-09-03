@@ -29,6 +29,13 @@
 //! `UserStore` and `SessionStore`: the engine cannot query storage even by accident, because it
 //! holds no handle to any.
 //!
+//! ## The one security rule
+//!
+//! Cedar *skips* a policy that raises an evaluation error and finishes the request with the
+//! rest. When the skipped policy is a `forbid`, the resulting `Allow` was only reached because
+//! the denying rule never ran. [`PolicyEngine::is_authorized`] refuses to return that: it fails
+//! closed with [`PolicyError::UnreliableDecision`]. See its docs for the full table.
+//!
 //! ## Example
 //!
 //! ```

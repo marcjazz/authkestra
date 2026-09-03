@@ -179,6 +179,13 @@ impl Decision {
     /// A non-empty list alongside an allow or a deny means *some policies did not evaluate*, so
     /// the decision was made on a subset of the policy set. Cedar's default error handling skips
     /// the erroring policy and continues; the engine logs each one at `warn`.
+    ///
+    /// What you will **not** find here is an allow that skipped a `forbid`: the engine refuses
+    /// to build such a `Decision` at all and returns [`PolicyError::UnreliableDecision`]
+    /// instead, because a skipped `forbid` is precisely the case where a bare `Allow` would be
+    /// fail-open. So a non-empty `errors()` on an allow means only `permit`s were skipped, and
+    /// some other `permit` matched on its own merits; on a deny it means whatever was skipped
+    /// could not have changed the outcome.
     pub fn errors(&self) -> &[String] {
         &self.errors
     }

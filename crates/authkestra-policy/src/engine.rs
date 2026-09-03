@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use cedar_policy::{
-    Authorizer, Context, PolicyId, PolicySet, Request, Schema, ValidationMode, Validator,
+    Authorizer, Context, Effect, PolicyId, PolicySet, Request, Schema, ValidationMode, Validator,
 };
 
 use crate::error::PolicyError;
@@ -193,23 +193,19 @@ impl PolicyEngine {
 
     /// Decide one request.
     ///
-    /// Returns `Err` only when the question could not be *asked* (a malformed context, a loader
-    /// failure); a policy saying "no" is `Ok` with [`Decision::is_allowed`] `== false`.
+    /// Returns `Err` when the question could not be *asked* (a malformed context, a request the
+    /// schema forbids, a loader failure) or when the answer cannot be trusted (see
+    /// [`PolicyError::UnreliableDecision`]). A policy saying "no" is `Ok` with
+    /// [`Decision::is_allowed`] `== false`.
+    ///
+    /// Cheap, purely local rejections — context conversion and schema conformance of the request
+    /// itself — happen *before* the loader is asked for anything, so a malformed request costs no
+    /// database round trip. The loader is only called once the request is known to be answerable.
     pub async fn is_authorized(
         &self,
         request: &AuthorizationRequest,
     ) -> Result<Decision, PolicyError> {
         let policies = self.current_policies();
-
-        let entities = self.loader.load_entities(request).await.inspect_err(|e| {
-            tracing::warn!(
-                error = %e,
-                principal = %request.principal,
-                action = %request.action,
-                resource = %request.resource,
-                "resource loader failed; no authorization decision was made"
-            );
-        })?;
 
         // The context is type-checked against the schema for *this action* when one is
         // configured, which is what turns a typo'd context key into a rejected request instead
@@ -229,6 +225,17 @@ impl PolicyEngine {
         )
         .map_err(|e| PolicyError::InvalidRequest(format!("request rejected by schema: {e}")))?;
 
+        // Only now — with the request known to be well-formed — is the entity store hydrated.
+        let entities = self.loader.load_entities(request).await.inspect_err(|e| {
+            tracing::warn!(
+                error = %e,
+                principal = %request.principal,
+                action = %request.action,
+                resource = %request.resource,
+                "resource loader failed; no authorization decision was made"
+            );
+        })?;
+
         let response = self
             .authorizer
             .is_authorized(&cedar_request, &policies, &entities);
@@ -239,23 +246,51 @@ impl PolicyEngine {
             .reason()
             .map(ToString::to_string)
             .collect();
-        let errors: Vec<String> = response
-            .diagnostics()
-            .errors()
-            .map(ToString::to_string)
-            .collect();
 
-        for error in &errors {
-            // Not fatal — Cedar skips the erroring policy and keeps going — but it means the
-            // decision was made on a subset of the policy set, which an operator must be able to
-            // see without a redeploy.
+        let mut errors: Vec<String> = Vec::new();
+        let mut unevaluated_forbids: Vec<String> = Vec::new();
+        for error in response.diagnostics().errors() {
+            errors.push(error.to_string());
+
+            // Cedar *skips* a policy that raises an evaluation error and carries on. For a
+            // `permit` that is harmless — a skipped permit can only lose you an Allow. For a
+            // `forbid` it is a fail-open: the rule that would have denied the request simply did
+            // not run, and the caller sees a plain Allow. So each errored policy is looked up in
+            // the set that produced this response to find out which effect was lost.
+            let cedar_policy::AuthorizationError::PolicyEvaluationError(evaluation) = error;
+            let id = evaluation.policy_id();
+            let lost_a_forbid = match policies.policy(id) {
+                Some(policy) => matches!(policy.effect(), Effect::Forbid),
+                // An id we cannot resolve back to a policy: we cannot prove it was *not* a
+                // forbid, so it counts as one. Fail closed on the unknown.
+                None => true,
+            };
+            if lost_a_forbid {
+                unevaluated_forbids.push(id.to_string());
+            }
+
             tracing::warn!(
                 error = %error,
+                policy = %id,
+                lost_a_forbid,
                 principal = %request.principal,
                 action = %request.action,
                 resource = %request.resource,
                 "policy evaluation error; that policy did not contribute to the decision"
             );
+        }
+
+        // A Deny stands: a skipped forbid cannot have turned a Deny into an Allow, and a skipped
+        // permit only ever costs an Allow the caller was not entitled to rely on anyway.
+        if allowed && !unevaluated_forbids.is_empty() {
+            tracing::warn!(
+                policies = %unevaluated_forbids.join(","),
+                principal = %request.principal,
+                action = %request.action,
+                resource = %request.resource,
+                "refusing to return Allow: a forbid policy could not be evaluated"
+            );
+            return Err(PolicyError::UnreliableDecision { errors });
         }
 
         tracing::debug!(

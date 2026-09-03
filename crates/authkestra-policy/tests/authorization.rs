@@ -265,12 +265,31 @@ async fn a_schema_validated_engine_still_decides_requests() {
         .is_allowed());
 }
 
+/// Wraps another loader and counts the calls, so a test can assert the engine did *not* reach
+/// for entities.
+struct CountingLoader<L> {
+    inner: L,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl<L: ResourceLoader> ResourceLoader for CountingLoader<L> {
+    async fn load_entities(&self, request: &AuthorizationRequest) -> Result<Entities, PolicyError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.load_entities(request).await
+    }
+}
+
 #[tokio::test]
-async fn a_schema_rejects_a_request_it_does_not_describe() {
+async fn a_schema_rejects_a_request_it_does_not_describe_without_hydrating_entities() {
+    let calls = Arc::new(AtomicUsize::new(0));
     let engine = PolicyEngine::builder()
         .policies(OWNER_POLICY)
         .schema(SCHEMA)
-        .loader(rbac_loader())
+        .loader(CountingLoader {
+            inner: rbac_loader(),
+            calls: Arc::clone(&calls),
+        })
         .build()
         .expect("engine builds");
 
@@ -285,6 +304,139 @@ async fn a_schema_rejects_a_request_it_does_not_describe() {
         .expect_err("the request does not conform to the schema");
 
     assert_eq!(error.code(), "invalid_request");
+    // The point of the ordering inside `is_authorized`: a request that cannot be answered is
+    // rejected from purely local information, so a malformed or schema-violating request never
+    // costs a database round trip.
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "loader must not be called");
+
+    // Control: a request the schema *does* describe reaches the loader.
+    engine
+        .is_authorized(&request(
+            r#"User::"alice""#,
+            r#"Action::"read""#,
+            r#"Doc::"design""#,
+        ))
+        .await
+        .expect("evaluation succeeds");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_malformed_context_is_rejected_without_hydrating_entities() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let engine = PolicyEngine::builder()
+        .policies(OWNER_POLICY)
+        .loader(CountingLoader {
+            inner: rbac_loader(),
+            calls: Arc::clone(&calls),
+        })
+        .build()
+        .expect("engine builds");
+
+    let mut req = request(r#"User::"alice""#, r#"Action::"read""#, r#"Doc::"design""#);
+    req.context = serde_json::json!("not an object");
+
+    let error = engine
+        .is_authorized(&req)
+        .await
+        .expect_err("context must be a JSON object");
+    assert_eq!(error.code(), "invalid_request");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "loader must not be called");
+}
+
+#[tokio::test]
+async fn an_allow_that_skipped_a_forbid_is_refused() {
+    // `Doc::"design"` has no `confidential` attribute, so this `forbid` raises an evaluation
+    // error and Cedar *skips* it — leaving the blanket permit to produce an Allow. Returning
+    // that Allow would be a fail-open: the one rule that would have denied the request never
+    // ran. The engine refuses to answer instead.
+    let engine = PolicyEngine::builder()
+        .policies(
+            r#"
+            @id("everyone-reads")
+            permit(principal, action == Action::"read", resource);
+
+            @id("no-confidential")
+            forbid(principal, action, resource) when { resource.confidential };
+            "#,
+        )
+        .loader(rbac_loader())
+        .build()
+        .expect("engine builds");
+
+    let error = engine
+        .is_authorized(&request(
+            r#"User::"alice""#,
+            r#"Action::"read""#,
+            r#"Doc::"design""#,
+        ))
+        .await
+        .expect_err("a skipped forbid makes the allow untrustworthy");
+
+    assert_eq!(error.code(), "unreliable_decision");
+    assert!(error.to_string().contains("no-confidential"), "{error}");
+}
+
+#[tokio::test]
+async fn an_allow_that_only_skipped_permits_stands() {
+    // Same shape, but the erroring policy is a `permit`. A skipped permit can only ever cost an
+    // Allow, never grant one, and the Allow here comes from a *different* permit that evaluated
+    // cleanly — so the decision is sound and the error is reported alongside it.
+    let engine = PolicyEngine::builder()
+        .policies(
+            r#"
+            @id("everyone-reads")
+            permit(principal, action == Action::"read", resource);
+
+            @id("confidential-readers")
+            permit(principal, action, resource) when { resource.confidential };
+            "#,
+        )
+        .loader(rbac_loader())
+        .build()
+        .expect("engine builds");
+
+    let decision = engine
+        .is_authorized(&request(
+            r#"User::"alice""#,
+            r#"Action::"read""#,
+            r#"Doc::"design""#,
+        ))
+        .await
+        .expect("a skipped permit does not invalidate the allow");
+
+    assert!(decision.is_allowed());
+    assert_eq!(decision.reasons(), ["everyone-reads"]);
+    assert_eq!(decision.errors().len(), 1, "{:?}", decision.errors());
+}
+
+#[tokio::test]
+async fn a_deny_with_a_skipped_forbid_stays_a_deny() {
+    // No permit matches, so the request is denied by default. A skipped `forbid` cannot have
+    // turned a Deny into an Allow, so there is nothing to distrust: the deny stands, and the
+    // error is still visible.
+    let engine = PolicyEngine::builder()
+        .policies(
+            r#"
+            @id("no-confidential")
+            forbid(principal, action, resource) when { resource.confidential };
+            "#,
+        )
+        .loader(rbac_loader())
+        .build()
+        .expect("engine builds");
+
+    let decision = engine
+        .is_authorized(&request(
+            r#"User::"alice""#,
+            r#"Action::"read""#,
+            r#"Doc::"design""#,
+        ))
+        .await
+        .expect("a deny is never unreliable");
+
+    assert!(!decision.is_allowed());
+    assert_eq!(decision.errors().len(), 1, "{:?}", decision.errors());
 }
 
 #[tokio::test]
@@ -509,22 +661,4 @@ async fn a_static_loader_serves_entities_from_cedar_json() {
         .await
         .expect("evaluation succeeds")
         .is_allowed());
-}
-
-#[tokio::test]
-async fn a_non_object_context_is_rejected() {
-    let engine = PolicyEngine::builder()
-        .policies(OWNER_POLICY)
-        .loader(rbac_loader())
-        .build()
-        .expect("engine builds");
-
-    let mut req = request(r#"User::"alice""#, r#"Action::"read""#, r#"Doc::"design""#);
-    req.context = serde_json::json!("not an object");
-
-    let error = engine
-        .is_authorized(&req)
-        .await
-        .expect_err("context must be a JSON object");
-    assert_eq!(error.code(), "invalid_request");
 }

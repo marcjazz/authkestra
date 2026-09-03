@@ -110,10 +110,25 @@ Cedar is **deny by default** and **forbid overrides permit**: a request is allow
   load time — it would name the wrong rule. `policy-admin-override` and the like are fine.
 - `decision.errors()` — policies that failed to evaluate (a missing attribute, a type error).
   Cedar skips those and carries on, so a non-empty list means the decision was made on only part
-  of your rule set. They are logged at `warn`.
+  of your rule set. They are logged at `warn` with the policy id.
 
 A `PolicyError` is never a deny. If your loader cannot reach its database you get `Err`, so
 "the rules say no" is always distinguishable from "we could not find out".
+
+## A skipped `forbid` is refused, not allowed
+
+Because Cedar skips an erroring policy rather than failing the request, a broken `forbid` would
+otherwise produce an `Allow` that only happened because the denying rule never ran — and
+`is_allowed() == true` would give you no way to tell. Authkestra refuses to answer instead:
+
+| decision | erroring policies | you get |
+| --- | --- | --- |
+| `Allow` | at least one `forbid` | `Err(PolicyError::UnreliableDecision { .. })` |
+| `Allow` | `permit`s only | `Ok(allow)` — another permit matched; errors listed on the decision |
+| `Deny` | any | `Ok(deny)` — nothing skipped could have turned a Deny into an Allow |
+
+Treat `UnreliableDecision` as a 500, not a 403: the request was not denied, it was unanswerable,
+and the fix is the broken policy or the missing entity attribute named in the error.
 
 ## Updating policies at runtime
 

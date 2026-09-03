@@ -16,6 +16,10 @@ use thiserror::Error;
 /// `Err` as a deny still fail closed, but they lose the ability to distinguish "the policies say
 /// no" from "the entity store was unreachable" — which is exactly the distinction an operator
 /// needs at 3am.
+///
+/// One variant is a refusal rather than a failure: [`PolicyError::UnreliableDecision`] means
+/// evaluation *succeeded* and produced `Allow`, but a `forbid` was skipped along the way, so
+/// that `Allow` is not answerable.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PolicyError {
@@ -47,6 +51,31 @@ pub enum PolicyError {
     #[error("invalid_request: {0}")]
     InvalidRequest(String),
 
+    /// A `forbid` policy could not be evaluated, so an `Allow` cannot be trusted.
+    ///
+    /// Cedar *skips* a policy that raises an evaluation error (a missing attribute, a type
+    /// error) and finishes the request with the remaining ones. For a skipped `permit` that is
+    /// harmless — the worst case is an Allow you were not going to get anyway. For a skipped
+    /// `forbid` it is a **fail-open**: the one rule that would have denied the request never
+    /// ran, and the caller is handed a plain `Allow` with no signal that anything went wrong.
+    ///
+    /// So this crate refuses to answer instead. The rule is:
+    ///
+    /// - `Allow` + an errored `forbid` → this error;
+    /// - `Allow` + errored `permit`s only → the `Allow` stands (some *other* permit matched),
+    ///   with the errors still listed in [`crate::Decision::errors`];
+    /// - `Deny` + any errors → still a `Deny`, since no skipped policy could have turned a Deny
+    ///   into an Allow.
+    ///
+    /// An errored policy whose id cannot be resolved back to a policy in the current set counts
+    /// as a `forbid`: it cannot be *proven* harmless, so it fails closed.
+    #[error("unreliable_decision: a forbid policy could not be evaluated, so Allow cannot be trusted: {}", errors.join("; "))]
+    UnreliableDecision {
+        /// Every evaluation error Cedar reported for this request, not only the `forbid` ones,
+        /// so an operator sees the whole picture in one place.
+        errors: Vec<String>,
+    },
+
     /// The entity set returned by a [`crate::ResourceLoader`] could not be assembled (duplicate
     /// UIDs, an attribute that is not a valid restricted expression, or a schema mismatch).
     #[error("entities: {0}")]
@@ -74,6 +103,7 @@ impl PolicyError {
             PolicyError::ReservedPolicyId(_) => "reserved_policy_id",
             PolicyError::Validation(_) => "validation",
             PolicyError::InvalidRequest(_) => "invalid_request",
+            PolicyError::UnreliableDecision { .. } => "unreliable_decision",
             PolicyError::Entities(_) => "entities",
             PolicyError::Loader(_) => "loader",
             PolicyError::Configuration(_) => "configuration",
@@ -108,6 +138,9 @@ mod tests {
             PolicyError::ReservedPolicyId("policy0".into()),
             PolicyError::Validation("x".into()),
             PolicyError::InvalidRequest("x".into()),
+            PolicyError::UnreliableDecision {
+                errors: vec!["x".into()],
+            },
             PolicyError::Entities("x".into()),
             PolicyError::loader_msg("x"),
             PolicyError::Configuration("x".into()),
@@ -121,6 +154,7 @@ mod tests {
                 "reserved_policy_id",
                 "validation",
                 "invalid_request",
+                "unreliable_decision",
                 "entities",
                 "loader",
                 "configuration",
