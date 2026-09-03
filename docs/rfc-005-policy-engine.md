@@ -95,7 +95,8 @@ accident, because there is nothing there to query with. It is the same rule `Use
 
 Two implementations ship: `StaticResourceLoader` (a fixed entity set — right for small
 config-file hierarchies and tests) and `MemoryResourceLoader`, which walks parent edges
-breadth-first from the request's principal/action/resource and returns only that sub-graph. The
+depth-first from the request's principal/action/resource (a stack plus a visited set, so the
+delivered sub-graph does not depend on traversal order) and returns only that sub-graph. The
 latter is the worked example of what a SQL-backed loader would do: a recursive CTE over the
 membership table, not `SELECT *`.
 

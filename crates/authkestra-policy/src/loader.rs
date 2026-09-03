@@ -142,7 +142,8 @@ impl EntityRecord {
 /// A mutable in-memory entity store that hydrates only what a request reaches.
 ///
 /// This is the worked example of a *real* loader rather than a fixture: starting from the
-/// request's principal, action, and resource it walks parent edges breadth-first and returns
+/// request's principal, action, and resource it walks parent edges depth-first (a stack plus a
+/// visited set, so the delivered sub-graph is the same whatever the traversal order) and returns
 /// just that sub-graph, which is the same query a SQL-backed loader would issue (a recursive CTE
 /// over the membership table) instead of `SELECT *`. It is also mutable at runtime — entities
 /// can be inserted and removed while requests are being evaluated — so it exercises the
