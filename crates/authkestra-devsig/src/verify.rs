@@ -90,12 +90,12 @@ pub async fn verify(
         "device-signature request accepted"
     );
 
-    Ok(DeviceIdentity {
-        subject: att.sub,
-        device: att.did,
-        key_thumbprint: sig.jwk_thumbprint,
-        attributes: att.att,
-    })
+    Ok(DeviceIdentity::new(
+        att.sub,
+        att.did,
+        sig.jwk_thumbprint,
+        att.att,
+    ))
 }
 
 fn current_unix_time() -> i64 {

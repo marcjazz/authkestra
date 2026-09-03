@@ -25,6 +25,27 @@ use authkestra_devsig::{IssuerJwks, InMemoryReplayStore, SignedRequest, Verifier
 let identity = verify(&request, &config, &jwks, &replay_store).await?;
 ```
 
+### Testing your own principal mapping
+
+`DeviceIdentity` is `#[non_exhaustive]`, so downstream crates cannot build one with a struct
+expression. `DeviceIdentity::new(subject, device, key_thumbprint, attributes)` exists so that the
+mapping from a verified identity onto your own principal/session type — where the
+security-relevant defaults live, such as what an absent `role` attribute grants — stays unit
+testable without minting a real attestation ([authkestra#282](https://github.com/marcjazz/authkestra/issues/282)):
+
+```rust,ignore
+let identity = DeviceIdentity::new(
+    "usr_1".to_owned(),
+    "vk_1".to_owned(),
+    "jkt-1".to_owned(),
+    serde_json::json!({}),
+);
+assert_eq!(my_mapping(&identity).role, "user");
+```
+
+`new` verifies nothing: a value built this way is test data, not an authentication result. Only
+`verify()` produces a `DeviceIdentity` that means a request passed the algorithm.
+
 ### Framework integration
 
 Framework wiring lives in the adapter crates, not here:

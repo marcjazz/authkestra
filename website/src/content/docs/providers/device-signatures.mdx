@@ -113,6 +113,24 @@ HttpServer::new(move || {
 
 By verifying the signature, you ensure that the request was genuinely initiated by the enrolled device, providing high-assurance authentication suitable for sensitive operations.
 
+## Testing your principal mapping
+
+The verified identity is an `authkestra_devsig::DeviceIdentity`, and it is `#[non_exhaustive]` — you cannot build one with a struct expression from your own crate. Use `DeviceIdentity::new(subject, device, key_thumbprint, attributes)` to unit-test the code that maps an identity onto your own principal or session type, which is where the security-relevant defaults live (for example, an absent `role` attribute must fall back to your least-privileged value):
+
+```rust
+use authkestra_devsig::DeviceIdentity;
+
+let identity = DeviceIdentity::new(
+    "usr_1".to_owned(),
+    "vk_1".to_owned(),
+    "jkt-1".to_owned(),
+    serde_json::json!({}),
+);
+assert_eq!(my_mapping(&identity).role, "user");
+```
+
+`DeviceIdentity::new` performs no verification at all: a value built this way is test data and carries no proof that any signature was checked. Only `verify()` (and therefore the layer/middleware above) produces a `DeviceIdentity` that means a request passed the algorithm.
+
 Complete, runnable versions of both wirings live in the repository:
 
 ```bash
