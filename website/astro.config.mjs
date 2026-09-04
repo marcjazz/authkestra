@@ -15,6 +15,12 @@ export default defineConfig({
 			],
 			sidebar: [
 				{
+					label: 'Playground',
+					link: 'https://play.authkestra.com',
+					attrs: { target: '_blank', rel: 'noreferrer' },
+					badge: { text: 'Live', variant: 'tip' },
+				},
+				{
 					label: 'Welcome',
 					items: [
 						{ label: 'Why Authkestra?', slug: 'concepts/architecture' },
