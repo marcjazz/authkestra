@@ -125,7 +125,15 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
         pkce_challenge: Option<&str>,
     ) -> (String, OAuth2State) {
         let state = uuid::Uuid::new_v4().to_string();
-        let nonce = Some(uuid::Uuid::new_v4().to_string());
+        // Only when the provider validates it. `finalize_login` below requires
+        // a matching nonce in the returned identity's attributes, so
+        // generating one for a plain OAuth2 provider — which has no ID token
+        // to carry it — made every login fail with "Nonce mismatch".
+        let nonce = if self.provider.validates_nonce() {
+            Some(uuid::Uuid::new_v4().to_string())
+        } else {
+            None
+        };
 
         let effective_scopes = if !scopes.is_empty() {
             scopes
@@ -383,5 +391,114 @@ mod tests {
             .finalize_login("code123", "wrong_state", &expected_state)
             .await;
         assert!(matches!(result, Err(AuthError::CsrfMismatch)));
+    }
+
+    fn mock(id: &str) -> MockProvider {
+        MockProvider {
+            id: id.to_string(),
+            auth_url: "http://mock/auth".to_string(),
+            expected_code: "code123".to_string(),
+            identity: Identity {
+                provider_id: id.to_string(),
+                external_id: "1".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            },
+            token: OAuthToken {
+                access_token: "acc".to_string(),
+                token_type: "Bearer".to_string(),
+                expires_in: None,
+                refresh_token: None,
+                scope: None,
+                id_token: None,
+            },
+        }
+    }
+
+    /// A provider that validates the nonce, as an OIDC one does.
+    struct NonceValidating(MockProvider);
+
+    #[async_trait]
+    impl Provider for NonceValidating {
+        async fn config(&self) -> ProviderConfig {
+            self.0.config().await
+        }
+    }
+
+    #[async_trait]
+    impl OAuthProvider for NonceValidating {
+        fn validates_nonce(&self) -> bool {
+            true
+        }
+
+        fn provider_id(&self) -> &str {
+            self.0.provider_id()
+        }
+
+        fn get_authorization_url(
+            &self,
+            state: &str,
+            scopes: &[&str],
+            code_challenge: Option<&str>,
+            nonce: Option<&str>,
+        ) -> String {
+            self.0
+                .get_authorization_url(state, scopes, code_challenge, nonce)
+        }
+
+        async fn exchange_code_for_identity(
+            &self,
+            code: &str,
+            code_verifier: Option<&str>,
+            nonce: Option<&str>,
+        ) -> Result<(Identity, OAuthToken), AuthError> {
+            self.0
+                .exchange_code_for_identity(code, code_verifier, nonce)
+                .await
+        }
+    }
+
+    /// A plain OAuth2 provider has no ID token, so it can never echo a nonce
+    /// back. Generating one anyway made `finalize_login` reject every login
+    /// with "Nonce mismatch".
+    #[test]
+    fn no_nonce_is_generated_for_a_provider_that_cannot_validate_one() {
+        let flow = OAuth2Flow::new(mock("plain"));
+        let (_url, state) = flow.initiate_login(&["email"], None);
+
+        assert!(
+            state.nonce.is_none(),
+            "a provider that does not validate a nonce must not be given one"
+        );
+    }
+
+    /// And a provider that does validate one still gets it, so OIDC keeps its
+    /// ID-token replay protection.
+    #[test]
+    fn a_nonce_is_generated_for_a_provider_that_validates_one() {
+        let flow = OAuth2Flow::new(NonceValidating(mock("oidc")));
+        let (_url, state) = flow.initiate_login(&["email"], None);
+
+        assert!(
+            state.nonce.is_some(),
+            "OIDC must keep its nonce, or ID-token replay protection is lost"
+        );
+    }
+
+    /// The end-to-end shape of the bug: a plain provider returning an identity
+    /// with no nonce attribute must now complete rather than be rejected.
+    #[tokio::test]
+    async fn a_plain_provider_can_complete_a_login() {
+        let flow = OAuth2Flow::new(mock("plain"));
+        let (_url, state) = flow.initiate_login(&["email"], None);
+
+        let result = flow.finalize_login("code123", &state.state, &state).await;
+
+        assert!(
+            result.is_ok(),
+            "a plain OAuth2 login should complete; got {:?}",
+            result.err()
+        );
     }
 }

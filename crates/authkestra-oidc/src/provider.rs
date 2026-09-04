@@ -387,6 +387,13 @@ impl Provider for OidcProvider {
 
 #[async_trait]
 impl OAuthProvider for OidcProvider {
+    /// This provider verifies the nonce against the ID token's `nonce`
+    /// claim and surfaces it in `Identity::attributes`, so
+    /// `OAuth2Flow` should generate one.
+    fn validates_nonce(&self) -> bool {
+        true
+    }
+
     fn provider_id(&self) -> &str {
         "oidc"
     }
