@@ -125,6 +125,11 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
         pkce_challenge: Option<&str>,
     ) -> (String, OAuth2State) {
         let state = uuid::Uuid::new_v4().to_string();
+        // Always generated, and always handed to the provider. A provider that
+        // has no use for it ignores it; one that validates an ID token needs it
+        // regardless of whether it remembered to advertise that. Gating this
+        // instead of the check below would let an out-of-tree OIDC provider
+        // opt out of replay protection just by not overriding a default.
         let nonce = Some(uuid::Uuid::new_v4().to_string());
 
         let effective_scopes = if !scopes.is_empty() {
@@ -189,10 +194,23 @@ impl<P: OAuthProvider, M: UserMapper> OAuth2Flow<P, M> {
 
         tracing::info!(user_id = %identity.external_id, "successfully retrieved identity from provider");
 
-        if let Some(expected_nonce) = expected_state.nonce.as_deref() {
-            if identity.attributes.get("nonce").map(|s| s.as_str()) != Some(expected_nonce) {
-                tracing::error!("nonce mismatch or missing in identity attributes");
-                return Err(AuthError::Token("Nonce mismatch".to_string()));
+        // Re-check the nonce only for a provider that surfaces it.
+        //
+        // This is a second line of defence: a provider that validates an ID
+        // token has already compared the nonce itself. Plain OAuth2 has no ID
+        // token, so there is nothing to surface and nothing to compare —
+        // enforcing it there rejected every login, because
+        // `identity.attributes` is necessarily empty of a nonce.
+        //
+        // The gate is on the check rather than on generation so that a
+        // provider which forgets to advertise itself loses only this redundant
+        // re-check, never the nonce itself.
+        if self.provider.validates_nonce() {
+            if let Some(expected_nonce) = expected_state.nonce.as_deref() {
+                if identity.attributes.get("nonce").map(|s| s.as_str()) != Some(expected_nonce) {
+                    tracing::error!("nonce mismatch or missing in identity attributes");
+                    return Err(AuthError::Token("Nonce mismatch".to_string()));
+                }
             }
         }
 
@@ -383,5 +401,154 @@ mod tests {
             .finalize_login("code123", "wrong_state", &expected_state)
             .await;
         assert!(matches!(result, Err(AuthError::CsrfMismatch)));
+    }
+
+    fn mock(id: &str) -> MockProvider {
+        MockProvider {
+            id: id.to_string(),
+            auth_url: "http://mock/auth".to_string(),
+            expected_code: "code123".to_string(),
+            identity: Identity {
+                provider_id: id.to_string(),
+                external_id: "1".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            },
+            token: OAuthToken {
+                access_token: "acc".to_string(),
+                token_type: "Bearer".to_string(),
+                expires_in: None,
+                refresh_token: None,
+                scope: None,
+                id_token: None,
+            },
+        }
+    }
+
+    /// A provider that behaves like an OIDC one: it surfaces the nonce it was
+    /// given in `Identity::attributes`, which is what the engine re-checks.
+    struct NonceEchoing {
+        inner: MockProvider,
+        /// What to surface. `None` means "echo whatever was received".
+        echo_instead: Option<String>,
+    }
+
+    #[async_trait]
+    impl Provider for NonceEchoing {
+        async fn config(&self) -> ProviderConfig {
+            self.inner.config().await
+        }
+    }
+
+    #[async_trait]
+    impl OAuthProvider for NonceEchoing {
+        fn validates_nonce(&self) -> bool {
+            true
+        }
+
+        fn provider_id(&self) -> &str {
+            self.inner.provider_id()
+        }
+
+        fn get_authorization_url(
+            &self,
+            state: &str,
+            scopes: &[&str],
+            code_challenge: Option<&str>,
+            nonce: Option<&str>,
+        ) -> String {
+            self.inner
+                .get_authorization_url(state, scopes, code_challenge, nonce)
+        }
+
+        async fn exchange_code_for_identity(
+            &self,
+            code: &str,
+            code_verifier: Option<&str>,
+            nonce: Option<&str>,
+        ) -> Result<(Identity, OAuthToken), AuthError> {
+            let (mut identity, token) = self
+                .inner
+                .exchange_code_for_identity(code, code_verifier, nonce)
+                .await?;
+            let surfaced = self
+                .echo_instead
+                .clone()
+                .or_else(|| nonce.map(|n| n.to_string()));
+            if let Some(value) = surfaced {
+                identity.attributes.insert("nonce".to_string(), value);
+            }
+            Ok((identity, token))
+        }
+    }
+
+    /// The regression this fix is for: a plain OAuth2 provider returns an
+    /// identity with no nonce attribute, because it has no ID token to carry
+    /// one. Enforcing the re-check there rejected every login.
+    #[tokio::test]
+    async fn a_plain_provider_can_complete_a_login() {
+        let flow = OAuth2Flow::new(mock("plain"));
+        let (_url, state) = flow.initiate_login(&["email"], None);
+
+        let result = flow.finalize_login("code123", &state.state, &state).await;
+
+        assert!(
+            result.is_ok(),
+            "a plain OAuth2 login should complete; got {:?}",
+            result.err()
+        );
+    }
+
+    /// Every provider is still handed a nonce, whatever the flag says.
+    ///
+    /// This is why the gate is on the check and not on generation: an
+    /// out-of-tree OIDC provider that never overrides `validates_nonce` still
+    /// receives a nonce to validate, so it cannot lose replay protection by
+    /// omission.
+    #[test]
+    fn every_provider_still_receives_a_nonce() {
+        let plain = OAuth2Flow::new(mock("plain"));
+        let (_url, state) = plain.initiate_login(&["email"], None);
+        assert!(
+            state.nonce.is_some(),
+            "a provider that does not advertise itself must still get a nonce"
+        );
+    }
+
+    /// And the re-check still bites where it applies: a provider that claims to
+    /// surface the nonce but surfaces the wrong one must be rejected.
+    #[tokio::test]
+    async fn a_wrong_nonce_is_still_rejected() {
+        let flow = OAuth2Flow::new(NonceEchoing {
+            inner: mock("oidc"),
+            echo_instead: Some("not-the-nonce".to_string()),
+        });
+        let (_url, state) = flow.initiate_login(&["email"], None);
+
+        let result = flow.finalize_login("code123", &state.state, &state).await;
+
+        assert!(
+            result.is_err(),
+            "gating the check must not disable it where a provider opts in"
+        );
+    }
+
+    /// The happy path for such a provider.
+    #[tokio::test]
+    async fn a_matching_nonce_is_accepted() {
+        let flow = OAuth2Flow::new(NonceEchoing {
+            inner: mock("oidc"),
+            echo_instead: None, // echo what was received
+        });
+        let (_url, state) = flow.initiate_login(&["email"], None);
+
+        let result = flow.finalize_login("code123", &state.state, &state).await;
+
+        assert!(
+            result.is_ok(),
+            "a correctly echoed nonce should pass; got {:?}",
+            result.err()
+        );
     }
 }

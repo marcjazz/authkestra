@@ -182,6 +182,28 @@ pub trait OAuthProvider: Provider {
     /// Get the provider identifier.
     fn provider_id(&self) -> &str;
 
+    /// Whether this provider validates an OIDC nonce **and surfaces it in
+    /// [`crate::state::Identity::attributes`]**.
+    ///
+    /// A nonce binds an ID token to the authorization request that asked for
+    /// it. Plain OAuth2 has no ID token, so there is nothing for a nonce to
+    /// bind to and nothing to surface — which is why this defaults to `false`.
+    ///
+    /// [`crate::flow::OAuth2Flow`] hands every provider a nonce regardless of
+    /// this flag. What the flag controls is whether `finalize_login`
+    /// *re-checks* it against `attributes["nonce"]` afterwards. So a provider
+    /// that forgets to override this loses only a redundant second check, never
+    /// the nonce itself — the reason the flag gates the check and not the
+    /// generation.
+    ///
+    /// Return `true` only if both halves hold: the nonce is verified against
+    /// the ID token's `nonce` claim, **and** copied into
+    /// `Identity::attributes`. Verifying without copying would fail the
+    /// re-check. `authkestra-oidc`'s provider does both.
+    fn validates_nonce(&self) -> bool {
+        false
+    }
+
     /// Helper to get the authorization URL.
     fn get_authorization_url(
         &self,
