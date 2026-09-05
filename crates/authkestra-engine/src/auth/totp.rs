@@ -19,6 +19,9 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
     /// TOTP re-enrolment replaces any existing secret for the user rather than accumulating them.
     /// This prevents the situation where a user scans a new QR code but gets an authenticator that
     /// never works because the old secret still matches first.
+    ///
+    /// The new secret is saved *before* the old ones are removed, so a failure part way through
+    /// never leaves the user without a working TOTP credential; see the comments below.
     pub async fn register_totp(
         &self,
         user_id: &str,
@@ -49,25 +52,31 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
         // A user can only have one TOTP secret at a time, so use a deterministic ID.
         let credential_id = format!("totp:{}", user_id);
 
-        // Try to delete any existing TOTP secrets for this user before saving the new one.
-        // `authenticate` only ever looks at the first stored credential, and the trait gives no
-        // guarantee that `save_credential` upserts by id, so the delete must happen first: a
-        // store that just appends would otherwise leave the old (still-first) secret in charge
-        // after "re-enrollment". The cost is a small window, on delete-success-then-save-failure,
-        // where the user has no working TOTP credential; the caller sees the error and a retry
-        // (which starts from an already-empty store) succeeds.
-        //
-        // For stores that don't implement deletion (returning Unsupported), we proceed anyway:
-        // SQL stores with ON CONFLICT will replace on insert, and non-SQL stores
-        // are responsible for their own merge semantics.
-        match self.store.delete_credentials(user_id, "totp").await {
-            Ok(_) => {
-                tracing::debug!(user_id = %user_id, "Deleted existing TOTP credentials");
+        // Snapshot the TOTP credentials that already exist, so they can be removed by id once
+        // the new secret is safely stored. Deleting first would be simpler, but it opens a
+        // window on delete-success-then-save-failure where the user has no TOTP secret at all
+        // — and since enrolment normally requires an authenticated session, a user locked out
+        // that way may not be able to reach the retry. Saving first degrades instead to the
+        // pre-existing behaviour (the old secret keeps working), and a retry converges because
+        // the new secret is written under a stable id that upserts.
+        let existing = self.store.get_credentials(user_id, "totp").await?;
+        let mut stale_ids = Vec::new();
+        let mut unidentified = 0usize;
+        let mut replacing = false;
+        for cred in &existing {
+            match cred.get("credential_id").and_then(|v| v.as_str()) {
+                // Stored under the deterministic id: `save_credential` is expected to replace it.
+                Some(id) if id == credential_id => replacing = true,
+                Some(id) => stale_ids.push(id.to_string()),
+                None => unidentified += 1,
             }
-            Err(AuthError::Unsupported) => {
-                tracing::debug!(user_id = %user_id, "Store does not support delete_credentials; relying on insert-time merge");
-            }
-            Err(e) => return Err(e),
+        }
+        if unidentified > 0 {
+            tracing::warn!(
+                user_id = %user_id,
+                count = unidentified,
+                "Existing TOTP credentials carry no credential_id and cannot be replaced; they may keep authenticating"
+            );
         }
 
         let val = serde_json::json!({
@@ -75,7 +84,83 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
             "secret": secret_b32.clone(),
             "last_used_step": 0
         });
-        self.store.save_credential(user_id, "totp", val).await?;
+        self.store
+            .save_credential(user_id, "totp", val.clone())
+            .await?;
+
+        // `CredentialStore::save_credential` is documented to replace a credential stored under
+        // the same id, which is what makes the save above safe to do first. Not every store
+        // honours that, and one that appends leaves two secrets sharing the deterministic id —
+        // indistinguishable to `delete_credential`, so the only way to retire the old one is to
+        // drop the id and write the secret again. That reintroduces the window this ordering
+        // avoids, but only for non-conforming stores, and only on re-enrollment.
+        if replacing {
+            let duplicates = self
+                .store
+                .get_credentials(user_id, "totp")
+                .await?
+                .iter()
+                .filter(|c| {
+                    c.get("credential_id").and_then(|v| v.as_str()) == Some(credential_id.as_str())
+                })
+                .count();
+            if duplicates > 1 {
+                tracing::warn!(
+                    user_id = %user_id,
+                    duplicates,
+                    "Credential store appended instead of replacing the TOTP secret; rewriting it"
+                );
+                match self
+                    .store
+                    .delete_credential(user_id, "totp", &credential_id)
+                    .await
+                {
+                    // Only rewrite once the copies are known to be gone; saving again after a
+                    // delete that removed nothing would just add a third copy.
+                    Ok(true) => self.store.save_credential(user_id, "totp", val).await?,
+                    Ok(false) => {
+                        tracing::warn!(
+                            user_id = %user_id,
+                            "Store reported nothing to delete under the TOTP credential id; superseded secrets remain and may keep authenticating"
+                        );
+                    }
+                    Err(AuthError::Unsupported) => {
+                        tracing::warn!(
+                            user_id = %user_id,
+                            "Store neither replaces nor deletes credentials; the superseded TOTP secret remains and may keep authenticating"
+                        );
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        // Now retire the previous secrets. `authenticate` only ever looks at the first stored
+        // credential, so leaving one behind would let a revoked secret shadow the new one.
+        for stale_id in &stale_ids {
+            match self
+                .store
+                .delete_credential(user_id, "totp", stale_id)
+                .await
+            {
+                Ok(_) => {
+                    tracing::debug!(user_id = %user_id, credential_id = %stale_id, "Deleted superseded TOTP credential");
+                }
+                // The store cannot delete. Credentials written by earlier versions used random
+                // uuid credential_ids, so they will not be replaced by the deterministic id
+                // either: such a store keeps accumulating secrets, exactly as it did before
+                // this id scheme existed. Nothing more can be done from here, so stop trying.
+                Err(AuthError::Unsupported) => {
+                    tracing::warn!(
+                        user_id = %user_id,
+                        count = stale_ids.len(),
+                        "Store does not support delete_credential; superseded TOTP secrets remain and may keep authenticating"
+                    );
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
         Ok((secret_b32, url))
     }
@@ -467,6 +552,88 @@ mod tests {
             1,
             "Store should hold exactly one TOTP credential after re-enrollment"
         );
+    }
+
+    #[tokio::test]
+    async fn test_totp_reenrollment_retires_legacy_uuid_credential() {
+        // Credentials written before the deterministic id scheme carry a random uuid, so the
+        // new `totp:{user_id}` id never collides with them. Re-enrollment must still retire
+        // them, or the revoked secret keeps authenticating from the front of the list.
+        let store = MockStore {
+            creds: Mutex::new(HashMap::new()),
+        };
+
+        let legacy_secret = match totp_rs::Secret::generate_secret().to_encoded() {
+            totp_rs::Secret::Encoded(s) => s,
+            _ => unreachable!(),
+        };
+        store
+            .save_credential(
+                "user123",
+                "totp",
+                serde_json::json!({
+                    "credential_id": uuid::Uuid::new_v4().to_string(),
+                    "secret": legacy_secret.clone(),
+                    "last_used_step": 0
+                }),
+            )
+            .await
+            .unwrap();
+
+        let totp_method = TotpAuthMethod::new(store);
+        let (new_secret_b32, _) = totp_method
+            .register_totp("user123", "Engine", "user123")
+            .await
+            .unwrap();
+
+        let creds = totp_method
+            .store
+            .get_credentials("user123", "totp")
+            .await
+            .unwrap();
+        assert_eq!(
+            creds.len(),
+            1,
+            "Legacy uuid-keyed credential should be retired by re-enrollment"
+        );
+
+        // The freshly scanned authenticator works.
+        let new_totp = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            totp_rs::Secret::Encoded(new_secret_b32).to_bytes().unwrap(),
+            None,
+            "".to_string(),
+        )
+        .unwrap();
+        totp_method
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: new_totp.generate_current().unwrap(),
+            })
+            .await
+            .unwrap();
+
+        // The superseded one does not.
+        let legacy_totp = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            totp_rs::Secret::Encoded(legacy_secret).to_bytes().unwrap(),
+            None,
+            "".to_string(),
+        )
+        .unwrap();
+        let replayed = totp_method
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: legacy_totp.generate_current().unwrap(),
+            })
+            .await;
+        assert!(matches!(replayed, Err(AuthError::Credentials(_))));
     }
 
     #[tokio::test]

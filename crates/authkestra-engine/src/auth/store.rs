@@ -5,6 +5,15 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait CredentialStore: Send + Sync {
     /// Save a generic credential serialized as a JSON Value mapped to a user and credential type.
+    ///
+    /// The `credential_id` (or `id`) field of `data`, when present, identifies the credential:
+    /// an implementation is expected to *replace* an existing credential stored under the same
+    /// id rather than store a second copy alongside it. Callers rely on this to rotate a
+    /// credential without a window in which the user has none — TOTP re-enrollment writes the
+    /// new secret under a stable id before retiring the old ones. A store that appends instead
+    /// will keep serving the superseded credential from [`Self::get_credentials`].
+    ///
+    /// Credentials with no id are always appended.
     async fn save_credential(
         &self,
         user_id: &str,
