@@ -49,9 +49,15 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
         // A user can only have one TOTP secret at a time, so use a deterministic ID.
         let credential_id = format!("totp:{}", user_id);
 
-        // Try to delete any existing TOTP secrets for this user.
-        // For stores that implement delete_credentials, this removes the old entry.
-        // For stores that don't (returning Unsupported), we proceed anyway:
+        // Try to delete any existing TOTP secrets for this user before saving the new one.
+        // `authenticate` only ever looks at the first stored credential, and the trait gives no
+        // guarantee that `save_credential` upserts by id, so the delete must happen first: a
+        // store that just appends would otherwise leave the old (still-first) secret in charge
+        // after "re-enrollment". The cost is a small window, on delete-success-then-save-failure,
+        // where the user has no working TOTP credential; the caller sees the error and a retry
+        // (which starts from an already-empty store) succeeds.
+        //
+        // For stores that don't implement deletion (returning Unsupported), we proceed anyway:
         // SQL stores with ON CONFLICT will replace on insert, and non-SQL stores
         // are responsible for their own merge semantics.
         match self.store.delete_credentials(user_id, "totp").await {
