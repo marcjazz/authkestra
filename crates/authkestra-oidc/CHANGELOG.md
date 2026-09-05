@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.8.0...authkestra-oidc-v0.8.1) - 2026-09-04
+
+### Other
+
+- Generate an OAuth2 nonce only when the provider validates one ([#318](https://github.com/marcjazz/authkestra/pull/318))
+
 ## [0.7.2](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.7.1...authkestra-oidc-v0.7.2) - 2026-09-03
 
 ### Other
