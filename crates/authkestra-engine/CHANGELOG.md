@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.8.1...authkestra-engine-v0.9.0) - 2026-09-05
+
+### Fixed
+
+- *(engine)* [**breaking**] replace stale TOTP secret on re-enrollment instead of accumulating it ([#330](https://github.com/marcjazz/authkestra/pull/330))
+
 ## [0.8.1](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.8.0...authkestra-engine-v0.8.1) - 2026-09-04
 
 ### Other
