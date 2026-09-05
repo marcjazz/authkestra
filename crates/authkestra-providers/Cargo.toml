@@ -14,7 +14,7 @@ readme.workspace = true
 default = ["rustls-aws-lc-rs"]
 github = []
 google = []
-discord = ["urlencoding"]
+discord = []
 
 # TLS backend, forwarded to authkestra-engine. See its documentation for the
 # `rustls-no-provider` contract.
@@ -34,7 +34,10 @@ reqwest = { version = "0.13.1", default-features = false, features = [
 ] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-urlencoding = { version = "2.1", optional = true }
+# Used by `define_oauth_provider!` for every provider it generates, so it
+# cannot be optional: gating it behind one provider feature breaks the
+# others. See https://github.com/marcjazz/authkestra/issues/321.
+urlencoding = "2.1"
 tracing = "0.1"
 
 [dev-dependencies]

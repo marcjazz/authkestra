@@ -30,6 +30,27 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features
 
+  provider-features:
+    # Every other job builds with --all-features, which is why a dependency
+    # gated behind one provider feature but used by all of them compiled
+    # cleanly here and broke for anyone selecting a single provider.
+    # See https://github.com/marcjazz/authkestra/issues/321.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [github, google, discord]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry and build
+        uses: swatinem/rust-cache@v2
+      - name: Build with one provider and nothing else
+        run: |
+          cargo check -p authkestra-providers --no-default-features \
+            --features ${{ matrix.feature }},rustls-aws-lc-rs
+
   lint:
     runs-on: ubuntu-latest
     steps:
