@@ -15,6 +15,13 @@ default = ["rustls-aws-lc-rs"]
 github = []
 google = []
 discord = []
+# A no-op, kept deliberately. `urlencoding` used to be an optional dependency,
+# which gave this crate an implicit feature of the same name. Making it a real
+# dependency removes that feature, and a manifest asking for a feature that no
+# longer exists fails to resolve — an error a downstream crate cannot work
+# around. Anyone who reached for `features = ["urlencoding"]` to get past #321
+# keeps resolving.
+urlencoding = []
 
 # TLS backend, forwarded to authkestra-engine. See its documentation for the
 # `rustls-no-provider` contract.
@@ -43,3 +50,21 @@ tracing = "0.1"
 [dev-dependencies]
 wiremock = "0.6.5"
 tokio = { version = "1.0", features = ["full"] }
+
+# Each test drives one provider, so it only compiles when that provider is
+# enabled. Declared explicitly rather than `#![cfg(feature = ...)]` inside the
+# file, matching `authkestra-axum`'s integration tests — and, more to the point,
+# so `--all-targets` can be used to guard single-provider builds. Without this
+# the guard job cannot see tests or examples at all, which is where the next
+# feature-gating slip would hide.
+[[test]]
+name = "github_oauth"
+required-features = ["github"]
+
+[[test]]
+name = "google_oauth"
+required-features = ["google"]
+
+[[test]]
+name = "discord_oauth"
+required-features = ["discord"]

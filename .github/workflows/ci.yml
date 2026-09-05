@@ -47,8 +47,12 @@ jobs:
       - name: Cache cargo registry and build
         uses: swatinem/rust-cache@v2
       - name: Build with one provider and nothing else
+        # --all-targets on purpose: without it this only compiles the lib, and
+        # the tests and examples — where a feature-gating slip is just as easy
+        # to make — are never built. Requires the provider tests to declare
+        # `required-features`, which they do.
         run: |
-          cargo check -p authkestra-providers --no-default-features \
+          cargo check --all-targets -p authkestra-providers --no-default-features \
             --features ${{ matrix.feature }},rustls-aws-lc-rs
 
   lint:
