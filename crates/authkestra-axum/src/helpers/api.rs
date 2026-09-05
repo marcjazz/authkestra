@@ -284,7 +284,10 @@ where
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AxumError::Internal("Provider not found".to_string()));
+            return Err(AxumError::NotFound(format!(
+                "Provider {} not found",
+                provider_for_display(&provider)
+            )));
         }
     };
 
@@ -326,7 +329,10 @@ where
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AxumError::Internal("Provider not found".to_string()));
+            return Err(AxumError::NotFound(format!(
+                "Provider {} not found",
+                provider_for_display(&provider)
+            )));
         }
     };
 
@@ -369,7 +375,10 @@ where
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AxumError::Internal("Provider not found".to_string()));
+            return Err(AxumError::NotFound(format!(
+                "Provider {} not found",
+                provider_for_display(&provider)
+            )));
         }
     };
 
@@ -416,9 +425,38 @@ where
         })
 }
 
+/// The provider name, bounded, for use in a response body.
+///
+/// The name is an unvalidated, URL-decoded path segment, and the 404 body
+/// echoes it back so the caller can see what was not found. Echoing it
+/// unbounded means an arbitrarily long attacker-controlled string is reflected
+/// into a response; bounding it keeps the message useful and the reflection
+/// finite. `authkestra-actix` bounds it identically — the two adapters return
+/// the same body by design, and a fix to one that skipped the other would
+/// quietly break that.
+///
+/// The budget is in **bytes**, not characters. What matters for a reflection is
+/// how much attacker-controlled data comes back, and 64 characters is up to 256
+/// bytes of UTF-8 — so a character bound does not actually bound the response.
+/// The cut moves down to a `char` boundary so the result stays valid UTF-8.
+fn provider_for_display(provider: &str) -> String {
+    const MAX_BYTES: usize = 64;
+    if provider.len() <= MAX_BYTES {
+        return provider.to_string();
+    }
+    let mut end = MAX_BYTES;
+    while !provider.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\u{2026}", &provider[..end])
+}
+
 #[derive(Debug, Clone)]
 pub enum AxumError {
     Unauthorized(String),
+    /// The caller asked for something that does not exist — an unregistered
+    /// OAuth provider, say. A client error, not a server fault.
+    NotFound(String),
     Internal(String),
     /// A required component (e.g., SessionManager, TokenManager) is missing
     ComponentMissing(String),
@@ -428,6 +466,7 @@ impl std::fmt::Display for AxumError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AxumError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            AxumError::NotFound(msg) => write!(f, "Not Found: {}", msg),
             AxumError::Internal(msg) => write!(f, "Internal Error: {}", msg),
             AxumError::ComponentMissing(msg) => write!(f, "Component Missing: {}", msg),
         }
@@ -438,10 +477,22 @@ impl IntoResponse for AxumError {
     fn into_response(self) -> axum::response::Response {
         let (status, message) = match self {
             AxumError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            AxumError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             AxumError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             AxumError::ComponentMissing(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
-        (status, message).into_response()
+        // `(StatusCode, String)` already sets `text/plain; charset=utf-8`, which
+        // is what keeps the echoed provider name in a 404 from being sniffed as
+        // HTML. `nosniff` states that explicitly rather than relying on the
+        // tuple impl keeping that behaviour, and matches what `authkestra-actix`
+        // sends — where the content type has to be set by hand because
+        // `HttpResponseBuilder::body` sets none at all.
+        (
+            status,
+            [(axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff")],
+            message,
+        )
+            .into_response()
     }
 }
 

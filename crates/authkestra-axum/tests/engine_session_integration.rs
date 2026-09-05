@@ -416,3 +416,90 @@ async fn callback_rejects_provider_exchange_failure() {
 
     assert_eq!(callback_resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// An unregistered provider is a client error, not a server fault.
+///
+/// This returned 500 until #321's sibling fix: `AxumError` had no not-found
+/// variant, so the three `providers.get()` misses fell back to `Internal`.
+/// The actix adapter answered 404 for the identical condition, so the two
+/// adapters disagreed on the HTTP contract for the same request.
+/// See https://github.com/marcjazz/authkestra/issues/320.
+#[tokio::test]
+async fn an_unknown_provider_is_not_found_rather_than_a_server_error() {
+    for uri in [
+        "/auth/login/nope",
+        "/auth/callback/nope?code=valid-code&state=whatever",
+    ] {
+        let resp = build_app()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "{uri} should be 404, not a 5xx"
+        );
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        // The name the caller asked for, as actix has always reported it.
+        assert!(
+            body.contains("nope"),
+            "the response should name the provider: {body:?}"
+        );
+    }
+}
+
+/// The 404 body echoes the provider name, which is an unvalidated path
+/// segment. Useful, but it must not reflect an unbounded attacker-controlled
+/// string, so it is truncated. `authkestra-actix` truncates identically.
+#[tokio::test]
+async fn a_long_provider_name_is_truncated_in_the_body() {
+    let long = "a".repeat(5_000);
+    let resp = build_app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/auth/login/{long}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(
+        body.len() < 200,
+        "the body reflected {} bytes: {body:.120?}",
+        body.len()
+    );
+    assert!(
+        body.contains('\u{2026}'),
+        "truncation should be visible: {body:?}"
+    );
+}
+
+/// The registered provider must keep working — a 404 for everything would
+/// satisfy the test above just as well.
+#[tokio::test]
+async fn a_registered_provider_still_redirects() {
+    let resp = build_app()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/login/mock")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+}

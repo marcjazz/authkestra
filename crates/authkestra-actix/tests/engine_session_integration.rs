@@ -363,3 +363,87 @@ async fn callback_rejects_provider_exchange_failure() {
 
     assert_eq!(callback_resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// An unregistered provider is a client error, and the body that names it must
+/// not be sniffable as HTML.
+///
+/// The actix adapter has always answered 404 here — issue #320 was that axum
+/// answered 500 for the same request. What was missing on this side is the
+/// content type: `HttpResponseBuilder::body` sets none, and a typeless response
+/// echoing a URL-decoded path segment is sniffed as HTML by browsers, which
+/// makes this message a reflected-XSS sink reachable from a plain link.
+#[actix_web::test]
+async fn an_unknown_provider_is_not_found_and_not_sniffable() {
+    let engine = build_engine();
+    let state = AppState {
+        auth: engine.clone(),
+    };
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(move |cfg| state.configure_authkestra(cfg))
+            .service(engine.actix_scope()),
+    )
+    .await;
+
+    // A payload that is inert as text and executable as HTML.
+    let req = test::TestRequest::get()
+        .uri("/auth/login/%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let content_type = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .map(|v| v.to_str().unwrap().to_string())
+        .expect("a body echoing a path segment must declare its content type");
+    assert!(
+        content_type.starts_with("text/plain"),
+        "the 404 body must be text/plain, got {content_type:?}"
+    );
+    assert_eq!(
+        resp.headers()
+            .get("x-content-type-options")
+            .map(|v| v.to_str().unwrap()),
+        Some("nosniff"),
+        "without nosniff a browser may still sniff the echoed name as HTML"
+    );
+}
+
+/// The 404 body echoes the provider name, so the reflection has to be bounded.
+/// `authkestra-axum` bounds it identically; this is the test that keeps the two
+/// in step, rather than a pair of doc comments asserting it.
+#[actix_web::test]
+async fn a_long_provider_name_is_truncated_in_the_body() {
+    let engine = build_engine();
+    let state = AppState {
+        auth: engine.clone(),
+    };
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(move |cfg| state.configure_authkestra(cfg))
+            .service(engine.actix_scope()),
+    )
+    .await;
+
+    let long = "a".repeat(5_000);
+    let req = test::TestRequest::get()
+        .uri(&format!("/auth/login/{long}"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = test::read_body(resp).await;
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    assert!(
+        body.len() < 200,
+        "the body reflected {} bytes: {body:.120?}",
+        body.len()
+    );
+    assert!(
+        body.contains('\u{2026}'),
+        "truncation should be visible: {body:?}"
+    );
+}
