@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/marcjazz/authkestra/compare/authkestra-actix-v0.8.1...authkestra-actix-v0.9.0) - 2026-09-05
+
+### Fixed
+
+- *(actix)* [**breaking**] redirect with 303, matching axum ([#327](https://github.com/marcjazz/authkestra/pull/327))
+- *(adapters)* [**breaking**] return 404 for an unknown OAuth provider, and stop the body being sniffed ([#323](https://github.com/marcjazz/authkestra/pull/323))
+
 ## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-actix-v0.7.2...authkestra-actix-v0.8.0) - 2026-09-03
 
 ### Other
