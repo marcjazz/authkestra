@@ -206,7 +206,7 @@ async fn full_login_callback_session_and_logout_round_trip() {
         .uri("/auth/login/mock")
         .to_request();
     let login_resp = test::call_service(&app, login_req).await;
-    assert_eq!(login_resp.status(), StatusCode::FOUND);
+    assert_eq!(login_resp.status(), StatusCode::SEE_OTHER);
 
     let location = login_resp
         .headers()
@@ -232,7 +232,7 @@ async fn full_login_callback_session_and_logout_round_trip() {
         .cookie(Cookie::new("ak_state", ak_state_cookie))
         .to_request();
     let callback_resp = test::call_service(&app, callback_req).await;
-    assert_eq!(callback_resp.status(), StatusCode::FOUND);
+    assert_eq!(callback_resp.status(), StatusCode::SEE_OTHER);
 
     let session_cookie = set_cookie_value(&callback_resp, "authkestra_session")
         .expect("a successful callback must set the session cookie");
@@ -256,7 +256,7 @@ async fn full_login_callback_session_and_logout_round_trip() {
         .cookie(Cookie::new("authkestra_session", session_cookie.clone()))
         .to_request();
     let logout_resp = test::call_service(&app, logout_req).await;
-    assert_eq!(logout_resp.status(), StatusCode::FOUND);
+    assert_eq!(logout_resp.status(), StatusCode::SEE_OTHER);
 
     // 5. ...so presenting the very same session cookie again is rejected.
     let after_logout_req = test::TestRequest::get()
@@ -445,5 +445,43 @@ async fn a_long_provider_name_is_truncated_in_the_body() {
     assert!(
         body.contains('\u{2026}'),
         "truncation should be visible: {body:?}"
+    );
+}
+
+/// The login redirect is a 303, matching `authkestra-axum`.
+///
+/// This adapter answered 302 until the parity sweep: the same request produced
+/// a different status code depending on which adapter an application happened
+/// to be built on, which is the class of divergence issue #320 was filed about.
+/// Every route here is a GET, so both codes send the browser to the same place
+/// — but 303 says "fetch the other resource with GET" without relying on the
+/// method-rewriting that made 302 ambiguous in the first place.
+///
+/// The axum suite pins the same code in
+/// `a_registered_provider_still_redirects`. Both are needed: a comment saying
+/// the adapters agree is not a thing that can fail.
+#[actix_web::test]
+async fn the_login_redirect_is_a_see_other_like_axum() {
+    let engine = build_engine();
+    let state = AppState {
+        auth: engine.clone(),
+    };
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(move |cfg| state.configure_authkestra(cfg))
+            .service(engine.actix_scope()),
+    )
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/auth/login/mock")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert!(
+        resp.headers().contains_key(header::LOCATION),
+        "a redirect must carry a Location header"
     );
 }

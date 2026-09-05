@@ -17,7 +17,7 @@ The auto-wired router generates three standard endpoints, all resolving the prov
 This endpoint **initiates the OAuth2/OIDC flow**. 
 - It constructs the authorization URL using the provider's configuration.
 - It generates a cryptographically secure `state` and `nonce`, storing them in an encrypted, HTTP-only cookie.
-- Finally, it returns an HTTP 302 Redirect to send the user to the provider (e.g., Google or GitHub).
+- Finally, it returns an HTTP 303 See Other to send the user to the provider (e.g., Google or GitHub). Both adapters use 303, so the status code does not change if you swap axum for actix.
 
 #### 2. `GET /auth/callback/{provider}`
 This endpoint **handles the provider's redirect callback**.

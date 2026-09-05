@@ -109,7 +109,12 @@ pub fn initiate_oauth_login_erased(
         .max_age(actix_web::cookie::time::Duration::minutes(15))
         .finish();
 
-    HttpResponse::Found()
+    // 303, not 302: the target is fetched with GET regardless of how this
+    // route was reached, which is exactly what a redirect-to-the-provider
+    // means. `authkestra-axum` sends 303 here too — `Redirect::to` is 303 —
+    // and the two adapters must not disagree on the status code for the same
+    // request. See issue #320 for the class of bug that causes.
+    HttpResponse::SeeOther()
         .insert_header((header::LOCATION, url))
         .cookie(cookie)
         .finish()
@@ -197,7 +202,7 @@ pub async fn handle_oauth_callback_erased(
         .success_url
         .unwrap_or_else(|| "/".to_string());
 
-    Ok(HttpResponse::Found()
+    Ok(HttpResponse::SeeOther()
         .insert_header((header::LOCATION, final_success_url))
         .cookie(cookie)
         .cookie(remove_cookie)
@@ -301,7 +306,7 @@ pub async fn logout(
 
     let remove_cookie = create_actix_cookie(&config, "".to_string());
 
-    Ok(HttpResponse::Found()
+    Ok(HttpResponse::SeeOther()
         .insert_header((header::LOCATION, redirect_to))
         .cookie(remove_cookie)
         .finish())
