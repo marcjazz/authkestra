@@ -451,7 +451,22 @@ fn provider_for_display(provider: &str) -> String {
     format!("{}\u{2026}", &provider[..end])
 }
 
+/// How the axum adapter reports a failure.
+///
+/// `#[non_exhaustive]`, so a future variant is an additive change rather than a
+/// major version. That is not free — downstream code cannot match on this
+/// exhaustively and needs a wildcard arm — but the alternative is worse. #320
+/// was exactly this: the enum had no not-found variant, every unregistered
+/// provider fell through to `Internal`, and the fix could not ship as a patch
+/// because adding one is breaking under
+/// [Cargo's SemVer reference](https://doc.rust-lang.org/cargo/reference/semver.html#enum-variant-new).
+/// The next status this adapter needs to distinguish should not have to wait
+/// for a major release too.
+///
+/// Applied in 0.9.0 because that release is already breaking; after it, adding
+/// the attribute would itself cost a major.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AxumError {
     Unauthorized(String),
     /// The caller asked for something that does not exist — an unregistered
