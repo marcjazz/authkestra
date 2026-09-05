@@ -434,14 +434,21 @@ where
 /// finite. `authkestra-actix` bounds it identically — the two adapters return
 /// the same body by design, and a fix to one that skipped the other would
 /// quietly break that.
+///
+/// The budget is in **bytes**, not characters. What matters for a reflection is
+/// how much attacker-controlled data comes back, and 64 characters is up to 256
+/// bytes of UTF-8 — so a character bound does not actually bound the response.
+/// The cut moves down to a `char` boundary so the result stays valid UTF-8.
 fn provider_for_display(provider: &str) -> String {
-    const MAX: usize = 64;
-    let shown: String = provider.chars().take(MAX).collect();
-    if shown.chars().count() < provider.chars().count() {
-        format!("{shown}\u{2026}")
-    } else {
-        shown
+    const MAX_BYTES: usize = 64;
+    if provider.len() <= MAX_BYTES {
+        return provider.to_string();
     }
+    let mut end = MAX_BYTES;
+    while !provider.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\u{2026}", &provider[..end])
 }
 
 #[derive(Debug, Clone)]
@@ -474,7 +481,18 @@ impl IntoResponse for AxumError {
             AxumError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             AxumError::ComponentMissing(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
-        (status, message).into_response()
+        // `(StatusCode, String)` already sets `text/plain; charset=utf-8`, which
+        // is what keeps the echoed provider name in a 404 from being sniffed as
+        // HTML. `nosniff` states that explicitly rather than relying on the
+        // tuple impl keeping that behaviour, and matches what `authkestra-actix`
+        // sends — where the content type has to be set by hand because
+        // `HttpResponseBuilder::body` sets none at all.
+        (
+            status,
+            [(axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff")],
+            message,
+        )
+            .into_response()
     }
 }
 

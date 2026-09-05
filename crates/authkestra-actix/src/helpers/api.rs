@@ -18,14 +18,40 @@ use super::cookie::create_actix_cookie;
 /// finite. `authkestra-axum` bounds it identically — the two adapters return
 /// the same body by design, and a fix to one that skipped the other would
 /// quietly break that.
+///
+/// The budget is in **bytes**, not characters. What matters for a reflection is
+/// how much attacker-controlled data comes back, and 64 characters is up to 256
+/// bytes of UTF-8 — so a character bound does not actually bound the response.
+/// The cut is moved down to a `char` boundary so the result is still valid UTF-8.
 fn provider_for_display(provider: &str) -> String {
-    const MAX: usize = 64;
-    let shown: String = provider.chars().take(MAX).collect();
-    if shown.chars().count() < provider.chars().count() {
-        format!("{shown}\u{2026}")
-    } else {
-        shown
+    const MAX_BYTES: usize = 64;
+    if provider.len() <= MAX_BYTES {
+        return provider.to_string();
     }
+    let mut end = MAX_BYTES;
+    while !provider.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\u{2026}", &provider[..end])
+}
+
+/// The 404 for an unregistered provider.
+///
+/// Built in one place because the `Content-Type` is load-bearing and easy to
+/// forget: `HttpResponseBuilder::body` sets no content type at all, and a
+/// response with none *and* an echoed path segment is sniffed as HTML by
+/// browsers — which turns this message into a reflected-XSS sink reachable from
+/// a plain link. `authkestra-axum` gets `text/plain` for free from
+/// `(StatusCode, String)`; actix does not, so it is set explicitly here, with
+/// `nosniff` as the belt to that braces.
+fn provider_not_found(provider: &str) -> HttpResponse {
+    HttpResponse::NotFound()
+        .content_type(actix_web::http::header::ContentType::plaintext())
+        .insert_header(("x-content-type-options", "nosniff"))
+        .body(format!(
+            "Provider {} not found",
+            provider_for_display(provider)
+        ))
 }
 
 #[derive(serde::Deserialize)]
@@ -186,10 +212,7 @@ pub async fn actix_login_handler<S, T>(
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return HttpResponse::NotFound().body(format!(
-                "Provider {} not found",
-                provider_for_display(&provider)
-            ));
+            return provider_not_found(&provider);
         }
     };
 
@@ -221,10 +244,7 @@ where
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Ok(HttpResponse::NotFound().body(format!(
-                "Provider {} not found",
-                provider_for_display(&provider)
-            )));
+            return Ok(provider_not_found(&provider));
         }
     };
 
@@ -369,10 +389,7 @@ where
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Ok(HttpResponse::NotFound().body(format!(
-                "Provider {} not found",
-                provider_for_display(&provider)
-            )));
+            return Ok(provider_not_found(&provider));
         }
     };
 
