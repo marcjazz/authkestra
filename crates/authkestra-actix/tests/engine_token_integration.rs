@@ -153,7 +153,7 @@ async fn stateless_login_callback_issues_a_working_bearer_token() {
         .uri("/auth/login/mock")
         .to_request();
     let login_resp = test::call_service(&app, login_req).await;
-    assert_eq!(login_resp.status(), StatusCode::FOUND);
+    assert_eq!(login_resp.status(), StatusCode::SEE_OTHER);
     let location = login_resp
         .headers()
         .get(header::LOCATION)
