@@ -284,7 +284,9 @@ where
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AxumError::Internal("Provider not found".to_string()));
+            return Err(AxumError::NotFound(format!(
+                "Provider {provider} not found"
+            )));
         }
     };
 
@@ -326,7 +328,9 @@ where
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AxumError::Internal("Provider not found".to_string()));
+            return Err(AxumError::NotFound(format!(
+                "Provider {provider} not found"
+            )));
         }
     };
 
@@ -369,7 +373,9 @@ where
     let flow: &Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Err(AxumError::Internal("Provider not found".to_string()));
+            return Err(AxumError::NotFound(format!(
+                "Provider {provider} not found"
+            )));
         }
     };
 
@@ -419,6 +425,9 @@ where
 #[derive(Debug, Clone)]
 pub enum AxumError {
     Unauthorized(String),
+    /// The caller asked for something that does not exist — an unregistered
+    /// OAuth provider, say. A client error, not a server fault.
+    NotFound(String),
     Internal(String),
     /// A required component (e.g., SessionManager, TokenManager) is missing
     ComponentMissing(String),
@@ -428,6 +437,7 @@ impl std::fmt::Display for AxumError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AxumError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            AxumError::NotFound(msg) => write!(f, "Not Found: {}", msg),
             AxumError::Internal(msg) => write!(f, "Internal Error: {}", msg),
             AxumError::ComponentMissing(msg) => write!(f, "Component Missing: {}", msg),
         }
@@ -438,6 +448,7 @@ impl IntoResponse for AxumError {
     fn into_response(self) -> axum::response::Response {
         let (status, message) = match self {
             AxumError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            AxumError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             AxumError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             AxumError::ComponentMissing(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
