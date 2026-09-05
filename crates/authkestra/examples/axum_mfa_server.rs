@@ -60,6 +60,19 @@ impl CredentialStore for MemoryCredentialStore {
     ) -> Result<(), AuthError> {
         Ok(())
     }
+
+    async fn delete_credential(
+        &self,
+        _user_id: &str,
+        _cred_type: &str,
+        _credential_id: &str,
+    ) -> Result<bool, AuthError> {
+        Ok(false)
+    }
+
+    async fn delete_credentials(&self, _user_id: &str, _cred_type: &str) -> Result<u64, AuthError> {
+        Ok(0)
+    }
 }
 
 /// No session store and no token manager: this example stops at "who are

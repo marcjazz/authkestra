@@ -15,6 +15,10 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
     }
 
     /// Helper to generate a new TOTP secret and return the Base32 secret and registration URI (e.g. for QR codes).
+    ///
+    /// TOTP re-enrolment replaces any existing secret for the user rather than accumulating them.
+    /// This prevents the situation where a user scans a new QR code but gets an authenticator that
+    /// never works because the old secret still matches first.
     pub async fn register_totp(
         &self,
         user_id: &str,
@@ -41,8 +45,24 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
 
         let url = totp.get_url();
 
-        // Save Base32 secret to store
-        let credential_id = uuid::Uuid::new_v4().to_string();
+        // Use a stable credential_id derived from user_id so re-enrollment replaces the old secret.
+        // A user can only have one TOTP secret at a time, so use a deterministic ID.
+        let credential_id = format!("totp:{}", user_id);
+
+        // Try to delete any existing TOTP secrets for this user.
+        // For stores that implement delete_credentials, this removes the old entry.
+        // For stores that don't (returning Unsupported), we proceed anyway:
+        // SQL stores with ON CONFLICT will replace on insert, and non-SQL stores
+        // are responsible for their own merge semantics.
+        match self.store.delete_credentials(user_id, "totp").await {
+            Ok(_) => {
+                tracing::debug!(user_id = %user_id, "Deleted existing TOTP credentials");
+            }
+            Err(AuthError::Unsupported) => {
+                tracing::debug!(user_id = %user_id, "Store does not support delete_credentials; relying on insert-time merge");
+            }
+            Err(e) => return Err(e),
+        }
 
         let val = serde_json::json!({
             "credential_id": credential_id,
@@ -238,6 +258,43 @@ mod tests {
             }
             Ok(())
         }
+
+        async fn delete_credential(
+            &self,
+            user_id: &str,
+            cred_type: &str,
+            credential_id: &str,
+        ) -> Result<bool, AuthError> {
+            let key = format!("{user_id}:{cred_type}");
+            let mut creds = self.creds.lock().unwrap();
+            if let Some(val_list) = creds.get_mut(&key) {
+                let original_len = val_list.len();
+                val_list.retain(|val| {
+                    if let Some(obj) = val.as_object() {
+                        obj.get("credential_id").and_then(|v| v.as_str()) != Some(credential_id)
+                    } else {
+                        true
+                    }
+                });
+                Ok(val_list.len() < original_len)
+            } else {
+                Ok(false)
+            }
+        }
+
+        async fn delete_credentials(
+            &self,
+            user_id: &str,
+            cred_type: &str,
+        ) -> Result<u64, AuthError> {
+            let key = format!("{user_id}:{cred_type}");
+            let mut creds = self.creds.lock().unwrap();
+            if let Some(val_list) = creds.remove(&key) {
+                Ok(val_list.len() as u64)
+            } else {
+                Ok(0)
+            }
+        }
     }
 
     #[tokio::test]
@@ -298,5 +355,228 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(replay_err, AuthError::Credentials(_)));
+    }
+
+    #[tokio::test]
+    async fn test_totp_reenrollment_replaces_secret() {
+        // Regression test for issue #326: TOTP re-enrollment should replace the old secret,
+        // not accumulate. A user scanning a new QR code must get a working authenticator.
+        let store = MockStore {
+            creds: Mutex::new(HashMap::new()),
+        };
+        let totp_method = TotpAuthMethod::new(store);
+
+        // First enrollment
+        let (secret1_b32, _) = totp_method
+            .register_totp("user123", "Engine", "user123")
+            .await
+            .unwrap();
+
+        // Verify first secret works
+        let totp1 = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            totp_rs::Secret::Encoded(secret1_b32.clone())
+                .to_bytes()
+                .unwrap(),
+            None,
+            "".to_string(),
+        )
+        .unwrap();
+        let code1 = totp1.generate_current().unwrap();
+
+        let identity = totp_method
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: code1,
+            })
+            .await
+            .unwrap();
+        assert_eq!(identity.external_id, "user123");
+
+        // Second enrollment (re-registration)
+        let (secret2_b32, _) = totp_method
+            .register_totp("user123", "Engine", "user123")
+            .await
+            .unwrap();
+
+        // secret2 should be different from secret1
+        assert_ne!(secret1_b32, secret2_b32);
+
+        // Verify the NEW secret works
+        let totp2 = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            totp_rs::Secret::Encoded(secret2_b32.clone())
+                .to_bytes()
+                .unwrap(),
+            None,
+            "".to_string(),
+        )
+        .unwrap();
+        let code2 = totp2.generate_current().unwrap();
+
+        let identity = totp_method
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: code2,
+            })
+            .await
+            .unwrap();
+        assert_eq!(identity.external_id, "user123");
+
+        // Verify the OLD secret NO LONGER works (crucial check!)
+        let totp1_new = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            totp_rs::Secret::Encoded(secret1_b32).to_bytes().unwrap(),
+            None,
+            "".to_string(),
+        )
+        .unwrap();
+        let code1_new = totp1_new.generate_current().unwrap();
+
+        let auth_result = totp_method
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: code1_new,
+            })
+            .await;
+        assert!(matches!(auth_result, Err(AuthError::Credentials(_))));
+
+        // Verify the store holds exactly one TOTP credential
+        let creds = totp_method
+            .store
+            .get_credentials("user123", "totp")
+            .await
+            .unwrap();
+        assert_eq!(
+            creds.len(),
+            1,
+            "Store should hold exactly one TOTP credential after re-enrollment"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_credential_store_delete_methods() {
+        let store = MockStore {
+            creds: Mutex::new(HashMap::new()),
+        };
+
+        // Test delete_credential when credential exists
+        store
+            .save_credential(
+                "user1",
+                "totp",
+                serde_json::json!({"credential_id": "totp_cred1", "secret": "SECRET1"}),
+            )
+            .await
+            .unwrap();
+
+        let result = store
+            .delete_credential("user1", "totp", "totp_cred1")
+            .await
+            .unwrap();
+        assert!(
+            result,
+            "delete_credential should return true when credential exists"
+        );
+
+        let creds = store.get_credentials("user1", "totp").await.unwrap();
+        assert_eq!(creds.len(), 0, "Credential should be deleted");
+
+        // Test delete_credential when credential does not exist
+        let result = store
+            .delete_credential("user1", "totp", "totp_cred1")
+            .await
+            .unwrap();
+        assert!(
+            !result,
+            "delete_credential should return false when credential does not exist"
+        );
+
+        // Test delete_credentials when credentials exist
+        store
+            .save_credential(
+                "user2",
+                "webauthn",
+                serde_json::json!({"credential_id": "webauthn_cred1"}),
+            )
+            .await
+            .unwrap();
+        store
+            .save_credential(
+                "user2",
+                "webauthn",
+                serde_json::json!({"credential_id": "webauthn_cred2"}),
+            )
+            .await
+            .unwrap();
+
+        let count = store.delete_credentials("user2", "webauthn").await.unwrap();
+        assert_eq!(
+            count, 2,
+            "delete_credentials should return count of deleted credentials"
+        );
+
+        let creds = store.get_credentials("user2", "webauthn").await.unwrap();
+        assert_eq!(creds.len(), 0, "All credentials should be deleted");
+
+        // Test delete_credentials when no credentials exist
+        let count = store.delete_credentials("user2", "webauthn").await.unwrap();
+        assert_eq!(
+            count, 0,
+            "delete_credentials should return 0 when no credentials exist"
+        );
+    }
+
+    /// Test that stores not implementing delete_credentials return Unsupported error.
+    struct NoDeleteStore;
+
+    #[async_trait]
+    impl CredentialStore for NoDeleteStore {
+        async fn save_credential(
+            &self,
+            _user_id: &str,
+            _cred_type: &str,
+            _data: serde_json::Value,
+        ) -> Result<(), AuthError> {
+            Ok(())
+        }
+
+        async fn get_credentials(
+            &self,
+            _user_id: &str,
+            _cred_type: &str,
+        ) -> Result<Vec<serde_json::Value>, AuthError> {
+            Ok(vec![])
+        }
+
+        async fn update_credential(
+            &self,
+            _credential_id: &str,
+            _data: serde_json::Value,
+        ) -> Result<(), AuthError> {
+            Ok(())
+        }
+        // delete_credential and delete_credentials use the default implementation
+    }
+
+    #[tokio::test]
+    async fn test_delete_unsupported_returns_error() {
+        let store = NoDeleteStore;
+
+        // Verify that the default implementation returns Unsupported
+        let result = store.delete_credential("user1", "totp", "cred_id").await;
+        assert!(matches!(result, Err(AuthError::Unsupported)));
+
+        let result = store.delete_credentials("user1", "totp").await;
+        assert!(matches!(result, Err(AuthError::Unsupported)));
     }
 }
