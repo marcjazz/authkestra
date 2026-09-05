@@ -57,6 +57,8 @@ macro_rules! impl_credential_store {
         $save_query:expr,
         $get_query:expr,
         $update_query:expr,
+        $delete_credential_query:expr,
+        $delete_credentials_query:expr,
         $migrate_q1:expr,
         $migrate_q2:expr
     ) => {
@@ -187,6 +189,52 @@ macro_rules! impl_credential_store {
 
                 Ok(())
             }
+
+            #[tracing::instrument(skip(self))]
+            async fn delete_credential(
+                &self,
+                user_id: &str,
+                cred_type: &str,
+                credential_id: &str,
+            ) -> Result<bool, AuthError> {
+                tracing::debug!(user_id = %user_id, cred_type = %cred_type, credential_id = %credential_id, concat!("deleting credential from ", $dialect_name, " store"));
+                let query = format!($delete_credential_query, self.table_name);
+
+                let result = sqlx::query(&query)
+                    .bind(credential_id)
+                    .bind(user_id)
+                    .bind(cred_type)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, concat!($dialect_name, " delete_credential error"));
+                        AuthError::Internal(format!("{} delete_credential error: {}", $dialect_name, e))
+                    })?;
+
+                Ok(result.rows_affected() > 0)
+            }
+
+            #[tracing::instrument(skip(self))]
+            async fn delete_credentials(
+                &self,
+                user_id: &str,
+                cred_type: &str,
+            ) -> Result<u64, AuthError> {
+                tracing::debug!(user_id = %user_id, cred_type = %cred_type, concat!("deleting all credentials from ", $dialect_name, " store"));
+                let query = format!($delete_credentials_query, self.table_name);
+
+                let result = sqlx::query(&query)
+                    .bind(user_id)
+                    .bind(cred_type)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, concat!($dialect_name, " delete_credentials error"));
+                        AuthError::Internal(format!("{} delete_credentials error: {}", $dialect_name, e))
+                    })?;
+
+                Ok(result.rows_affected())
+            }
         }
 
         #[cfg(feature = $feature)]
@@ -214,8 +262,10 @@ impl_credential_store! {
     "sql-postgres",
     "Postgres",
     "INSERT INTO {} (credential_id, user_id, cred_type, secret_key, extra_data) VALUES ($1, $2, $3, $4, $5) ON CONFLICT(credential_id) DO UPDATE SET secret_key = $4, extra_data = $5",
-    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = $1 AND cred_type = $2",
+    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = $1 AND cred_type = $2 ORDER BY created_at DESC",
     "UPDATE {} SET extra_data = $1 WHERE credential_id = $2",
+    "DELETE FROM {} WHERE credential_id = $1 AND user_id = $2 AND cred_type = $3",
+    "DELETE FROM {} WHERE user_id = $1 AND cred_type = $2",
     "CREATE TABLE IF NOT EXISTS {table} (credential_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_type TEXT NOT NULL, secret_key TEXT, extra_data TEXT, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     "CREATE INDEX IF NOT EXISTS {table}_user_idx ON {table}(user_id, cred_type)"
 }
@@ -225,8 +275,10 @@ impl_credential_store! {
     "sql-sqlite",
     "Sqlite",
     "INSERT INTO {} (credential_id, user_id, cred_type, secret_key, extra_data) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(credential_id) DO UPDATE SET secret_key = ?4, extra_data = ?5",
-    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = ?1 AND cred_type = ?2",
+    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = ?1 AND cred_type = ?2 ORDER BY created_at DESC",
     "UPDATE {} SET extra_data = ?1 WHERE credential_id = ?2",
+    "DELETE FROM {} WHERE credential_id = ?1 AND user_id = ?2 AND cred_type = ?3",
+    "DELETE FROM {} WHERE user_id = ?1 AND cred_type = ?2",
     "CREATE TABLE IF NOT EXISTS {table} (credential_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_type TEXT NOT NULL, secret_key TEXT, extra_data TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     "CREATE INDEX IF NOT EXISTS {table}_user_idx ON {table}(user_id, cred_type)"
 }
@@ -236,8 +288,10 @@ impl_credential_store! {
     "sql-mysql",
     "MySql",
     "INSERT INTO {} (credential_id, user_id, cred_type, secret_key, extra_data) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE secret_key = VALUES(secret_key), extra_data = VALUES(extra_data)",
-    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = ? AND cred_type = ?",
+    "SELECT credential_id, user_id, cred_type, secret_key, extra_data FROM {} WHERE user_id = ? AND cred_type = ? ORDER BY created_at DESC",
     "UPDATE {} SET extra_data = ? WHERE credential_id = ?",
+    "DELETE FROM {} WHERE credential_id = ? AND user_id = ? AND cred_type = ?",
+    "DELETE FROM {} WHERE user_id = ? AND cred_type = ?",
     "CREATE TABLE IF NOT EXISTS {table} (credential_id VARCHAR(255) PRIMARY KEY, user_id VARCHAR(255) NOT NULL, cred_type VARCHAR(255) NOT NULL, secret_key TEXT, extra_data TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
     "CREATE INDEX {table}_user_idx ON {table}(user_id, cred_type)"
 }
