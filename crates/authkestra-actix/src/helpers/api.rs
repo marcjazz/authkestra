@@ -9,6 +9,25 @@ use std::sync::Arc;
 #[cfg(feature = "session")]
 use super::cookie::create_actix_cookie;
 
+/// The provider name, bounded, for use in a response body.
+///
+/// The name is an unvalidated, URL-decoded path segment, and the 404 body
+/// echoes it back so the caller can see what was not found. Echoing it
+/// unbounded means an arbitrarily long attacker-controlled string is reflected
+/// into a response; bounding it keeps the message useful and the reflection
+/// finite. `authkestra-axum` bounds it identically — the two adapters return
+/// the same body by design, and a fix to one that skipped the other would
+/// quietly break that.
+fn provider_for_display(provider: &str) -> String {
+    const MAX: usize = 64;
+    let shown: String = provider.chars().take(MAX).collect();
+    if shown.chars().count() < provider.chars().count() {
+        format!("{shown}\u{2026}")
+    } else {
+        shown
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[non_exhaustive]
 pub struct OAuthCallbackParams {
@@ -167,7 +186,10 @@ pub async fn actix_login_handler<S, T>(
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return HttpResponse::NotFound().body(format!("Provider {provider} not found"));
+            return HttpResponse::NotFound().body(format!(
+                "Provider {} not found",
+                provider_for_display(&provider)
+            ));
         }
     };
 
@@ -199,7 +221,10 @@ where
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Ok(HttpResponse::NotFound().body(format!("Provider {provider} not found")));
+            return Ok(HttpResponse::NotFound().body(format!(
+                "Provider {} not found",
+                provider_for_display(&provider)
+            )));
         }
     };
 
@@ -344,7 +369,10 @@ where
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Ok(HttpResponse::NotFound().body(format!("Provider {provider} not found")));
+            return Ok(HttpResponse::NotFound().body(format!(
+                "Provider {} not found",
+                provider_for_display(&provider)
+            )));
         }
     };
 

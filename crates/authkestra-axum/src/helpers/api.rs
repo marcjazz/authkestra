@@ -285,7 +285,8 @@ where
         Some(f) => f,
         None => {
             return Err(AxumError::NotFound(format!(
-                "Provider {provider} not found"
+                "Provider {} not found",
+                provider_for_display(&provider)
             )));
         }
     };
@@ -329,7 +330,8 @@ where
         Some(f) => f,
         None => {
             return Err(AxumError::NotFound(format!(
-                "Provider {provider} not found"
+                "Provider {} not found",
+                provider_for_display(&provider)
             )));
         }
     };
@@ -374,7 +376,8 @@ where
         Some(f) => f,
         None => {
             return Err(AxumError::NotFound(format!(
-                "Provider {provider} not found"
+                "Provider {} not found",
+                provider_for_display(&provider)
             )));
         }
     };
@@ -420,6 +423,25 @@ where
                 AxumError::Internal(msg)
             }
         })
+}
+
+/// The provider name, bounded, for use in a response body.
+///
+/// The name is an unvalidated, URL-decoded path segment, and the 404 body
+/// echoes it back so the caller can see what was not found. Echoing it
+/// unbounded means an arbitrarily long attacker-controlled string is reflected
+/// into a response; bounding it keeps the message useful and the reflection
+/// finite. `authkestra-actix` bounds it identically — the two adapters return
+/// the same body by design, and a fix to one that skipped the other would
+/// quietly break that.
+fn provider_for_display(provider: &str) -> String {
+    const MAX: usize = 64;
+    let shown: String = provider.chars().take(MAX).collect();
+    if shown.chars().count() < provider.chars().count() {
+        format!("{shown}\u{2026}")
+    } else {
+        shown
+    }
 }
 
 #[derive(Debug, Clone)]
