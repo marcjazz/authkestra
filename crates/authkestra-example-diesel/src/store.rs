@@ -630,7 +630,6 @@ mod queries {
 }
 
 #[async_trait]
-#[async_trait]
 impl ClientStore for DieselOpStore {
     async fn find_client(
         &mut self,
@@ -642,7 +641,6 @@ impl ClientStore for DieselOpStore {
     }
 }
 
-#[async_trait]
 #[async_trait]
 impl AuthorizationCodeStore for DieselOpStore {
     async fn store_code(&mut self, code: AuthorizationCode) -> Result<(), StoreError> {
@@ -656,7 +654,6 @@ impl AuthorizationCodeStore for DieselOpStore {
     }
 }
 
-#[async_trait]
 #[async_trait]
 impl RefreshTokenStore for DieselOpStore {
     async fn store_token(&mut self, token: RefreshToken) -> Result<(), StoreError> {
@@ -679,7 +676,6 @@ impl RefreshTokenStore for DieselOpStore {
     }
 }
 
-#[async_trait]
 #[async_trait]
 impl DeviceCodeStore for DieselOpStore {
     async fn store_device_code(&mut self, session: DeviceCodeSession) -> Result<(), StoreError> {

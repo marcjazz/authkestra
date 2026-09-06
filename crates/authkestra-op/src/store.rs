@@ -238,9 +238,11 @@ where
 /// This is what the `&mut self` receiver on the store traits is *for*: the
 /// transaction lives in the store value rather than being threaded through
 /// every method as an extra argument. That choice is what keeps the traits
-/// dyn-compatible — `authkestra-axum` and `authkestra-actix` hand route
-/// handlers an `Arc<Mutex<dyn OpStore>>`, which a generic executor
-/// parameter on each method would have made impossible to express.
+/// dyn-compatible, which the adapters depend on — `authkestra-axum` and
+/// `authkestra-actix` hold an [`Arc<dyn CloneableOpStore>`](CloneableOpStore)
+/// and clone a `Box<dyn OpStore>` per request. Neither trait object can be
+/// named if `OpStore` stops being dyn-compatible, and a generic executor
+/// parameter on each method would do exactly that.
 ///
 /// Obtain one from [`TransactionalOpStore::begin`]. To interleave a host
 /// application's *own* statements in the same transaction, use the

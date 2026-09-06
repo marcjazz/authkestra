@@ -24,12 +24,13 @@ The obvious design — an executor parameter on each method —
 async fn store_token<E: Executor>(&mut self, ex: &mut E, token: RefreshToken) -> ...;
 ```
 
-is not available. `authkestra-axum` and `authkestra-actix` hand route handlers
-an `Arc<tokio::sync::Mutex<dyn OpStore>>`, locked once per request. A generic
-method parameter makes the trait non-dyn-compatible, so that type stops
-existing. An associated `type Executor` has the same effect by a different
-route: `dyn OpStore` becomes `dyn OpStore<Executor = ...>`, which no longer
-names one type across backends.
+is not available. `authkestra-axum` and `authkestra-actix` hold an
+`Arc<dyn CloneableOpStore>` and clone a `Box<dyn OpStore>` out of it per
+request. A generic method parameter makes `OpStore` non-dyn-compatible, and
+neither of those trait objects can be named any more. An associated
+`type Executor` has the same effect by a different route: `dyn OpStore`
+becomes `dyn OpStore<Executor = ...>`, which no longer names one type across
+backends.
 
 The second constraint is that backends disagree about what an executor even is.
 sqlx wants `&mut Connection`, SeaORM wants `&impl ConnectionTrait`, Diesel wants
@@ -59,7 +60,7 @@ pub trait TransactionalOpStore: OpStore {
 
 Both stay dyn-compatible: `self: Box<Self>` is an object-safe receiver, and
 every inherited method already takes `&mut self`. Nothing about the existing
-traits, the adapters, or `Arc<Mutex<dyn OpStore>>` changes. This is a purely
+traits, the adapters, or `Arc<dyn CloneableOpStore>` changes. This is a purely
 additive, non-breaking capability.
 
 ### Where the host's own queries go
