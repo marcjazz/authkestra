@@ -68,9 +68,20 @@ fn generate_rsa_key(kid: Option<&str>) -> TestKey {
         e: Some(e),
         crv: None,
         x: None,
+        r#use: None,
+        key_ops: None,
     };
 
     TestKey { encoding_key, jwk }
+}
+
+/// As [`generate_rsa_key`], but stamps RFC 7517 §4.2 `use` on the published
+/// JWK — `"sig"` for a signing key, `"enc"` for an encryption key such as the
+/// RSA-OAEP key a stock Keycloak realm serves alongside its signing key.
+fn generate_rsa_key_for_use(kid: Option<&str>, key_use: &str) -> TestKey {
+    let mut key = generate_rsa_key(kid);
+    key.jwk.r#use = Some(key_use.to_string());
+    key
 }
 
 fn sign_token<T: Serialize>(key: &EncodingKey, kid: Option<&str>, claims: &T) -> String {
@@ -227,6 +238,120 @@ async fn missing_kid_falls_back_to_first_key_by_default() {
         .await
         .expect("kid-less token should fall back to the first JWKS key by default");
     assert_eq!(result.sub, "user-1");
+}
+
+/// Issue #341: a stock Keycloak realm publishes an RSA *encryption* key next to
+/// its RSA signing key, identical in `kty`. With no `kid` on the token the
+/// fallback used to take `keys.first()` — whichever JWKS member order happened
+/// to put first — so a good token could be rejected with a bare
+/// `InvalidSignature`. Key selection must skip the encryption key and find the
+/// signing key behind it.
+#[tokio::test]
+async fn missing_kid_skips_an_encryption_key_to_reach_the_signing_key() {
+    let enc = generate_rsa_key_for_use(Some("enc-key"), "enc");
+    let sig = generate_rsa_key_for_use(Some("sig-key"), "sig");
+    // Encryption key first, which is the ordering that used to break.
+    let server = start_jwks_server(vec![enc.jwk.clone(), sig.jwk.clone()]).await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&sig.encoding_key, None, &claims);
+
+    let validated: TestClaims = validate_jwt_generic(&token, &cache, &validation)
+        .await
+        .expect("the encryption key must be skipped in favour of the signing key");
+    assert_eq!(validated.sub, "user-1");
+}
+
+/// A `kid` naming an encryption key is not a licence to verify with it: the
+/// filter applies to the `kid` branch too, so the key is passed over and the
+/// lookup fails closed.
+#[tokio::test]
+async fn a_kid_naming_an_encryption_key_is_refused() {
+    let enc = generate_rsa_key_for_use(Some("enc-key"), "enc");
+    let server = start_jwks_server(vec![enc.jwk.clone()]).await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    // Genuinely signed by that key's private half — only its declared *use*
+    // makes it unacceptable.
+    let token = sign_token(&enc.encoding_key, Some("enc-key"), &claims);
+
+    let err = validate_jwt_generic::<TestClaims>(&token, &cache, &validation)
+        .await
+        .expect_err("an encryption key must never verify a signature");
+    assert!(
+        matches!(err, ValidationError::KeyNotFound),
+        "expected the key to be passed over, got: {err}"
+    );
+}
+
+/// `key_ops` is honoured on the same footing as `use` (RFC 7517 §4.3): a key
+/// whose declared operations do not include `verify` is not a verification key.
+#[tokio::test]
+async fn a_key_whose_key_ops_exclude_verify_is_refused() {
+    let mut key = generate_rsa_key(Some("kid-1"));
+    key.jwk.key_ops = Some(vec!["encrypt".to_string()]);
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+
+    let err = validate_jwt_generic::<TestClaims>(&token, &cache, &validation)
+        .await
+        .expect_err("a key that may not verify must not be selected");
+    assert!(
+        matches!(err, ValidationError::KeyNotFound),
+        "expected the key to be passed over, got: {err}"
+    );
+}
+
+/// The overwhelmingly common JWKS shape declares neither `use` nor `key_ops`.
+/// Those keys must stay usable, or the filter would fail closed on almost
+/// every IdP in existence.
+#[tokio::test]
+async fn a_key_declaring_neither_use_nor_key_ops_is_still_usable() {
+    let key = generate_rsa_key(Some("kid-1"));
+    assert!(key.jwk.r#use.is_none() && key.jwk.key_ops.is_none());
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+
+    let validated: TestClaims = validate_jwt_generic(&token, &cache, &validation)
+        .await
+        .expect("a key declaring no use restriction must remain usable");
+    assert_eq!(validated.sub, "user-1");
 }
 
 #[tokio::test]

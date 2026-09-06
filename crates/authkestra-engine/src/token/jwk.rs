@@ -4,12 +4,16 @@ use serde::{Deserialize, Serialize};
 
 /// A JSON Web Key, as published at `/jwks.json`.
 ///
-/// This struct is widened (not an enum) so that every existing call site
-/// that builds a `Jwk` with a plain struct literal — inside this crate and
-/// downstream — keeps compiling: it only needs two more fields (`crv`, `x`),
-/// both `None` for the RSA shape it already builds. See the `to_decoding_key`
-/// doc comment for why an enum/`#[serde(untagged)]` representation was
-/// rejected in favor of this.
+/// This struct is widened (not an enum) rather than split per key type, so a
+/// call site that builds a `Jwk` with a plain struct literal names one set of
+/// fields whatever shape it is describing. See the `to_decoding_key` doc
+/// comment for why an enum/`#[serde(untagged)]` representation was rejected
+/// in favor of this. The trade-off is that widening it again is a breaking
+/// change for those literals, which is what adding `use`/`key_ops` cost.
+///
+/// `use` and `key_ops` (RFC 7517 §4.2/§4.3) are carried so that key-use
+/// separation can be enforced when selecting a verification key — see
+/// [`Jwk::is_usable_for_signature_verification`].
 ///
 /// Two shapes are represented today:
 /// - RSA (`kty: "RSA"`): `n`, `e` are populated; `crv`, `x` are `None`.
@@ -42,9 +46,57 @@ pub struct Jwk {
     /// keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub x: Option<String>,
+    /// Intended use of the public key (RFC 7517 §4.2): `"sig"` or `"enc"`.
+    ///
+    /// Named `r#use` because `use` is a keyword; it is `use` on the wire.
+    /// `None` — the shape most IdPs publish — asserts nothing either way,
+    /// and [`Jwk::is_usable_for_signature_verification`] treats it as
+    /// permitted.
+    #[serde(rename = "use", skip_serializing_if = "Option::is_none")]
+    pub r#use: Option<String>,
+    /// Operations the key is intended for (RFC 7517 §4.3), e.g. `["verify"]`.
+    ///
+    /// RFC 7517 §4.3 says `use` and `key_ops` "SHOULD NOT be used together";
+    /// both are honoured here because a publisher that ignores that advice
+    /// should not end up with *neither* restriction enforced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_ops: Option<Vec<String>>,
 }
 
 impl Jwk {
+    /// Whether this key may be used to **verify a signature**.
+    ///
+    /// A JWKS endpoint routinely publishes keys that exist for something
+    /// other than signature verification. A stock Keycloak realm serves an
+    /// RSA signing key and an RSA *encryption* key side by side, both
+    /// `kty: "RSA"` and distinguishable only by `use`/`alg`, so selecting a
+    /// verification key on `kty` (or on JWKS member order) alone can land on
+    /// the encryption key and reject a perfectly good token with a bare
+    /// `InvalidSignature` — see #341.
+    ///
+    /// Only an *explicit* exclusion rejects: `use: "enc"`, or a `key_ops`
+    /// that is present and does not list `"verify"`. A key declaring neither
+    /// is permitted, because that is what the majority of IdPs publish and
+    /// refusing it would fail closed on the common case.
+    ///
+    /// This is about key **purpose**, not about trust: it never decides
+    /// whether a key is the right one, only whether it is the right *kind*.
+    pub fn is_usable_for_signature_verification(&self) -> bool {
+        if let Some(r#use) = self.r#use.as_deref() {
+            if r#use != "sig" {
+                return false;
+            }
+        }
+
+        if let Some(key_ops) = self.key_ops.as_deref() {
+            if !key_ops.iter().any(|op| op == "verify") {
+                return false;
+            }
+        }
+
+        true
+    }
+
     /// Derives a `DecodingKey` from this JWK, dispatching on `kty`.
     ///
     /// Supports `"RSA"` (unchanged from before this key gained the OKP
@@ -114,6 +166,8 @@ mod tests {
             e: None,
             crv: Some("Ed25519".to_string()),
             x: Some(identity_b64.to_string()),
+            r#use: None,
+            key_ops: None,
         };
 
         let err = jwk

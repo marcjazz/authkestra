@@ -153,6 +153,8 @@ fn generate_rsa_key(kid: &str) -> TestKey {
         e: Some(e),
         crv: None,
         x: None,
+        r#use: Some("sig".to_string()),
+        key_ops: None,
     };
 
     TestKey { encoding_key, jwk }

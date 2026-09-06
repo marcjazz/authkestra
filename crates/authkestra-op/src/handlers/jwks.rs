@@ -51,6 +51,8 @@ mod tests {
             e: Some("AQAB".to_string()),
             crv: None,
             x: None,
+            r#use: None,
+            key_ops: None,
         };
         let response = JwksResponse::new(Some(jwk.clone()));
         assert_eq!(response.keys.len(), 1);
@@ -67,6 +69,8 @@ mod tests {
             e: Some("AQAB".into()),
             crv: None,
             x: None,
+            r#use: None,
+            key_ops: None,
         };
         let jwk2 = Jwk {
             kty: "RSA".into(),
@@ -76,6 +80,8 @@ mod tests {
             e: Some("AQAB".into()),
             crv: None,
             x: None,
+            r#use: None,
+            key_ops: None,
         };
         let response = JwksResponse::new(vec![jwk1, jwk2]);
         assert_eq!(response.keys.len(), 2);

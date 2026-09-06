@@ -275,6 +275,11 @@ impl TokenManager {
             e: Some(e),
             crv: None,
             x: None,
+            // Declared explicitly so a relying party enforcing RFC 7517 §4.2
+            // key-use separation (as this crate's own `Jwks::find_key` now
+            // does) sees what this key is for instead of having to assume.
+            r#use: Some("sig".to_string()),
+            key_ops: None,
         };
 
         // The decoding key must come from the PUBLIC half. `DecodingKey::from_rsa_pem`
@@ -332,6 +337,11 @@ impl TokenManager {
             e: None,
             crv: Some("Ed25519".to_string()),
             x: Some(x),
+            // Declared explicitly so a relying party enforcing RFC 7517 §4.2
+            // key-use separation (as this crate's own `Jwks::find_key` now
+            // does) sees what this key is for instead of having to assume.
+            r#use: Some("sig".to_string()),
+            key_ops: None,
         };
 
         // Same rationale as `new_asymmetric`: derive the decoding key from
