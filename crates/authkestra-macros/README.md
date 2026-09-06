@@ -47,6 +47,31 @@ For Axum, this eliminates the need to manually implement `FromRef` for:
 - `SessionConfig`
 - `Result<Arc<TokenManager>, AxumError>` (if tokens are configured)
 
+### Using the derives through the `authkestra` facade
+
+The expansion names the adapter crate, `authkestra_engine`, and the web
+framework. By default it reaches all three through the adapter crate under its
+own name — `authkestra_axum` / `authkestra_actix` — which is right when that is
+how you depend on it.
+
+If you reach the adapter under a different name, say through the facade's
+re-export, point the anchor at that name:
+
+```rust,ignore
+use authkestra::axum::AxumState;
+
+#[derive(Clone, AxumState)]
+#[authkestra(crate = ::authkestra::axum)]
+struct AppState {
+    #[authkestra(engine)]
+    auth: authkestra::core::AkWebAppEngine,
+}
+```
+
+Without it the derive expands to paths naming crates a facade-only dependent
+never listed, and the resulting error points at those crates rather than at the
+cause.
+
 ## Part of authkestra
 
 This crate is part of the [authkestra](https://github.com/marcjazz/authkestra) workspace.
