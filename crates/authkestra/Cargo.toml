@@ -17,6 +17,8 @@ authkestra-axum = { workspace = true, optional = true, default-features = false 
 authkestra-actix = { workspace = true, optional = true, default-features = false }
 authkestra-providers = { workspace = true, optional = true, default-features = false }
 authkestra-resource = { workspace = true, optional = true, default-features = false }
+authkestra-op = { workspace = true, optional = true, default-features = false }
+authkestra-devsig = { workspace = true, optional = true }
 
 [dev-dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
@@ -74,6 +76,7 @@ rustls-aws-lc-rs = [
     "authkestra-actix?/rustls-aws-lc-rs",
     "authkestra-providers?/rustls-aws-lc-rs",
     "authkestra-resource?/rustls-aws-lc-rs",
+    "authkestra-op?/rustls-aws-lc-rs",
 ]
 rustls-no-provider = [
     "authkestra-engine/rustls-no-provider",
@@ -82,6 +85,7 @@ rustls-no-provider = [
     "authkestra-actix?/rustls-no-provider",
     "authkestra-providers?/rustls-no-provider",
     "authkestra-resource?/rustls-no-provider",
+    "authkestra-op?/rustls-no-provider",
 ]
 
 # Core features
@@ -99,6 +103,39 @@ actix = ["dep:authkestra-actix", "authkestra-actix/session", "authkestra-actix/t
 github = ["authkestra-providers/github"]
 google = ["authkestra-providers/google"]
 discord = ["authkestra-providers/discord"]
+
+# Storage backends. Forwarded to the engine, and to `authkestra-op` where it
+# has a matching backend of its own, so an application picks a store once
+# rather than per sub-crate.
+memory = ["authkestra-engine/memory"]
+redis = ["authkestra-engine/redis", "authkestra-op?/redis"]
+sql-postgres = ["authkestra-engine/sql-postgres"]
+sql-mysql = ["authkestra-engine/sql-mysql"]
+sql-sqlite = ["authkestra-engine/sql-sqlite"]
+
+# Authentication methods beyond sessions and OAuth.
+webauthn = ["authkestra-engine/webauthn"]
+totp = ["authkestra-engine/totp"]
+captcha = [
+    "authkestra-engine/captcha",
+    "authkestra-axum?/captcha",
+    "authkestra-actix?/captcha",
+]
+
+# Adapter extras. `?` throughout: turning one of these on must not drag in a
+# web framework the application never asked for.
+#
+# `macros` is a no-op for axum, whose facade feature already enables it, and
+# is the only way to reach the `ActixState` derive — that asymmetry predates
+# this and is left alone here, since removing it from `axum` would break
+# anyone relying on it.
+macros = ["authkestra-axum?/macros", "authkestra-actix?/macros"]
+op = ["dep:authkestra-op", "authkestra-axum?/op", "authkestra-actix?/op"]
+devsig = [
+    "dep:authkestra-devsig",
+    "authkestra-axum?/devsig",
+    "authkestra-actix?/devsig",
+]
 
 
 
