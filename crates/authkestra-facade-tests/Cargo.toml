@@ -1,0 +1,42 @@
+[package]
+name = "authkestra-facade-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Compile-time tests that the authkestra facade reaches what it claims to"
+# Never released: this exists only to hold the facade's dependency surface
+# honest from the outside.
+publish = false
+
+[dependencies]
+
+# `authkestra` and nothing else from the workspace. That is the entire point:
+# `crates/authkestra`'s own tests cannot verify what the facade forwards,
+# because its dev-dependencies name the sub-crates directly and Cargo unifies
+# features across normal and dev dependencies. A sub-crate feature enabled
+# there is on during the test build whether or not the facade forwards it, so
+# an in-crate test passes with the forwarding entry deleted. Verified: removing
+# `authkestra-engine/webauthn` from the facade's `webauthn` feature left that
+# suite green.
+#
+# From here there is no such dependency, so every path named in `tests/` can
+# only resolve if the facade genuinely forwarded the feature.
+[dev-dependencies]
+authkestra = { path = "../authkestra", features = [
+    "session",
+    "token",
+    "actix",
+    "memory",
+    "redis",
+    "sql-sqlite",
+    "webauthn",
+    "totp",
+    "captcha",
+    "macros",
+    "op",
+    "devsig",
+] }
+# Not a workspace crate: needed to name the type the `ActixState` derive
+# generates against, and it masks nothing.
+actix-web = "4"

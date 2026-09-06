@@ -15,6 +15,7 @@ members = [
     "crates/authkestra-store-sqlx",
     "crates/authkestra-example-seaorm",
     "crates/authkestra-example-diesel",
+    "crates/authkestra-facade-tests",
 ]
 
 [workspace.package]
