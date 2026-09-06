@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(engine)* WebAuthn `start_register` no longer substitutes a random UUID for the user handle when
+  the application's `user_id` is not UUID-shaped. The handle is now derived deterministically with
+  the new `auth::webauthn::derive_user_handle`: a `user_id` that already parses as a UUID is used
+  verbatim (byte-identical to previous behaviour), and anything else is hashed into a UUIDv5 over
+  the documented `auth::webauthn::USER_HANDLE_NAMESPACE`. Previously, an application with non-UUID
+  user ids got a different, unstable handle on every registration, which silently broke discoverable
+  ("usernameless") sign-in ([#333](https://github.com/marcjazz/authkestra/issues/333)).
+
+  **This change is additive and does not re-map existing credentials.** A user handle is stored
+  inside the authenticator at registration time and cannot be rewritten server-side, so passkeys
+  already enrolled under a random handle keep that handle and must be re-enrolled to gain a stable
+  one. Applications with UUID user ids are unaffected.
+
+### Added
+
+- *(engine)* `auth::webauthn::WebAuthnAuthMethod::start_register_with_handle`, for applications that
+  allocate WebAuthn user handles themselves or need a display name distinct from the username
+  (`start_register` passes the username for both).
+- *(engine)* `auth::webauthn::derive_user_handle` and `auth::webauthn::USER_HANDLE_NAMESPACE`, so an
+  application can reproduce the same handle out-of-band and index credentials by it.
+
 ## [0.9.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.8.1...authkestra-engine-v0.9.0) - 2026-09-05
 
 ### Fixed

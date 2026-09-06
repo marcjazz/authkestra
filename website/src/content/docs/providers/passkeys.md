@@ -47,6 +47,50 @@ A runnable example combining passkeys with TOTP lives in the repository:
 cargo run -p authkestra --example axum_mfa_server --all-features
 ```
 
+## Registration Ceremony
+
+Registration is also a two-step ceremony, driven directly on the `WebAuthnAuthMethod`:
+
+```rust
+use authkestra_engine::auth::webauthn::WebAuthnAuthMethod;
+
+let method = WebAuthnAuthMethod::new(Arc::new(webauthn), my_store);
+
+// 1. Start: return `challenge` to the browser for `navigator.credentials.create()`,
+//    and stash `reg_state` in the user's session.
+let (challenge, reg_state) = method.start_register("user_123", "ada")?;
+
+// 2. Finish: verify the attestation and persist the passkey via the CredentialStore.
+let passkey = method.finish_register("user_123", reg_response, reg_state).await?;
+```
+
+### User handles
+
+`user.id` in the creation options is the **user handle**. The authenticator stores it inside the
+credential and returns it as `response.userHandle` on every later assertion, which is what makes
+discoverable ("usernameless") sign-in able to resolve an account. It must be stable for the lifetime
+of the account and map back to exactly one user.
+
+`start_register` derives the handle from `user_id` with `derive_user_handle`:
+
+- a `user_id` that already parses as a UUID is used verbatim;
+- anything else (CUID, ULID, prefixed id, integer) is hashed into a **UUIDv5** over the documented
+  `USER_HANDLE_NAMESPACE` constant.
+
+Because the derivation is a plain UUIDv5, you can reproduce the same handle in any language to index
+your own users by handle.
+
+If your application allocates handles itself — or needs a display name distinct from the username,
+since `start_register` passes `username` for both — use `start_register_with_handle`:
+
+```rust
+use authkestra_engine::auth::webauthn::derive_user_handle;
+
+let handle = derive_user_handle("user_123"); // or your own stable handle
+let (challenge, reg_state) =
+    method.start_register_with_handle(handle, "ada", "Ada Lovelace")?;
+```
+
 ## Authentication Ceremony
 
 WebAuthn uses a two-step "ceremony":
@@ -54,7 +98,7 @@ WebAuthn uses a two-step "ceremony":
 2. **Finish**: The client (browser) signs the challenge with the authenticator and returns the signature to the server. The server verifies the signature and completes the authentication via the unified `Engine::authenticate` method.
 
 ### Starting Authentication
-When the user wants to sign in, call `start_authentication`. You must pass the user's previously registered `Passkey` objects (retrieved from your credential store):
+When the user wants to sign in, call `start_authentication`. You must pass the user's previously registered `Passkey` objects (retrieved from your credential store). `Engine::start_webauthn` is the usual entry point; to call it directly on a `WebAuthnAuthMethod` you must bring the `authkestra_engine::auth::WebAuthnStarter` trait into scope, since that is where the method lives:
 
 ```rust
 // `passkeys` is a `Vec<webauthn_rs::prelude::Passkey>` loaded from your store
