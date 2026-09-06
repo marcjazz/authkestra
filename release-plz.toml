@@ -58,19 +58,20 @@ version_group = "authkestra"
 name = "authkestra-store-testsuite"
 version_group = "authkestra"
 
-# Workspace members that exist only to be built and tested, never shipped.
-# Each already carries `publish = false`, which keeps `cargo publish` away from
-# them; `release = false` says the same thing to release-plz explicitly, so
-# they are also left out of version bumps, changelogs and release PRs rather
-# than relying on it inferring intent from the manifest.
-[[package]]
-name = "authkestra-facade-tests"
-release = false
-
-[[package]]
-name = "authkestra-example-seaorm"
-release = false
-
-[[package]]
-name = "authkestra-example-diesel"
-release = false
+# Crates that are never shipped — `authkestra-facade-tests`,
+# `authkestra-example-seaorm`, `authkestra-example-diesel` — are excluded by
+# `publish = false` in their own `Cargo.toml`, and must NOT be given a
+# `[[package]]` entry here.
+#
+# release-plz reads that manifest flag and cross-checks it against this file.
+# A `[[package]]` block materialises this file's defaults for that package,
+# `publish = true` among them, so merely adding an entry — even one whose only
+# key is `release = false` — contradicts the manifest and aborts the run
+# before any release happens:
+#
+#     ERROR Package `authkestra-example-seaorm` has `publish = false` or
+#     `publish = []` in the Cargo.toml, but it has `publish = true` in the
+#     release-plz configuration.
+#
+# The manifest is the single source of truth by design. Adding entries to
+# "make the exclusion explicit" is what broke the release run after #348.
