@@ -111,4 +111,11 @@ actix-files = "0.6"
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["redis"] }
 wiremock = "0.6.5"
+
+# Test-only: `test-util` brings `#[tokio::test(start_paused = true)]`, which
+# `full` does not include. The device-flow tests use the paused clock to prove
+# `poll_for_token` waits on a timer rather than blocking the thread (#306) --
+# under a paused clock a real timer costs no wall-clock time, so a blocking
+# sleep is unmistakable.
+tokio = { version = "1.0", features = ["full", "test-util"] }
 authkestra-store-testsuite = { path = "../authkestra-store-testsuite" }
