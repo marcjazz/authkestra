@@ -3,6 +3,50 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use webauthn_rs::prelude::*;
 
+/// Namespace for authkestra-derived WebAuthn user handles.
+///
+/// This is `uuid5(NAMESPACE_URL, "https://authkestra.dev/webauthn/user-handle")`,
+/// so the value is reproducible outside Rust and will never change.
+pub const USER_HANDLE_NAMESPACE: Uuid = Uuid::from_u128(0xef84b322_b2dd_5ab4_aea2_8221f829229e);
+
+/// Derive a stable WebAuthn user handle from an application user id.
+///
+/// The user handle (`user.id` in `PublicKeyCredentialCreationOptions`) is baked
+/// into the credential by the authenticator at registration time and returned as
+/// `response.userHandle` by discoverable ("usernameless") sign-in. It must
+/// therefore be stable for the lifetime of the account and resolvable back to
+/// exactly one user, which rules out generating a fresh value per registration.
+///
+/// The rule is deterministic and total:
+///
+/// * a `user_id` that already parses as a UUID is returned unchanged, so
+///   applications with UUID user ids keep byte-identical handles;
+/// * anything else (CUID, ULID, prefixed id, integer, email) is hashed into a
+///   version 5 UUID over [`USER_HANDLE_NAMESPACE`].
+///
+/// Because it is UUIDv5, an application can reproduce the same handle in any
+/// language to build its own handle-to-user index for discoverable login.
+///
+/// ```
+/// use authkestra_engine::auth::webauthn::derive_user_handle;
+///
+/// // A UUID user id is passed through untouched.
+/// let uuid_id = "67e55044-10b1-426f-9247-bb680e5fe0c8";
+/// assert_eq!(derive_user_handle(uuid_id).to_string(), uuid_id);
+///
+/// // A non-UUID id yields the same handle every time.
+/// let cuid = "clh3k2j1x0000qwer1234asdf";
+/// assert_eq!(derive_user_handle(cuid), derive_user_handle(cuid));
+///
+/// // Different ids yield different handles.
+/// assert_ne!(derive_user_handle("user-a"), derive_user_handle("user-b"));
+/// ```
+#[must_use]
+pub fn derive_user_handle(user_id: &str) -> Uuid {
+    Uuid::parse_str(user_id)
+        .unwrap_or_else(|_| Uuid::new_v5(&USER_HANDLE_NAMESPACE, user_id.as_bytes()))
+}
+
 /// WebAuthn Passkeys authentication method.
 #[non_exhaustive]
 pub struct WebAuthnAuthMethod<S: CredentialStore> {
@@ -17,16 +61,44 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
     }
 
     /// Helper to generate a registration challenge.
+    ///
+    /// The WebAuthn user handle is derived from `user_id` with
+    /// [`derive_user_handle`], which is stable across calls. Use
+    /// [`WebAuthnAuthMethod::start_register_with_handle`] when the application
+    /// allocates handles itself, or when the display name differs from the
+    /// username (this method passes `username` for both).
     pub fn start_register(
         &self,
         user_id: &str,
         username: &str,
     ) -> Result<(CreationChallengeResponse, PasskeyRegistration), AuthError> {
-        let user_unique_id = Uuid::parse_str(user_id).unwrap_or_else(|_| Uuid::new_v4());
+        self.start_register_with_handle(derive_user_handle(user_id), username, username)
+    }
+
+    /// Helper to generate a registration challenge for an explicit user handle.
+    ///
+    /// `handle` becomes `user.id` in the returned
+    /// `PublicKeyCredentialCreationOptions`. The authenticator stores it inside
+    /// the credential and returns it as `response.userHandle` on every later
+    /// assertion, so it MUST be stable for the lifetime of the account and MUST
+    /// map back to exactly one user. Prefer this method when the application
+    /// keeps its own handle-to-user index; otherwise use
+    /// [`WebAuthnAuthMethod::start_register`], which derives a stable handle
+    /// from the user id.
+    pub fn start_register_with_handle(
+        &self,
+        handle: Uuid,
+        username: &str,
+        display_name: &str,
+    ) -> Result<(CreationChallengeResponse, PasskeyRegistration), AuthError> {
+        tracing::debug!(user_handle = %handle, username, "starting WebAuthn registration");
 
         self.webauthn
-            .start_passkey_registration(user_unique_id, username, username, None)
-            .map_err(|e| AuthError::Internal(format!("WebAuthn registration failed to start: {e}")))
+            .start_passkey_registration(handle, username, display_name, None)
+            .map_err(|e| {
+                tracing::warn!(error = %e, user_handle = %handle, "WebAuthn registration failed to start");
+                AuthError::Internal(format!("WebAuthn registration failed to start: {e}"))
+            })
     }
 
     /// Helper to finalize passkey registration and return the serialized Passkey to store.
@@ -269,5 +341,109 @@ mod tests {
             })
             .await;
         assert!(matches!(invalid_input, Err(AuthError::InvalidInput)));
+    }
+
+    #[test]
+    fn derive_user_handle_is_stable_for_a_non_uuid_id() {
+        // A CUID, which is what many applications actually use for user ids.
+        let cuid = "clh3k2j1x0000qwer1234asdf";
+
+        let first = derive_user_handle(cuid);
+        let second = derive_user_handle(cuid);
+
+        assert_eq!(
+            first, second,
+            "the same non-UUID user id must always derive the same handle"
+        );
+        assert_eq!(first.get_version_num(), 5, "handle must be a UUIDv5");
+    }
+
+    #[test]
+    fn derive_user_handle_separates_distinct_ids() {
+        assert_ne!(
+            derive_user_handle("clh3k2j1x0000qwer1234asdf"),
+            derive_user_handle("clh3k2j1x0000qwer1234asdg"),
+            "distinct user ids must not collide onto one handle"
+        );
+    }
+
+    #[test]
+    fn derive_user_handle_passes_uuid_ids_through_unchanged() {
+        let id = "67e55044-10b1-426f-9247-bb680e5fe0c8";
+
+        assert_eq!(
+            derive_user_handle(id),
+            Uuid::parse_str(id).unwrap(),
+            "an id that is already a UUID must be used verbatim"
+        );
+    }
+
+    #[test]
+    fn derive_user_handle_matches_the_documented_namespace() {
+        // Pins the derivation rule: changing the namespace or the hash would
+        // orphan every passkey already registered under a derived handle.
+        assert_eq!(
+            USER_HANDLE_NAMESPACE.to_string(),
+            "ef84b322-b2dd-5ab4-aea2-8221f829229e"
+        );
+        assert_eq!(
+            derive_user_handle("clh3k2j1x0000qwer1234asdf").to_string(),
+            "ed6b6951-8a79-5ac9-a322-471f5427dc08"
+        );
+    }
+
+    #[test]
+    fn start_register_emits_a_stable_user_handle_for_a_non_uuid_id() {
+        let site_url = Url::parse("http://localhost").unwrap();
+        let webauthn = Arc::new(
+            WebauthnBuilder::new("localhost", &site_url)
+                .unwrap()
+                .build()
+                .unwrap(),
+        );
+        let method = WebAuthnAuthMethod::new(webauthn, DummyCredentialStore);
+
+        let cuid = "clh3k2j1x0000qwer1234asdf";
+        let (first, _) = method.start_register(cuid, "ada").unwrap();
+        let (second, _) = method.start_register(cuid, "ada").unwrap();
+
+        assert_eq!(
+            first.public_key.user.id, second.public_key.user.id,
+            "two registrations for one user must share a user handle"
+        );
+        assert_eq!(
+            first.public_key.user.id.as_ref(),
+            derive_user_handle(cuid).as_bytes(),
+            "the challenge must carry the derived handle"
+        );
+
+        let (other, _) = method
+            .start_register("clh3k2j1x0000qwer1234asdg", "grace")
+            .unwrap();
+        assert_ne!(
+            first.public_key.user.id, other.public_key.user.id,
+            "distinct users must not share a user handle"
+        );
+    }
+
+    #[test]
+    fn start_register_with_handle_uses_the_caller_handle_and_display_name() {
+        let site_url = Url::parse("http://localhost").unwrap();
+        let webauthn = Arc::new(
+            WebauthnBuilder::new("localhost", &site_url)
+                .unwrap()
+                .build()
+                .unwrap(),
+        );
+        let method = WebAuthnAuthMethod::new(webauthn, DummyCredentialStore);
+
+        let handle = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
+        let (challenge, _) = method
+            .start_register_with_handle(handle, "ada", "Ada Lovelace")
+            .unwrap();
+
+        assert_eq!(challenge.public_key.user.id.as_ref(), handle.as_bytes());
+        assert_eq!(challenge.public_key.user.name, "ada");
+        assert_eq!(challenge.public_key.user.display_name, "Ada Lovelace");
     }
 }
