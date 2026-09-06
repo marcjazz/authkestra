@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.9.0...authkestra-engine-v0.9.1) - 2026-09-06
+
+### Fixed
+
+- *(engine)* derive a stable WebAuthn user handle instead of a random one ([#334](https://github.com/marcjazz/authkestra/pull/334))
+
 ### Fixed
 
 - *(engine)* WebAuthn `start_register` no longer substitutes a random UUID for the user handle when
