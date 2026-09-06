@@ -154,6 +154,58 @@ impl Jwk {
 mod tests {
     use super::*;
 
+    /// A minimal RSA-shaped JWK; the `use`/`key_ops` fields are what each
+    /// test below varies.
+    fn rsa_jwk(r#use: Option<&str>, key_ops: Option<&[&str]>) -> Jwk {
+        Jwk {
+            kid: Some("kid-1".to_string()),
+            kty: "RSA".to_string(),
+            alg: Some("RS256".to_string()),
+            n: Some("bg".to_string()),
+            e: Some("AQAB".to_string()),
+            crv: None,
+            x: None,
+            r#use: r#use.map(str::to_string),
+            key_ops: key_ops.map(|ops| ops.iter().map(|op| op.to_string()).collect()),
+        }
+    }
+
+    #[test]
+    fn a_key_declaring_no_restriction_may_verify() {
+        // The shape most IdPs publish. Rejecting it would fail closed on
+        // nearly every deployment in existence.
+        assert!(rsa_jwk(None, None).is_usable_for_signature_verification());
+    }
+
+    #[test]
+    fn use_decides_when_it_is_the_only_restriction() {
+        assert!(rsa_jwk(Some("sig"), None).is_usable_for_signature_verification());
+        assert!(!rsa_jwk(Some("enc"), None).is_usable_for_signature_verification());
+        // An unrecognised `use` is not "no restriction": it is a restriction
+        // to something that is not signing.
+        assert!(!rsa_jwk(Some("wat"), None).is_usable_for_signature_verification());
+    }
+
+    #[test]
+    fn key_ops_decides_when_it_is_the_only_restriction() {
+        assert!(rsa_jwk(None, Some(&["verify"])).is_usable_for_signature_verification());
+        assert!(rsa_jwk(None, Some(&["sign", "verify"])).is_usable_for_signature_verification());
+        assert!(!rsa_jwk(None, Some(&["encrypt"])).is_usable_for_signature_verification());
+        // Present but empty still means "these are the operations", and
+        // `verify` is not among them.
+        assert!(!rsa_jwk(None, Some(&[])).is_usable_for_signature_verification());
+    }
+
+    /// RFC 7517 §4.3 says `use` and `key_ops` "SHOULD NOT be used together",
+    /// but a publisher that ignores that must not end up with *neither*
+    /// restriction enforced: either one alone is enough to disqualify a key.
+    #[test]
+    fn use_and_key_ops_are_both_honoured_when_both_are_present() {
+        assert!(rsa_jwk(Some("sig"), Some(&["verify"])).is_usable_for_signature_verification());
+        assert!(!rsa_jwk(Some("sig"), Some(&["encrypt"])).is_usable_for_signature_verification());
+        assert!(!rsa_jwk(Some("enc"), Some(&["verify"])).is_usable_for_signature_verification());
+    }
+
     #[test]
     fn rejects_low_order_ed25519_key() {
         // The identity point: the canonical universal low-order vector.
