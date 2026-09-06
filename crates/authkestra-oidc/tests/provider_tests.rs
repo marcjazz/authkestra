@@ -145,17 +145,10 @@ fn generate_rsa_key(kid: &str) -> TestKey {
     let n = URL_SAFE_NO_PAD.encode(private_key.n().to_bytes_be());
     let e = URL_SAFE_NO_PAD.encode(private_key.e().to_bytes_be());
 
-    let jwk = Jwk {
-        kid: Some(kid.to_string()),
-        kty: "RSA".to_string(),
-        alg: Some("RS256".to_string()),
-        n: Some(n),
-        e: Some(e),
-        crv: None,
-        x: None,
-        r#use: Some("sig".to_string()),
-        key_ops: None,
-    };
+    let jwk = Jwk::rsa(n, e)
+        .with_kid(kid)
+        .with_alg("RS256")
+        .with_use("sig");
 
     TestKey { encoding_key, jwk }
 }

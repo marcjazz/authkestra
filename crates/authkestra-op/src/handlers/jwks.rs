@@ -43,17 +43,7 @@ mod tests {
 
     #[test]
     fn test_jwks_response_with_key() {
-        let jwk = Jwk {
-            kty: "RSA".to_string(),
-            alg: Some("RS256".to_string()),
-            kid: Some("123".to_string()),
-            n: Some("abc".to_string()),
-            e: Some("AQAB".to_string()),
-            crv: None,
-            x: None,
-            r#use: None,
-            key_ops: None,
-        };
+        let jwk = Jwk::rsa("abc", "AQAB").with_alg("RS256").with_kid("123");
         let response = JwksResponse::new(Some(jwk.clone()));
         assert_eq!(response.keys.len(), 1);
         assert_eq!(response.keys[0].kid.as_deref(), Some("123"));
@@ -61,28 +51,8 @@ mod tests {
 
     #[test]
     fn test_jwks_response_with_multiple_keys() {
-        let jwk1 = Jwk {
-            kty: "RSA".into(),
-            alg: Some("RS256".into()),
-            kid: Some("key-1".into()),
-            n: Some("n1".into()),
-            e: Some("AQAB".into()),
-            crv: None,
-            x: None,
-            r#use: None,
-            key_ops: None,
-        };
-        let jwk2 = Jwk {
-            kty: "RSA".into(),
-            alg: Some("RS256".into()),
-            kid: Some("key-2".into()),
-            n: Some("n2".into()),
-            e: Some("AQAB".into()),
-            crv: None,
-            x: None,
-            r#use: None,
-            key_ops: None,
-        };
+        let jwk1 = Jwk::rsa("n1", "AQAB").with_alg("RS256").with_kid("key-1");
+        let jwk2 = Jwk::rsa("n2", "AQAB").with_alg("RS256").with_kid("key-2");
         let response = JwksResponse::new(vec![jwk1, jwk2]);
         assert_eq!(response.keys.len(), 2);
         assert_eq!(response.keys[0].kid.as_deref(), Some("key-1"));

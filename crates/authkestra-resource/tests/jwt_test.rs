@@ -60,17 +60,12 @@ fn generate_rsa_key(kid: Option<&str>) -> TestKey {
     let n = URL_SAFE_NO_PAD.encode(private_key.n().to_bytes_be());
     let e = URL_SAFE_NO_PAD.encode(private_key.e().to_bytes_be());
 
-    let jwk = Jwk {
-        kid: kid.map(|s| s.to_string()),
-        kty: "RSA".to_string(),
-        alg: Some("RS256".to_string()),
-        n: Some(n),
-        e: Some(e),
-        crv: None,
-        x: None,
-        r#use: None,
-        key_ops: None,
-    };
+    // `use`/`key_ops` are left unset on purpose: that is the shape most IdPs
+    // publish, so the existing tests keep exercising the permissive path.
+    let mut jwk = Jwk::rsa(n, e).with_alg("RS256");
+    if let Some(kid) = kid {
+        jwk = jwk.with_kid(kid);
+    }
 
     TestKey { encoding_key, jwk }
 }
