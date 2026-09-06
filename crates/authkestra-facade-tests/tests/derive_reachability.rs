@@ -12,12 +12,17 @@
 //! are compile-time assertions: if the anchored paths do not resolve through
 //! the facade's re-export, the file does not build.
 //!
-//! What they cannot prove is the absence of the *original* fault, because this
-//! crate's own dev-dependencies include the adapters directly, so bare paths
-//! would resolve here too. The expansion itself is pinned by the unit tests in
-//! `authkestra-macros`, which assert no emitted path escapes the anchor.
+//! These moved here from `crates/authkestra/tests/`, where they could not
+//! prove the absence of the original fault: that crate's dev-dependencies name
+//! the adapters directly, so the bare paths the bug emitted would have
+//! resolved there too. This crate depends on `authkestra` and nothing else
+//! from the workspace, so an unanchored path in the expansion fails to
+//! resolve here exactly as it did for the reporter. See this crate's
+//! `Cargo.toml` for why that distinction is load-bearing.
+//!
+//! The expansion is separately pinned by unit tests in `authkestra-macros`,
+//! which assert no emitted path escapes the anchor at all.
 
-#[cfg(feature = "axum")]
 mod axum_facade {
     use authkestra::axum::AxumState;
 
@@ -37,7 +42,6 @@ mod axum_facade {
     }
 }
 
-#[cfg(feature = "actix")]
 mod actix_facade {
     use authkestra::actix::ActixState;
 

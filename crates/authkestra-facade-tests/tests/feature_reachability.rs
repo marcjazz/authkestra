@@ -88,14 +88,12 @@ fn device_signatures_are_reachable() {
 /// The state derives. `macros` is the only route to `ActixState` through the
 /// facade — the `axum` feature already carries `AxumState`, which is the
 /// asymmetry this feature works around without changing it.
+///
+/// Reachability only: `derive_reachability.rs` exercises both derives properly.
 #[test]
-fn the_actix_state_derive_is_reachable() {
-    #[derive(Clone, authkestra::actix::ActixState)]
-    #[authkestra(crate = ::authkestra::actix)]
-    struct AppState {
-        #[authkestra(engine)]
-        auth: authkestra::core::AkWebAppEngine,
-    }
-
-    let _: fn(&AppState, &mut ::actix_web::web::ServiceConfig) = AppState::configure_authkestra;
+fn the_state_derives_are_reachable() {
+    #[allow(unused_imports)]
+    use authkestra::actix::ActixState;
+    #[allow(unused_imports)]
+    use authkestra::axum::AxumState;
 }

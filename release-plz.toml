@@ -57,3 +57,20 @@ version_group = "authkestra"
 [[package]]
 name = "authkestra-store-testsuite"
 version_group = "authkestra"
+
+# Workspace members that exist only to be built and tested, never shipped.
+# Each already carries `publish = false`, which keeps `cargo publish` away from
+# them; `release = false` says the same thing to release-plz explicitly, so
+# they are also left out of version bumps, changelogs and release PRs rather
+# than relying on it inferring intent from the manifest.
+[[package]]
+name = "authkestra-facade-tests"
+release = false
+
+[[package]]
+name = "authkestra-example-seaorm"
+release = false
+
+[[package]]
+name = "authkestra-example-diesel"
+release = false
