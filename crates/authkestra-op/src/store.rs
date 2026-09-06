@@ -227,6 +227,69 @@ where
     }
 }
 
+/// An [`OpStore`] scoped to a single open database transaction.
+///
+/// Every `OpStore` method called on one of these runs inside that
+/// transaction, so nothing it writes is visible to anyone else — and
+/// nothing is durable — until [`commit`](OpStoreTransaction::commit).
+/// Dropping it without committing rolls the transaction back, which is what
+/// makes `?` in the middle of a composed unit of work safe.
+///
+/// This is what the `&mut self` receiver on the store traits is *for*: the
+/// transaction lives in the store value rather than being threaded through
+/// every method as an extra argument. That choice is what keeps the traits
+/// dyn-compatible — `authkestra-axum` and `authkestra-actix` hand route
+/// handlers an `Arc<Mutex<dyn OpStore>>`, which a generic executor
+/// parameter on each method would have made impossible to express.
+///
+/// Obtain one from [`TransactionalOpStore::begin`]. To interleave a host
+/// application's *own* statements in the same transaction, use the
+/// concrete store's inherent `begin_tx` instead, which returns the backend
+/// type rather than a trait object — see that type's docs (e.g.
+/// `authkestra_store_sqlx::SqlxOpStoreTx`) for the escape hatch that hands
+/// you the native connection.
+#[async_trait::async_trait]
+pub trait OpStoreTransaction: OpStore {
+    /// Commit the transaction, making every write durable at once.
+    ///
+    /// Takes `self: Box<Self>` rather than `self` so the trait stays
+    /// dyn-compatible: a by-value `self` on a `?Sized` receiver is not
+    /// expressible, and this trait is meant to be usable as
+    /// `Box<dyn OpStoreTransaction>`.
+    async fn commit(self: Box<Self>) -> Result<(), authkestra_engine::store::StoreError>;
+
+    /// Roll the transaction back, discarding every write.
+    ///
+    /// Dropping without committing does this too; the explicit form exists
+    /// so a caller can observe a rollback failure rather than have it
+    /// swallowed by `Drop`.
+    async fn rollback(self: Box<Self>) -> Result<(), authkestra_engine::store::StoreError>;
+}
+
+/// An [`OpStore`] whose backend can hand out transaction-scoped stores.
+///
+/// Deliberately a separate, opt-in trait rather than defaulted methods on
+/// `OpStore`: a backend with no transactions (the in-memory store, Redis)
+/// must not be able to accidentally claim this. There is no useful default
+/// — one that committed each write immediately and made `rollback` a no-op
+/// would hand callers a unit of work that silently isn't one, which is
+/// worse than not offering the capability at all.
+///
+/// See [`OpStoreTransaction`] for why the transaction lives in the store
+/// value instead of in the method signatures.
+#[async_trait::async_trait]
+pub trait TransactionalOpStore: OpStore {
+    /// Begin a transaction and return a store scoped to it.
+    ///
+    /// Takes `&self`, not `&mut self`: beginning a transaction borrows the
+    /// pool, not the store's own state, so a host application can start one
+    /// from behind an `Arc` while request handlers keep using the
+    /// non-transactional store.
+    async fn begin(
+        &self,
+    ) -> Result<Box<dyn OpStoreTransaction + Send>, authkestra_engine::store::StoreError>;
+}
+
 /// A helper struct that implements `OpStore` by delegating to individual stores.
 /// Useful if you want to use different backends for different types of data (e.g., config for clients, Redis for codes).
 ///
