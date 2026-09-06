@@ -1313,9 +1313,65 @@ where
         .ok_or(ValidationError::KeyNotFound)?;
 
     let decoding_key = jwk.to_decoding_key()?;
-    let token_data = decode::<T>(token, &decoding_key, validation)?;
+    let validation = narrow_to_header_family(validation, header.alg)?;
+    let token_data = decode::<T>(token, &decoding_key, &validation)?;
 
     Ok(token_data.claims)
+}
+
+/// Restricts `validation` to the algorithms that share a key family with the
+/// token header's own `alg`.
+///
+/// `jsonwebtoken` does not merely require that the header's `alg` be *among*
+/// `validation.algorithms`; it requires that **every** entry of that list
+/// belong to the same key family as the verifying key
+/// (`decoding::verify_signature_body`). A policy naming more than one family
+/// is therefore unverifiable by construction: whatever the token is signed
+/// with, the first entry from another family fails the loop and the whole
+/// decode returns `InvalidAlgorithm`.
+///
+/// That is exactly the policy an OIDC discovery document produces. Keycloak
+/// advertises all twelve algorithms across the HMAC/RSA/EC/Ed families in
+/// `id_token_signing_alg_values_supported`, so `authkestra-oidc`'s
+/// discovery-derived default rejected *every* ID token from *every* Keycloak
+/// deployment with a bare `InvalidAlgorithm` (#335). The same applied to a
+/// `ValidationConfig` whose `algorithms` deliberately spans families, which
+/// is the natural way to write "this resource server accepts RS256 or ES256".
+///
+/// # Why this does not weaken the policy
+///
+/// The set is only ever *narrowed*, and only to algorithms the caller already
+/// listed — a token signed with an algorithm outside the caller's policy is
+/// still rejected, by the explicit check below. What narrowing removes is
+/// `jsonwebtoken`'s use of the list as a proxy for "which family is this key",
+/// and that proxy is not what protects against algorithm confusion: each
+/// verifier re-checks the key's own family when it is constructed
+/// (`DecodingKey::family` → `ErrorKind::InvalidKeyFormat`), so an RSA JWK
+/// presented for an `HS256` header still fails there, with the public key
+/// never reaching the HMAC verifier.
+fn narrow_to_header_family(
+    validation: &Validation,
+    header_alg: Algorithm,
+) -> Result<Validation, ValidationError> {
+    if !validation.algorithms.contains(&header_alg) {
+        return Err(ValidationError::InvalidToken(format!(
+            "token is signed with {header_alg:?}, which this validation policy does not accept \
+             (accepted: {:?})",
+            validation.algorithms
+        )));
+    }
+
+    let mut narrowed = validation.clone();
+    narrowed
+        .algorithms
+        .retain(|alg| alg.family() == header_alg.family());
+    tracing::debug!(
+        header_alg = ?header_alg,
+        accepted = ?validation.algorithms,
+        narrowed = ?narrowed.algorithms,
+        "narrowed the accepted algorithm set to the token header's key family"
+    );
+    Ok(narrowed)
 }
 
 /// Validates a PASETO V4 Local/Public token.
