@@ -1,9 +1,38 @@
-use proc_macro::TokenStream;
+//! # Actix state derive
+//!
+//! Generates `configure_authkestra`, registering the engine's pieces as
+//! `actix_web` app data.
+//!
+//! ## Reaching the adapter under another name
+//!
+//! Every emitted path hangs off `::authkestra_actix`. A caller reaching this
+//! adapter by a different name — the facade's `authkestra::actix` re-export,
+//! say — redirects the anchor on the struct:
+//!
+//! ```rust,ignore
+//! #[derive(Clone, ActixState)]
+//! #[authkestra(crate = ::authkestra::actix)]
+//! struct AppState { /* ... */ }
+//! ```
+
+use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
+use syn::{Data, DeriveInput, Fields, Type};
 
 pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
+    let input = match syn::parse2::<DeriveInput>(input) {
+        Ok(input) => input,
+        Err(err) => return err.to_compile_error(),
+    };
+
+    // Every emitted path hangs off this, so the expansion never depends on
+    // what the caller happens to have in scope (#332).
+    let anchor = match crate::anchor::resolve(&input.attrs, "::authkestra_actix") {
+        Ok(anchor) => anchor,
+        Err(err) => return err.to_compile_error(),
+    };
+    let engine = quote!(#anchor::__private::authkestra_engine);
+    let web = quote!(#anchor::__private::actix_web);
 
     let struct_name = &input.ident;
     let generics = &input.generics;
@@ -37,14 +66,12 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                     &input,
                     "State can only be derived for structs with named fields",
                 )
-                .to_compile_error()
-                .into();
+                .to_compile_error();
             }
         },
         _ => {
             return syn::Error::new_spanned(&input, "State can only be derived for structs")
-                .to_compile_error()
-                .into();
+                .to_compile_error();
         }
     };
 
@@ -61,31 +88,31 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                 if ident_str == "AkWebAppEngine" {
                     (
                         syn::parse_quote!(
-                            authkestra_engine::Configured<
-                                ::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>,
+                            #engine::Configured<
+                                ::std::sync::Arc<dyn #engine::auth::SessionStore>,
                             >
                         ),
-                        syn::parse_quote!(authkestra_engine::Missing),
+                        syn::parse_quote!(#engine::Missing),
                     )
                 } else if ident_str == "AkApiEngine" {
                     (
-                        syn::parse_quote!(authkestra_engine::Missing),
+                        syn::parse_quote!(#engine::Missing),
                         syn::parse_quote!(
-                            authkestra_engine::Configured<
-                                ::std::sync::Arc<authkestra_engine::TokenManager>,
+                            #engine::Configured<
+                                ::std::sync::Arc<#engine::TokenManager>,
                             >
                         ),
                     )
                 } else if ident_str == "AkEngine" {
                     (
                         syn::parse_quote!(
-                            authkestra_engine::Configured<
-                                ::std::sync::Arc<dyn authkestra_engine::auth::SessionStore>,
+                            #engine::Configured<
+                                ::std::sync::Arc<dyn #engine::auth::SessionStore>,
                             >
                         ),
                         syn::parse_quote!(
-                            authkestra_engine::Configured<
-                                ::std::sync::Arc<authkestra_engine::TokenManager>,
+                            #engine::Configured<
+                                ::std::sync::Arc<#engine::TokenManager>,
                             >
                         ),
                     )
@@ -97,8 +124,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                                     &field.ty,
                                     "Engine must have exactly 2 type parameters: Engine<S, T>",
                                 )
-                                .to_compile_error()
-                                .into();
+                                .to_compile_error();
                             }
                             let s = &args.args[0];
                             let t = &args.args[1];
@@ -109,8 +135,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                                 &field.ty,
                                 "Engine must have type parameters: Engine<S, T>",
                             )
-                            .to_compile_error()
-                            .into();
+                            .to_compile_error();
                         }
                     }
                 } else {
@@ -118,8 +143,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                         &field.ty,
                         "Field marked with #[authkestra(engine)] must be of type Engine<S, T>, AkWebAppEngine, AkApiEngine, or AkEngine",
                     )
-                    .to_compile_error()
-                    .into();
+                    .to_compile_error();
                 }
             }
             _ => {
@@ -127,26 +151,25 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
                     &field.ty,
                     "Field marked with #[authkestra(engine)] must be a valid path type",
                 )
-                .to_compile_error()
-                .into();
+                .to_compile_error();
             }
         };
 
         config_statements.push(quote! {
-            cfg.app_data(actix_web::web::Data::new(self.#field_name.clone()));
+            cfg.app_data(#web::web::Data::new(self.#field_name.clone()));
         });
 
         let s_param_str = quote!(#s_param).to_string();
         if !s_param_str.contains("Missing") {
             config_statements.push(quote! {
-                cfg.app_data(actix_web::web::Data::new(
-                    authkestra_engine::SessionStoreState::get_store(&self.#field_name.session_store)
+                cfg.app_data(#web::web::Data::new(
+                    #engine::SessionStoreState::get_store(&self.#field_name.session_store)
                 ));
             });
         }
 
         config_statements.push(quote! {
-            cfg.app_data(actix_web::web::Data::new(
+            cfg.app_data(#web::web::Data::new(
                 self.#field_name.session_config.clone()
             ));
         });
@@ -154,8 +177,8 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
         let t_param_str = quote!(#t_param).to_string();
         if !t_param_str.contains("Missing") {
             config_statements.push(quote! {
-                cfg.app_data(actix_web::web::Data::new(
-                    authkestra_engine::TokenManagerState::get_manager(&self.#field_name.token_manager)
+                cfg.app_data(#web::web::Data::new(
+                    #engine::TokenManagerState::get_manager(&self.#field_name.token_manager)
                 ));
             });
         }
@@ -164,7 +187,7 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
     for field in store_fields {
         let field_name = field.ident.as_ref().unwrap();
         config_statements.push(quote! {
-            cfg.app_data(actix_web::web::Data::new(self.#field_name.clone()));
+            cfg.app_data(#web::web::Data::new(self.#field_name.clone()));
         });
     }
 
@@ -173,17 +196,79 @@ pub(crate) fn derive_authkestra_state_impl(input: TokenStream) -> TokenStream {
             &input,
             "No field marked with #[authkestra(engine)] found. Add #[authkestra(engine)] to your Engine field."
         )
-        .to_compile_error()
-        .into();
+        .to_compile_error();
     }
 
     let expanded = quote! {
         impl #impl_generics #struct_name #ty_generics #where_clause {
-            pub fn configure_authkestra(&self, cfg: &mut actix_web::web::ServiceConfig) {
+            pub fn configure_authkestra(&self, cfg: &mut #web::web::ServiceConfig) {
                 #(#config_statements)*
             }
         }
     };
 
-    TokenStream::from(expanded)
+    expanded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expand(container_attrs: TokenStream) -> String {
+        let input = quote! {
+            #container_attrs
+            struct AppState {
+                #[authkestra(engine)]
+                auth: AkEngine,
+                #[authkestra(store)]
+                clients: ::std::sync::Arc<dyn ClientStore>,
+            }
+        };
+        derive_authkestra_state_impl(input).to_string()
+    }
+
+    /// #332, actix half. The bug was identical in both derives, so the fix and
+    /// its tests are too — covering only one would recreate exactly the
+    /// adapter asymmetry #320/#327/#329 are about.
+    #[test]
+    fn every_engine_path_is_anchored() {
+        let expanded = expand(quote!());
+
+        assert!(expanded.contains("authkestra_engine"));
+        assert_eq!(
+            expanded.matches("authkestra_engine").count(),
+            expanded
+                .matches(":: __private :: authkestra_engine")
+                .count(),
+            "some engine path is not routed through the anchor: {expanded}"
+        );
+    }
+
+    #[test]
+    fn every_actix_web_path_is_anchored() {
+        let expanded = expand(quote!());
+
+        assert!(expanded.contains("web :: Data"));
+        assert_eq!(
+            expanded.matches("web :: Data").count(),
+            expanded
+                .matches(":: __private :: actix_web :: web :: Data")
+                .count(),
+            "some actix-web path is not routed through the anchor: {expanded}"
+        );
+    }
+
+    #[test]
+    fn the_anchor_can_be_redirected_at_the_struct() {
+        let expanded = expand(quote!(#[authkestra(crate = ::authkestra::actix)]));
+
+        assert!(
+            expanded.contains(":: authkestra :: actix :: __private :: authkestra_engine"),
+            "the `crate = ...` override was ignored: {expanded}"
+        );
+        assert!(
+            !expanded.contains(":: authkestra_actix ::"),
+            "the default anchor leaked through despite the override: {expanded}"
+        );
+    }
 }
