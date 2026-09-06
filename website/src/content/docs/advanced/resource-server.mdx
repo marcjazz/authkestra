@@ -62,6 +62,7 @@ The `ValidationConfig::builder()` supports advanced validation rules and cryptog
 - **Supported Signing Algorithms**: Supports `RS256`, `RS384`, `RS512`, `ES256`, `ES384`, and `EdDSA` (`Ed25519` OKP keys).
 - **Multi-Audience Support**: To accept tokens minted for any of multiple distinct client IDs, chain `.audiences(["client_a", "client_b"])`.
 - **Strict Key IDs (`kid`)**: To strictly reject malformed tokens that lack a `kid` header instead of falling back to the first JWKS key, chain `.require_kid(true)`.
+- **Clock-skew tolerance**: `exp` and `nbf` are checked with a 60-second allowance, so a token is accepted for about a minute past its expiry. That absorbs disagreement between the issuer's clock and yours. Chain `.leeway(0)` where both share a clock, or in tests that assert a token is rejected once it expires — with the default, such a test passes when you expect it to fail. The value is `authkestra_engine::token::DEFAULT_LEEWAY_SECS`, the same constant `TokenManager` uses.
 
 ```rust
 let advanced_config = ValidationConfig::builder()

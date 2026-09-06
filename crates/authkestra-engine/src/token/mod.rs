@@ -214,6 +214,22 @@ pub struct Claims {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
+/// Clock-skew allowance applied to `exp` and `nbf` when validating a JWT, in
+/// seconds.
+///
+/// A token is accepted for this long *after* its `exp`, and this long *before*
+/// its `nbf`, absorbing the disagreement between the issuer's clock and the
+/// validator's. Sixty seconds is `jsonwebtoken`'s own default, which this
+/// crate used implicitly — and silently — before it was named here (#350).
+///
+/// It is a single constant, and `authkestra-resource`'s [`ValidationConfig`]
+/// defaults to it too, so the tolerance is stated once rather than restated
+/// per validation site. Downstream code that needs to size a token's lifetime
+/// against it can name it instead of hardcoding 60.
+///
+/// [`ValidationConfig`]: https://docs.rs/authkestra-resource
+pub const DEFAULT_LEEWAY_SECS: u64 = 60;
+
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct TokenManager {
@@ -223,6 +239,9 @@ pub struct TokenManager {
     kid: Option<String>,
     alg: Algorithm,
     public_jwk: Option<crate::token::jwk::Jwk>,
+    /// Clock-skew allowance for `exp`/`nbf`, in seconds. See
+    /// [`TokenManager::with_leeway`].
+    leeway: u64,
 }
 
 impl TokenManager {
@@ -235,6 +254,7 @@ impl TokenManager {
             kid: None,
             alg: Algorithm::HS256,
             public_jwk: None,
+            leeway: DEFAULT_LEEWAY_SECS,
         }
     }
 
@@ -290,6 +310,7 @@ impl TokenManager {
             kid: Some(kid_val),
             alg: Algorithm::RS256,
             public_jwk: Some(jwk),
+            leeway: DEFAULT_LEEWAY_SECS,
         })
     }
 
@@ -348,7 +369,40 @@ impl TokenManager {
             kid: Some(kid_val),
             alg: Algorithm::EdDSA,
             public_jwk: Some(jwk),
+            leeway: DEFAULT_LEEWAY_SECS,
         })
+    }
+
+    /// Sets the clock-skew allowance applied to `exp` and `nbf` when
+    /// validating, in seconds.
+    ///
+    /// Defaults to [`DEFAULT_LEEWAY_SECS`] (60), which is what this crate
+    /// inherited from `jsonwebtoken` before the value was ever named (#350).
+    /// A token therefore keeps validating for about a minute past its `exp`
+    /// unless this is lowered.
+    ///
+    /// Set it to `0` when the issuer and the validator share a clock, or in a
+    /// test that asserts a token is rejected once it expires — with the
+    /// default, "issue a one-second token, sleep, assert rejection" passes
+    /// when it should fail, and the time goes into looking for a bug that
+    /// isn't there.
+    ///
+    /// ```
+    /// # use authkestra_engine::token::TokenManager;
+    /// let manager = TokenManager::new(b"secret", None).with_leeway(0);
+    /// ```
+    ///
+    /// Raising it instead widens the window in which an expired token is
+    /// still honoured, so it trades revocation latency for tolerance of
+    /// badly-synchronised clocks.
+    pub fn with_leeway(mut self, seconds: u64) -> Self {
+        self.leeway = seconds;
+        self
+    }
+
+    /// The configured clock-skew allowance, in seconds.
+    pub fn leeway(&self) -> u64 {
+        self.leeway
     }
 
     pub fn public_jwk(&self) -> Option<crate::token::jwk::Jwk> {
@@ -610,12 +664,24 @@ impl TokenManager {
         encode(&header, &claims, &self.encoding_key).map_err(|e| AuthError::Token(e.to_string()))
     }
 
+    /// Validates a token's signature and claims, returning them on success.
+    ///
+    /// # Clock skew
+    ///
+    /// `exp` and `nbf` are checked with a tolerance of
+    /// [`TokenManager::leeway`] seconds, [`DEFAULT_LEEWAY_SECS`] by default,
+    /// so a token is accepted for roughly a minute past its expiry unless
+    /// [`TokenManager::with_leeway`] lowers it. This was inherited silently
+    /// from `jsonwebtoken` until #350; it is set explicitly here now, so the
+    /// window this crate honours no longer depends on a transitive
+    /// dependency's default.
     pub fn validate_token(
         &self,
         token: &str,
         expected_aud: Option<&str>,
     ) -> Result<Claims, AuthError> {
         let mut validation = Validation::new(self.alg);
+        validation.leeway = self.leeway;
         if let Some(aud) = expected_aud {
             validation.set_audience(&[aud]);
         } else {
@@ -1732,3 +1798,148 @@ MC4CAQAwBQYDK2VwBCIEIPlsnSfvh53rJ+Tlbo8e7cgq2mIkWQ1NCM5paVeinUh8
     }
 }
 pub mod jwk;
+
+/// Issue #350: the clock-skew tolerance applied to `exp`/`nbf` used to be
+/// `jsonwebtoken`'s default, inherited silently — invisible from the
+/// signature, absent from the docs, and with no way to change it.
+#[cfg(test)]
+mod leeway_tests {
+    use super::*;
+    use crate::auth::state::Identity;
+    use jsonwebtoken::EncodingKey;
+    use std::collections::HashMap;
+
+    const SECRET: &[u8] = b"a-test-signing-key-for-leeway-tests";
+
+    /// Mints an HS256 token whose `exp` is `seconds_ago` in the past.
+    ///
+    /// Signed here rather than through `issue_user_token`, which can only
+    /// place `exp` at or after *now*: a zero TTL yields `exp == iat == now`,
+    /// which is not yet expired even at zero tolerance. The alternative —
+    /// issuing a one-second token and sleeping — is exactly the shape #350
+    /// reports as confusing, and would make these tests slow and timing
+    /// dependent for no gain.
+    fn token_expired(seconds_ago: usize) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as usize;
+        let claims = Claims {
+            iss: None,
+            sub: "user-1".to_string(),
+            aud: Some(Audience::Single("api".to_string())),
+            exp: now - seconds_ago,
+            iat: now - seconds_ago - 1,
+            nbf: None,
+            jti: None,
+            scope: None,
+            identity: Some(Identity {
+                provider_id: "test".to_string(),
+                external_id: "user-1".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            }),
+            extra: HashMap::new(),
+        };
+        encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(SECRET),
+        )
+        .expect("signing should succeed")
+    }
+
+    fn manager() -> TokenManager {
+        TokenManager::new(SECRET, None)
+    }
+
+    /// Pins the claim made in `DEFAULT_LEEWAY_SECS`'s own documentation.
+    ///
+    /// The value is now set explicitly at every validation site, so a change
+    /// upstream would not alter behaviour — it would just quietly make the
+    /// docs wrong about where the number came from. This keeps them honest.
+    #[test]
+    fn the_default_matches_the_jsonwebtoken_default_it_documents() {
+        assert_eq!(
+            Validation::new(Algorithm::HS256).leeway,
+            DEFAULT_LEEWAY_SECS,
+            "DEFAULT_LEEWAY_SECS no longer matches jsonwebtoken's default; \
+             update the docs that say it does"
+        );
+    }
+
+    /// The surprise reported in #350: a token that expired half a minute ago
+    /// still validates, because the inherited tolerance covers it.
+    #[test]
+    fn a_token_expired_within_the_default_leeway_is_still_accepted() {
+        assert!(
+            manager()
+                .validate_token(&token_expired(30), Some("api"))
+                .is_ok(),
+            "the documented 60s tolerance should still accept this token"
+        );
+    }
+
+    /// The tolerance is a window, not a licence: past it, the token is gone.
+    #[test]
+    fn a_token_expired_beyond_the_default_leeway_is_rejected() {
+        let err = manager()
+            .validate_token(
+                &token_expired(DEFAULT_LEEWAY_SECS as usize + 60),
+                Some("api"),
+            )
+            .expect_err("beyond the tolerance the token must be refused");
+        assert!(
+            err.to_string().contains("ExpiredSignature"),
+            "expected an expiry rejection, got: {err}"
+        );
+    }
+
+    /// `with_leeway(0)` is the knob that makes validation behave the way the
+    /// person writing "issue, expire, assert rejected" expected all along.
+    /// Same token, both settings, so the contrast is the assertion.
+    #[test]
+    fn with_leeway_zero_rejects_a_token_the_default_would_accept() {
+        let token = token_expired(5);
+
+        assert!(
+            manager().validate_token(&token, Some("api")).is_ok(),
+            "precondition: the default tolerance accepts this token"
+        );
+
+        let err = manager()
+            .with_leeway(0)
+            .validate_token(&token, Some("api"))
+            .expect_err("with no tolerance an expired token must be refused");
+        assert!(
+            err.to_string().contains("ExpiredSignature"),
+            "expected an expiry rejection, got: {err}"
+        );
+    }
+
+    /// A token still inside its lifetime is unaffected: this is a tolerance
+    /// on expiry, not a cap on it.
+    #[test]
+    fn a_live_token_is_accepted_with_no_leeway_at_all() {
+        let identity = Identity {
+            provider_id: "test".to_string(),
+            external_id: "user-1".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+        let manager = manager().with_leeway(0);
+        let token = manager
+            .issue_user_token(identity, 3600, None, Some("api".to_string()))
+            .expect("issuing should succeed");
+
+        assert!(manager.validate_token(&token, Some("api")).is_ok());
+    }
+
+    #[test]
+    fn the_configured_value_is_readable_back() {
+        assert_eq!(manager().leeway(), DEFAULT_LEEWAY_SECS);
+        assert_eq!(manager().with_leeway(5).leeway(), 5);
+    }
+}

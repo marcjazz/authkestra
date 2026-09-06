@@ -12,6 +12,7 @@
 use authkestra_engine::strategy::AuthenticationStrategy;
 use authkestra_engine::token::cert_binding::{x5t_s256_thumbprint, ClientCertificateDer};
 use authkestra_engine::token::jwk::Jwk;
+use authkestra_engine::token::DEFAULT_LEEWAY_SECS;
 use authkestra_resource::jwt::{
     validate_jwt_generic, validate_jwt_with_resolver, IssuerTrustMap, JwksCache, JwtStrategy,
     ValidationConfig, ValidationError,
@@ -203,6 +204,137 @@ async fn single_audience_builder_validates_like_before() {
         .await
         .expect_err("token with mismatched single audience must be rejected");
     assert!(matches!(err, ValidationError::Jwt(_)));
+}
+
+// --- Issue #350: clock-skew leeway ---
+//
+// `ValidationConfig` inherited `jsonwebtoken`'s 60-second tolerance on `exp`
+// with nothing naming it and no way to change it. It now carries the same
+// `DEFAULT_LEEWAY_SECS` constant `TokenManager` uses, so the two halves of a
+// deployment state the same tolerance instead of both borrowing one.
+
+/// Signs a token whose `exp` is `seconds_ago` in the past.
+fn expired_token(key: &TestKey, seconds_ago: usize) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize;
+    sign_token(
+        &key.encoding_key,
+        Some("kid-1"),
+        &TestClaims {
+            sub: "user-1".to_string(),
+            exp: now - seconds_ago,
+            aud: None,
+        },
+    )
+}
+
+fn validation_with_leeway(leeway: u64) -> Validation {
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+    validation.leeway = leeway;
+    validation
+}
+
+/// The builder defaults to the shared constant rather than to zero — the trap
+/// a plain `u64` field on a `#[derive(Default)]` builder would have set.
+#[test]
+fn the_builder_defaults_leeway_to_the_shared_constant() {
+    let config = ValidationConfig::builder()
+        .jwks_url("https://idp.example.com/jwks")
+        .build();
+    assert_eq!(config.leeway, DEFAULT_LEEWAY_SECS);
+
+    let configured = ValidationConfig::builder()
+        .jwks_url("https://idp.example.com/jwks")
+        .leeway(0)
+        .build();
+    assert_eq!(configured.leeway, 0);
+}
+
+/// The default tolerance accepts a token that has already expired...
+#[tokio::test]
+async fn a_token_expired_within_the_leeway_is_accepted() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+
+    let token = expired_token(&key, 30);
+
+    let validated: TestClaims =
+        validate_jwt_generic(&token, &cache, &validation_with_leeway(DEFAULT_LEEWAY_SECS))
+            .await
+            .expect("the default tolerance should still accept this token");
+    assert_eq!(validated.sub, "user-1");
+}
+
+/// ...and setting the leeway to zero is what makes expiry bite immediately.
+#[tokio::test]
+async fn leeway_zero_rejects_a_token_the_default_would_accept() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+
+    let token = expired_token(&key, 5);
+
+    // Precondition: this is a token the default would let through, so the
+    // rejection below is attributable to the setting and nothing else.
+    validate_jwt_generic::<TestClaims>(
+        &token,
+        &cache,
+        &validation_with_leeway(DEFAULT_LEEWAY_SECS),
+    )
+    .await
+    .expect("precondition: the default tolerance accepts this token");
+
+    let err = validate_jwt_generic::<TestClaims>(&token, &cache, &validation_with_leeway(0))
+        .await
+        .expect_err("with no tolerance an expired token must be refused");
+    assert!(
+        matches!(&err, ValidationError::Jwt(e) if matches!(e.kind(), ErrorKind::ExpiredSignature)),
+        "expected an expiry rejection, got: {err}"
+    );
+}
+
+/// The wiring, end to end through `JwtStrategy`.
+///
+/// The two tests above build a `Validation` by hand, so they would still pass
+/// if `build_validation` stopped copying `config.leeway` across. This one goes
+/// through the strategy, which is the path an application actually takes, so
+/// it fails if the config field is set but never applied.
+#[tokio::test]
+async fn the_strategy_applies_the_configured_leeway() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let token = expired_token(&key, 5);
+
+    async fn authenticate(config: ValidationConfig, token: &str) -> bool {
+        let strategy: JwtStrategy<TestClaims> = JwtStrategy::new(config);
+        let request = Request::builder()
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        matches!(strategy.authenticate(&parts).await, Ok(Some(_)))
+    }
+
+    let default_config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+    assert!(
+        authenticate(default_config, &token).await,
+        "precondition: the default tolerance accepts a token expired 5s ago"
+    );
+
+    let strict_config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .leeway(0)
+        .build();
+    assert!(
+        !authenticate(strict_config, &token).await,
+        "leeway(0) was set on the config but never reached the Validation"
+    );
 }
 
 #[tokio::test]

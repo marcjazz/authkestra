@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use authkestra_engine::token::DEFAULT_LEEWAY_SECS;
 use authkestra_engine::{
     error::AuthError,
     strategy::AuthenticationStrategy,
@@ -342,6 +343,18 @@ pub struct ValidationConfig {
     pub audience: Vec<String>,
     pub algorithms: Vec<Algorithm>,
     pub require_kid: bool,
+    /// Clock-skew allowance applied to `exp` and `nbf`, in seconds.
+    ///
+    /// Defaults to [`DEFAULT_LEEWAY_SECS`] (60) — the same constant
+    /// `TokenManager` uses, so a deployment does not have to discover that
+    /// the two halves of the system agreed on a tolerance neither of them
+    /// stated. Before #350 this was `jsonwebtoken`'s default, applied
+    /// silently and with no way to change it.
+    ///
+    /// Set it to `0` where issuer and validator share a clock, or in tests
+    /// that assert on expiry. Raising it widens the window in which an
+    /// expired token is still honoured.
+    pub leeway: u64,
     /// When `true`, enforce RFC 8705 §3.1 certificate binding: a token
     /// carrying a `cnf.x5t#S256` claim is only accepted if the same
     /// certificate (by SHA-256 thumbprint) was presented on the connection
@@ -431,6 +444,10 @@ pub struct ValidationConfigBuilder {
     audience: Vec<String>,
     algorithms: Vec<Algorithm>,
     require_kid: bool,
+    // `Option`, not a bare `u64`: the builder derives `Default`, where a
+    // `u64` would default to 0 and silently turn the documented 60-second
+    // tolerance into none at all.
+    leeway: Option<u64>,
     require_cert_binding: bool,
     require_dpop: bool,
     dpop_resource_origin: Option<String>,
@@ -524,6 +541,15 @@ impl ValidationConfigBuilder {
     /// [`JwksCache::require_kid`].
     pub fn require_kid(mut self, value: bool) -> Self {
         self.require_kid = value;
+        self
+    }
+
+    /// Sets the clock-skew allowance applied to `exp` and `nbf`, in seconds.
+    ///
+    /// Defaults to [`DEFAULT_LEEWAY_SECS`] (60). See
+    /// [`ValidationConfig::leeway`].
+    pub fn leeway(mut self, seconds: u64) -> Self {
+        self.leeway = Some(seconds);
         self
     }
 
@@ -648,6 +674,7 @@ impl ValidationConfigBuilder {
                 self.algorithms
             },
             require_kid: self.require_kid,
+            leeway: self.leeway.unwrap_or(DEFAULT_LEEWAY_SECS),
             require_cert_binding: self.require_cert_binding,
             require_dpop: self.require_dpop,
             dpop_resource_origin: self.dpop_resource_origin,
@@ -778,6 +805,10 @@ fn build_resolver(config: &ValidationConfig) -> Box<dyn JwksResolver> {
 fn build_validation(config: &ValidationConfig, multi_issuer: bool) -> Validation {
     let mut validation = Validation::new(config.algorithms[0]);
     validation.algorithms = config.algorithms.clone();
+    // Set explicitly rather than left to `jsonwebtoken`'s default, so the
+    // window in which an expired token is still honoured is this crate's
+    // decision and is visible in `ValidationConfig` (#350).
+    validation.leeway = config.leeway;
 
     // `set_issuer` has always taken a slice; the pre-#243 config simply had no
     // way to express more than one name. Every trusted issuer goes in, so a
