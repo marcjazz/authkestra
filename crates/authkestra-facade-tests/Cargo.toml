@@ -26,6 +26,7 @@ publish = false
 authkestra = { path = "../authkestra", features = [
     "session",
     "token",
+    "axum",
     "actix",
     "memory",
     "redis",
@@ -37,6 +38,9 @@ authkestra = { path = "../authkestra", features = [
     "op",
     "devsig",
 ] }
-# Not a workspace crate: needed to name the type the `ActixState` derive
-# generates against, and it masks nothing.
+# None of these are workspace crates, so none of them mask anything. The web
+# frameworks are needed only to name the types the state derives generate
+# against (`FromRef`, `ServiceConfig`); tokio, to run the async tests.
 actix-web = "4"
+axum = "0.8.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

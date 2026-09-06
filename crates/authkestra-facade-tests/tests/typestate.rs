@@ -1,5 +1,21 @@
+//! The typestate builder, driven entirely through the facade.
+//!
+//! `Authkestra::builder()` is the facade's own entry point, so this belongs
+//! with the other facade tests. It moved here from `crates/authkestra/tests/`
+//! for the reason given in this crate's `Cargo.toml`: there it reached
+//! `authkestra_engine::` directly for `Identity` and `MemoryStore`, which
+//! resolved through that crate's dev-dependencies rather than through
+//! anything the facade forwards.
+//!
+//! It was declared `required-features = ["full"]`, yet `full` does not include
+//! `memory` — the store it builds with. It compiled anyway, because the
+//! dev-dependency enabled `memory` regardless. Reaching both types through
+//! `authkestra::core` from here makes the test depend on the `memory`
+//! forwarding it always implicitly relied on.
+
+use authkestra::core::state::Identity;
+use authkestra::core::store::memory::MemoryStore;
 use authkestra::Authkestra;
-use authkestra_engine::state::Identity;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -7,9 +23,7 @@ use std::sync::Arc;
 async fn test_typestate_session_flow() {
     let builder = Authkestra::builder();
     let auth = builder
-        .session_store(Arc::new(
-            authkestra_engine::store::memory::MemoryStore::default(),
-        ))
+        .session_store(Arc::new(MemoryStore::default()))
         .build();
 
     // create_session should be available
@@ -52,9 +66,7 @@ fn test_typestate_token_flow() {
 #[tokio::test]
 async fn test_typestate_full_flow() {
     let auth = Authkestra::builder()
-        .session_store(Arc::new(
-            authkestra_engine::store::memory::MemoryStore::default(),
-        ))
+        .session_store(Arc::new(MemoryStore::default()))
         .jwt_secret(b"secret")
         .build();
 
