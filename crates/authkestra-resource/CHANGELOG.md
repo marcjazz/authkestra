@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.9.1...authkestra-resource-v0.9.2) - 2026-09-06
+
+### Fixed
+
+- *(resource)* verify tokens under a multi-family algorithm policy ([#340](https://github.com/marcjazz/authkestra/pull/340))
+
 ## [0.7.1](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.7.0...authkestra-resource-v0.7.1) - 2026-09-01
 
 ### Added
