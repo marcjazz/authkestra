@@ -388,9 +388,50 @@ async fn algorithms_come_from_discovery_not_the_rs256_fallback() {
         .await
         .expect_err("an RS256 token must be rejected when discovery advertises only ES256");
     assert!(
-        err.to_string().contains("InvalidAlgorithm"),
-        "expected an InvalidAlgorithm rejection, got: {err}"
+        err.to_string().contains("RS256") && err.to_string().contains("ES256"),
+        "expected a rejection naming both the token's algorithm and the accepted set, got: {err}"
     );
+}
+
+/// Issue #335: Keycloak advertises every algorithm it knows in
+/// `id_token_signing_alg_values_supported` — twelve of them, spanning the
+/// HMAC, RSA, EC and Ed key families — and signs with RS256. Because
+/// `jsonwebtoken` requires the *whole* accepted list to match the verifying
+/// key's family, the discovery-derived policy rejected every one of those ID
+/// tokens with a bare `InvalidAlgorithm`, making the provider unusable against
+/// a stock Keycloak realm.
+#[tokio::test]
+async fn keycloak_shaped_multi_family_discovery_list_verifies_an_rs256_id_token() {
+    let mock_server = MockServer::start().await;
+    let (provider, key) = setup_provider_advertising(
+        &mock_server,
+        "test_client",
+        Some(json!([
+            "PS384", "RS384", "EdDSA", "ES384", "HS256", "HS512", "ES256", "RS256", "HS384",
+            "PS256", "PS512", "RS512"
+        ])),
+    )
+    .await;
+
+    let claims = TestClaims {
+        sub: "user-123".to_string(),
+        iss: mock_server.uri(),
+        aud: "test_client".into(),
+        exp: future_exp(),
+        azp: None,
+        email: None,
+        name: None,
+        picture: None,
+        nonce: None,
+    };
+    let id_token = sign_claims(&key.encoding_key, "kid-1", &claims);
+    mount_token_response(&mock_server, &id_token).await;
+
+    let (identity, _token) = provider
+        .exchange_code_for_identity("code123", None, None)
+        .await
+        .expect("an RS256 ID token must verify against a Keycloak-shaped algorithm list");
+    assert_eq!(identity.external_id, "user-123");
 }
 
 /// A discovery document that omits `id_token_signing_alg_values_supported`

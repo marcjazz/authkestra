@@ -1400,3 +1400,126 @@ async fn default_client_does_not_carry_the_injected_configuration() {
          passes, the header is not actually discriminating and the sibling test proves nothing"
     );
 }
+
+/// The twelve algorithms Keycloak advertises in
+/// `id_token_signing_alg_values_supported`, in the order a realm returns them —
+/// four key families in one list.
+fn keycloak_signing_algs() -> Vec<Algorithm> {
+    vec![
+        Algorithm::PS384,
+        Algorithm::RS384,
+        Algorithm::EdDSA,
+        Algorithm::ES384,
+        Algorithm::HS256,
+        Algorithm::HS512,
+        Algorithm::ES256,
+        Algorithm::RS256,
+        Algorithm::HS384,
+        Algorithm::PS256,
+        Algorithm::PS512,
+        Algorithm::RS512,
+    ]
+}
+
+/// Issue #335: a validation policy naming more than one key family — which is
+/// exactly what an OIDC discovery document yields — must still verify a token
+/// signed with one of the algorithms it lists.
+///
+/// `jsonwebtoken` requires every entry of `Validation::algorithms` to match the
+/// verifying key's family, not just the header's `alg`, so before the fix this
+/// list rejected every token from every Keycloak deployment with a bare
+/// `InvalidAlgorithm`.
+#[tokio::test]
+async fn multi_family_algorithm_policy_verifies_a_token_from_one_of_its_families() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(300));
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.algorithms = keycloak_signing_algs();
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+
+    let validated: TestClaims = validate_jwt_generic(&token, &cache, &validation)
+        .await
+        .expect("an RS256 token must verify against the RS256 key that signed it");
+    assert_eq!(validated.sub, "user-1");
+}
+
+/// Narrowing the policy to the header's family must not turn it into "any
+/// algorithm goes": an algorithm the caller never listed is still refused.
+#[tokio::test]
+async fn rejects_an_algorithm_the_policy_does_not_list() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(300));
+
+    // A policy that accepts EC and Ed only — the token below is neither.
+    let mut validation = Validation::new(Algorithm::ES256);
+    validation.algorithms = vec![Algorithm::ES256, Algorithm::ES384, Algorithm::EdDSA];
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+
+    let err = validate_jwt_generic::<TestClaims>(&token, &cache, &validation)
+        .await
+        .expect_err("RS256 is not in the policy and must be rejected");
+    assert!(
+        matches!(&err, ValidationError::InvalidToken(msg) if msg.contains("RS256")),
+        "expected an unaccepted-algorithm rejection naming RS256, got: {err}"
+    );
+}
+
+/// The classic algorithm-confusion attack: the attacker takes the *public* RSA
+/// key from the JWKS, uses its bytes as an HMAC secret, and presents an
+/// `HS256`-signed token. Keycloak's advertised list contains both `RS256` and
+/// `HS256`, so narrowing to the header's family leaves `HS256` in the policy —
+/// the attack must be stopped by the key's own family check instead, before the
+/// public key ever reaches an HMAC verifier.
+#[tokio::test]
+async fn rejects_hmac_token_verified_against_an_rsa_jwks_key() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(300));
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.algorithms = keycloak_signing_algs();
+    validation.validate_aud = false;
+
+    // Sign with the published modulus as the shared secret — everything the
+    // attacker needs is in the JWKS.
+    let public_bytes = URL_SAFE_NO_PAD
+        .decode(key.jwk.n.as_ref().expect("RSA JWK carries 'n'"))
+        .expect("'n' is base64url");
+    let mut header = Header::new(Algorithm::HS256);
+    header.kid = Some("kid-1".to_string());
+    let forged = encode(
+        &header,
+        &TestClaims {
+            sub: "attacker".to_string(),
+            exp: future_exp(),
+            aud: None,
+        },
+        &EncodingKey::from_secret(&public_bytes),
+    )
+    .expect("failed to forge token");
+
+    let err = validate_jwt_generic::<TestClaims>(&forged, &cache, &validation)
+        .await
+        .expect_err("an HS256 token must never be verified with an RSA JWKS key");
+    assert!(
+        matches!(&err, ValidationError::Jwt(e) if matches!(e.kind(), ErrorKind::InvalidKeyFormat)),
+        "expected the RSA key to be refused by the HMAC verifier, got: {err}"
+    );
+}
