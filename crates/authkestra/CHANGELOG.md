@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-v0.9.2...authkestra-v0.9.3) - 2026-09-07
+
+### Added
+
+- *(facade)* forward the sub-crate features the facade never exposed ([#347](https://github.com/marcjazz/authkestra/pull/347))
+
+### Other
+
+- *(facade)* move the facade tests where they can actually fail ([#348](https://github.com/marcjazz/authkestra/pull/348))
+
 ## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-v0.7.2...authkestra-v0.8.0) - 2026-09-03
 
 ### Other

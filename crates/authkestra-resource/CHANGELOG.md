@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.9.2...authkestra-resource-v0.9.3) - 2026-09-07
+
+### Added
+
+- instrument the token-validation path, and fix flaky log-capture tests ([#358](https://github.com/marcjazz/authkestra/pull/358))
+- *(engine)* name and expose the clock-skew leeway JWT validation applies ([#351](https://github.com/marcjazz/authkestra/pull/351))
+
 ## [0.9.2](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.9.1...authkestra-resource-v0.9.2) - 2026-09-06
 
 ### Fixed
