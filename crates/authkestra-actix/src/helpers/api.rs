@@ -400,6 +400,16 @@ pub async fn handle_oauth_callback_jwt_erased(
             actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
         })?;
 
+    // Also emitted by the session callback above. On `authkestra-axum` one
+    // shared `finalize_callback_erased` covers both callbacks, so it cannot
+    // be present in one and missing from the other; here it has to be
+    // written twice. It was missing from this copy until a diff of the two
+    // blocks caught it, which is the drift #356 exists to remove.
+    tracing::debug!(
+        external_id = %identity.external_id,
+        "OAuth callback validated and exchanged for an identity"
+    );
+
     let user_id = identity.external_id.clone();
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None, None)
