@@ -62,7 +62,7 @@ pub async fn handle_authorize(
     let client = match op_store.find_client(&req.client_id).await {
         Ok(Some(client)) => client,
         Ok(None) => {
-            tracing::warn!(client_id = %req.client_id, "Unknown client ID requested");
+            tracing::error!(client_id = %req.client_id, "Unknown client ID requested");
             return AuthorizeOutcome::DirectError(OpError::UnknownClient(req.client_id));
         }
         Err(e) => {
@@ -127,7 +127,7 @@ pub async fn handle_authorize(
 
     // 4. Check response_type == "code"
     if req.response_type != "code" {
-        tracing::warn!(
+        tracing::debug!(
             client_id = %req.client_id,
             response_type = %req.response_type,
             "Unsupported response type requested"
@@ -140,7 +140,7 @@ pub async fn handle_authorize(
 
     // 5. Check client allows AuthorizationCode grant type
     if !client.allows_grant_type(&GrantType::AuthorizationCode) {
-        tracing::warn!(
+        tracing::error!(
             client_id = %req.client_id,
             "Client is not permitted to use the authorization code grant"
         );
@@ -155,11 +155,11 @@ pub async fn handle_authorize(
     // does not grandfather in confidential clients or any other exemption,
     // and per-client opt-out was the exact gap #273 closes.
     if req.code_challenge.is_none() {
-        tracing::warn!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
+        tracing::debug!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
         return error_redirect("invalid_request", "code_challenge is required");
     }
     if req.code_challenge_method.as_deref() != Some("S256") {
-        tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
+        tracing::debug!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
         return error_redirect("invalid_request", "code_challenge_method must be S256");
     }
 
@@ -235,6 +235,63 @@ mod tests {
             email: None,
             username: None,
             attributes: std::collections::HashMap::new(),
+        }
+    }
+
+    /// #353 tier 4: the authorize endpoint's grant-authorization check had no
+    /// test, so changing its log level surfaced it as uncovered. It is the
+    /// same security property the token endpoint enforces — a client may only
+    /// use the grants it is registered for — and belongs at `error!` because
+    /// the registration is what has to change.
+    #[tokio::test]
+    async fn a_client_not_registered_for_the_code_grant_is_refused() {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        #[allow(deprecated)] // `require_pkce` (authkestra#273) — not exercised here
+        clients
+            .set(
+                "client1",
+                crate::client::ClientRegistration {
+                    client_id: "client1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    // Registered for a different grant entirely.
+                    grant_types: vec![crate::client::GrantType::ClientCredentials],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: false,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(3600),
+            )
+            .await
+            .unwrap();
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+
+        let req = AuthorizeRequest {
+            client_id: "client1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid".to_string(),
+            state: None,
+            code_challenge: Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            nonce: None,
+        };
+
+        let outcome = handle_authorize(req, test_identity(), &test_config(), &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
+
+        // Redirected with an error rather than refused directly: the
+        // redirect_uri was validated first, so the client learns why.
+        match outcome {
+            AuthorizeOutcome::Redirect(url) => assert!(
+                url.contains("unauthorized_client"),
+                "expected an unauthorized_client error redirect, got {url}"
+            ),
+            other => panic!("expected an error redirect, got {other:?}"),
         }
     }
 
