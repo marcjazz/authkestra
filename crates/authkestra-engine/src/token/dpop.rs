@@ -166,6 +166,57 @@ pub fn verify_dpop_proof(
     expected_ath: Option<&str>,
     max_age: chrono::Duration,
 ) -> Result<VerifiedDpopProof, DpopError> {
+    // Logged once here rather than at each of the eleven rejection points
+    // inside. Every `DpopError` variant already names the check that failed
+    // — `WrongHtm`, `WrongHtu`, `Stale`, `AthMismatch`, `JtiTooLong(n)`,
+    // `UnsupportedAlgorithm(alg)` — so one line at the boundary carries the
+    // same information as eleven near-identical ones, and cannot drift out
+    // of step with the checks the way per-site logging does. Callers see
+    // only that verification failed (the adapters map every variant onto one
+    // `invalid_dpop_proof` response, deliberately), so without this the
+    // reason existed nowhere at all (#353).
+    //
+    // `compact_jws` is never logged: the proof is a credential.
+    let outcome = verify_dpop_proof_inner(
+        compact_jws,
+        expected_htm,
+        expected_htu,
+        expected_ath,
+        max_age,
+    );
+    // Computed once outside the fields rather than inline in both arms. A
+    // call inside a `tracing` field expands into regions that no test can
+    // fully execute, so it reads as permanently uncovered however well the
+    // function is exercised; a plain binding is both covered and used twice.
+    let ath_bound = expected_ath.is_some();
+    match &outcome {
+        Ok(proof) => tracing::debug!(
+            jti = %proof.jti,
+            htm = %expected_htm,
+            htu = ?expected_htu,
+            ath_bound,
+            "DPoP proof verified"
+        ),
+        Err(error) => tracing::warn!(
+            %error,
+            htm = %expected_htm,
+            htu = ?expected_htu,
+            ath_bound,
+            "DPoP proof rejected"
+        ),
+    }
+    outcome
+}
+
+/// The verification itself. Split out so [`verify_dpop_proof`] can report the
+/// outcome in one place; see the comment there.
+fn verify_dpop_proof_inner(
+    compact_jws: &str,
+    expected_htm: &str,
+    expected_htu: Option<&str>,
+    expected_ath: Option<&str>,
+    max_age: chrono::Duration,
+) -> Result<VerifiedDpopProof, DpopError> {
     let mut parts = compact_jws.split('.');
     let header_b64 = parts
         .next()
@@ -912,6 +963,67 @@ mod tests {
         assert_eq!(
             compute_jwk_thumbprint(&jwk).unwrap(),
             "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+        );
+    }
+
+    /// #353: the adapters map every `DpopError` onto a single
+    /// `invalid_dpop_proof` response, so before this the reason a proof was
+    /// refused existed nowhere at all. The reason is reported once at the
+    /// boundary, and this asserts it actually says which check failed.
+    ///
+    /// Installing a subscriber also makes the instrumentation genuinely run:
+    /// `tracing` skips its field expressions entirely when none is present,
+    /// so without this the fields are never evaluated by any test.
+    #[test]
+    fn a_rejected_proof_reports_which_check_failed() {
+        let proof = ProofBuilder::new().build();
+
+        let (result, logs) = crate::test_support::capture(|| {
+            // Signed for POST, presented as GET.
+            verify_dpop_proof(&proof, "GET", None, None, chrono::Duration::seconds(60))
+        });
+
+        assert!(matches!(result, Err(DpopError::WrongHtm)));
+        assert!(
+            logs.contains("DPoP proof rejected"),
+            "the rejection should be reported; got:\n{logs}"
+        );
+        // `%error` renders `DpopError`'s `Display`, so the line carries the
+        // reason in prose rather than as a variant name — which is what an
+        // operator wants, and is the whole point of logging it here.
+        assert!(
+            logs.contains("htm does not match the request method"),
+            "the log must name the check that failed, not just that one did; got:\n{logs}"
+        );
+        assert!(
+            !logs.contains(&proof),
+            "the proof is a credential and must never be logged:\n{logs}"
+        );
+    }
+
+    /// The accepting side of the same boundary.
+    #[test]
+    fn an_accepted_proof_is_logged_at_debug_without_the_proof_itself() {
+        let proof = ProofBuilder::new().build();
+
+        let (result, logs) = crate::test_support::capture(|| {
+            verify_dpop_proof(
+                &proof,
+                "POST",
+                Some("https://as.example.com/token"),
+                None,
+                chrono::Duration::seconds(60),
+            )
+        });
+
+        assert!(result.is_ok(), "the fixture must produce a valid proof");
+        assert!(
+            logs.contains("DPoP proof verified"),
+            "a successful verification should be visible at debug; got:\n{logs}"
+        );
+        assert!(
+            !logs.contains(&proof),
+            "the proof must never be logged:\n{logs}"
         );
     }
 }
