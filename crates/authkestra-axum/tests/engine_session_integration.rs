@@ -503,3 +503,94 @@ async fn a_registered_provider_still_redirects() {
 
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 }
+
+// --- OAuth callback failure diagnosis (#353) ---
+//
+// The three ways a callback can fail — no state cookie, a state cookie that
+// will not decrypt, a provider exchange that fails — all return 401 with a
+// message the client sees. Nothing distinguished them in the logs, so an
+// operator could not tell a browser `SameSite` problem from a rotated
+// `state_encryption_key`. These assert they now read differently.
+
+/// Accumulates emitted `tracing` output so a test can assert on it.
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// Drives a callback carrying `state_cookie` (if any) and returns the status
+/// alongside everything logged while doing it.
+async fn callback_with_state(state_cookie: Option<&str>) -> (StatusCode, String) {
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .without_time()
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let app = build_app();
+    let mut request = Request::builder().uri("/auth/callback/mock?code=valid-code&state=whatever");
+    if let Some(cookie) = state_cookie {
+        request = request.header(header::COOKIE, format!("ak_state={cookie}"));
+    }
+    let resp = app
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let logs = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    (status, logs)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_callback_with_no_state_cookie_says_so() {
+    let (status, logs) = callback_with_state(None).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        logs.contains("carries no state cookie"),
+        "an absent state cookie should be named as such; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("could not be decrypted"),
+        "an absent cookie must not be reported as an undecryptable one:\n{logs}"
+    );
+}
+
+/// The case worth separating: this is what a rotated `state_encryption_key`
+/// looks like, and it is indistinguishable from the one above over HTTP.
+#[tokio::test(flavor = "current_thread")]
+async fn a_callback_whose_state_cookie_will_not_decrypt_says_so() {
+    let (status, logs) = callback_with_state(Some("not-a-valid-encrypted-state")).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        logs.contains("could not be decrypted"),
+        "an unreadable state cookie should be named as such; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("state encryption key"),
+        "the log should point at key rotation, which is the usual cause; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("carries no state cookie"),
+        "a present-but-unreadable cookie must not be reported as absent:\n{logs}"
+    );
+}
