@@ -14,9 +14,11 @@
 //! drifting back the next time a call site is added.
 
 use super::*;
+use crate::client::{ClientRegistration, GrantType};
 use crate::handlers::token::tests::{test_config, test_tokens};
 use crate::store::CompositeOpStore;
 use authkestra_engine::store::memory::MemoryStore;
+use authkestra_engine::store::KvStore;
 use std::cell::RefCell;
 use std::io;
 use std::sync::{Arc, Mutex, Once};
@@ -57,6 +59,32 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ThreadSink {
 
 static INSTALL: Once = Once::new();
 
+/// A public client permitted the refresh-token grant, so a request can get
+/// past client resolution and authentication and reach a later branch.
+async fn registered_client() -> MemoryStore<ClientRegistration> {
+    let clients = MemoryStore::<ClientRegistration>::new();
+    #[allow(deprecated)] // `require_pkce` (authkestra#273) — not exercised here
+    clients
+        .set(
+            "client1",
+            ClientRegistration {
+                client_id: "client1".to_string(),
+                client_secret_hash: None,
+                redirect_uris: vec![],
+                grant_types: vec![GrantType::RefreshToken],
+                scopes: vec![],
+                require_pkce: false,
+                allowed_audiences: vec![],
+                token_endpoint_auth_method: None,
+                jwks: None,
+            },
+            std::time::Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+    clients
+}
+
 async fn capture_token_request(req: TokenRequest) -> String {
     INSTALL.call_once(|| {
         let _ = tracing_subscriber::fmt()
@@ -70,7 +98,7 @@ async fn capture_token_request(req: TokenRequest) -> String {
     SINK.with(|sink| *sink.borrow_mut() = Some(Arc::clone(&buffer)));
 
     let mut store = CompositeOpStore::new(
-        MemoryStore::<authkestra_engine::oauth2::client::ClientRegistration>::new(),
+        registered_client().await,
         MemoryStore::<crate::code::AuthorizationCode>::new(),
         MemoryStore::<crate::refresh::RefreshToken>::new(),
         MemoryStore::<crate::device::DeviceCodeSession>::new(),
@@ -130,13 +158,33 @@ async fn a_malformed_request_does_not_warn() {
     );
 }
 
-/// And an unsupported grant type, the other shape of the same thing.
+/// A second debug case, and one that has to travel: a request naming the
+/// refresh-token grant with no `refresh_token` in it. This gets past client
+/// resolution and authentication and reaches the refresh handler, so unlike
+/// the case above it exercises a branch deep in the flow.
+///
+/// The first version of this test used an unsupported grant type instead, and
+/// was worthless twice over. It carried no `client_id`, so it was rejected as
+/// `invalid_client` before grant dispatch and re-tested the case above — and
+/// had it reached the dispatch it would have *failed*, because an
+/// unregistered custom grant logs "Client not authorized for custom grant",
+/// which this same change classifies as `error!`. The premise was wrong, not
+/// just the fixture: an unsupported grant type is a determined authorization
+/// refusal, not a client's malformed request.
 #[tokio::test]
-async fn an_unsupported_grant_type_does_not_warn() {
-    let logs = capture_token_request(bare_request("urn:example:no-such-grant")).await;
+async fn a_missing_grant_parameter_does_not_warn() {
+    let mut req = bare_request("refresh_token");
+    req.client_id = Some("client1".to_string());
+
+    let logs = capture_token_request(req).await;
 
     assert!(
-        !logs.contains("WARN"),
-        "an unsupported grant type is a client mistake, not an operator's:\n{logs}"
+        logs.contains("Missing refresh_token in request"),
+        "the request must actually reach the refresh handler, not be refused \
+         earlier — otherwise this asserts nothing; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("WARN") && !logs.contains("ERROR"),
+        "an incomplete request is the client's own bug:\n{logs}"
     );
 }
