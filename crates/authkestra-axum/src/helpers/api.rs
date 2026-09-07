@@ -68,6 +68,16 @@ pub fn initiate_oauth_login(
 
     cookies.add(cookie);
 
+    // Bound above the event rather than computed in the fields: a call inside
+    // a `tracing` field expands into regions no test can fully execute, so it
+    // reads as permanently uncovered however well the function is exercised.
+    let scope_count = scopes.len();
+    let has_success_url = auth_state.success_url.is_some();
+    tracing::debug!(
+        scopes = scope_count,
+        has_success_url,
+        "issued an OAuth authorization redirect and set the state cookie"
+    );
     Redirect::to(&url)
 }
 
@@ -84,6 +94,11 @@ async fn finalize_callback_erased(
         .get(cookie_name)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
+            // No cookie at all, which is usually the browser rather than the
+            // user: a `SameSite`/`Secure` mismatch, or a callback arriving
+            // after the fifteen-minute lifetime. Distinct from a cookie that
+            // arrived and could not be read, below.
+            tracing::warn!("OAuth callback carries no state cookie; cannot validate CSRF");
             (
                 StatusCode::UNAUTHORIZED,
                 "CSRF validation failed or session expired".to_string(),
@@ -92,6 +107,15 @@ async fn finalize_callback_erased(
 
     let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
         .map_err(|e| {
+            // The cookie arrived but would not decrypt. The reason worth
+            // separating from the case above: a rotated
+            // `state_encryption_key` fails every in-flight login exactly
+            // like this, and nothing else in the system would say so.
+            tracing::warn!(
+                error = %e,
+                "OAuth state cookie could not be decrypted; if the state encryption key \
+                 was rotated, logins started before the rotation will all fail this way"
+            );
             (
                 StatusCode::UNAUTHORIZED,
                 format!("Invalid state cookie: {e}"),
@@ -109,12 +133,18 @@ async fn finalize_callback_erased(
         .finalize_login(&params.code, &params.state, &expected_state)
         .await
         .map_err(|e| {
+            // The state checked out; the provider exchange is what failed.
+            tracing::warn!(error = %e, "OAuth code exchange failed after state validation");
             (
                 StatusCode::UNAUTHORIZED,
                 format!("Authentication failed: {e}"),
             )
         })?;
 
+    tracing::debug!(
+        external_id = %identity.external_id,
+        "OAuth callback validated and exchanged for an identity"
+    );
     Ok((identity, token, expected_state))
 }
 
@@ -154,12 +184,16 @@ pub async fn handle_oauth_callback_erased(
         chrono::Utc::now() + session_duration,
     );
 
+    let session_id = session.id.clone();
+    let user_id = session.identity.external_id.clone();
     store.save_session(&session).await.map_err(|e| {
+        tracing::error!(error = %e, "failed to persist the session after a successful login");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to save session: {e}"),
         )
     })?;
+    tracing::info!(%session_id, %user_id, "OAuth login completed; session created");
 
     let cookie = create_axum_cookie(&config, session.id);
     cookies.add(cookie);
@@ -198,14 +232,26 @@ pub async fn handle_oauth_callback_jwt_erased(
     let (identity, _token, _auth_state) =
         finalize_callback_erased(flow, &cookies, &params, &config).await?;
 
+    let user_id = identity.external_id.clone();
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None, None)
+        // Not covered by a test, deliberately: signing with a fixed secret
+        // has no reachable failure mode, so exercising this would mean
+        // contriving one. Logged rather than dropped because if it ever does
+        // fire, the login has failed for a reason nothing else would explain.
         .map_err(|e| {
+            tracing::error!(error = %e, "failed to issue a token after a successful login");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Token error: {e}"),
             )
         })?;
+    // The token itself is a credential and is not logged.
+    tracing::info!(
+        %user_id,
+        expires_in_secs,
+        "OAuth login completed; token issued"
+    );
 
     Ok(Json(serde_json::json!({
         "access_token": jwt,
@@ -254,10 +300,16 @@ pub async fn logout(
         .map(|c| c.value().to_string());
 
     if let Some(id) = session_id {
-        store
-            .delete_session(&id)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        store.delete_session(&id).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to delete the session during logout");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
+        tracing::info!(session_id = %id, "session deleted on logout");
+    } else {
+        // Still clears the cookie below, so this is a no-op logout rather
+        // than an error — worth saying, since it looks like a failure to
+        // anyone reading a support ticket.
+        tracing::debug!("logout with no session cookie present; clearing the cookie anyway");
     }
 
     let mut cookie = create_axum_cookie(&config, "".to_string());

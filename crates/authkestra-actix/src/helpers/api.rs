@@ -114,6 +114,16 @@ pub fn initiate_oauth_login_erased(
     // means. `authkestra-axum` sends 303 here too — `Redirect::to` is 303 —
     // and the two adapters must not disagree on the status code for the same
     // request. See issue #320 for the class of bug that causes.
+    // Bound above the event rather than computed in the fields: a call inside
+    // a `tracing` field expands into regions no test can fully execute, so it
+    // reads as permanently uncovered however well the function is exercised.
+    let scope_count = scopes.len();
+    let has_success_url = auth_state.success_url.is_some();
+    tracing::debug!(
+        scopes = scope_count,
+        has_success_url,
+        "issued an OAuth authorization redirect and set the state cookie"
+    );
     HttpResponse::SeeOther()
         .insert_header((header::LOCATION, url))
         .cookie(cookie)
@@ -151,17 +161,40 @@ pub async fn handle_oauth_callback_erased(
         .cookie(cookie_name)
         .map(|c: Cookie| c.value().to_string())
         .ok_or_else(|| {
+            // No cookie at all, which is usually the browser rather than the
+            // user: a `SameSite`/`Secure` mismatch, or a callback arriving
+            // after the fifteen-minute lifetime.
+            tracing::warn!("OAuth callback carries no state cookie; cannot validate CSRF");
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
         })?;
 
     let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
-        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}")))?;
+        .map_err(|e| {
+            // The cookie arrived but would not decrypt. A rotated
+            // `state_encryption_key` fails every in-flight login exactly
+            // like this, and nothing else in the system would say so.
+            tracing::warn!(
+                error = %e,
+                "OAuth state cookie could not be decrypted; if the state encryption key \
+                 was rotated, logins started before the rotation will all fail this way"
+            );
+            actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}"))
+        })?;
 
     // Exchange code
     let (mut identity, token) = flow
         .finalize_login(&params.code, &params.state, &expected_state)
         .await
-        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
+        .map_err(|e| {
+            // The state checked out; the provider exchange is what failed.
+            tracing::warn!(error = %e, "OAuth code exchange failed after state validation");
+            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
+        })?;
+
+    tracing::debug!(
+        external_id = %identity.external_id,
+        "OAuth callback validated and exchanged for an identity"
+    );
 
     // Store tokens in identity attributes for convenience
     identity
@@ -185,9 +218,13 @@ pub async fn handle_oauth_callback_erased(
         chrono::Utc::now() + session_duration,
     );
 
+    let session_id = session.id.clone();
+    let user_id = session.identity.external_id.clone();
     store.save_session(&session).await.map_err(|e| {
+        tracing::error!(error = %e, "failed to persist the session after a successful login");
         actix_web::error::ErrorInternalServerError(format!("Failed to save session: {e}"))
     })?;
+    tracing::info!(%session_id, %user_id, "OAuth login completed; session created");
 
     let cookie = create_actix_cookie(&config, session.id);
 
@@ -298,10 +335,15 @@ pub async fn logout(
         .map(|c: Cookie| c.value().to_string());
 
     if let Some(id) = session_id {
-        store
-            .delete_session(&id)
-            .await
-            .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+        store.delete_session(&id).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to delete the session during logout");
+            actix_web::error::ErrorInternalServerError(e.to_string())
+        })?;
+        tracing::info!(session_id = %id, "session deleted on logout");
+    } else {
+        // Still clears the cookie below, so this is a no-op logout rather
+        // than an error.
+        tracing::debug!("logout with no session cookie present; clearing the cookie anyway");
     }
 
     let remove_cookie = create_actix_cookie(&config, "".to_string());
@@ -328,21 +370,49 @@ pub async fn handle_oauth_callback_jwt_erased(
         .cookie(cookie_name)
         .map(|c: Cookie| c.value().to_string())
         .ok_or_else(|| {
+            // No cookie at all, which is usually the browser rather than the
+            // user: a `SameSite`/`Secure` mismatch, or a callback arriving
+            // after the fifteen-minute lifetime.
+            tracing::warn!("OAuth callback carries no state cookie; cannot validate CSRF");
             actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
         })?;
 
     let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
-        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}")))?;
+        .map_err(|e| {
+            // The cookie arrived but would not decrypt. A rotated
+            // `state_encryption_key` fails every in-flight login exactly
+            // like this, and nothing else in the system would say so.
+            tracing::warn!(
+                error = %e,
+                "OAuth state cookie could not be decrypted; if the state encryption key \
+                 was rotated, logins started before the rotation will all fail this way"
+            );
+            actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}"))
+        })?;
 
     // Exchange code
     let (identity, _token) = flow
         .finalize_login(&params.code, &params.state, &expected_state)
         .await
-        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
+        .map_err(|e| {
+            // The state checked out; the provider exchange is what failed.
+            tracing::warn!(error = %e, "OAuth code exchange failed after state validation");
+            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
+        })?;
 
+    let user_id = identity.external_id.clone();
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None, None)
-        .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Token error: {e}")))?;
+        // Not covered by a test, deliberately: signing with a fixed secret
+        // has no reachable failure mode, so exercising this would mean
+        // contriving one. Logged rather than dropped because if it ever does
+        // fire, the login has failed for a reason nothing else would explain.
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to issue a token after a successful login");
+            actix_web::error::ErrorInternalServerError(format!("Token error: {e}"))
+        })?;
+    // The token itself is a credential and is not logged.
+    tracing::info!(%user_id, expires_in_secs, "OAuth login completed; token issued");
 
     let mut res = HttpResponse::Ok();
 

@@ -213,3 +213,164 @@ async fn protected_route_rejects_garbage_bearer_token() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+// --- Stateless callback failure diagnosis (#353) ---
+//
+// These exist for this adapter specifically. `authkestra-axum` routes both
+// its session and JWT callbacks through one `finalize_callback_erased`, so a
+// single test covers the state-cookie failures for both. This crate holds two
+// copies of that block — one per callback — so the stateless copy needs its
+// own tests, and would otherwise be the half that drifts.
+
+/// Accumulates emitted `tracing` output so a test can assert on it.
+#[derive(Clone, Default)]
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// Drives the stateless callback carrying `state_cookie` (if any).
+async fn stateless_callback_with_state(state_cookie: Option<&str>) -> (StatusCode, String) {
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .without_time()
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let engine = build_engine();
+    let state = AppState {
+        auth: engine.clone(),
+    };
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(move |cfg| state.configure_authkestra(cfg))
+            .service(engine.actix_scope_stateless()),
+    )
+    .await;
+
+    let mut req =
+        test::TestRequest::get().uri("/auth/callback/mock?code=valid-code&state=whatever");
+    if let Some(cookie) = state_cookie {
+        req = req.cookie(actix_web::cookie::Cookie::new("ak_state", cookie));
+    }
+    let resp = test::call_service(&app, req.to_request()).await;
+
+    let status = resp.status();
+    let logs = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    (status, logs)
+}
+
+#[actix_web::test]
+async fn a_stateless_callback_with_no_state_cookie_says_so() {
+    let (status, logs) = stateless_callback_with_state(None).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        logs.contains("carries no state cookie"),
+        "an absent state cookie should be named as such; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("could not be decrypted"),
+        "an absent cookie must not be reported as an undecryptable one:\n{logs}"
+    );
+}
+
+/// The rotated-key shape, on the stateless path.
+#[actix_web::test]
+async fn a_stateless_callback_whose_state_cookie_will_not_decrypt_says_so() {
+    let (status, logs) = stateless_callback_with_state(Some("not-a-valid-encrypted-state")).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        logs.contains("could not be decrypted"),
+        "an unreadable state cookie should be named as such; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("state encryption key"),
+        "the log should point at key rotation, which is the usual cause; got:\n{logs}"
+    );
+}
+
+/// The third failure mode on the stateless path: state validated, provider
+/// refused the code. The session path has an equivalent test already; this
+/// copy of the block needs its own, which is the cost of duplicating it.
+#[actix_web::test]
+async fn a_stateless_callback_whose_code_exchange_fails_says_so() {
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .without_time()
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let engine = build_engine();
+    let state = AppState {
+        auth: engine.clone(),
+    };
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(move |cfg| state.configure_authkestra(cfg))
+            .service(engine.actix_scope_stateless()),
+    )
+    .await;
+
+    // A real login, so the state cookie and CSRF value genuinely agree and
+    // the request reaches the exchange rather than failing before it.
+    let login_resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/auth/login/mock")
+            .to_request(),
+    )
+    .await;
+    let ak_state = set_cookie_value(&login_resp, "ak_state").expect("login sets ak_state");
+    let csrf_state = login_resp
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|l| l.to_str().ok())
+        .and_then(|l| l.split("state=").nth(1))
+        .expect("the redirect carries a state parameter")
+        .to_string();
+
+    // The mock provider accepts only "valid-code".
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!(
+                "/auth/callback/mock?code=wrong-code&state={csrf_state}"
+            ))
+            .cookie(actix_web::cookie::Cookie::new("ak_state", ak_state))
+            .to_request(),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let logs = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    assert!(
+        logs.contains("code exchange failed after state validation"),
+        "a provider refusal must be distinguishable from a state failure; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("carries no state cookie") && !logs.contains("could not be decrypted"),
+        "the state checked out, so neither state failure should be reported:\n{logs}"
+    );
+}

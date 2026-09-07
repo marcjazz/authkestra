@@ -517,6 +517,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -544,6 +545,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

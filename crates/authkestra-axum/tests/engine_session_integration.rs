@@ -503,3 +503,240 @@ async fn a_registered_provider_still_redirects() {
 
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 }
+
+// --- OAuth callback failure diagnosis (#353) ---
+//
+// The three ways a callback can fail — no state cookie, a state cookie that
+// will not decrypt, a provider exchange that fails — all return 401 with a
+// message the client sees. Nothing distinguished them in the logs, so an
+// operator could not tell a browser `SameSite` problem from a rotated
+// `state_encryption_key`. These assert they now read differently.
+
+/// Accumulates emitted `tracing` output so a test can assert on it.
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// Drives a callback carrying `state_cookie` (if any) and returns the status
+/// alongside everything logged while doing it.
+async fn callback_with_state(state_cookie: Option<&str>) -> (StatusCode, String) {
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .without_time()
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let app = build_app();
+    let mut request = Request::builder().uri("/auth/callback/mock?code=valid-code&state=whatever");
+    if let Some(cookie) = state_cookie {
+        request = request.header(header::COOKIE, format!("ak_state={cookie}"));
+    }
+    let resp = app
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let logs = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    (status, logs)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_callback_with_no_state_cookie_says_so() {
+    let (status, logs) = callback_with_state(None).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        logs.contains("carries no state cookie"),
+        "an absent state cookie should be named as such; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("could not be decrypted"),
+        "an absent cookie must not be reported as an undecryptable one:\n{logs}"
+    );
+}
+
+/// The case worth separating: this is what a rotated `state_encryption_key`
+/// looks like, and it is indistinguishable from the one above over HTTP.
+#[tokio::test(flavor = "current_thread")]
+async fn a_callback_whose_state_cookie_will_not_decrypt_says_so() {
+    let (status, logs) = callback_with_state(Some("not-a-valid-encrypted-state")).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        logs.contains("could not be decrypted"),
+        "an unreadable state cookie should be named as such; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("state encryption key"),
+        "the log should point at key rotation, which is the usual cause; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("carries no state cookie"),
+        "a present-but-unreadable cookie must not be reported as absent:\n{logs}"
+    );
+}
+
+/// A session store that refuses every write, for the paths a working store
+/// never reaches. "The session store is down mid-login" is an ordinary
+/// production event and had no test on either adapter.
+#[derive(Default)]
+struct FailingSessionStore;
+
+#[async_trait]
+impl SessionStore for FailingSessionStore {
+    async fn load_session(&self, _id: &str) -> Result<Option<Session>, AuthError> {
+        Ok(None)
+    }
+    async fn save_session(&self, _session: &Session) -> Result<(), AuthError> {
+        Err(AuthError::Session("store unavailable".to_string()))
+    }
+    async fn delete_session(&self, _id: &str) -> Result<(), AuthError> {
+        Err(AuthError::Session("store unavailable".to_string()))
+    }
+}
+
+fn app_with_failing_store() -> Router {
+    let session_store: Arc<dyn SessionStore> = Arc::new(FailingSessionStore);
+    let engine = Engine::builder()
+        .provider(OAuth2Flow::new(MockOAuthProvider))
+        .session_store(session_store)
+        .session_config(SessionConfig {
+            secure: false,
+            ..Default::default()
+        })
+        .build();
+    let state = AppState {
+        auth: engine.clone(),
+    };
+    Router::new()
+        .merge(engine.axum_router())
+        .layer(CookieManagerLayer::new())
+        .with_state(state)
+}
+
+/// Runs `request` against `app` with logging captured.
+async fn drive_capturing(app: Router, request: Request<Body>) -> (StatusCode, String) {
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .without_time()
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let resp = app.oneshot(request).await.unwrap();
+    let status = resp.status();
+    let logs = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    (status, logs)
+}
+
+/// A store that cannot persist the session turns a successful authentication
+/// into a 500. The user authenticated fine; the failure is ours, and the log
+/// has to say which.
+#[tokio::test(flavor = "current_thread")]
+async fn a_store_that_cannot_save_fails_the_login_and_says_why() {
+    let app = app_with_failing_store();
+
+    // A full login first, to obtain a genuine state cookie.
+    let login_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/login/mock")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let ak_state = set_cookie_value(&login_resp, "ak_state").expect("login sets ak_state");
+    let state_param = login_resp
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|l| l.to_str().ok())
+        .and_then(|l| l.split("state=").nth(1))
+        .expect("the redirect carries a state parameter")
+        .to_string();
+
+    let (status, logs) = drive_capturing(
+        app,
+        Request::builder()
+            .uri(format!(
+                "/auth/callback/mock?code=valid-code&state={state_param}"
+            ))
+            .header(header::COOKIE, format!("ak_state={ak_state}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        logs.contains("failed to persist the session after a successful login"),
+        "the store failure should be reported, and distinguished from an auth failure; got:\n{logs}"
+    );
+}
+
+/// Logging out without a session cookie clears the cookie and succeeds. It is
+/// a no-op, not a failure — which is worth stating, because it reads like one
+/// in a support ticket.
+#[tokio::test(flavor = "current_thread")]
+async fn logging_out_without_a_session_is_a_no_op_and_says_so() {
+    let (status, logs) = drive_capturing(
+        build_app(),
+        Request::builder()
+            .uri("/auth/logout")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert!(
+        status.is_redirection(),
+        "a logout with no session should still redirect, got {status}"
+    );
+    assert!(
+        logs.contains("logout with no session cookie present"),
+        "the no-op case should be visible; got:\n{logs}"
+    );
+}
+
+/// And a store that cannot delete turns logout into a 500 rather than
+/// silently leaving the session live.
+#[tokio::test(flavor = "current_thread")]
+async fn a_store_that_cannot_delete_fails_the_logout_and_says_why() {
+    let cookie_name = SessionConfig::default().cookie_name;
+    let (status, logs) = drive_capturing(
+        app_with_failing_store(),
+        Request::builder()
+            .uri("/auth/logout")
+            .header(header::COOKIE, format!("{cookie_name}=some-session-id"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        logs.contains("failed to delete the session during logout"),
+        "a failed deletion must not pass for a successful logout; got:\n{logs}"
+    );
+}

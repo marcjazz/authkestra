@@ -67,6 +67,12 @@ rustls-no-provider = [
 
 [dev-dependencies]
 async-trait = "0.1"
+
+# Test-only: the OAuth callback's three failure modes all return 401, so the
+# only thing that tells a missing state cookie apart from an undecryptable one
+# is the log line. Capturing emitted output is the only way to assert that
+# (#353).
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }
 
