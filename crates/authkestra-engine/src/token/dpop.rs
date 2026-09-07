@@ -166,6 +166,52 @@ pub fn verify_dpop_proof(
     expected_ath: Option<&str>,
     max_age: chrono::Duration,
 ) -> Result<VerifiedDpopProof, DpopError> {
+    // Logged once here rather than at each of the eleven rejection points
+    // inside. Every `DpopError` variant already names the check that failed
+    // — `WrongHtm`, `WrongHtu`, `Stale`, `AthMismatch`, `JtiTooLong(n)`,
+    // `UnsupportedAlgorithm(alg)` — so one line at the boundary carries the
+    // same information as eleven near-identical ones, and cannot drift out
+    // of step with the checks the way per-site logging does. Callers see
+    // only that verification failed (the adapters map every variant onto one
+    // `invalid_dpop_proof` response, deliberately), so without this the
+    // reason existed nowhere at all (#353).
+    //
+    // `compact_jws` is never logged: the proof is a credential.
+    let outcome = verify_dpop_proof_inner(
+        compact_jws,
+        expected_htm,
+        expected_htu,
+        expected_ath,
+        max_age,
+    );
+    match &outcome {
+        Ok(proof) => tracing::debug!(
+            jti = %proof.jti,
+            htm = %expected_htm,
+            htu = ?expected_htu,
+            ath_bound = expected_ath.is_some(),
+            "DPoP proof verified"
+        ),
+        Err(error) => tracing::warn!(
+            %error,
+            htm = %expected_htm,
+            htu = ?expected_htu,
+            ath_bound = expected_ath.is_some(),
+            "DPoP proof rejected"
+        ),
+    }
+    outcome
+}
+
+/// The verification itself. Split out so [`verify_dpop_proof`] can report the
+/// outcome in one place; see the comment there.
+fn verify_dpop_proof_inner(
+    compact_jws: &str,
+    expected_htm: &str,
+    expected_htu: Option<&str>,
+    expected_ath: Option<&str>,
+    max_age: chrono::Duration,
+) -> Result<VerifiedDpopProof, DpopError> {
     let mut parts = compact_jws.split('.');
     let header_b64 = parts
         .next()

@@ -18,6 +18,26 @@ pub trait AuthenticationStrategy<I>: Send + Sync {
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError>;
 }
 
+/// Reports a strategy's outcome, so the three cases a caller collapses stay
+/// distinguishable in the logs.
+///
+/// The distinction is load-bearing rather than cosmetic: under a
+/// first-success policy, "I found no credentials of my kind" and "I found
+/// credentials and they were wrong" both let the next strategy run, and an
+/// operator looking at a 401 needs to know which strategies declined and
+/// which actually rejected something. None of these log the credential.
+fn log_outcome<I>(strategy: &'static str, outcome: &Result<Option<I>, AuthError>) {
+    match outcome {
+        Ok(Some(_)) => tracing::debug!(strategy, "strategy authenticated the request"),
+        Ok(None) => tracing::debug!(strategy, "credentials were present but yielded no identity"),
+        Err(error) => tracing::warn!(
+            strategy,
+            %error,
+            "strategy rejected the request's credentials"
+        ),
+    }
+}
+
 /// Trait for a provider that validates username and password (Basic Auth).
 #[async_trait]
 pub trait BasicAuthenticator: Send + Sync {
@@ -56,8 +76,14 @@ where
 {
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
         if let Some((username, password)) = utils::extract_basic_credentials(&parts.headers) {
-            self.authenticator.authenticate(&username, &password).await
+            let outcome = self.authenticator.authenticate(&username, &password).await;
+            log_outcome("basic", &outcome);
+            outcome
         } else {
+            tracing::debug!(
+                strategy = "basic",
+                "no Basic credentials present; declining"
+            );
             Ok(None)
         }
     }
@@ -97,8 +123,11 @@ where
 {
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
         if let Some(token) = utils::extract_bearer_token(&parts.headers) {
-            self.validator.validate(token).await
+            let outcome = self.validator.validate(token).await;
+            log_outcome("bearer", &outcome);
+            outcome
         } else {
+            tracing::debug!(strategy = "bearer", "no Bearer token present; declining");
             Ok(None)
         }
     }
@@ -132,9 +161,26 @@ where
 {
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
         if let Some(value) = parts.headers.get(&self.header_name) {
-            if let Ok(value_str) = value.to_str() {
-                return (self.validator)(value_str.to_string()).await;
+            match value.to_str() {
+                Ok(value_str) => {
+                    let outcome = (self.validator)(value_str.to_string()).await;
+                    log_outcome("header", &outcome);
+                    return outcome;
+                }
+                // Present but not valid UTF-8, which is not the same as absent.
+                Err(error) => tracing::warn!(
+                    strategy = "header",
+                    header = %self.header_name,
+                    %error,
+                    "header is present but is not valid ASCII; declining"
+                ),
             }
+        } else {
+            tracing::debug!(
+                strategy = "header",
+                header = %self.header_name,
+                "header not present; declining"
+            );
         }
         Ok(None)
     }
@@ -176,8 +222,17 @@ where
 {
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
         if let Some(session_id) = utils::extract_cookie(&parts.headers, &self.cookie_name) {
-            self.provider.load_session(session_id).await
+            // The cookie value is the session credential, so it is not
+            // logged; only that one was found.
+            let outcome = self.provider.load_session(session_id).await;
+            log_outcome("session", &outcome);
+            outcome
         } else {
+            tracing::debug!(
+                strategy = "session",
+                cookie = %self.cookie_name,
+                "no session cookie present; declining"
+            );
             Ok(None)
         }
     }

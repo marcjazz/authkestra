@@ -398,3 +398,119 @@ mod mfa_token_leeway {
         );
     }
 }
+
+// --- Tracing on the authentication path (#353) ---
+//
+// `Engine::authenticate` was entirely silent: 161 lines covering primary
+// dispatch, MFA continuation and four error paths, with no span and no
+// events, directly above two fully-instrumented methods. These assert the
+// instrumentation exists *and* that it cannot leak what it is handed —
+// `AuthInput` carries passwords and TOTP codes, so the span skips the
+// argument rather than formatting it.
+#[cfg(test)]
+mod authenticate_tracing {
+    use super::*;
+    use crate::Engine;
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
+    /// A `MakeWriter` that accumulates everything written to it, so a test
+    /// can assert on what was actually emitted.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl Captured {
+        fn contents(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    impl io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// A password method that always rejects, so the interesting path (a
+    /// failed login) is the one exercised.
+    struct RejectingPasswordMethod;
+    #[async_trait]
+    impl AuthMethod for RejectingPasswordMethod {
+        fn name(&self) -> &str {
+            "password"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Err(AuthError::Credentials("no such user".into()))
+        }
+    }
+
+    const SECRET_PASSWORD: &str = "correct-horse-battery-staple-9f3a";
+
+    async fn capture_failed_login() -> String {
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .without_time()
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let engine = Engine::builder()
+            .with_auth_method(RejectingPasswordMethod)
+            .build();
+        let result = engine
+            .authenticate(AuthInput::Password {
+                identifier: "someone@example.com".to_string(),
+                password: SECRET_PASSWORD.to_string(),
+            })
+            .await;
+        assert!(result.is_err(), "the fixture must produce a failed login");
+
+        captured.contents()
+    }
+
+    /// A rejected login has to leave a trace. Before #353 it left none, which
+    /// is the whole complaint: successful sessions logged three events and
+    /// failed logins logged nothing.
+    #[tokio::test]
+    async fn a_rejected_login_is_logged() {
+        let logs = capture_failed_login().await;
+
+        assert!(
+            !logs.is_empty(),
+            "a failed authentication emitted no log output at all"
+        );
+        assert!(
+            logs.contains("primary authentication rejected"),
+            "the rejection itself should be reported; got:\n{logs}"
+        );
+        assert!(
+            logs.contains("no such user"),
+            "the underlying reason should be carried through; got:\n{logs}"
+        );
+    }
+
+    /// The property worth protecting. `AuthInput` carries the password, so
+    /// the span skips the argument; if someone later adds it to the span or
+    /// logs `input` directly, this fails.
+    #[tokio::test]
+    async fn the_password_never_reaches_a_log_line() {
+        let logs = capture_failed_login().await;
+
+        assert!(
+            !logs.contains(SECRET_PASSWORD),
+            "the password appeared in emitted tracing output:\n{logs}"
+        );
+    }
+}

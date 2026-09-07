@@ -112,6 +112,13 @@ testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["redis"] }
 wiremock = "0.6.5"
 
+# Test-only: captures emitted `tracing` output so the instrumentation on
+# `Engine::authenticate` can be asserted on directly — both that it exists and,
+# more importantly, that a password handed to it never reaches a log line
+# (#353). Without a capturing subscriber that second property is unassertable,
+# and it is precisely the one that would matter if it broke.
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
 # Test-only: `test-util` brings `#[tokio::test(start_paused = true)]`, which
 # `full` does not include. The device-flow tests use the paused clock to prove
 # `poll_for_token` waits on a timer rather than blocking the thread (#306) --
