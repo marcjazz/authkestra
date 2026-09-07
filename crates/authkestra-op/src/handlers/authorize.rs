@@ -62,7 +62,7 @@ pub async fn handle_authorize(
     let client = match op_store.find_client(&req.client_id).await {
         Ok(Some(client)) => client,
         Ok(None) => {
-            tracing::warn!(client_id = %req.client_id, "Unknown client ID requested");
+            tracing::error!(client_id = %req.client_id, "Unknown client ID requested");
             return AuthorizeOutcome::DirectError(OpError::UnknownClient(req.client_id));
         }
         Err(e) => {
@@ -127,7 +127,7 @@ pub async fn handle_authorize(
 
     // 4. Check response_type == "code"
     if req.response_type != "code" {
-        tracing::warn!(
+        tracing::debug!(
             client_id = %req.client_id,
             response_type = %req.response_type,
             "Unsupported response type requested"
@@ -140,7 +140,7 @@ pub async fn handle_authorize(
 
     // 5. Check client allows AuthorizationCode grant type
     if !client.allows_grant_type(&GrantType::AuthorizationCode) {
-        tracing::warn!(
+        tracing::error!(
             client_id = %req.client_id,
             "Client is not permitted to use the authorization code grant"
         );
@@ -155,11 +155,11 @@ pub async fn handle_authorize(
     // does not grandfather in confidential clients or any other exemption,
     // and per-client opt-out was the exact gap #273 closes.
     if req.code_challenge.is_none() {
-        tracing::warn!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
+        tracing::debug!(client_id = %req.client_id, "Missing required code_challenge for PKCE");
         return error_redirect("invalid_request", "code_challenge is required");
     }
     if req.code_challenge_method.as_deref() != Some("S256") {
-        tracing::warn!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
+        tracing::debug!(client_id = %req.client_id, "Invalid code_challenge_method, S256 required");
         return error_redirect("invalid_request", "code_challenge_method must be S256");
     }
 
