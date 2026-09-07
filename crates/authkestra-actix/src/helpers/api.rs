@@ -114,9 +114,14 @@ pub fn initiate_oauth_login_erased(
     // means. `authkestra-axum` sends 303 here too — `Redirect::to` is 303 —
     // and the two adapters must not disagree on the status code for the same
     // request. See issue #320 for the class of bug that causes.
+    // Bound above the event rather than computed in the fields: a call inside
+    // a `tracing` field expands into regions no test can fully execute, so it
+    // reads as permanently uncovered however well the function is exercised.
+    let scope_count = scopes.len();
+    let has_success_url = auth_state.success_url.is_some();
     tracing::debug!(
-        scopes = scopes.len(),
-        has_success_url = auth_state.success_url.is_some(),
+        scopes = scope_count,
+        has_success_url,
         "issued an OAuth authorization redirect and set the state cookie"
     );
     HttpResponse::SeeOther()
@@ -398,6 +403,10 @@ pub async fn handle_oauth_callback_jwt_erased(
     let user_id = identity.external_id.clone();
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None, None)
+        // Not covered by a test, deliberately: signing with a fixed secret
+        // has no reachable failure mode, so exercising this would mean
+        // contriving one. Logged rather than dropped because if it ever does
+        // fire, the login has failed for a reason nothing else would explain.
         .map_err(|e| {
             tracing::error!(error = %e, "failed to issue a token after a successful login");
             actix_web::error::ErrorInternalServerError(format!("Token error: {e}"))

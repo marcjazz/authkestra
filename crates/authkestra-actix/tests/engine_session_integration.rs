@@ -585,3 +585,151 @@ async fn a_callback_whose_state_cookie_will_not_decrypt_says_so() {
         "a present-but-unreadable cookie must not be reported as absent:\n{logs}"
     );
 }
+
+/// A session store that refuses every write, for the paths a working store
+/// never reaches. Mirrors `authkestra-axum`'s store of the same name.
+#[derive(Default)]
+struct FailingSessionStore;
+
+#[async_trait]
+impl SessionStore for FailingSessionStore {
+    async fn load_session(&self, _id: &str) -> Result<Option<Session>, AuthError> {
+        Ok(None)
+    }
+    async fn save_session(&self, _session: &Session) -> Result<(), AuthError> {
+        Err(AuthError::Session("store unavailable".to_string()))
+    }
+    async fn delete_session(&self, _id: &str) -> Result<(), AuthError> {
+        Err(AuthError::Session("store unavailable".to_string()))
+    }
+}
+
+fn engine_with_failing_store() -> AkWebAppEngine {
+    let session_store: std::sync::Arc<dyn SessionStore> = std::sync::Arc::new(FailingSessionStore);
+    Engine::builder()
+        .provider(OAuth2Flow::new(MockOAuthProvider))
+        .session_store(session_store)
+        .session_config(SessionConfig {
+            secure: false,
+            ..Default::default()
+        })
+        .build()
+}
+
+/// Drives `build` against a freshly-built app with logging captured.
+async fn drive_capturing(
+    engine: AkWebAppEngine,
+    request: test::TestRequest,
+) -> (StatusCode, String) {
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .without_time()
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let state = AppState {
+        auth: engine.clone(),
+    };
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(move |cfg| state.configure_authkestra(cfg))
+            .service(engine.actix_scope()),
+    )
+    .await;
+
+    let resp = test::call_service(&app, request.to_request()).await;
+    let status = resp.status();
+    let logs = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    (status, logs)
+}
+
+/// A store that cannot persist the session turns a successful authentication
+/// into a 500. The user authenticated fine; the failure is ours.
+#[actix_web::test]
+async fn a_store_that_cannot_save_fails_the_login_and_says_why() {
+    let engine = engine_with_failing_store();
+
+    // A login first, to obtain a genuine state cookie and CSRF value.
+    let state = AppState {
+        auth: engine.clone(),
+    };
+    let login_engine = engine.clone();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state.clone()))
+            .configure(move |cfg| state.configure_authkestra(cfg))
+            .service(login_engine.actix_scope()),
+    )
+    .await;
+    let login_resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/auth/login/mock")
+            .to_request(),
+    )
+    .await;
+    let ak_state = set_cookie_value(&login_resp, "ak_state").expect("login sets ak_state");
+    let csrf_state = login_resp
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|l| l.to_str().ok())
+        .and_then(|l| l.split("state=").nth(1))
+        .expect("the redirect carries a state parameter")
+        .to_string();
+
+    let (status, logs) = drive_capturing(
+        engine,
+        test::TestRequest::get()
+            .uri(&format!(
+                "/auth/callback/mock?code=valid-code&state={csrf_state}"
+            ))
+            .cookie(Cookie::new("ak_state", ak_state)),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        logs.contains("failed to persist the session after a successful login"),
+        "the store failure should be reported, and distinguished from an auth failure; got:\n{logs}"
+    );
+}
+
+/// Logging out without a session cookie clears the cookie and succeeds. It is
+/// a no-op, not a failure.
+#[actix_web::test]
+async fn logging_out_without_a_session_is_a_no_op_and_says_so() {
+    let (status, logs) =
+        drive_capturing(build_engine(), test::TestRequest::get().uri("/auth/logout")).await;
+
+    assert!(
+        status.is_redirection(),
+        "a logout with no session should still redirect, got {status}"
+    );
+    assert!(
+        logs.contains("logout with no session cookie present"),
+        "the no-op case should be visible; got:\n{logs}"
+    );
+}
+
+/// A store that cannot delete turns logout into a 500 rather than silently
+/// leaving the session live.
+#[actix_web::test]
+async fn a_store_that_cannot_delete_fails_the_logout_and_says_why() {
+    let cookie_name = SessionConfig::default().cookie_name;
+    let (status, logs) = drive_capturing(
+        engine_with_failing_store(),
+        test::TestRequest::get()
+            .uri("/auth/logout")
+            .cookie(Cookie::new(cookie_name, "some-session-id")),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        logs.contains("failed to delete the session during logout"),
+        "a failed deletion must not pass for a successful logout; got:\n{logs}"
+    );
+}
