@@ -411,6 +411,11 @@ impl<S, T> Engine<S, T> {
                 &claims,
                 &jsonwebtoken::EncodingKey::from_secret(&self.mfa_jwt_secret),
             )
+            // Not covered by a test, and deliberately so: HS256 signing
+            // with a fixed 32-byte secret has no reachable failure mode, so
+            // exercising this would mean contriving one. It is logged rather
+            // than dropped because if it ever does fire, the login has
+            // failed for a reason nothing else would explain.
             .map_err(|e| {
                 tracing::error!(error = %e, "failed to mint the MFA continuation token");
                 AuthError::Internal(e.to_string())

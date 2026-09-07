@@ -410,37 +410,8 @@ mod mfa_token_leeway {
 #[cfg(test)]
 mod authenticate_tracing {
     use super::*;
+    use crate::test_support::capture;
     use crate::Engine;
-    use std::io;
-    use std::sync::{Arc, Mutex};
-
-    /// A `MakeWriter` that accumulates everything written to it, so a test
-    /// can assert on what was actually emitted.
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
-
-    impl Captured {
-        fn contents(&self) -> String {
-            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
-        }
-    }
-
-    impl io::Write for Captured {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-        type Writer = Self;
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
 
     /// A password method that always rejects, so the interesting path (a
     /// failed login) is the one exercised.
@@ -457,35 +428,34 @@ mod authenticate_tracing {
 
     const SECRET_PASSWORD: &str = "correct-horse-battery-staple-9f3a";
 
-    async fn capture_failed_login() -> String {
-        let captured = Captured::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(captured.clone())
-            .with_max_level(tracing::Level::TRACE)
-            .without_time()
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
+    fn capture_failed_login() -> String {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("building a runtime should succeed");
 
-        let engine = Engine::builder()
-            .with_auth_method(RejectingPasswordMethod)
-            .build();
-        let result = engine
-            .authenticate(AuthInput::Password {
-                identifier: "someone@example.com".to_string(),
-                password: SECRET_PASSWORD.to_string(),
+        let (result, logs) = capture(|| {
+            runtime.block_on(async {
+                let engine = Engine::builder()
+                    .with_auth_method(RejectingPasswordMethod)
+                    .build();
+                engine
+                    .authenticate(AuthInput::Password {
+                        identifier: "someone@example.com".to_string(),
+                        password: SECRET_PASSWORD.to_string(),
+                    })
+                    .await
             })
-            .await;
+        });
         assert!(result.is_err(), "the fixture must produce a failed login");
-
-        captured.contents()
+        logs
     }
 
     /// A rejected login has to leave a trace. Before #353 it left none, which
     /// is the whole complaint: successful sessions logged three events and
     /// failed logins logged nothing.
-    #[tokio::test]
-    async fn a_rejected_login_is_logged() {
-        let logs = capture_failed_login().await;
+    #[test]
+    fn a_rejected_login_is_logged() {
+        let logs = capture_failed_login();
 
         assert!(
             !logs.is_empty(),
@@ -504,13 +474,221 @@ mod authenticate_tracing {
     /// The property worth protecting. `AuthInput` carries the password, so
     /// the span skips the argument; if someone later adds it to the span or
     /// logs `input` directly, this fails.
-    #[tokio::test]
-    async fn the_password_never_reaches_a_log_line() {
-        let logs = capture_failed_login().await;
+    #[test]
+    fn the_password_never_reaches_a_log_line() {
+        let logs = capture_failed_login();
 
         assert!(
             !logs.contains(SECRET_PASSWORD),
             "the password appeared in emitted tracing output:\n{logs}"
         );
+    }
+}
+
+// --- `Engine::authenticate` error paths (#353) ---
+//
+// Instrumenting `authenticate` surfaced that almost none of its rejection
+// branches had a test: `codecov/patch` flagged ten added lines as uncovered,
+// and every one sat on a path that predated the instrumentation. The log
+// lines were new; the untested branches were not. These cover the behaviour,
+// so the branches are exercised rather than merely annotated.
+#[cfg(all(test, feature = "totp"))]
+mod authenticate_error_paths {
+    use super::*;
+    use crate::auth::AuthResult;
+    use crate::Engine;
+
+    /// Returns the given identity, whatever it is asked.
+    struct FixedTotpMethod(&'static str);
+    #[async_trait]
+    impl AuthMethod for FixedTotpMethod {
+        fn name(&self) -> &str {
+            "totp"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Ok(Identity {
+                provider_id: "totp".to_string(),
+                external_id: self.0.to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+        async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
+            Ok(true)
+        }
+    }
+
+    /// Always refuses the second factor.
+    struct RejectingTotpMethod;
+    #[async_trait]
+    impl AuthMethod for RejectingTotpMethod {
+        fn name(&self) -> &str {
+            "totp"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Err(AuthError::Credentials("wrong code".into()))
+        }
+        async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
+            Ok(true)
+        }
+    }
+
+    fn mfa_token<S, T>(engine: &Engine<S, T>, sub: &str, mfa_pending: bool) -> String {
+        let claims = crate::auth::state::MfaTokenClaims {
+            sub: sub.to_string(),
+            mfa_pending,
+            exp: (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp() as usize,
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(&engine.mfa_jwt_secret),
+        )
+        .expect("signing should succeed")
+    }
+
+    fn totp_challenge(mfa_token: String) -> AuthInput {
+        AuthInput::MfaChallenge {
+            mfa_token,
+            challenge_input: Box::new(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: "000000".to_string(),
+            }),
+        }
+    }
+
+    /// A validly-signed, unexpired token is still not a continuation ticket
+    /// unless it says so — otherwise any token minted with this secret for
+    /// another purpose would resume a half-completed login.
+    #[tokio::test]
+    async fn a_token_not_marked_mfa_pending_is_refused() {
+        let engine = Engine::builder()
+            .with_mfa_method(FixedTotpMethod("user123"))
+            .build();
+        let token = mfa_token(&engine, "user123", false);
+
+        assert!(matches!(
+            engine.authenticate(totp_challenge(token)).await,
+            Err(AuthError::InvalidInput)
+        ));
+    }
+
+    /// Only `Totp` and `WebAuthnAuthentication` dispatch as second factors.
+    /// Worth pinning: I wrote a test against this path earlier assuming
+    /// `Password` would reach the expiry check, and it silently did not.
+    #[tokio::test]
+    async fn a_challenge_whose_input_is_not_a_second_factor_is_refused() {
+        let engine = Engine::builder()
+            .with_mfa_method(FixedTotpMethod("user123"))
+            .build();
+        let token = mfa_token(&engine, "user123", true);
+
+        let result = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token: token,
+                challenge_input: Box::new(AuthInput::Password {
+                    identifier: "user123".to_string(),
+                    password: "irrelevant".to_string(),
+                }),
+            })
+            .await;
+        assert!(matches!(result, Err(AuthError::InvalidInput)));
+    }
+
+    /// A misconfiguration, not a bad credential — hence `Internal` rather
+    /// than `InvalidInput`, and `error!` rather than `warn!` in the log.
+    #[tokio::test]
+    async fn a_second_factor_that_is_not_registered_is_an_internal_error() {
+        let engine = Engine::builder().build();
+        let token = mfa_token(&engine, "user123", true);
+
+        assert!(matches!(
+            engine.authenticate(totp_challenge(token)).await,
+            Err(AuthError::Internal(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_refused_second_factor_propagates_the_methods_error() {
+        let engine = Engine::builder()
+            .with_mfa_method(RejectingTotpMethod)
+            .build();
+        let token = mfa_token(&engine, "user123", true);
+
+        assert!(matches!(
+            engine.authenticate(totp_challenge(token)).await,
+            Err(AuthError::Credentials(_))
+        ));
+    }
+
+    /// The second factor verified, but for somebody else. Accepting this
+    /// would let anyone holding a continuation token for user A complete the
+    /// login by presenting their own valid second factor.
+    #[tokio::test]
+    async fn a_second_factor_verifying_a_different_user_is_refused() {
+        let engine = Engine::builder()
+            .with_mfa_method(FixedTotpMethod("someone-else"))
+            .build();
+        let token = mfa_token(&engine, "user123", true);
+
+        let err = engine
+            .authenticate(totp_challenge(token))
+            .await
+            .expect_err("a mismatched user must not complete the login");
+        assert!(
+            matches!(&err, AuthError::Credentials(m) if m.contains("user mismatch")),
+            "expected a user-mismatch rejection, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_input_that_maps_to_no_primary_method_is_refused() {
+        let engine = Engine::builder()
+            .with_mfa_method(FixedTotpMethod("user123"))
+            .build();
+
+        let result = engine
+            .authenticate(AuthInput::OAuthCode {
+                code: "abc".to_string(),
+                code_verifier: None,
+            })
+            .await;
+        assert!(matches!(result, Err(AuthError::InvalidInput)));
+    }
+
+    /// `Totp` maps to a primary method name too, so an engine that registers
+    /// it only as a step-up factor has no *primary* method under that name.
+    #[tokio::test]
+    async fn a_primary_method_registered_only_as_step_up_is_an_internal_error() {
+        let engine = Engine::builder()
+            .with_mfa_method(FixedTotpMethod("user123"))
+            .build();
+
+        let result = engine
+            .authenticate(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: "000000".to_string(),
+            })
+            .await;
+        assert!(
+            matches!(result, Err(AuthError::Internal(_))),
+            "expected an Internal error, got {result:?}"
+        );
+    }
+
+    /// The happy path through the same fixtures, so the rejections above are
+    /// attributable to what each test varies rather than to the setup.
+    #[tokio::test]
+    async fn the_fixture_completes_a_login_when_nothing_is_wrong() {
+        let engine = Engine::builder()
+            .with_mfa_method(FixedTotpMethod("user123"))
+            .build();
+        let token = mfa_token(&engine, "user123", true);
+
+        assert!(matches!(
+            engine.authenticate(totp_challenge(token)).await,
+            Ok(AuthResult::Success(_))
+        ));
     }
 }

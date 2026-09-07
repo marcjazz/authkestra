@@ -29,4 +29,6 @@ pub use captcha::{CaptchaProvider, CaptchaVerifier};
 
 pub mod oauth2;
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests;

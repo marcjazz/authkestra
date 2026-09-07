@@ -435,4 +435,82 @@ mod tests {
         headers3.insert(COOKIE, HeaderValue::from_static("foo=bar; sid=123"));
         assert_eq!(utils::extract_cookie(&headers3, "sid"), Some("123"));
     }
+
+    /// No existing test produced an `Err` from a delegate, so the strategies'
+    /// *rejection* path was untested — which is the case `log_outcome` exists
+    /// to keep distinguishable from a decline (#353). Under a first-success
+    /// policy both let the next strategy run, so the difference lives only in
+    /// the logs and in what the caller sees.
+    struct RejectingValidator;
+    #[async_trait]
+    impl TokenValidator for RejectingValidator {
+        type Identity = DummyIdentity;
+        async fn validate(&self, _t: &str) -> Result<Option<Self::Identity>, AuthError> {
+            Err(AuthError::Token("expired".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rejected_token_is_an_error_not_a_decline() {
+        let strategy = TokenStrategy::new(RejectingValidator);
+        let req = Request::builder()
+            .uri("/")
+            .header(AUTHORIZATION, "Bearer whatever")
+            .body(())
+            .unwrap();
+
+        let result = strategy.authenticate(&req.into_parts().0).await;
+        assert!(
+            matches!(result, Err(AuthError::Token(_))),
+            "a credential this strategy owns and refuses must surface as Err, \
+             not as Ok(None) — the latter reads as \"not mine\" to the caller"
+        );
+    }
+
+    /// A header that is present but not ASCII is neither absent nor readable.
+    /// It declines, so another strategy may still succeed, but it is logged
+    /// distinctly because it is not the same as absent.
+    #[tokio::test]
+    async fn a_non_ascii_header_value_declines_rather_than_erroring() {
+        let strategy = HeaderStrategy::new(
+            HeaderName::from_static("x-api-key"),
+            // Returns `Ok(Some(..))` for any input, which is what makes the
+            // assertion below meaningful: had the unreadable header reached
+            // this validator, the result would be `Ok(Some(..))`, so
+            // `Ok(None)` proves the strategy declined without calling it.
+            // The body is consequently expected to show as uncovered.
+            |_key: String| async move { Ok(Some(DummyIdentity("user".to_string()))) },
+        );
+        let mut req = Request::builder().uri("/").body(()).unwrap();
+        req.headers_mut().insert(
+            HeaderName::from_static("x-api-key"),
+            HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+        );
+
+        let result = strategy.authenticate(&req.into_parts().0).await;
+        assert!(matches!(result, Ok(None)));
+    }
+
+    /// The third outcome, distinct from both a decline and a rejection: the
+    /// strategy found credentials of its kind, handed them to its delegate,
+    /// and the delegate recognised nobody. `DummyBasic` returns `Ok(None)`
+    /// for an unknown user, but no existing test presented one — so this arm
+    /// of the outcome reporting was never exercised (#353).
+    #[tokio::test]
+    async fn credentials_that_resolve_to_nobody_are_a_decline_not_an_error() {
+        // base64("nobody:whatever")
+        let strategy = BasicStrategy::new(DummyBasic);
+        let req = Request::builder()
+            .uri("/")
+            .header(AUTHORIZATION, "Basic bm9ib2R5OndoYXRldmVy")
+            .body(())
+            .unwrap();
+
+        let result: Result<Option<DummyIdentity>, AuthError> =
+            strategy.authenticate(&req.into_parts().0).await;
+        assert!(
+            matches!(result, Ok(None)),
+            "an unrecognised user is not an error; another strategy may still succeed"
+        );
+    }
 }
