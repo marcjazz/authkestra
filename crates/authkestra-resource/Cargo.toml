@@ -44,6 +44,10 @@ rustls-aws-lc-rs = ["authkestra-engine/rustls-aws-lc-rs"]
 rustls-no-provider = ["authkestra-engine/rustls-no-provider"]
 
 [dev-dependencies]
+# Test-only: a token that fails validation is declined with `Ok(None)`, so the
+# only record of *why* is the log line. Capturing emitted output is the only
+# way to assert it (#353).
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 wiremock = "0.6"
 rsa = "0.9.6"
 rand = "0.8"

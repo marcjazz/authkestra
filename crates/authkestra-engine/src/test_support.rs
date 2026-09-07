@@ -1,37 +1,26 @@
 //! Test-only helpers shared across this crate's test modules.
 
+use std::cell::RefCell;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 
-/// A `MakeWriter` that accumulates everything written to it, so a test can
-/// assert on the `tracing` output actually emitted.
-///
-/// Two reasons this exists rather than each test module rolling its own.
-///
-/// The first is the property it makes assertable: instrumentation on an
-/// authentication path is handed credentials, and "the password never reaches
-/// a log line" cannot be checked without capturing what was emitted.
-///
-/// The second is subtler. `tracing` macros do not evaluate their field
-/// expressions when no subscriber is installed, so a field like
-/// `ath_bound = expected_ath.is_some()` is never executed under a plain
-/// `cargo test` and shows as uncovered however well the surrounding function
-/// is exercised. Installing a subscriber makes the instrumentation genuinely
-/// run, which is both more honest about coverage and the only way to assert
-/// that a log line says what it claims to.
-#[derive(Clone, Default)]
-pub(crate) struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
-
-impl CapturedLogs {
-    /// Everything emitted so far.
-    pub(crate) fn contents(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
-    }
+thread_local! {
+    /// Where this thread's captured output goes, when it is capturing.
+    static SINK: RefCell<Option<Arc<Mutex<Vec<u8>>>>> = const { RefCell::new(None) };
 }
 
-impl io::Write for CapturedLogs {
+/// Routes each thread's `tracing` output to that thread's own buffer, and
+/// discards it on threads that are not capturing.
+#[derive(Clone, Copy, Default)]
+struct ThreadSink;
+
+impl io::Write for ThreadSink {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
+        SINK.with(|sink| {
+            if let Some(target) = sink.borrow().as_ref() {
+                target.lock().unwrap().extend_from_slice(buf);
+            }
+        });
         Ok(buf.len())
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -39,24 +28,54 @@ impl io::Write for CapturedLogs {
     }
 }
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ThreadSink {
     type Writer = Self;
     fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
+        *self
     }
 }
 
-/// Runs `body` with every `tracing` event captured, returning the output.
+static INSTALL: Once = Once::new();
+
+/// Installs one process-wide subscriber, once.
 ///
-/// The subscriber is installed for the current thread only, so this composes
-/// with `#[tokio::test]`'s default current-thread runtime.
+/// A **global** subscriber rather than a thread-local one, which is the whole
+/// point. `tracing` caches callsite interest globally and a thread-local
+/// subscriber does not invalidate that cache, so any test that reaches a
+/// callsite while no subscriber is installed gets its interest cached as
+/// "never" — and a later thread-local capture at that callsite sees nothing,
+/// however correctly it installed its subscriber.
+///
+/// Rebuilding the cache is not enough either: the tests that are not
+/// capturing run concurrently and re-cache "never" immediately afterwards.
+/// Both were tried, and both produced a capture that passed alone and failed
+/// in a parallel run.
+///
+/// Installed once at `TRACE`, interest is stable for the life of the process,
+/// and the per-thread sink decides what is kept.
+fn install() {
+    INSTALL.call_once(|| {
+        let _ = tracing_subscriber::fmt()
+            .with_writer(ThreadSink)
+            .with_max_level(tracing::Level::TRACE)
+            .without_time()
+            .try_init();
+    });
+}
+
+/// Runs `body` with this thread's `tracing` output captured.
+///
+/// Capture is per-thread, so this needs no lock and composes with `cargo
+/// test`'s parallelism. It does assume `body` emits on the calling thread,
+/// which holds for `#[tokio::test]`'s default current-thread runtime.
 pub(crate) fn capture<T>(body: impl FnOnce() -> T) -> (T, String) {
-    let captured = CapturedLogs::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(captured.clone())
-        .with_max_level(tracing::Level::TRACE)
-        .without_time()
-        .finish();
-    let value = tracing::subscriber::with_default(subscriber, body);
-    (value, captured.contents())
+    install();
+
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    SINK.with(|sink| *sink.borrow_mut() = Some(Arc::clone(&buffer)));
+    let value = body();
+    SINK.with(|sink| *sink.borrow_mut() = None);
+
+    let captured = String::from_utf8_lossy(&buffer.lock().unwrap()).into_owned();
+    (value, captured)
 }

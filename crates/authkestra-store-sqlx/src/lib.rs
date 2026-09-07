@@ -159,11 +159,21 @@ async fn ensure_postgres_column(
     .fetch_one(pool)
     .await?;
     if exists == 0 {
+        // `info!`, not `debug!`: this alters the host application's schema.
+        // A deployment should be able to see that happen without having to
+        // turn debug logging on, and this whole path was silent.
+        tracing::info!(
+            table,
+            column,
+            "adding a missing column to the authkestra schema"
+        );
         sqlx::query(&format!(
             "ALTER TABLE authkestra.{table} ADD COLUMN IF NOT EXISTS {add_column_ddl}"
         ))
         .execute(pool)
         .await?;
+    } else {
+        tracing::debug!(table, column, "column already present; no migration needed");
     }
     Ok(())
 }
@@ -220,14 +230,30 @@ async fn ensure_sqlite_column(
         // the probe above and here; that is the *intended* end state, so it
         // is success, not a failed migration. Nothing else is tolerated —
         // see `is_sqlite_duplicate_column`.
+        tracing::info!(
+            table,
+            column,
+            "adding a missing column to the authkestra schema"
+        );
         if let Err(e) = sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {add_column_ddl}"))
             .execute(pool)
             .await
         {
             if !is_sqlite_duplicate_column(&e) {
+                tracing::error!(table, column, error = %e, "column migration failed");
                 return Err(e);
             }
+            // The intended end state, reached by somebody else. Worth a line
+            // during a rolling deploy: it says another replica won the race
+            // rather than that this one did nothing.
+            tracing::debug!(
+                table,
+                column,
+                "column was added concurrently by another process; treating as done"
+            );
         }
+    } else {
+        tracing::debug!(table, column, "column already present; no migration needed");
     }
     Ok(())
 }
@@ -257,14 +283,30 @@ async fn ensure_mysql_column(
     if exists == 0 {
         // See `ensure_sqlite_column`'s identical comment: only the losing
         // side of a check-then-ALTER race is tolerated here.
+        tracing::info!(
+            table,
+            column,
+            "adding a missing column to the authkestra schema"
+        );
         if let Err(e) = sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {add_column_ddl}"))
             .execute(pool)
             .await
         {
             if !is_mysql_duplicate_column(&e) {
+                tracing::error!(table, column, error = %e, "column migration failed");
                 return Err(e);
             }
+            // The intended end state, reached by somebody else. Worth a line
+            // during a rolling deploy: it says another replica won the race
+            // rather than that this one did nothing.
+            tracing::debug!(
+                table,
+                column,
+                "column was added concurrently by another process; treating as done"
+            );
         }
+    } else {
+        tracing::debug!(table, column, "column already present; no migration needed");
     }
     Ok(())
 }

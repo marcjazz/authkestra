@@ -95,7 +95,22 @@ impl Jwks {
         client: &reqwest::Client,
         jwks_uri: &str,
     ) -> Result<Self, ValidationError> {
-        let jwks = client.get(jwks_uri).send().await?.json::<Jwks>().await?;
+        // An unreachable, slow or malformed JWKS endpoint is among the most
+        // common ways a resource server stops working, and this whole path
+        // was silent: the error propagated as `ValidationError::Http` and was
+        // only ever seen if some caller happened to log it.
+        tracing::debug!(jwks_uri, "fetching JWKS");
+        let jwks = match client.get(jwks_uri).send().await {
+            Ok(response) => response.json::<Jwks>().await.map_err(|e| {
+                tracing::warn!(jwks_uri, error = %e, "JWKS response was not a usable key set");
+                ValidationError::Http(e)
+            })?,
+            Err(e) => {
+                tracing::warn!(jwks_uri, error = %e, "could not reach the JWKS endpoint");
+                return Err(ValidationError::Http(e));
+            }
+        };
+        tracing::debug!(jwks_uri, keys = jwks.keys.len(), "fetched JWKS");
         Ok(jwks)
     }
 
@@ -190,8 +205,19 @@ impl JwksCache {
         }
 
         // If key not found, try refreshing once in case of rotation
+        tracing::debug!(
+            kid,
+            "no key for this token in the cached JWKS; refreshing in case of rotation"
+        );
         let jwks = self.refresh().await?;
-        Ok(jwks.find_key(kid).cloned())
+        let key = jwks.find_key(kid).cloned();
+        if key.is_none() {
+            // Distinct from a fetch failure: the endpoint answered, and the
+            // key this token names is not in it. Signing key retired too
+            // early, or a token from a different issuer entirely.
+            tracing::warn!(kid, "token names a key the issuer's JWKS does not contain");
+        }
+        Ok(key)
     }
 
     pub async fn refresh(&self) -> Result<Jwks, ValidationError> {
@@ -854,6 +880,11 @@ impl<I> AuthenticationStrategy<I> for JwtStrategy<I>
 where
     I: for<'de> Deserialize<'de> + Send + Sync + 'static,
 {
+    // `skip_all`: `parts` carries the `Authorization` header, and a derived
+    // span field would print the bearer token. The span exists so the dozen
+    // rejection events in this function can be correlated to one request,
+    // which is what having none of them under a span cost (#353).
+    #[tracing::instrument(skip_all, name = "jwt_authenticate")]
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
         if let Some(presented) = extract_presented_token(&parts.headers) {
             let token = presented.token();
@@ -1008,8 +1039,26 @@ where
                     }
                     Ok(Some(claims))
                 }
-                Err(ValidationError::InvalidToken(_)) | Err(ValidationError::Jwt(_)) => Ok(None),
-                Err(e) => Err(AuthError::Token(e.to_string())),
+                // A token that failed signature or claim validation. This
+                // returns `Ok(None)` — "declined", so another strategy may
+                // still run — and used to do so silently, which left the
+                // resource server unable to answer the one question anyone
+                // asks it: why was that token rejected? #335 is exactly that
+                // question, and answering it took reading a dependency's
+                // source. `debug!`, not `warn!`, to match the issuer-decline
+                // above: under a first-success policy a decline is ordinary.
+                Err(e @ (ValidationError::InvalidToken(_) | ValidationError::Jwt(_))) => {
+                    tracing::debug!(error = %e, "token failed validation; no identity");
+                    Ok(None)
+                }
+                // Everything else — a JWKS that could not be fetched, a key
+                // that could not be found, replay protection that could not
+                // be checked — is not "this credential is bad" but "we could
+                // not tell", and is propagated as a hard error.
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not determine whether the token is valid");
+                    Err(AuthError::Token(e.to_string()))
+                }
             }
         } else {
             Ok(None)

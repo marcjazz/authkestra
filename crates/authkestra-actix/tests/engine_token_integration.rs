@@ -222,36 +222,88 @@ async fn protected_route_rejects_garbage_bearer_token() {
 // copies of that block — one per callback — so the stateless copy needs its
 // own tests, and would otherwise be the half that drifts.
 
-/// Accumulates emitted `tracing` output so a test can assert on it.
-#[derive(Clone, Default)]
-struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+/// Routes each thread's `tracing` output to that thread's own buffer, and
+/// discards it on threads that are not capturing.
+///
+/// A **global** subscriber, installed once, rather than a thread-local one.
+/// `tracing` caches callsite interest globally and a thread-local subscriber
+/// does not invalidate that cache, so any test reaching a callsite while no
+/// subscriber is installed gets its interest cached as "never" — and a later
+/// thread-local capture there sees nothing. Rebuilding the cache does not fix
+/// it either, because the non-capturing tests run concurrently and re-cache
+/// "never" immediately after. Both were tried; both produced a capture that
+/// passed alone and failed in a parallel run (#353).
+mod capture {
+    use std::cell::RefCell;
+    use std::io;
+    use std::sync::{Arc, Mutex, Once};
 
-impl std::io::Write for Captured {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
+    thread_local! {
+        static SINK: RefCell<Option<Arc<Mutex<Vec<u8>>>>> = const { RefCell::new(None) };
     }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-    type Writer = Self;
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
+    #[derive(Clone, Copy, Default)]
+    pub struct ThreadSink;
+
+    impl io::Write for ThreadSink {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            SINK.with(|sink| {
+                if let Some(target) = sink.borrow().as_ref() {
+                    target.lock().unwrap().extend_from_slice(buf);
+                }
+            });
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ThreadSink {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            *self
+        }
+    }
+
+    static INSTALL: Once = Once::new();
+
+    fn install() {
+        INSTALL.call_once(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_writer(ThreadSink)
+                .with_max_level(tracing::Level::TRACE)
+                .without_time()
+                .try_init();
+        });
+    }
+
+    /// Starts capturing on this thread; the returned handle yields the output.
+    pub struct Handle(Arc<Mutex<Vec<u8>>>);
+
+    impl Handle {
+        pub fn contents(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            SINK.with(|sink| *sink.borrow_mut() = None);
+        }
+    }
+
+    pub fn start() -> Handle {
+        install();
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        SINK.with(|sink| *sink.borrow_mut() = Some(Arc::clone(&buffer)));
+        Handle(buffer)
     }
 }
 
 /// Drives the stateless callback carrying `state_cookie` (if any).
 async fn stateless_callback_with_state(state_cookie: Option<&str>) -> (StatusCode, String) {
-    let captured = Captured::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(captured.clone())
-        .with_max_level(tracing::Level::TRACE)
-        .without_time()
-        .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let captured = capture::start();
 
     let engine = build_engine();
     let state = AppState {
@@ -273,7 +325,7 @@ async fn stateless_callback_with_state(state_cookie: Option<&str>) -> (StatusCod
     let resp = test::call_service(&app, req.to_request()).await;
 
     let status = resp.status();
-    let logs = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    let logs = captured.contents();
     (status, logs)
 }
 
@@ -313,13 +365,7 @@ async fn a_stateless_callback_whose_state_cookie_will_not_decrypt_says_so() {
 /// copy of the block needs its own, which is the cost of duplicating it.
 #[actix_web::test]
 async fn a_stateless_callback_whose_code_exchange_fails_says_so() {
-    let captured = Captured::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(captured.clone())
-        .with_max_level(tracing::Level::TRACE)
-        .without_time()
-        .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let captured = capture::start();
 
     let engine = build_engine();
     let state = AppState {
@@ -364,7 +410,7 @@ async fn a_stateless_callback_whose_code_exchange_fails_says_so() {
     .await;
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    let logs = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    let logs = captured.contents();
     assert!(
         logs.contains("code exchange failed after state validation"),
         "a provider refusal must be distinguishable from a state failure; got:\n{logs}"
