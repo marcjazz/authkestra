@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
+use authkestra_engine::auth::{Identity, OAuthToken};
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 use authkestra_engine::pkce::Pkce;
 use authkestra_engine::{state::OAuth2State, Engine, ErasedOAuthFlow, OAuth2Flow};
@@ -8,6 +9,11 @@ use std::sync::Arc;
 
 #[cfg(feature = "session")]
 use super::cookie::create_actix_cookie;
+
+/// The cookie carrying the encrypted OAuth state between the authorization
+/// redirect and the callback. Named once: it was written as a literal at each
+/// of the three places that touch it.
+const STATE_COOKIE: &str = "ak_state";
 
 /// The provider name, bounded, for use in a response body.
 ///
@@ -99,9 +105,7 @@ pub fn initiate_oauth_login_erased(
         .encrypt(&config.state_encryption_key)
         .expect("Failed to encrypt OAuth state");
 
-    let cookie_name = "ak_state";
-
-    let cookie = Cookie::build(cookie_name, encrypted)
+    let cookie = Cookie::build(STATE_COOKIE, encrypted)
         .path("/")
         .http_only(true)
         .same_site(actix_web::cookie::SameSite::Lax)
@@ -148,17 +152,32 @@ where
 }
 
 #[cfg(feature = "session")]
-pub async fn handle_oauth_callback_erased(
-    req: HttpRequest,
+/// Validates the callback's state cookie and exchanges the code for an
+/// identity, shared by both callbacks.
+///
+/// Extracted for #356. This crate previously inlined the sequence twice, once
+/// per callback, while `authkestra-axum` routed both of its callbacks through
+/// a single helper of the same name. The duplicated part is the CSRF defence,
+/// and the part that legitimately differs — creating a session versus issuing
+/// a token — sat immediately after it, which is the shape that invites drift.
+///
+/// It did drift: the debug line reporting the resolved identity was added to
+/// one copy and missed from the other, in the change that introduced it
+/// (#355, corrected in #357). Sharing the block removes the possibility
+/// rather than the instance.
+///
+/// The three failure modes are reported distinctly here, so an operator can
+/// tell a browser `SameSite` problem from a rotated `state_encryption_key`
+/// from a provider refusal — all three of which are otherwise an identical
+/// 401.
+async fn finalize_callback_erased(
+    req: &HttpRequest,
     flow: &dyn ErasedOAuthFlow,
-    params: OAuthCallbackParams,
-    store: Arc<dyn SessionStore>,
-    config: SessionConfig,
-    _success_url: &str,
-) -> Result<HttpResponse, actix_web::Error> {
-    let cookie_name = "ak_state";
+    params: &OAuthCallbackParams,
+    config: &SessionConfig,
+) -> Result<(Identity, OAuthToken, OAuth2State), actix_web::Error> {
     let encrypted_state = req
-        .cookie(cookie_name)
+        .cookie(STATE_COOKIE)
         .map(|c: Cookie| c.value().to_string())
         .ok_or_else(|| {
             // No cookie at all, which is usually the browser rather than the
@@ -181,8 +200,7 @@ pub async fn handle_oauth_callback_erased(
             actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}"))
         })?;
 
-    // Exchange code
-    let (mut identity, token) = flow
+    let (identity, token) = flow
         .finalize_login(&params.code, &params.state, &expected_state)
         .await
         .map_err(|e| {
@@ -195,6 +213,20 @@ pub async fn handle_oauth_callback_erased(
         external_id = %identity.external_id,
         "OAuth callback validated and exchanged for an identity"
     );
+
+    Ok((identity, token, expected_state))
+}
+
+pub async fn handle_oauth_callback_erased(
+    req: HttpRequest,
+    flow: &dyn ErasedOAuthFlow,
+    params: OAuthCallbackParams,
+    store: Arc<dyn SessionStore>,
+    config: SessionConfig,
+    _success_url: &str,
+) -> Result<HttpResponse, actix_web::Error> {
+    let (mut identity, token, expected_state) =
+        finalize_callback_erased(&req, flow, &params, &config).await?;
 
     // Store tokens in identity attributes for convenience
     identity
@@ -229,7 +261,7 @@ pub async fn handle_oauth_callback_erased(
     let cookie = create_actix_cookie(&config, session.id);
 
     // Remove the flow cookie
-    let remove_cookie = Cookie::build(cookie_name, "")
+    let remove_cookie = Cookie::build(STATE_COOKIE, "")
         .path("/")
         .secure(true)
         .max_age(actix_web::cookie::time::Duration::ZERO)
@@ -364,51 +396,8 @@ pub async fn handle_oauth_callback_jwt_erased(
     expires_in_secs: u64,
     config: SessionConfig,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let cookie_name = "ak_state";
-
-    let encrypted_state = req
-        .cookie(cookie_name)
-        .map(|c: Cookie| c.value().to_string())
-        .ok_or_else(|| {
-            // No cookie at all, which is usually the browser rather than the
-            // user: a `SameSite`/`Secure` mismatch, or a callback arriving
-            // after the fifteen-minute lifetime.
-            tracing::warn!("OAuth callback carries no state cookie; cannot validate CSRF");
-            actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
-        })?;
-
-    let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
-        .map_err(|e| {
-            // The cookie arrived but would not decrypt. A rotated
-            // `state_encryption_key` fails every in-flight login exactly
-            // like this, and nothing else in the system would say so.
-            tracing::warn!(
-                error = %e,
-                "OAuth state cookie could not be decrypted; if the state encryption key \
-                 was rotated, logins started before the rotation will all fail this way"
-            );
-            actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}"))
-        })?;
-
-    // Exchange code
-    let (identity, _token) = flow
-        .finalize_login(&params.code, &params.state, &expected_state)
-        .await
-        .map_err(|e| {
-            // The state checked out; the provider exchange is what failed.
-            tracing::warn!(error = %e, "OAuth code exchange failed after state validation");
-            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
-        })?;
-
-    // Also emitted by the session callback above. On `authkestra-axum` one
-    // shared `finalize_callback_erased` covers both callbacks, so it cannot
-    // be present in one and missing from the other; here it has to be
-    // written twice. It was missing from this copy until a diff of the two
-    // blocks caught it, which is the drift #356 exists to remove.
-    tracing::debug!(
-        external_id = %identity.external_id,
-        "OAuth callback validated and exchanged for an identity"
-    );
+    let (identity, _token, _expected_state) =
+        finalize_callback_erased(req, flow, &params, &config).await?;
 
     let user_id = identity.external_id.clone();
     let jwt = token_manager
@@ -427,7 +416,7 @@ pub async fn handle_oauth_callback_jwt_erased(
     let mut res = HttpResponse::Ok();
 
     // Remove the flow cookie
-    let remove_cookie = Cookie::build(cookie_name, "")
+    let remove_cookie = Cookie::build(STATE_COOKIE, "")
         .path("/")
         .max_age(actix_web::cookie::time::Duration::ZERO)
         .secure(true)
