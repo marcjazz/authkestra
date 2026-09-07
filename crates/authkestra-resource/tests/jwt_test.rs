@@ -1655,3 +1655,240 @@ async fn rejects_hmac_token_verified_against_an_rsa_jwks_key() {
         "expected the RSA key to be refused by the HMAC verifier, got: {err}"
     );
 }
+
+// --- Why a token was rejected (#353) ---
+//
+// `JwtStrategy::authenticate` declines an invalid token with `Ok(None)` so
+// another strategy may still run. That decline used to be silent, which left
+// the resource server unable to answer the question #335 was filed to ask:
+// why was this token rejected? These assert the reason is now recorded, and
+// that the credential itself still is not.
+
+/// Routes each thread's `tracing` output to that thread's own buffer, and
+/// discards it on threads that are not capturing.
+///
+/// A **global** subscriber, installed once, rather than a thread-local one.
+/// `tracing` caches callsite interest globally and a thread-local subscriber
+/// does not invalidate that cache, so any test reaching a callsite while no
+/// subscriber is installed gets its interest cached as "never" — and a later
+/// thread-local capture there sees nothing. Rebuilding the cache does not fix
+/// it either, because the non-capturing tests run concurrently and re-cache
+/// "never" immediately after. Both were tried; both produced a capture that
+/// passed alone and failed in a parallel run (#353).
+mod capture {
+    use std::cell::RefCell;
+    use std::io;
+    use std::sync::{Arc, Mutex, Once};
+
+    thread_local! {
+        static SINK: RefCell<Option<Arc<Mutex<Vec<u8>>>>> = const { RefCell::new(None) };
+    }
+
+    #[derive(Clone, Copy, Default)]
+    pub struct ThreadSink;
+
+    impl io::Write for ThreadSink {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            SINK.with(|sink| {
+                if let Some(target) = sink.borrow().as_ref() {
+                    target.lock().unwrap().extend_from_slice(buf);
+                }
+            });
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ThreadSink {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            *self
+        }
+    }
+
+    static INSTALL: Once = Once::new();
+
+    fn install() {
+        INSTALL.call_once(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_writer(ThreadSink)
+                .with_max_level(tracing::Level::TRACE)
+                .without_time()
+                .try_init();
+        });
+    }
+
+    /// Starts capturing on this thread; the returned handle yields the output.
+    pub struct Handle(Arc<Mutex<Vec<u8>>>);
+
+    impl Handle {
+        pub fn contents(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            SINK.with(|sink| *sink.borrow_mut() = None);
+        }
+    }
+
+    pub fn start() -> Handle {
+        install();
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        SINK.with(|sink| *sink.borrow_mut() = Some(Arc::clone(&buffer)));
+        Handle(buffer)
+    }
+}
+
+/// Runs `strategy.authenticate` against a Bearer `token`, capturing logs.
+async fn authenticate_capturing(
+    config: ValidationConfig,
+    token: &str,
+) -> (
+    Result<Option<TestClaims>, authkestra_engine::error::AuthError>,
+    String,
+) {
+    let captured = capture::start();
+
+    let strategy: JwtStrategy<TestClaims> = JwtStrategy::new(config);
+    let request = Request::builder()
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .body(())
+        .unwrap();
+    let (parts, _) = request.into_parts();
+
+    let result = strategy.authenticate(&parts).await;
+    let logs = captured.contents();
+    (result, logs)
+}
+
+/// An expired token is declined, and the reason is now on the record. This is
+/// #335's question — "my token looks fine, why is it refused?" — answered at
+/// the layer that refused it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_token_that_fails_validation_records_why() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .leeway(0)
+        .build();
+
+    let token = expired_token(&key, 120);
+    let (result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        matches!(result, Ok(None)),
+        "an invalid token is a decline, not a hard error"
+    );
+    assert!(
+        logs.contains("token failed validation"),
+        "the decline should be recorded; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("ExpiredSignature"),
+        "and it should say which check failed; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains(&token),
+        "the bearer token must never be logged:\n{logs}"
+    );
+}
+
+/// An unreachable JWKS endpoint is not a bad credential — it is not knowing.
+/// It surfaces as a hard error rather than a decline, and both the fetch
+/// failure and that distinction are now visible.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unreachable_jwks_endpoint_is_reported_and_is_not_a_decline() {
+    let key = generate_rsa_key(Some("kid-1"));
+    // A port nothing is listening on.
+    let config = ValidationConfig::builder()
+        .jwks_url("http://127.0.0.1:1/.well-known/jwks.json")
+        .build();
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let (result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        result.is_err(),
+        "not being able to reach the JWKS is 'we cannot tell', not 'the token is bad'"
+    );
+    assert!(
+        logs.contains("could not reach the JWKS endpoint"),
+        "the fetch failure should be reported at the point it happens; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("could not determine whether the token is valid"),
+        "and distinguished from a validation failure; got:\n{logs}"
+    );
+}
+
+/// A token naming a `kid` the issuer does not publish: the endpoint answered,
+/// the key is simply not there. Reported distinctly from a fetch failure,
+/// after the refresh-for-rotation retry.
+#[tokio::test(flavor = "current_thread")]
+async fn a_token_naming_an_unknown_kid_says_the_jwks_lacks_it() {
+    let served = generate_rsa_key(Some("kid-served"));
+    let other = generate_rsa_key(Some("kid-unknown"));
+    let server = start_jwks_server(vec![served.jwk.clone()]).await;
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&other.encoding_key, Some("kid-unknown"), &claims);
+    let (_result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        logs.contains("refreshing in case of rotation"),
+        "the rotation retry should be visible; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("does not contain"),
+        "and the give-up should say the JWKS lacks the key; got:\n{logs}"
+    );
+}
+
+/// Review finding on #358: with no `kid`, `find_key` falls back to the first
+/// key, so the only way to reach the give-up branch is an empty key set — the
+/// token named nothing. Reporting that as "token names a key the JWKS does not
+/// contain" described a fault that had not happened.
+#[tokio::test(flavor = "current_thread")]
+async fn an_empty_jwks_does_not_claim_the_token_named_a_missing_key() {
+    let key = generate_rsa_key(None);
+    // The endpoint answers, with no keys at all.
+    let server = start_jwks_server(vec![]).await;
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    // No `kid` on the token either, which is what selects the fallback path.
+    let token = sign_token(&key.encoding_key, None, &claims);
+    let (_result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        logs.contains("no kid and the issuer's JWKS has no key"),
+        "an empty key set should be reported as such; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("token names a key"),
+        "the token named no key, so it must not be blamed for one; got:\n{logs}"
+    );
+}

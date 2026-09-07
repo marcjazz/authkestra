@@ -51,6 +51,39 @@ impl Jwk {
     /// shape) and `"OKP"` with `crv: "Ed25519"` (RFC 8037). Any other `kty`,
     /// or an OKP key advertising an unsupported curve, is rejected.
     pub fn to_decoding_key(&self) -> Result<DecodingKey, AuthError> {
+        // Reported at one boundary rather than at each of the nine rejection
+        // points inside. Every one of them builds an `AuthError::Token` whose
+        // message already names what was wrong — a missing `n`, an
+        // unsupported curve, a low-order Ed25519 point — so one line here
+        // carries the same information and cannot fall out of step with the
+        // checks.
+        //
+        // `debug!`, not `warn!`, and the distinction is load-bearing: this is
+        // the per-token verification path, so an issuer publishing one key
+        // shape this crate rejects would otherwise emit a warning for *every*
+        // token that resolves to it, for as long as the key stays in the
+        // JWKS. Warn-level visibility of the condition is not lost —
+        // `AuthError` propagates as `ValidationError::Discovery` and
+        // `JwtStrategy::authenticate` reports it as "could not determine
+        // whether the token is valid" — so what belongs here is the
+        // structured identification of *which* published key was unusable,
+        // which is a debugging detail rather than an alert.
+        let outcome = self.to_decoding_key_inner();
+        if let Err(error) = &outcome {
+            tracing::debug!(
+                kid = ?self.kid,
+                kty = %self.kty,
+                alg = ?self.alg,
+                %error,
+                "JWKS key could not be turned into a verification key"
+            );
+        }
+        outcome
+    }
+
+    /// The conversion itself. Split out so [`Jwk::to_decoding_key`] can report
+    /// the outcome in one place; see the comment there.
+    fn to_decoding_key_inner(&self) -> Result<DecodingKey, AuthError> {
         match self.kty.as_str() {
             "RSA" => {
                 let n = self
@@ -123,6 +156,75 @@ mod tests {
             err.to_string().contains("low-order"),
             "expected low-order point rejection, got: {}",
             err
+        );
+    }
+
+    /// #353: a key the issuer published but this crate cannot use was
+    /// indistinguishable, to a caller, from a forged token — nine rejection
+    /// branches here all collapse into the same downstream rejection. The
+    /// reason is now reported at the boundary.
+    ///
+    /// At `DEBUG`, asserted below: this runs per token, so a warning here
+    /// would repeat for every token resolving to an unusable key.
+    #[test]
+    fn an_unusable_key_reports_why_and_identifies_the_key() {
+        let jwk = Jwk {
+            kid: Some("kid-1".to_string()),
+            kty: "EC".to_string(),
+            alg: Some("ES256".to_string()),
+            n: None,
+            e: None,
+            crv: Some("P-256".to_string()),
+            x: Some("irrelevant".to_string()),
+        };
+
+        let (result, logs) = crate::test_support::capture(|| jwk.to_decoding_key());
+
+        assert!(result.is_err());
+        assert!(
+            logs.contains("could not be turned into a verification key"),
+            "the failure should be reported; got:\n{logs}"
+        );
+        assert!(
+            logs.contains("kid-1") && logs.contains("EC"),
+            "and should identify which published key was unusable; got:\n{logs}"
+        );
+        assert!(
+            logs.contains("only RSA and OKP are supported"),
+            "and say what was wrong with it; got:\n{logs}"
+        );
+        assert!(
+            logs.contains("DEBUG") && !logs.contains("WARN"),
+            "this is a per-token path; a warning here would repeat for every \
+             token resolving to the same unusable key; got:\n{logs}"
+        );
+    }
+
+    /// A usable key logs nothing: this is a per-token hot path, and a warning
+    /// on every successful verification would be noise.
+    #[test]
+    fn a_usable_key_is_silent() {
+        // A real Ed25519 point, so the strict parse succeeds.
+        use base64::Engine as _;
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let x = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(signing.verifying_key().to_bytes());
+        let jwk = Jwk {
+            kid: None,
+            kty: "OKP".to_string(),
+            alg: None,
+            n: None,
+            e: None,
+            crv: Some("Ed25519".to_string()),
+            x: Some(x),
+        };
+
+        let (result, logs) = crate::test_support::capture(|| jwk.to_decoding_key());
+
+        assert!(result.is_ok(), "the fixture must produce a usable key");
+        assert!(
+            logs.is_empty(),
+            "a successful conversion should not log on a per-token path:\n{logs}"
         );
     }
 }
