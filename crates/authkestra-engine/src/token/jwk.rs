@@ -51,19 +51,26 @@ impl Jwk {
     /// shape) and `"OKP"` with `crv: "Ed25519"` (RFC 8037). Any other `kty`,
     /// or an OKP key advertising an unsupported curve, is rejected.
     pub fn to_decoding_key(&self) -> Result<DecodingKey, AuthError> {
-        // Reported once here rather than at each of the nine rejection points
-        // inside. Every one of them builds an `AuthError::Token` whose message
-        // already names what was wrong — a missing `n`, an unsupported curve,
-        // a low-order Ed25519 point — so one line at the boundary carries the
-        // same information and cannot fall out of step with the checks.
+        // Reported at one boundary rather than at each of the nine rejection
+        // points inside. Every one of them builds an `AuthError::Token` whose
+        // message already names what was wrong — a missing `n`, an
+        // unsupported curve, a low-order Ed25519 point — so one line here
+        // carries the same information and cannot fall out of step with the
+        // checks.
         //
-        // Worth having because callers collapse this: `validate_jwt_generic`
-        // turns any failure here into the same rejection as a bad signature,
-        // so "the issuer published a key this crate cannot use" was
-        // indistinguishable from "the token is forged" (#353).
+        // `debug!`, not `warn!`, and the distinction is load-bearing: this is
+        // the per-token verification path, so an issuer publishing one key
+        // shape this crate rejects would otherwise emit a warning for *every*
+        // token that resolves to it, for as long as the key stays in the
+        // JWKS. Warn-level visibility of the condition is not lost —
+        // `AuthError` propagates as `ValidationError::Discovery` and
+        // `JwtStrategy::authenticate` reports it as "could not determine
+        // whether the token is valid" — so what belongs here is the
+        // structured identification of *which* published key was unusable,
+        // which is a debugging detail rather than an alert.
         let outcome = self.to_decoding_key_inner();
         if let Err(error) = &outcome {
-            tracing::warn!(
+            tracing::debug!(
                 kid = ?self.kid,
                 kty = %self.kty,
                 alg = ?self.alg,
@@ -156,6 +163,9 @@ mod tests {
     /// indistinguishable, to a caller, from a forged token — nine rejection
     /// branches here all collapse into the same downstream rejection. The
     /// reason is now reported at the boundary.
+    ///
+    /// At `DEBUG`, asserted below: this runs per token, so a warning here
+    /// would repeat for every token resolving to an unusable key.
     #[test]
     fn an_unusable_key_reports_why_and_identifies_the_key() {
         let jwk = Jwk {
@@ -182,6 +192,11 @@ mod tests {
         assert!(
             logs.contains("only RSA and OKP are supported"),
             "and say what was wrong with it; got:\n{logs}"
+        );
+        assert!(
+            logs.contains("DEBUG") && !logs.contains("WARN"),
+            "this is a per-token path; a warning here would repeat for every \
+             token resolving to the same unusable key; got:\n{logs}"
         );
     }
 

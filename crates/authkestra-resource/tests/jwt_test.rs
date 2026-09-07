@@ -1860,3 +1860,35 @@ async fn a_token_naming_an_unknown_kid_says_the_jwks_lacks_it() {
         "and the give-up should say the JWKS lacks the key; got:\n{logs}"
     );
 }
+
+/// Review finding on #358: with no `kid`, `find_key` falls back to the first
+/// key, so the only way to reach the give-up branch is an empty key set — the
+/// token named nothing. Reporting that as "token names a key the JWKS does not
+/// contain" described a fault that had not happened.
+#[tokio::test(flavor = "current_thread")]
+async fn an_empty_jwks_does_not_claim_the_token_named_a_missing_key() {
+    let key = generate_rsa_key(None);
+    // The endpoint answers, with no keys at all.
+    let server = start_jwks_server(vec![]).await;
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    // No `kid` on the token either, which is what selects the fallback path.
+    let token = sign_token(&key.encoding_key, None, &claims);
+    let (_result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        logs.contains("no kid and the issuer's JWKS has no key"),
+        "an empty key set should be reported as such; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("token names a key"),
+        "the token named no key, so it must not be blamed for one; got:\n{logs}"
+    );
+}

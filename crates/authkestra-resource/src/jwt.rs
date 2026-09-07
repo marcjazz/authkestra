@@ -212,10 +212,18 @@ impl JwksCache {
         let jwks = self.refresh().await?;
         let key = jwks.find_key(kid).cloned();
         if key.is_none() {
-            // Distinct from a fetch failure: the endpoint answered, and the
-            // key this token names is not in it. Signing key retired too
-            // early, or a token from a different issuer entirely.
-            tracing::warn!(kid, "token names a key the issuer's JWKS does not contain");
+            // Both mean "the endpoint answered and we still have no key", but
+            // they are different faults and must not share a message: with no
+            // `kid`, `find_key` falls back to the first key, so the only way
+            // to get here is an empty key set — the token named nothing.
+            match kid {
+                Some(kid) => {
+                    tracing::warn!(kid, "token names a key the issuer's JWKS does not contain")
+                }
+                None => tracing::warn!(
+                    "token carries no kid and the issuer's JWKS has no key to fall back to"
+                ),
+            }
         }
         Ok(key)
     }
