@@ -279,3 +279,122 @@ async fn test_totp_primary_requires_mfa() {
         _ => panic!("Expected MFA required for TOTP primary"),
     }
 }
+
+// --- MFA continuation token: clock-skew window (#350 follow-up) ---
+//
+// `Engine::authenticate` validates the MFA token that resumes a
+// half-completed login. That validation used to take `jsonwebtoken`'s
+// 60-second `exp` tolerance silently; it is now stated explicitly. These
+// characterize the window rather than a change, because the value did not
+// move — the point is that the boundary is now visible in the suite, so
+// tightening or widening it later has to be a deliberate edit with a failing
+// test attached rather than an invisible consequence of a dependency bump.
+//
+// `Totp` is the `challenge_input`, not `Password`: `authenticate` maps only
+// `Totp`/`WebAuthnAuthentication` to an MFA method and returns
+// `InvalidInput` for anything else *before* it ever looks at `exp`. A first
+// draft of these tests used `Password`, which made the "beyond the leeway"
+// case pass for entirely the wrong reason — it would have passed with the
+// expiry check deleted outright.
+#[cfg(feature = "totp")]
+mod mfa_token_leeway {
+    use super::*;
+    use crate::auth::AuthResult;
+    use crate::Engine;
+
+    /// An MFA method registered under the name the `Totp` challenge maps to,
+    /// returning the same `external_id` the MFA token's `sub` carries so the
+    /// post-validation user check passes.
+    struct MockTotpMethod;
+    #[async_trait]
+    impl AuthMethod for MockTotpMethod {
+        fn name(&self) -> &str {
+            "totp"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Ok(Identity {
+                provider_id: "totp".to_string(),
+                external_id: "user123".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+        async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
+            Ok(true)
+        }
+    }
+
+    fn engine() -> crate::Engine<crate::engine::Missing, crate::engine::Missing> {
+        Engine::builder().with_mfa_method(MockTotpMethod).build()
+    }
+
+    /// Mints an MFA continuation token whose `exp` is `seconds_ago` in the
+    /// past, signed with the engine's own secret so that expiry is the only
+    /// thing wrong with it.
+    fn expired_mfa_token<S, T>(engine: &crate::Engine<S, T>, seconds_ago: i64) -> String {
+        let exp = chrono::Utc::now() - chrono::Duration::seconds(seconds_ago);
+        let claims = crate::auth::state::MfaTokenClaims {
+            sub: "user123".to_string(),
+            mfa_pending: true,
+            exp: exp.timestamp() as usize,
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(&engine.mfa_jwt_secret),
+        )
+        .expect("signing the MFA token should succeed")
+    }
+
+    fn challenge(mfa_token: String) -> AuthInput {
+        AuthInput::MfaChallenge {
+            mfa_token,
+            challenge_input: Box::new(AuthInput::Totp {
+                user_id: "user123".to_string(),
+                code: "000000".to_string(),
+            }),
+        }
+    }
+
+    /// A live token resumes the login. Establishes that everything *other*
+    /// than expiry is wired correctly, so the rejection below is attributable
+    /// to the window and not to the fixture.
+    #[tokio::test]
+    async fn a_live_mfa_token_resumes_the_login() {
+        let engine = engine();
+        // Negative "seconds ago" puts `exp` in the future.
+        let token = expired_mfa_token(&engine, -600);
+
+        let result = engine.authenticate(challenge(token)).await;
+        assert!(
+            matches!(result, Ok(AuthResult::Success(_))),
+            "a live MFA token should resume the login, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_mfa_token_expired_within_the_leeway_still_resumes_the_login() {
+        let engine = engine();
+        let token = expired_mfa_token(&engine, 30);
+
+        let result = engine.authenticate(challenge(token)).await;
+        assert!(
+            matches!(result, Ok(AuthResult::Success(_))),
+            "within DEFAULT_LEEWAY_SECS the token is still honoured, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_mfa_token_expired_beyond_the_leeway_is_refused() {
+        let engine = engine();
+        // Comfortably past the tolerance, so this does not sit on the boundary.
+        let token = expired_mfa_token(&engine, crate::token::DEFAULT_LEEWAY_SECS as i64 + 60);
+
+        let result = engine.authenticate(challenge(token)).await;
+        assert!(
+            matches!(result, Err(AuthError::InvalidInput)),
+            "past the tolerance a stale MFA token must not resume a login, got {result:?}"
+        );
+    }
+}

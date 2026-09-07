@@ -236,10 +236,27 @@ impl<S, T> Engine<S, T> {
         } = input
         {
             // Verify MFA Token
+            let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+            // Stated rather than inherited, for the reason #350 gives: a
+            // tolerance nobody wrote down is one nobody can review. This is
+            // the last site that still took `jsonwebtoken`'s default
+            // silently, and it matters more here than most — the 15-minute
+            // TTL below is a deliberate bound on how long a half-completed
+            // login stays resumable, and an unstated grace period quietly
+            // widens it.
+            //
+            // The value is unchanged at `DEFAULT_LEEWAY_SECS`, so nothing
+            // about today's behaviour moves. It is more tolerance than this
+            // token needs, though: unlike an ID token or a client assertion,
+            // this one is minted and verified by the same deployment with the
+            // same secret, so the only clocks that can disagree belong to
+            // instances of the same service. Tightening it is a deliberate
+            // decision to make on its own, not a side effect of naming it.
+            validation.leeway = crate::token::DEFAULT_LEEWAY_SECS;
             let token_data = jsonwebtoken::decode::<crate::auth::state::MfaTokenClaims>(
                 &mfa_token,
                 &jsonwebtoken::DecodingKey::from_secret(&self.mfa_jwt_secret),
-                &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+                &validation,
             )
             .map_err(|_| AuthError::InvalidInput)?;
 
