@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.9.2...authkestra-axum-v0.9.3) - 2026-09-07
+
+### Added
+
+- instrument the token-validation path, and fix flaky log-capture tests ([#358](https://github.com/marcjazz/authkestra/pull/358))
+- *(adapters)* instrument the OAuth login, callback and logout handlers ([#355](https://github.com/marcjazz/authkestra/pull/355))
+
+### Fixed
+
+- *(macros)* anchor derive output so the state derives work through the facade ([#344](https://github.com/marcjazz/authkestra/pull/344))
+
+### Other
+
+- *(adapters)* cover the OpenID Provider handlers in both axum and actix ([#346](https://github.com/marcjazz/authkestra/pull/346))
+
 ## [0.9.0](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.8.1...authkestra-axum-v0.9.0) - 2026-09-05
 
 ### Fixed

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.9.2...authkestra-oidc-v0.9.3) - 2026-09-07
+
+### Added
+
+- *(engine)* name and expose the clock-skew leeway JWT validation applies ([#351](https://github.com/marcjazz/authkestra/pull/351))
+
 ## [0.8.1](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.8.0...authkestra-oidc-v0.8.1) - 2026-09-04
 
 ### Other

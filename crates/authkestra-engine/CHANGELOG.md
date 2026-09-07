@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.9.2...authkestra-engine-v0.9.3) - 2026-09-07
+
+### Added
+
+- instrument the token-validation path, and fix flaky log-capture tests ([#358](https://github.com/marcjazz/authkestra/pull/358))
+- *(engine)* instrument the authentication path ([#354](https://github.com/marcjazz/authkestra/pull/354))
+- *(engine)* name and expose the clock-skew leeway JWT validation applies ([#351](https://github.com/marcjazz/authkestra/pull/351))
+
+### Fixed
+
+- *(engine)* state the MFA continuation token's clock-skew window ([#352](https://github.com/marcjazz/authkestra/pull/352))
+- *(engine)* wait on a timer in DeviceFlow::poll_for_token instead of blocking ([#343](https://github.com/marcjazz/authkestra/pull/343))
+
 ## [0.9.1](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.9.0...authkestra-engine-v0.9.1) - 2026-09-06
 
 ### Fixed
