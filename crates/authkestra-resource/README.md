@@ -44,6 +44,26 @@ let config = ValidationConfig::builder()
 let strategy = JwtStrategy::new(config);
 ```
 
+### Clock-skew tolerance
+
+`exp` and `nbf` are validated with a 60-second allowance, so a token is
+accepted for roughly a minute after it expires. This absorbs the disagreement
+between the issuing clock and the validating one.
+
+```rust
+let config = ValidationConfig::builder()
+    .jwks_url("https://example.com/.well-known/jwks.json")
+    .leeway(0) // no tolerance: expiry takes effect immediately
+    .build();
+```
+
+The default is `authkestra_engine::token::DEFAULT_LEEWAY_SECS`, the same
+constant `TokenManager` validates with, so both halves of a deployment apply
+the same window. Set it to `0` when issuer and validator share a clock, or in
+a test asserting that an expired token is refused — at the default such a test
+passes where you expect it to fail. Raising it widens the window in which an
+expired token is still honoured.
+
 ### Trusting several issuers
 
 One verifier can accept tokens from several issuers, each with its own JWKS
