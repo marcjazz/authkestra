@@ -220,7 +220,7 @@ pub async fn handle_token_with_client_cert(
     client_cert_der: Option<&[u8]>,
     dpop_header: Option<&str>,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
+    tracing::debug!(grant_type = %req.grant_type, "Processing token request");
 
     // 0. Work out which credential — if any — the request presents.
     let credential = extract_credential(
@@ -245,7 +245,11 @@ pub async fn handle_token_with_client_cert(
     let client = match op_store.find_client(&client_id).await {
         Ok(Some(c)) => c,
         Ok(None) => {
-            tracing::error!(client_id = %client_id, "Unknown client ID during token exchange");
+            // Not "during token exchange": this is the token endpoint's own
+            // client lookup and fires for every grant type. The message was
+            // mislabelling every unknown-client rejection here, which nothing
+            // noticed because the branch had no test.
+            tracing::error!(client_id = %client_id, "Unknown client ID at the token endpoint");
             return Err(TokenErrorResponse {
                 error: "invalid_client".to_string(),
                 error_description: "Client authentication failed".to_string(),
