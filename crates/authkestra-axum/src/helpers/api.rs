@@ -37,14 +37,14 @@ pub struct OAuthLoginParams {
     pub success_url: Option<String>,
 }
 
-/// Helper to initiate the OAuth2 login flow.
-///
-/// This generates the authorization URL and sets a CSRF state cookie.
 /// The cookie carrying the encrypted OAuth state between the authorization
 /// redirect and the callback. Named once rather than repeated as a literal,
 /// matching `authkestra-actix` (#356).
 const STATE_COOKIE: &str = "ak_state";
 
+/// Helper to initiate the OAuth2 login flow.
+///
+/// This generates the authorization URL and sets a CSRF state cookie.
 pub fn initiate_oauth_login(
     flow: &dyn ErasedOAuthFlow,
     cookies: &Cookies,
