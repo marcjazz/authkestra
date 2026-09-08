@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.9.3...authkestra-axum-v0.9.4) - 2026-09-08
+
+### Other
+
+- *(actix)* share one callback helper instead of two copies of the CSRF check ([#361](https://github.com/marcjazz/authkestra/pull/361))
+
 ## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.9.2...authkestra-axum-v0.9.3) - 2026-09-07
 
 ### Added

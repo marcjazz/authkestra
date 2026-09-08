@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.9.3...authkestra-op-v0.9.4) - 2026-09-08
+
+### Added
+
+- *(op)* apply the log-level policy to the parts it settles cleanly ([#359](https://github.com/marcjazz/authkestra/pull/359))
+
 ## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.7.2...authkestra-op-v0.8.0) - 2026-09-03
 
 ### Other
