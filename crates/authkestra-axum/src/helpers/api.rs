@@ -37,6 +37,11 @@ pub struct OAuthLoginParams {
     pub success_url: Option<String>,
 }
 
+/// The cookie carrying the encrypted OAuth state between the authorization
+/// redirect and the callback. Named once rather than repeated as a literal,
+/// matching `authkestra-actix` (#356).
+const STATE_COOKIE: &str = "ak_state";
+
 /// Helper to initiate the OAuth2 login flow.
 ///
 /// This generates the authorization URL and sets a CSRF state cookie.
@@ -57,9 +62,7 @@ pub fn initiate_oauth_login(
         .encrypt(&config.state_encryption_key)
         .expect("Failed to encrypt OAuth state");
 
-    let cookie_name = "ak_state";
-
-    let mut cookie = Cookie::new(cookie_name, encrypted);
+    let mut cookie = Cookie::new(STATE_COOKIE, encrypted);
     cookie.set_path("/");
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Lax);
@@ -88,10 +91,8 @@ async fn finalize_callback_erased(
     params: &OAuthCallbackParams,
     config: &SessionConfig,
 ) -> Result<(Identity, OAuthToken, OAuth2State), (StatusCode, String)> {
-    let cookie_name = "ak_state";
-
     let encrypted_state = cookies
-        .get(cookie_name)
+        .get(STATE_COOKIE)
         .map(|c| c.value().to_string())
         .ok_or_else(|| {
             // No cookie at all, which is usually the browser rather than the
@@ -123,7 +124,7 @@ async fn finalize_callback_erased(
         })?;
 
     // Remove cookie after use
-    let mut remove_cookie = Cookie::new(cookie_name, "");
+    let mut remove_cookie = Cookie::new(STATE_COOKIE, "");
     remove_cookie.set_path("/");
     remove_cookie.set_secure(true);
 
