@@ -287,15 +287,13 @@ impl TokenManager {
 
         let kid_val = kid.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        let jwk = crate::token::jwk::Jwk {
-            kid: Some(kid_val.clone()),
-            kty: "RSA".to_string(),
-            alg: Some("RS256".to_string()),
-            n: Some(n),
-            e: Some(e),
-            crv: None,
-            x: None,
-        };
+        // `use` is declared explicitly so a relying party enforcing RFC 7517
+        // §4.2 key-use separation (as this crate's own `Jwks::find_key` now
+        // does) sees what this key is for instead of having to assume.
+        let jwk = crate::token::jwk::Jwk::rsa(n, e)
+            .with_kid(kid_val.clone())
+            .with_alg("RS256")
+            .with_use("sig");
 
         // The decoding key must come from the PUBLIC half. `DecodingKey::from_rsa_pem`
         // expects a public-key PEM; handed a private one it still constructs, but every
@@ -345,15 +343,11 @@ impl TokenManager {
 
         let kid_val = kid.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        let jwk = crate::token::jwk::Jwk {
-            kid: Some(kid_val.clone()),
-            kty: "OKP".to_string(),
-            alg: Some("EdDSA".to_string()),
-            n: None,
-            e: None,
-            crv: Some("Ed25519".to_string()),
-            x: Some(x),
-        };
+        // Same `use` rationale as `new_asymmetric`.
+        let jwk = crate::token::jwk::Jwk::ed25519(x)
+            .with_kid(kid_val.clone())
+            .with_alg("EdDSA")
+            .with_use("sig");
 
         // Same rationale as `new_asymmetric`: derive the decoding key from
         // the JWK we just built (the public half) rather than from the
