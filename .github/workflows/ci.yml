@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'website/**'
+      - 'landing/**'
+      - 'design/**'
       - 'docs/**'
       - '**.md'
       - '.gitignore'
@@ -12,7 +13,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths-ignore:
-      - 'website/**'
+      - 'landing/**'
+      - 'design/**'
       - 'docs/**'
       - '**.md'
       - '.gitignore'

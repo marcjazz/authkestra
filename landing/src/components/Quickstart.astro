@@ -1,0 +1,142 @@
+---
+const cargo = `authkestra = { version = "0.9", features = ["axum", "session", "github"] }`;
+
+const rust = `let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
+let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());
+
+let auth_engine = Authkestra::builder()
+    .provider(OAuth2Flow::new(github_provider))
+    .session_store(session_store)
+    .build();`;
+---
+<section id="quickstart" class="quickstart" aria-labelledby="quickstart-heading">
+  <div class="inner">
+    <div class="copy">
+      <h2 id="quickstart-heading">Working GitHub login, four lines in</h2>
+      <p>
+        Add the facade crate with the features you need, then build the engine.
+        The typestate builder only lets you call <code>.build()</code> once
+        every prerequisite it needs is actually in place.
+      </p>
+      <a class="link" href="https://docs.authkestra.com/guides/quickstart/">Read the full quickstart guide</a>
+    </div>
+
+    <div class="panels">
+      <figure class="panel">
+        <figcaption>Cargo.toml</figcaption>
+        <pre class="code"><code>{cargo}</code></pre>
+      </figure>
+      <figure class="panel">
+        <figcaption>src/main.rs</figcaption>
+        <pre class="code"><code>{rust}</code></pre>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<style>
+  .quickstart {
+    max-width: var(--ak-layout-max);
+    margin: 0 auto;
+    padding: var(--ak-space-24) var(--ak-space-6);
+  }
+
+  .inner {
+    display: grid;
+    grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+    gap: var(--ak-space-10);
+    align-items: start;
+  }
+
+  /* Grid items default to min-width:auto (≈ their min-content). The code
+     panel's unwrapped Rust lines would otherwise blow that min-content out
+     and stretch the whole row — including this plain-text column — wider
+     than the viewport. min-width:0 lets the track (and .code's own
+     overflow-x:auto) do the shrinking instead. */
+  .copy,
+  .panels {
+    min-width: 0;
+  }
+
+  h2 {
+    font-size: var(--ak-text-3xl);
+    max-width: 16ch;
+  }
+
+  .copy p {
+    margin-top: var(--ak-space-4);
+    color: hsl(var(--muted-foreground));
+    max-width: 42ch;
+  }
+
+  .copy code {
+    background: hsl(var(--ak-neutral-800));
+    padding: 0.1em 0.4em;
+    border-radius: var(--ak-radius-sm);
+    font-size: 0.9em;
+    color: hsl(var(--foreground));
+  }
+
+  .link {
+    display: inline-block;
+    margin-top: var(--ak-space-6);
+    color: hsl(var(--primary-accent));
+    font-size: var(--ak-text-sm);
+    font-weight: 500;
+  }
+
+  .link:hover {
+    text-decoration: underline;
+  }
+
+  .panels {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ak-space-4);
+  }
+
+  .panel {
+    margin: 0;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--ak-radius-xl);
+    overflow: hidden;
+  }
+
+  figcaption {
+    padding: var(--ak-space-2) var(--ak-space-5);
+    font-size: var(--ak-text-xs);
+    color: hsl(var(--muted-foreground));
+    border-bottom: 1px solid hsl(var(--border));
+    font-family: var(--ak-font-mono);
+  }
+
+  .code {
+    margin: 0;
+    padding: var(--ak-space-5);
+    font-family: var(--ak-font-mono);
+    font-size: var(--ak-text-sm);
+    line-height: var(--ak-leading-relaxed);
+    color: hsl(var(--muted-foreground));
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  @media (max-width: 900px) {
+    .inner {
+      grid-template-columns: 1fr;
+    }
+    h2, .copy p {
+      max-width: none;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .quickstart {
+      padding: var(--ak-space-16) var(--ak-space-4);
+    }
+    .code {
+      font-size: var(--ak-text-xs);
+    }
+  }
+</style>
