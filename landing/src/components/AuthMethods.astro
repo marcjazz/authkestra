@@ -110,8 +110,13 @@ const methods = [
     border-color: hsl(var(--input));
   }
 
+  /*
+    Rust as a set, not as eight competing accents — see DESIGN.md §2, rule 1.
+    Every card in this grid is styled identically, so the colour reads once,
+    as "these are the methods", which is exactly what this section is for.
+  */
   .icon {
-    color: hsl(var(--muted-foreground));
+    color: hsl(var(--primary-accent));
   }
 
   h3 {
