@@ -95,7 +95,17 @@ Colour is never the only signal. Every verdict carries an icon and a word.
 
 ### Rules
 
-1. One orange element per screen region. If you want two, one of them is wrong.
+1. One orange element per screen region — where "element" means a claim on the
+   reader's attention. If two things in a region each say "look here", one of
+   them is wrong.
+
+   A *uniform set* is not two claims. Eight method icons in a grid, each
+   styled identically, read as one repeated object: the accent is saying
+   "these are the methods", once, not competing with itself eight times. The
+   test is whether removing the accent from one member would look like a
+   mistake — if yes, it is a set and it can be rust; if it would look like
+   demoting that one thing, they were competing and only one should have had
+   it. A set and a call to action must not both be rust in the same region.
 2. Never tint a surface warm. `--card` is grey. Accent tint is
    `--primary-subtle` behind accent *text*, at panel scale at most.
 3. Never hardcode a hex or a Tailwind palette class (`bg-slate-900`,

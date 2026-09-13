@@ -87,7 +87,7 @@ const rows = [
       <thead>
         <tr>
           <th scope="col">Feature</th>
-          <th scope="col">Authkestra</th>
+          <th scope="col" class="col-ak">Authkestra</th>
           <th scope="col">better-auth.rs</th>
           <th scope="col">Rauthy / Kanidm</th>
         </tr>
@@ -96,8 +96,8 @@ const rows = [
         {rows.map((r) => (
           <tr>
             <th scope="row">{r.feature}</th>
-            {[r.authkestra, r.betterAuth, r.standalone].map((cell) => (
-              <td>
+            {[r.authkestra, r.betterAuth, r.standalone].map((cell, i) => (
+              <td class:list={[{ 'col-ak': i === 0 }]}>
                 {cell.kind === 'yes' && (
                   <span class="verdict yes">
                     <Icon name="circle-check" size={16} aria-hidden="true" />
@@ -209,6 +209,31 @@ const rows = [
 
   .verdict.muted {
     color: hsl(var(--muted-foreground) / 0.75);
+  }
+
+  /*
+    The Authkestra column is the subject of the table, so it is tinted and its
+    plain text takes the accent — a reader scanning ten rows should not have to
+    re-find which column is ours each time.
+
+    The verdict cells inside it deliberately stay green. Rust here answers
+    "which column is this about", green answers "is it supported", and those
+    are different questions; colouring both with the accent would collapse them
+    into one and make a supported feature indistinguishable from an unsupported
+    one in our own column. `--primary-subtle` is the one warm surface the system
+    allows (DESIGN.md §3), and at this alpha the accent text clears AA on it at
+    6.8:1 with the green at 8.9:1.
+  */
+  .col-ak {
+    background: hsl(var(--primary-subtle) / 0.55);
+  }
+
+  thead .col-ak {
+    color: hsl(var(--primary-accent));
+  }
+
+  .col-ak .verdict.plain {
+    color: hsl(var(--primary-accent));
   }
 
   .verdict.plain {
