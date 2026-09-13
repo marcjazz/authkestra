@@ -270,13 +270,21 @@ below that. Only three hues carry meaning — keyword, type, literal — because
 snippet coloured like a rainbow is harder to read than one that colours only
 what separates its lines.
 
-Rust is absent from the highlighting on purpose. Inside a code block the accent
-marks what is live and nothing else — a highlighted line, or the snippet a
-surrounding control has selected. Spending the same colour on every keyword
-would leave that mark nothing to stand out against. A surface that signals
-liveness outside the block (the landing page lights the active route in its
-diagram, and the panel shows that route's code) carries no rust in the block at
-all, which is the correct amount.
+The three hues are warm and fan out from the rust ramp — coral at 16, amber at
+35, olive at 75 — close enough to read as one family, far enough apart to stay
+tellable at 13px. On a page about a Rust library, code is the last place that
+should look like someone else's editor. Keywords take `--ak-rust-300`, a step
+lighter than the accent itself, so the family reads while the exact accent shade
+stays reserved for links and calls to action; a `let` should never look
+clickable.
+
+**This depends on where liveness is marked.** Inside a code block the accent's
+only other job is to say which line or which snippet is live, and that mark has
+to stay distinguishable. A surface that marks liveness *inside* the block cannot
+also have warm keywords — there would be nothing for the mark to stand out
+against — and its highlighting must stay cool. The landing page marks liveness
+outside the block: the diagram lights the active route and the panel shows that
+route's code, which is what leaves the palette free.
 
 ---
 

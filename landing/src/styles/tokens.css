@@ -102,17 +102,20 @@
   /* ---------------------------------------------------------------------
      PRIMITIVES — Syntax highlighting
 
-     Three hues, deliberately few. A code block coloured like a rainbow is
-     harder to read than one that colours only what distinguishes a line, and
-     these three sit well clear of the 8-18 rust band so nothing in a snippet
-     can be mistaken for the accent.
+     Three hues, deliberately few, and all of them warm. A code block
+     coloured like a rainbow is harder to read than one that colours only
+     what distinguishes a line — and on a page about a Rust library, code is
+     the last place that should look like someone else's editor.
 
-     Measured against `--card` (#18181b), which is the ground code sits on:
-       violet 8.0:1 · sky 9.1:1 · mint 10.7:1 — all comfortably past AA.
+     They fan out from the rust ramp rather than sitting on top of it:
+     coral at 16, amber at 35, olive at 75. Close enough to read as one
+     warm family, far enough apart to stay tellable at 13px.
+
+     Measured against `--card` (#18181b), the ground code sits on:
+       coral 8.7:1 · amber 9.8:1 · olive 10.1:1 — all past AAA.
      --------------------------------------------------------------------- */
-  --ak-violet-300: 271 74% 77%;  /* #c79bf0  keywords */
-  --ak-sky-300:    208 100% 74%; /* #79c0ff  types */
-  --ak-mint-300:   143 59% 70%;  /* #86e0a8  strings and numbers */
+  --ak-amber-300: 35 73% 68%;  /* #e9b872  types */
+  --ak-olive-300: 75 48% 69%;  /* #c3d68a  strings and numbers */
   --ak-blue-700:   224 76% 48%;  /* #1d4ed8  info fill */
 
   /* ---------------------------------------------------------------------
@@ -169,21 +172,27 @@
      what changes as the flow animation moves from one method to the next.
      Plain code sits a step below it, and a comment a step below that.
 
-     Rust is absent on purpose. Inside a code block the accent's only job is
-     to mark what is live — a highlighted line, or the snippet some
-     surrounding control has selected — and whatever carries that mark has to
-     stay distinguishable from everything around it. Spending the same colour
-     on every `let` and `fn` would leave it nothing to stand out against.
-     Where a surface signals liveness outside the block instead (the landing
-     page's diagram lights the active route, and the panel simply shows that
-     route's code), the block itself carries no rust at all.
+     Keywords take `--ak-rust-300`, a step lighter than the accent itself.
+     That is deliberate on both counts: the family is the point, and the
+     exact accent shade stays reserved for links and calls to action, so a
+     `let` never reads as something you can click.
+
+     This is safe here for a specific reason, and the reason is worth
+     stating because it does not always hold. Inside a code block the
+     accent's only other job is to mark what is live — a highlighted line,
+     or the snippet a control has selected — and that mark has to stay
+     distinguishable from everything around it. On a surface that marks
+     liveness *inside* the block, warm keywords would leave it nothing to
+     stand out against, and the highlighting there must stay cool. The
+     landing page marks liveness outside the block instead: the diagram
+     lights the active route and the panel simply shows that route's code.
      --------------------------------------------------------------------- */
   --code-fn: var(--ak-neutral-50);
   --code-plain: var(--ak-neutral-300);
   --code-comment: var(--ak-neutral-400);
-  --code-keyword: var(--ak-violet-300);
-  --code-type: var(--ak-sky-300);
-  --code-literal: var(--ak-mint-300);
+  --code-keyword: var(--ak-rust-300);
+  --code-type: var(--ak-amber-300);
+  --code-literal: var(--ak-olive-300);
 
   /* ---------------------------------------------------------------------
      ROLES — verdicts
