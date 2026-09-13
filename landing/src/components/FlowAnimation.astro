@@ -412,9 +412,16 @@ const curveIn = (my: number) =>
     font-family: var(--ak-font-mono);
   }
 
+  /*
+    The frame is warm, the ground is not. A rust-tinted edge and header strip
+    make the panel read as part of the brand rather than a grey box that
+    happens to sit on the page — but the code area itself stays `--card`,
+    because the syntax colours were measured against that ground and warming
+    it would quietly cost every one of them contrast.
+  */
   .code-panel {
     background: hsl(var(--card));
-    border: 1px solid hsl(var(--border));
+    border: 1px solid hsl(var(--primary) / 0.4);
     border-radius: var(--ak-radius-xl);
     overflow: hidden;
     align-self: stretch;
@@ -424,14 +431,20 @@ const curveIn = (my: number) =>
     display: flex;
     gap: var(--ak-space-2);
     padding: var(--ak-space-3) var(--ak-space-4);
-    border-bottom: 1px solid hsl(var(--border));
+    background: hsl(var(--primary-subtle) / 0.6);
+    border-bottom: 1px solid hsl(var(--primary) / 0.28);
   }
 
   .win {
     width: 9px;
     height: 9px;
     border-radius: var(--ak-radius-full);
-    background: hsl(var(--border));
+    background: hsl(var(--ak-neutral-700));
+  }
+
+  /* One lit dot, not three. A terminal's three colours would be three claims. */
+  .win:first-child {
+    background: hsl(var(--primary));
   }
 
   .code {

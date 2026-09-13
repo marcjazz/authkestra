@@ -109,10 +109,11 @@ const rustHtml = highlightRust(rust);
     gap: var(--ak-space-4);
   }
 
+  /* Warm frame, neutral code ground — same reasoning as FlowAnimation.astro. */
   .panel {
     margin: 0;
     background: hsl(var(--card));
-    border: 1px solid hsl(var(--border));
+    border: 1px solid hsl(var(--primary) / 0.4);
     border-radius: var(--ak-radius-xl);
     overflow: hidden;
   }
@@ -120,8 +121,9 @@ const rustHtml = highlightRust(rust);
   figcaption {
     padding: var(--ak-space-2) var(--ak-space-5);
     font-size: var(--ak-text-xs);
-    color: hsl(var(--muted-foreground));
-    border-bottom: 1px solid hsl(var(--border));
+    color: hsl(var(--primary-accent));
+    background: hsl(var(--primary-subtle) / 0.6);
+    border-bottom: 1px solid hsl(var(--primary) / 0.28);
     font-family: var(--ak-font-mono);
   }
 
