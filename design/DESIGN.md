@@ -260,9 +260,13 @@ below that. Only three hues carry meaning — keyword, type, literal — because
 snippet coloured like a rainbow is harder to read than one that colours only
 what separates its lines.
 
-Rust is absent from the highlighting on purpose. The accent's job inside a code
-block is to say which line or which snippet is live; spending it on keywords as
-well would leave that highlight with nothing to distinguish itself from.
+Rust is absent from the highlighting on purpose. Inside a code block the accent
+marks what is live and nothing else — a highlighted line, or the snippet a
+surrounding control has selected. Spending the same colour on every keyword
+would leave that mark nothing to stand out against. A surface that signals
+liveness outside the block (the landing page lights the active route in its
+diagram, and the panel shows that route's code) carries no rust in the block at
+all, which is the correct amount.
 
 ---
 

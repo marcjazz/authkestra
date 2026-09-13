@@ -169,10 +169,14 @@
      what changes as the flow animation moves from one method to the next.
      Plain code sits a step below it, and a comment a step below that.
 
-     Rust is absent on purpose. The accent's job in a code block is to say
-     which line is live, which the active line's tinted ground already does;
-     spending it on keywords as well would leave the highlight with nothing
-     to distinguish itself from.
+     Rust is absent on purpose. Inside a code block the accent's only job is
+     to mark what is live — a highlighted line, or the snippet some
+     surrounding control has selected — and whatever carries that mark has to
+     stay distinguishable from everything around it. Spending the same colour
+     on every `let` and `fn` would leave it nothing to stand out against.
+     Where a surface signals liveness outside the block instead (the landing
+     page's diagram lights the active route, and the panel simply shows that
+     route's code), the block itself carries no rust at all.
      --------------------------------------------------------------------- */
   --code-fn: var(--ak-neutral-50);
   --code-plain: var(--ak-neutral-300);
