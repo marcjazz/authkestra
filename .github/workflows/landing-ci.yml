@@ -5,12 +5,12 @@ on:
     branches: [main]
     paths:
       - 'landing/**'
-      - '.github/workflows/website-ci.yml'
+      - '.github/workflows/landing-ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'landing/**'
-      - '.github/workflows/website-ci.yml'
+      - '.github/workflows/landing-ci.yml'
 
 jobs:
   build:

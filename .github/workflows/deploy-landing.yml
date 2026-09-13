@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - 'landing/**'
-      - '.github/workflows/deploy-docs.yml'
+      - '.github/workflows/deploy-landing.yml'
   workflow_dispatch:
 
 permissions:
