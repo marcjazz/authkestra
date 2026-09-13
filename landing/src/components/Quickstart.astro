@@ -1,4 +1,6 @@
 ---
+import { highlightRust, highlightRustLine } from '../lib/rust-highlight';
+
 const cargo = `authkestra = { version = "0.9", features = ["axum", "session", "github"] }`;
 
 const rust = `let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
@@ -8,6 +10,16 @@ let auth_engine = Authkestra::builder()
     .provider(OAuth2Flow::new(github_provider))
     .session_store(session_store)
     .build();`;
+
+/*
+  Highlighted at build time from the design tokens rather than a highlighter's
+  own theme — see lib/rust-highlight.ts for why this is hand-rolled. The
+  Cargo.toml line is run through the same pass: it is not Rust, but a TOML
+  dependency line is close enough in shape that keys, strings and brackets all
+  land on the right tokens.
+*/
+const cargoHtml = highlightRustLine(cargo);
+const rustHtml = highlightRust(rust);
 ---
 <section id="quickstart" class="quickstart" aria-labelledby="quickstart-heading">
   <div class="inner">
@@ -24,11 +36,13 @@ let auth_engine = Authkestra::builder()
     <div class="panels">
       <figure class="panel">
         <figcaption>Cargo.toml</figcaption>
-        <pre class="code"><code>{cargo}</code></pre>
+        <pre class="code"><code><span class="code-line" set:html={cargoHtml} /></code></pre>
       </figure>
       <figure class="panel">
         <figcaption>src/main.rs</figcaption>
-        <pre class="code"><code>{rust}</code></pre>
+        <pre class="code"><code>{rustHtml.map((line) => (
+          <span class="code-line" set:html={line || '&nbsp;'} />
+        ))}</code></pre>
       </figure>
     </div>
   </div>
@@ -110,6 +124,20 @@ let auth_engine = Authkestra::builder()
     border-bottom: 1px solid hsl(var(--border));
     font-family: var(--ak-font-mono);
   }
+
+  .code-line {
+    display: block;
+    color: hsl(var(--code-plain));
+    white-space: pre;
+  }
+
+  /* Same token mapping as the flow panel; see DESIGN.md §7. */
+  .code-line :global(.t-keyword) { color: hsl(var(--code-keyword)); }
+  .code-line :global(.t-type) { color: hsl(var(--code-type)); }
+  .code-line :global(.t-literal) { color: hsl(var(--code-literal)); }
+  .code-line :global(.t-macro) { color: hsl(var(--code-keyword)); }
+  .code-line :global(.t-comment) { color: hsl(var(--code-comment)); font-style: italic; }
+  .code-line :global(.t-fn) { color: hsl(var(--code-fn)); }
 
   .code {
     margin: 0;
