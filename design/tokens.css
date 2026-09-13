@@ -92,6 +92,21 @@
   --ak-rose-400:   351 95% 71%;  /* #fb7185  danger text on dark */
   --ak-rose-700:   345 83% 41%;  /* #be123c  danger fill */
   --ak-blue-400:   213 94% 68%;  /* #60a5fa  info text on dark */
+
+  /* ---------------------------------------------------------------------
+     PRIMITIVES — Syntax highlighting
+
+     Three hues, deliberately few. A code block coloured like a rainbow is
+     harder to read than one that colours only what distinguishes a line, and
+     these three sit well clear of the 8-18 rust band so nothing in a snippet
+     can be mistaken for the accent.
+
+     Measured against `--card` (#18181b), which is the ground code sits on:
+       violet 8.0:1 · sky 9.1:1 · mint 10.7:1 — all comfortably past AA.
+     --------------------------------------------------------------------- */
+  --ak-violet-300: 271 74% 77%;  /* #c79bf0  keywords */
+  --ak-sky-300:    208 100% 74%; /* #79c0ff  types */
+  --ak-mint-300:   143 59% 70%;  /* #86e0a8  strings and numbers */
   --ak-blue-700:   224 76% 48%;  /* #1d4ed8  info fill */
 
   /* ---------------------------------------------------------------------
@@ -138,6 +153,27 @@
   --brand: var(--ak-rust-600);            /* the mark itself, never UI chrome */
 
   --ring: var(--ak-rust-500);
+
+  /* ---------------------------------------------------------------------
+     ROLES — code
+
+     Emphasis inside a snippet is carried by *brightness* first and hue
+     second. The brightest thing in a line is the function or method being
+     called, because on the landing page that is the payload — the name is
+     what changes as the flow animation moves from one method to the next.
+     Plain code sits a step below it, and a comment a step below that.
+
+     Rust is absent on purpose. The accent's job in a code block is to say
+     which line is live, which the active line's tinted ground already does;
+     spending it on keywords as well would leave the highlight with nothing
+     to distinguish itself from.
+     --------------------------------------------------------------------- */
+  --code-fn: var(--ak-neutral-50);
+  --code-plain: var(--ak-neutral-300);
+  --code-comment: var(--ak-neutral-400);
+  --code-keyword: var(--ak-violet-300);
+  --code-type: var(--ak-sky-300);
+  --code-literal: var(--ak-mint-300);
 
   /* ---------------------------------------------------------------------
      ROLES — verdicts

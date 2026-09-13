@@ -250,8 +250,19 @@ Auth flows are keyboard-heavy; a component that styles its own focus is a
 component that will eventually have none.
 
 **Code** — JetBrains Mono, `--ak-neutral-800` inline ground,
-`--ak-radius-xl` block with a `--border` hairline. Rust keyword highlighting may
-use the rust ramp; nothing else in a code block may.
+`--ak-radius-xl` block with a `--border` hairline.
+
+Syntax highlighting runs on brightness first and hue second, through the
+`--code-*` roles. The brightest thing in a line is the function or method being
+called (`--code-fn`), because that is usually the part that distinguishes one
+snippet from the next; plain code sits a step below it and a comment a step
+below that. Only three hues carry meaning — keyword, type, literal — because a
+snippet coloured like a rainbow is harder to read than one that colours only
+what separates its lines.
+
+Rust is absent from the highlighting on purpose. The accent's job inside a code
+block is to say which line or which snippet is live; spending it on keywords as
+well would leave that highlight with nothing to distinguish itself from.
 
 ---
 
