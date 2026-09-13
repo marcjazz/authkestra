@@ -7,8 +7,9 @@ const year = new Date().getFullYear();
   <div class="inner">
     <div class="brand">
       <a class="wordmark" href="#top">
-        <svg class="mark" width="18" height="18" viewBox="0 0 32 32" aria-hidden="true">
-          <path d="M16 7 24.5 24H19.6L16 16.4 12.4 24H7.5Z" fill="currentColor" />
+        <svg class="mark" width="20" height="20" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="M5.5 27.5 16 5l10.5 22.5" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="10" y="17.6" width="12" height="2.8" rx="1.4" fill="hsl(var(--brand))" />
         </svg>
         authkestra
       </a>
@@ -74,8 +75,9 @@ const year = new Date().getFullYear();
     color: hsl(var(--foreground));
   }
 
+  /* Ink, not accent — the crossbar is the rust. See Nav.astro. */
   .mark {
-    color: hsl(var(--brand));
+    color: hsl(var(--foreground));
   }
 
   .brand p {

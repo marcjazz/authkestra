@@ -255,7 +255,65 @@ use the rust ramp; nothing else in a code block may.
 
 ---
 
-## 8. Checklist
+## 8. The mark
+
+![The Authkestra mark](./logo/mark-on-dark.svg)
+
+An **A**, drawn as two converging strokes with a rust crossbar where an arch
+would carry its keystone. The crossbar is the whole idea: in an arch the
+keystone is the piece that makes the structure hold, which is the typestate
+argument in one object. It is also the only part that is rust.
+
+Two things it deliberately is not. It is not a **shield, lock, key or
+fingerprint** — that is the default every authentication product reaches for,
+and this system already spends `fingerprint` and `key-round` as *content* icons
+(§6), so reusing one as the mark would make the brand look like a feature. And
+it is not the *orchestra* in the name: several marks were drawn from converging
+strokes and bars, and every one of them read as a crown, a fountain or an
+equalizer before it read as a letter. That idea survives where it has motion and
+room — the landing page's flow animation — rather than where it has 16 pixels.
+
+### Files
+
+| File | Use |
+| --- | --- |
+| `logo/mark.svg` | The mark. Takes its ink from `currentColor`; rust bar fixed. |
+| `logo/mark-on-dark.svg` | Explicit `#fafafa` ink, for `<img>` contexts. |
+| `logo/mark-on-light.svg` | Explicit `#18181b` ink, same reason. |
+| `logo/favicon.svg` | Follows the browser theme via `prefers-color-scheme`. |
+| `logo/apple-touch-icon.png` | 180px, on a solid `#09090b` ground. |
+| `logo/icon-192.png`, `icon-512.png` | PWA / manifest / social. |
+
+`currentColor` resolves to black inside an `<img>`, which is how GitHub renders
+a README SVG — so a mark embedded that way must use an explicit-ink file, or it
+turns invisible on a dark README.
+
+### Rules
+
+**Minimum size is 16px.** The mark was chosen because it is still a letter at
+favicon size; nothing below that is supported. Do not add detail to compensate
+at large sizes — it scales as drawn.
+
+**Clear space** on all four sides is the height of the crossbar — `2.8` units on
+the 32-unit grid, so `0.0875 × size`. At 32px that is 3px. Nothing else sits in
+it, including the wordmark.
+
+**The lockup** is the mark beside `Authkestra` set in Inter 600, optically
+centred, with the wordmark's cap height matching the mark's height and a gap of
+`0.4 × size`. There is no lockup SVG on purpose: outlining the wordmark would
+fork the typeface, and every surface that needs a lockup already has Inter.
+
+**Colour.** The crossbar is `--brand` (rust-600, `#ce422b`) and nothing else in
+the mark is ever rust. The strokes take the ink of whatever they sit on. A
+single-colour rendering — the crossbar in the ink too — is allowed where colour
+is unavailable (an engraving, a fax, a one-colour print) and nowhere else.
+
+**Do not** recolour the crossbar, rotate the mark, add a container shape or
+outline, apply a gradient or shadow, stretch either axis independently, or place
+it on a background that leaves the strokes under 4.5:1. On a busy image, put it
+on a solid `--background` plate rather than knocking it out.
+
+## 9. Checklist
 
 Before shipping a screen:
 
@@ -268,3 +326,4 @@ Before shipping a screen:
 - [ ] Focus is visible on every interactive element via the global ring.
 - [ ] Counting numerals are tabular.
 - [ ] `prefers-reduced-motion` settles animations rather than freezing them.
+- [ ] The mark has its clear space, is at least 16px, and its crossbar is the only rust in it.

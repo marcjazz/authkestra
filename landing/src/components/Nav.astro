@@ -4,8 +4,9 @@ import Icon from './Icon.astro';
 <header class="nav">
   <nav class="bar" aria-label="Primary">
     <a class="wordmark" href="#top">
-      <svg class="mark" width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
-        <path d="M16 7 24.5 24H19.6L16 16.4 12.4 24H7.5Z" fill="currentColor" />
+      <svg class="mark" width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path d="M5.5 27.5 16 5l10.5 22.5" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
+        <rect x="10" y="17.6" width="12" height="2.8" rx="1.4" fill="hsl(var(--brand))" />
       </svg>
       authkestra
     </a>
@@ -54,9 +55,14 @@ import Icon from './Icon.astro';
     letter-spacing: var(--ak-tracking-tight);
   }
 
-  /* The one orange element in the nav region: the mark. Never in chrome. */
+  /*
+    The mark carries its own rust in the crossbar, so `color` here sets its
+    ink — the two strokes — not the accent. Painting the whole glyph rust
+    would make the crossbar vanish into it and lose the one part that means
+    anything. This is still the only orange in the nav region.
+  */
   .mark {
-    color: hsl(var(--brand));
+    color: hsl(var(--foreground));
     flex-shrink: 0;
   }
 
