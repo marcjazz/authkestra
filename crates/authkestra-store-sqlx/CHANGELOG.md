@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5](https://github.com/marcjazz/authkestra/compare/authkestra-store-sqlx-v0.9.4...authkestra-store-sqlx-v0.9.5) - 2026-09-13
+
+### Other
+
+- Move the docs out, put a landing page in their place ([#362](https://github.com/marcjazz/authkestra/pull/362))
+
 ## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-store-sqlx-v0.9.2...authkestra-store-sqlx-v0.9.3) - 2026-09-07
 
 ### Added
