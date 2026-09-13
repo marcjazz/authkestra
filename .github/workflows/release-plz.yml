@@ -9,7 +9,8 @@ on:
     branches:
       - main
     paths-ignore:
-      - 'website/**'
+      - 'landing/**'
+      - 'design/**'
       - 'docs/**'
       - '**.md'
 

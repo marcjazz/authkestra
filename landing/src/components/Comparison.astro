@@ -1,0 +1,247 @@
+---
+import Icon from './Icon.astro';
+
+// A "yes" cell: paired icon + word, never colour alone (DESIGN.md §2, §8).
+const yes = (label: string) => ({ kind: 'yes' as const, label });
+const plain = (label: string) => ({ kind: 'plain' as const, label });
+const muted = (label: string) => ({ kind: 'muted' as const, label });
+
+const rows = [
+  {
+    feature: 'Category',
+    authkestra: plain('Embedded identity engine'),
+    betterAuth: plain('Comprehensive auth library'),
+    standalone: plain('Standalone IdP server'),
+  },
+  {
+    feature: 'OIDC OP server',
+    authkestra: yes('Native, fully featured'),
+    betterAuth: muted('Relying party only'),
+    standalone: yes('Full support'),
+  },
+  {
+    feature: 'Resource server',
+    authkestra: yes('Native (guard, strategies)'),
+    betterAuth: yes('API validation'),
+    standalone: yes('API validation'),
+  },
+  {
+    feature: 'Configuration safety',
+    authkestra: yes('Strict — typestate builder'),
+    betterAuth: yes('Standard builder'),
+    standalone: muted('N/A — external config'),
+  },
+  {
+    feature: 'State management',
+    authkestra: plain('Stateless, encrypted cookies'),
+    betterAuth: plain('Stateful, in your DB'),
+    standalone: plain('Stateful, dedicated DB'),
+  },
+  {
+    feature: 'Data architecture',
+    authkestra: plain('Agnostic, trait-based — any DB'),
+    betterAuth: plain('Built-in adapters and ORMs'),
+    standalone: plain('100% yours'),
+  },
+  {
+    feature: 'Passkeys / WebAuthn',
+    authkestra: yes('Native support'),
+    betterAuth: yes('Native support'),
+    standalone: yes('Full support'),
+  },
+  {
+    feature: 'Multi-factor auth',
+    authkestra: yes('Native support'),
+    betterAuth: yes('Native support'),
+    standalone: yes('Full support'),
+  },
+  {
+    feature: 'Device signatures',
+    authkestra: yes('Built in'),
+    betterAuth: muted('Not offered'),
+    standalone: muted('Not offered'),
+  },
+  {
+    feature: 'Bot protection',
+    authkestra: yes('Built in'),
+    betterAuth: yes('Plugins available'),
+    standalone: yes('Built in'),
+  },
+];
+---
+<section id="comparison" class="comparison" aria-labelledby="comparison-heading">
+  <h2 id="comparison-heading">Authkestra vs. the world</h2>
+  <p class="lead">
+    In the Rust ecosystem you generally choose between a standalone identity
+    provider and a library you embed. Authkestra sits in between: a modular
+    identity engine, embedded in your binary, with the reach of a standalone OP
+    server. Here is how it compares to the two most popular alternatives — both
+    of which are good at what they do.
+  </p>
+
+  <div class="table-scroll">
+    <table>
+      <caption class="visually-hidden">
+        Feature comparison between Authkestra, better-auth.rs, and standalone servers Rauthy and Kanidm
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Feature</th>
+          <th scope="col">Authkestra</th>
+          <th scope="col">better-auth.rs</th>
+          <th scope="col">Rauthy / Kanidm</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr>
+            <th scope="row">{r.feature}</th>
+            {[r.authkestra, r.betterAuth, r.standalone].map((cell) => (
+              <td>
+                {cell.kind === 'yes' && (
+                  <span class="verdict yes">
+                    <Icon name="circle-check" size={16} aria-hidden="true" />
+                    {cell.label}
+                  </span>
+                )}
+                {cell.kind === 'muted' && <span class="verdict muted">{cell.label}</span>}
+                {cell.kind === 'plain' && <span class="verdict plain">{cell.label}</span>}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="detail">
+    <div>
+      <h3>vs. better-auth.rs</h3>
+      <p>
+        A strong, batteries-included library for user management, with built-in
+        database adapters and passkeys or 2FA out of the box. It doesn't build an
+        OpenID Provider, though — Authkestra's typestate-checked builder and
+        native OP support are where it pulls ahead.
+      </p>
+    </div>
+    <div>
+      <h3>vs. Rauthy &amp; Kanidm</h3>
+      <p>
+        Both are excellent, fast standalone identity servers — the right call
+        when you want a dedicated IdP microservice. Authkestra gives you the
+        same OP capability without the extra service to deploy, the network hop,
+        or the database to back up.
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .comparison {
+    max-width: var(--ak-layout-max);
+    margin: 0 auto;
+    padding: var(--ak-space-24) var(--ak-space-6);
+  }
+
+  h2 {
+    font-size: var(--ak-text-3xl);
+  }
+
+  .lead {
+    margin-top: var(--ak-space-4);
+    max-width: var(--ak-layout-prose);
+    color: hsl(var(--muted-foreground));
+  }
+
+  .table-scroll {
+    margin-top: var(--ak-space-10);
+    overflow-x: auto;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    background: hsl(var(--card));
+  }
+
+  table {
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    font-size: var(--ak-text-sm);
+  }
+
+  th, td {
+    text-align: left;
+    padding: var(--ak-space-3) var(--ak-space-4);
+    border-bottom: 1px solid hsl(var(--border));
+    white-space: nowrap;
+  }
+
+  thead th {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+    background: hsl(var(--popover));
+  }
+
+  tbody th {
+    color: hsl(var(--foreground));
+    font-weight: 500;
+    white-space: normal;
+  }
+
+  tbody tr:last-child th,
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .verdict {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ak-space-2);
+    white-space: normal;
+  }
+
+  .verdict.yes {
+    color: hsl(var(--success-foreground));
+  }
+
+  .verdict.yes :global(svg) {
+    flex-shrink: 0;
+  }
+
+  .verdict.muted {
+    color: hsl(var(--muted-foreground) / 0.75);
+  }
+
+  .verdict.plain {
+    color: hsl(var(--muted-foreground));
+  }
+
+  .detail {
+    margin-top: var(--ak-space-10);
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--ak-space-8);
+  }
+
+  .detail h3 {
+    font-size: var(--ak-text-lg);
+  }
+
+  .detail p {
+    margin-top: var(--ak-space-2);
+    font-size: var(--ak-text-sm);
+    color: hsl(var(--muted-foreground));
+  }
+
+  @media (max-width: 720px) {
+    .detail {
+      grid-template-columns: 1fr;
+      gap: var(--ak-space-6);
+    }
+  }
+
+  @media (max-width: 560px) {
+    .comparison {
+      padding: var(--ak-space-16) var(--ak-space-4);
+    }
+  }
+</style>
