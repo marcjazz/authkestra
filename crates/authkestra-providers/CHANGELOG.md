@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.10.2...authkestra-providers-v0.11.0) - 2026-09-14
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+
+## [0.9.5](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.9.4...authkestra-providers-v0.9.5) - 2026-09-13
+
+### Other
+
+- Move the docs out, put a landing page in their place ([#362](https://github.com/marcjazz/authkestra/pull/362))
+
+## [0.9.0](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.8.1...authkestra-providers-v0.9.0) - 2026-09-05
+
+### Fixed
+
+- *(providers)* make single-provider builds work ([#321](https://github.com/marcjazz/authkestra/pull/321)) ([#322](https://github.com/marcjazz/authkestra/pull/322))
+
 ## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-providers-v0.7.2...authkestra-providers-v0.8.0) - 2026-09-03
 
 ### Other

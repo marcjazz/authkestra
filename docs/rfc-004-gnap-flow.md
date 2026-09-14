@@ -1,5 +1,12 @@
 # RFC-004: GNAP (RFC 9635) Compatibility for the `Flow` Abstraction
 
+> **Status: partially implemented.** §§2–9 below are the original design
+> analysis and are kept as written — they are still the accurate rationale.
+> **§11 (added after implementation) records what actually shipped, what was
+> deliberately deferred, and which open questions were resolved versus left
+> for the maintainer.** Read §11 first if you only want the current state of
+> `Flow`.
+
 ## 1. Summary
 
 This RFC analyses what `authkestra-engine`'s `Flow` / `FlowContext` /
@@ -8,10 +15,11 @@ Negotiation and Authorization Protocol, published as **RFC 9635 (October
 2024, Proposed Standard)** and informally called "OAuth 3.0" — alongside the
 existing OAuth 2.0 flows.
 
-It is a **design document only**: no code changes accompany it. It exists to
-answer the roadmap Phase 1 item "Update `Flow` trait for GNAP compatibility"
-(`docs/roadmap.md`) with a concrete proposal, and to give the follow-up
-prototype ticket a plan it can start executing on day one.
+It began as a **design document only**, with no code changes attached. It
+answered the roadmap Phase 1 item "Update `Flow` trait for GNAP
+compatibility" (`docs/roadmap.md`) with a concrete proposal, and gave the
+follow-up prototype ticket a plan it could start executing on day one. §11
+records the implementation PR that followed it.
 
 The headline findings are:
 
@@ -723,3 +731,136 @@ the project's direction rather than a detail derivable from the RFC.
   sketch (now stale; see §4.3 above).
 - `docs/rfc-003-oidc-provider.md` — the OP design this RFC runs alongside.
 - `docs/roadmap.md` Phase 1 — the roadmap item this RFC answers.
+
+## 11. Implementation Record (this PR)
+
+This section documents what the `feat/gnap-flow-trait` PR actually shipped
+against the analysis above, resolves some of §8's open questions for *this
+PR only* (not for the GNAP AS as a whole), and hands the rest forward to a
+tracking issue. Written after implementation, unlike §§2–9.
+
+### 11.1. What this PR is, in one sentence
+
+It makes `Flow` **capable of carrying a GNAP-shaped exchange** — a JSON
+request body, a JSON document response, and access to the raw request for
+key proofing — without implementing GNAP itself: no grant endpoint, no
+grant store, no key-proofing verifier, no `authkestra-op` changes at all.
+That is deliberate: the roadmap item is literally "update the `Flow` trait
+for GNAP compatibility," and §4.1 already established that doing so is
+close to free (the trait is unwired and has exactly one production
+implementor). The much larger question this RFC poses in §5 — whether the
+eventual GNAP authorization server is *reached through* `Flow` at all
+(Route A) or becomes its own `authkestra-op` trait (Route B) — is
+unaffected by this PR and remains open; see §11.3, Q1.
+
+### 11.2. The actual diff
+
+All in `crates/authkestra-engine/src/flow/mod.rs` unless noted:
+
+| Change | Shape | Breaking? |
+| --- | --- | --- |
+| `Flow::execute_with_parts` | New method, defaulted to `self.execute(ctx).await` | No. `OAuth2Flow` (`flow/oauth2.rs`) and `MockFlow` (`src/tests.rs`) compile and behave identically, unchanged. Verified by `execute_with_parts_default_delegates_to_execute` in the new test module. |
+| `RequestParts<'a>` | New `#[non_exhaustive]` struct: `method: &http::Method`, `uri: &http::Uri`, `headers: &http::HeaderMap`, `body: &[u8]` | No — new type. |
+| `FlowContext::body: Option<serde_json::Value>` | New field, `#[serde(default, skip_serializing_if = "Option::is_none")]` | No for downstream (already `#[non_exhaustive]`, unconstructable outside the crate — §4.3's first defect). **Did** break the one in-crate construction site (`src/tests.rs:89`), fixed by switching it to the new constructor. |
+| `FlowContext::new(state, params)` and `FlowContext::with_body(self, body)` | New associated functions | No. Also fixes §4.3's first defect: `FlowContext` is now constructable outside the crate for the first time. |
+| `FlowResult` gains `#[non_exhaustive]` | Attribute added | **Yes, in principle**, per §4.3/Q3 — any external exhaustive `match` on `FlowResult` stops compiling. Grep of the workspace (`grep -rn "FlowResult::" crates/`) found none outside `authkestra-engine` itself, where non-exhaustiveness has no effect; nothing in-tree broke. External consumers are the actual exposure, and the version bump below is how that is signalled. |
+| `FlowResult::Document(serde_json::Value)` | New variant | Only possible because of the line above; see Q3 resolution in §11.3. |
+| `AuthError` | **No change.** | — |
+
+One incidental fix, unrelated to `Flow`: two pre-existing test literals in
+`crates/authkestra-engine/src/token/jwk.rs` (`an_unusable_key_reports_why_and_identifies_the_key`,
+`a_usable_key_is_silent`) failed to compile against `main` as of this PR's
+branch point (`Jwk`'s `use`/`key_ops` fields, added by #342, were never
+back-filled into these two literals). Fixed by adding `r#use: None, key_ops:
+None` to both — two lines each, no behavioural change. Flagged here rather
+than silently folded in, per usual practice for drive-by fixes.
+
+### 11.3. §8's open questions, resolved or carried forward
+
+- **Q1 (Route A vs Route B) — still open, unaffected by this PR.** This PR
+  does not put GNAP through `Flow`; it only ensures `Flow` *could* carry a
+  GNAP-shaped implementation later without another breaking change, which
+  was cheap enough to do regardless of which route wins. RFC §6.3's
+  recommendation stands: decide this at G6, after a working prototype
+  exists under Route A. **Maintainer**: this is the one open question in
+  this document actually worth your time; everything else below is either
+  resolved or mechanical.
+- **Q2 (is `serde_json::Value` acceptable at the `Flow` boundary?) —
+  implemented as "yes" for this PR, not decided for all time.**
+  `FlowContext::body` and `FlowResult::Document` both use
+  `serde_json::Value`, per §5 Route B / §5.1's reasoning: it keeps `Flow`
+  object-safe and avoids generics, matching AGENTS.md's trait-object
+  guidance. If, once a real GNAP request/response type exists (G0 of §6.3),
+  the maintainer wants static typing at the `Flow` boundary instead, that
+  is a further breaking change to `FlowContext`/`FlowResult` — cheaper to
+  decide now than after downstream consumers depend on the untyped shape,
+  which is why this PR does not leave it unresolved.
+- **Q3 (mark `FlowResult` — and `AuthError` — `#[non_exhaustive]` now?) —
+  done for `FlowResult`; moot for `AuthError`.** `FlowResult` is now
+  `#[non_exhaustive]` (§11.2). **Correction to §4.3/§5:** re-reading
+  `crates/authkestra-engine/src/auth/error.rs` at this PR's branch point
+  shows `AuthError` is *already* `#[non_exhaustive]` — the original RFC
+  text asserting otherwise was wrong (or true when written and fixed by an
+  intervening PR; either way, no action was needed here). `AuthError`
+  therefore has headroom for a future GNAP error variant (G8) with no
+  breaking change required.
+- **Q4 (is `Flow` worth keeping at all?) — not addressed.** Still a live
+  question (§4.1's finding that `Flow` is unwired and `OAuth2Flow`'s
+  callback branch is a stub still holds); out of scope for a PR whose
+  premise is "update the trait."
+- **Q5 (which key proofing method — `jwsd` or `httpsig`?), Q6 (does
+  `authkestra-resource` take on RFC 9767?), Q7 (does the facade's `full`
+  feature ever include `gnap`?) — untouched, carried into the follow-up
+  issue** (§11.4). None of them bear on the trait shape.
+- **One more §4.3 item, resolved as a side effect:** `FlowContext` is no
+  longer unconstructable outside `authkestra-engine` — `FlowContext::new`
+  is the fix that item asked for.
+- **The other §4.3 doc-staleness claim did not hold up:**
+  `docs/book/ch03-core-traits.md:59` was checked and does **not** name a
+  `next_step` method — it already showed `execute`. That part of the
+  original RFC text was stale itself (or referred to a state that predates
+  this repository's history as checked out for this PR); the chapter has
+  been updated regardless to describe the new trait shape.
+  `docs/rfc-001-architecture-migration.md` §4.3 was deliberately left
+  untouched: it is a historical record of the original migration design
+  (already superseded, and already flagged as stale by this RFC's own §4.3)
+  rather than living documentation, so rewriting it to match the current
+  trait would misrepresent what that document is.
+
+### 11.4. What was deliberately deferred, and where
+
+Everything in RFC §6 (the staged G0–G6 prototype: discovery endpoint, grant
+store, software-only grant, `user_code` interaction, redirect interaction,
+multi-token support, and the actual Q1 decision) is **not** in this PR. It
+is genuinely large — a stateful multi-verb protocol server with its own
+persistence, key proofing, and two adapter integrations — and RFC §6.3
+itself stages it across seven milestones. Tracked as a follow-up:
+
+**GitHub issue [#370](https://github.com/marcjazz/authkestra/issues/370) —
+"Implement a GNAP (RFC 9635) authorization server prototype behind a `gnap`
+feature flag"**, referencing this PR and RFC-004 §6, so the next implementer
+starts from the staged plan rather than from a blank page.
+
+### 11.5. Design decisions a maintainer should double-check
+
+- **`serde_json::Value` at the `FlowContext`/`FlowResult` boundary (Q2
+  above).** The reversible-now-costly-later trade is real; if there is
+  already a strong preference for static typing, better to say so before
+  the follow-up issue builds a `GrantRequest` type on top of it.
+- **Marking `FlowResult` `#[non_exhaustive]` in this PR rather than as its
+  own preceding PR.** §5's table suggested doing this as a separate,
+  one-time break; this PR folds it into the same commit as the new variant
+  instead, on the reasoning that both changes ship in the same minor
+  version anyway (there is no intermediate release where one lands without
+  the other) and splitting them would only double the changelog entries for
+  no isolation benefit. If the project's release process expects
+  attribute-only breaking changes isolated from feature additions, this
+  should be split before merge.
+- **`RequestParts` borrows `http::Method`/`http::Uri`/`http::HeaderMap`
+  rather than owning or re-deriving them.** This matches §5.1's `http`-based
+  `ProofContext` sketch and costs nothing since `authkestra-engine` already
+  depends on `http = "1"`. Nobody has built the adapter-side code that
+  would construct a `RequestParts` from a live axum/actix request yet — that
+  wiring is part of the deferred work in §11.4, not this PR — so the shape
+  is unexercised by any real caller today, only by the tests in
+  `flow/mod.rs`.

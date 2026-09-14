@@ -3,7 +3,6 @@ use crate::auth::{
     state::OAuthToken,
 };
 use serde::{Deserialize, Serialize};
-use std::thread::sleep;
 use std::time::Duration;
 
 /// Represents the response from the device authorization endpoint.
@@ -154,7 +153,17 @@ impl DeviceFlow {
                 ));
             }
 
-            sleep(Duration::from_secs(current_interval));
+            // `tokio::time::sleep`, never `std::thread::sleep`: this is an
+            // `async fn`, so blocking the thread here parks the whole worker
+            // for the interval (5s by default, growing on `slow_down`).
+            // On a multi-thread runtime that starves every other task on
+            // that worker; on a current-thread runtime it stalls the entire
+            // executor for the length of the device ceremony (#306).
+            tracing::debug!(
+                interval_secs = current_interval,
+                "authorization still pending; waiting before polling the token endpoint again"
+            );
+            tokio::time::sleep(Duration::from_secs(current_interval)).await;
         }
     }
 }

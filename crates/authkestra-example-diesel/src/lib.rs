@@ -9,4 +9,4 @@ mod models;
 mod schema;
 mod store;
 
-pub use store::DieselOpStore;
+pub use store::{DieselOpStore, DieselOpStoreTx};

@@ -8,8 +8,9 @@ use authkestra_op::code::{AuthorizationCode, AuthorizationCodeStore};
 use authkestra_op::device::{DeviceCodeSession, DeviceCodeStore};
 use authkestra_op::refresh::{RefreshToken, RefreshTokenStore};
 use authkestra_op::store::OpStore;
+use diesel::connection::{AnsiTransactionManager, TransactionManager};
 use diesel::prelude::*;
-use diesel::r2d2::{ConnectionManager, Pool};
+use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 use diesel::sqlite::SqliteConnection;
 
 type SqlitePool = Pool<ConnectionManager<SqliteConnection>>;
@@ -118,6 +119,58 @@ impl DieselOpStore {
         &self.pool
     }
 
+    /// Run one synchronous query on a pooled connection, off the async
+    /// runtime. The pool-backed counterpart to [`DieselOpStoreTx::run`],
+    /// which runs the same closure on the connection its transaction owns —
+    /// having both means every query in `queries` is written once and driven
+    /// two ways.
+    async fn run<T, F>(&self, f: F) -> Result<T, StoreError>
+    where
+        F: FnOnce(&mut SqliteConnection) -> Result<T, StoreError> + Send + 'static,
+        T: Send + 'static,
+    {
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(pool_err)?;
+            f(&mut conn)
+        })
+        .await
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+    }
+
+    /// Begin a transaction and return a store scoped to it.
+    ///
+    /// Diesel is synchronous and has no owned transaction object, so this
+    /// holds the checked-out connection with a transaction open on it and
+    /// drives it through `spawn_blocking` per call. The connection is moved
+    /// into the blocking task and moved back out again, which is what lets a
+    /// `!Sync` `SqliteConnection` be held across await points at all.
+    ///
+    /// Note this takes the connection out of the pool for as long as the
+    /// transaction is open — the same cost any synchronous transaction has,
+    /// but worth stating, since a pool sized for request concurrency needs
+    /// headroom for however many of these a host application holds at once.
+    pub async fn begin_tx(&self) -> Result<DieselOpStoreTx, StoreError> {
+        let pool = self.pool.clone();
+        let conn = tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(pool_err)?;
+            // `BEGIN IMMEDIATE`, matching the `immediate_transaction` the
+            // consume paths use when they run on the pool: it takes the
+            // write lock up front rather than discovering a conflict at the
+            // first write and failing with SQLITE_BUSY halfway through a
+            // unit of work the caller believes it has already secured.
+            AnsiTransactionManager::begin_transaction_sql(&mut *conn, "BEGIN IMMEDIATE")
+                .map_err(diesel_err)?;
+            Ok::<_, StoreError>(conn)
+        })
+        .await
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))??;
+
+        Ok(DieselOpStoreTx {
+            conn: std::sync::Mutex::new(Some(conn)),
+        })
+    }
+
     /// Creates the four tables this store needs, if they don't already
     /// exist. Idempotent — safe to call on every startup, same contract as
     /// `authkestra-store-sqlx::SqlxOpStore::migrate`.
@@ -188,287 +241,576 @@ impl DieselOpStore {
     }
 }
 
+/// A [`DieselOpStore`] scoped to one open transaction — the synchronous
+/// counterpart to `authkestra-store-sqlx`'s `SqlxOpStoreTx`, and the case
+/// that most stresses the design: Diesel has no owned transaction handle and
+/// its connections are `!Sync`, so the transaction lives as an open
+/// transaction *on a connection this type owns*, moved in and out of
+/// `spawn_blocking` for each call.
+///
+/// That it works at all is the point: because the transaction lives in the
+/// store value rather than in the method signatures, a backend whose native
+/// API has no transaction object to pass around can still implement the
+/// trait unchanged.
+///
+/// Obtain one from [`DieselOpStore::begin_tx`]. [`run`](Self::run) is the
+/// escape hatch for the host application's own Diesel queries — it hands a
+/// `&mut SqliteConnection` inside the same transaction.
+#[non_exhaustive]
+pub struct DieselOpStoreTx {
+    /// `Option` so the connection can be moved into a blocking task and
+    /// moved back; it is `Some` at every await point except during a call.
+    ///
+    /// The `Mutex` is not for concurrency — every access below goes through
+    /// `get_mut`, and an open transaction is exclusively owned anyway. It is
+    /// here purely to satisfy the `Send + Sync` bound the store traits carry:
+    /// a `SqliteConnection` is `Send` but `!Sync`, so without the wrapper
+    /// this type cannot implement `OpStore` at all. Worth noting as a wart —
+    /// `Sync` buys those traits nothing now that every method takes
+    /// `&mut self` — but relaxing the bound is a breaking change to every
+    /// implementor, so it stays for now.
+    conn: std::sync::Mutex<Option<PooledConnection<ConnectionManager<SqliteConnection>>>>,
+}
+
+impl DieselOpStoreTx {
+    /// Run one synchronous closure on this transaction's connection, off the
+    /// async runtime.
+    ///
+    /// Public because it is also how a host application runs *its own*
+    /// Diesel queries inside this transaction — the equivalent of
+    /// `SqlxOpStoreTx::as_mut`, shaped as a closure rather than a borrow
+    /// because a `!Sync` connection cannot be lent across an await point.
+    pub async fn run<T, F>(&mut self, f: F) -> Result<T, StoreError>
+    where
+        F: FnOnce(&mut SqliteConnection) -> Result<T, StoreError> + Send + 'static,
+        T: Send + 'static,
+    {
+        let mut conn = self.take_conn()?;
+        let (conn, result) = tokio::task::spawn_blocking(move || {
+            let result = f(&mut conn);
+            (conn, result)
+        })
+        .await
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?;
+        *self
+            .conn
+            .get_mut()
+            .expect("transaction mutex is never poisoned") = Some(conn);
+        result
+    }
+
+    fn take_conn(
+        &mut self,
+    ) -> Result<PooledConnection<ConnectionManager<SqliteConnection>>, StoreError> {
+        self.conn
+            .get_mut()
+            .expect("transaction mutex is never poisoned")
+            .take()
+            .ok_or_else(|| {
+                StoreError::Internal("diesel transaction connection is gone".to_string())
+            })
+    }
+
+    /// Commit, making every write in this transaction durable at once.
+    pub async fn commit(mut self) -> Result<(), StoreError> {
+        self.finish(true).await
+    }
+
+    /// Roll back, discarding every write in this transaction.
+    pub async fn rollback(mut self) -> Result<(), StoreError> {
+        self.finish(false).await
+    }
+
+    async fn finish(&mut self, commit: bool) -> Result<(), StoreError> {
+        let mut conn = self.take_conn()?;
+        tokio::task::spawn_blocking(move || {
+            if commit {
+                AnsiTransactionManager::commit_transaction(&mut *conn).map_err(diesel_err)
+            } else {
+                AnsiTransactionManager::rollback_transaction(&mut *conn).map_err(diesel_err)
+            }
+        })
+        .await
+        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+    }
+}
+
+impl Drop for DieselOpStoreTx {
+    /// Roll back on drop, so an early `?` in a host application's unit of
+    /// work cannot leave the transaction open.
+    ///
+    /// This has to happen synchronously — `Drop` cannot await — which is
+    /// safe enough here (a local `ROLLBACK` on an already-checked-out
+    /// connection) but is a real reason to prefer calling
+    /// [`commit`](Self::commit) or [`rollback`](Self::rollback) explicitly.
+    ///
+    /// Doing nothing would not be a silent success: r2d2 asks Diesel whether
+    /// a returned connection is broken, and a connection still inside a
+    /// transaction answers yes, so the pool would discard it and dial a new
+    /// one. The data outcome is the same (nothing was committed), but the
+    /// pool pays for a reconnect on every dropped transaction — and against
+    /// an in-memory SQLite database, where the connection *is* the database,
+    /// the reconnect silently starts from an empty schema.
+    fn drop(&mut self) {
+        if let Ok(slot) = self.conn.get_mut() {
+            if let Some(mut conn) = slot.take() {
+                let _ = AnsiTransactionManager::rollback_transaction(&mut *conn);
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl authkestra_op::store::TransactionalOpStore for DieselOpStore {
+    async fn begin(
+        &self,
+    ) -> Result<Box<dyn authkestra_op::store::OpStoreTransaction + Send>, StoreError> {
+        Ok(Box::new(self.begin_tx().await?))
+    }
+}
+
+#[async_trait]
+impl authkestra_op::store::OpStoreTransaction for DieselOpStoreTx {
+    async fn commit(self: Box<Self>) -> Result<(), StoreError> {
+        DieselOpStoreTx::commit(*self).await
+    }
+
+    async fn rollback(self: Box<Self>) -> Result<(), StoreError> {
+        DieselOpStoreTx::rollback(*self).await
+    }
+}
+
+/// Every query this store runs, written once as plain synchronous Diesel
+/// against a borrowed connection — no pool checkout, no `spawn_blocking`.
+/// Both [`DieselOpStore`] (which checks a connection out per call) and
+/// [`DieselOpStoreTx`] (which owns one for the life of its transaction)
+/// drive these through their own `run` helper.
+mod queries {
+    use super::*;
+
+    /// True when `conn` already has a transaction (or savepoint) open.
+    fn in_transaction(conn: &mut SqliteConnection) -> bool {
+        AnsiTransactionManager::transaction_manager_status_mut(conn)
+            .transaction_depth()
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    /// Run `f` atomically, whether or not a transaction is already open.
+    ///
+    /// The single-use consume paths need their own atomic scope, and on the
+    /// pool that means `BEGIN IMMEDIATE` — taking SQLite's write lock up
+    /// front rather than failing with `SQLITE_BUSY` at the first write. But
+    /// SQLite has no nested `BEGIN`: called inside a host application's
+    /// transaction (`DieselOpStoreTx`), the same statement errors with
+    /// "cannot start a transaction within a transaction". Diesel's plain
+    /// `transaction` issues a SAVEPOINT once the depth is non-zero, which is
+    /// the correct nested form — governed by the outer commit or rollback —
+    /// so pick between them by depth.
+    ///
+    /// The outer transaction was itself opened with `BEGIN IMMEDIATE` (see
+    /// [`DieselOpStore::begin_tx`]), so the write lock this would have taken
+    /// is already held by the time a savepoint is used instead. Nothing is
+    /// given up by the switch.
+    fn atomically<T>(
+        conn: &mut SqliteConnection,
+        f: impl FnOnce(&mut SqliteConnection) -> Result<T, diesel::result::Error>,
+    ) -> Result<T, diesel::result::Error> {
+        if in_transaction(conn) {
+            conn.transaction(f)
+        } else {
+            conn.immediate_transaction(f)
+        }
+    }
+
+    pub(crate) fn find_client(
+        conn: &mut SqliteConnection,
+        client_id: String,
+    ) -> Result<Option<ClientRegistration>, StoreError> {
+        let row: Option<ClientRow> = oauth_clients::table
+            .find(client_id)
+            .first(conn)
+            .optional()
+            .map_err(diesel_err)?;
+        row.map(ClientRow::into_domain).transpose()
+    }
+
+    pub(crate) fn store_code(conn: &mut SqliteConnection, row: CodeRow) -> Result<(), StoreError> {
+        diesel::insert_into(oauth_codes::table)
+            .values(&row)
+            .execute(conn)
+            .map_err(diesel_err)?;
+        Ok(())
+    }
+
+    pub(crate) fn consume_code(
+        conn: &mut SqliteConnection,
+        code: String,
+    ) -> Result<Option<AuthorizationCode>, StoreError> {
+        atomically(conn, |conn| {
+            let row: Option<CodeRow> = oauth_codes::table.find(&code).first(conn).optional()?;
+            let Some(mut row) = row else {
+                return Ok(None);
+            };
+            // Single-use, atomically: the `UPDATE ... WHERE used =
+            // false` below is the actual compare-and-swap — two
+            // concurrent consumers can both reach this point having
+            // read `used: false` above, but only the one whose UPDATE
+            // affects a row (still `used = false` at write time) may
+            // treat the code as consumed. Same shape, and the same
+            // reasoning, as authkestra-store-sqlx's own consume_code;
+            // the `find` above is a read for the fields to return, not
+            // the authority on whether this call wins the race.
+            let affected = diesel::update(
+                oauth_codes::table
+                    .filter(oauth_codes::code.eq(&code))
+                    .filter(oauth_codes::used.eq(false)),
+            )
+            .set(oauth_codes::used.eq(true))
+            .execute(conn)?;
+            if affected != 1 {
+                return Ok(None);
+            }
+            row.used = true;
+            Ok::<_, diesel::result::Error>(Some(row))
+        })
+        .map_err(diesel_err)?
+        .map(CodeRow::into_domain)
+        .transpose()
+    }
+
+    pub(crate) fn store_token(
+        conn: &mut SqliteConnection,
+        row: RefreshTokenRow,
+    ) -> Result<(), StoreError> {
+        diesel::insert_into(oauth_refresh_tokens::table)
+            .values(&row)
+            .execute(conn)
+            .map_err(diesel_err)?;
+        Ok(())
+    }
+
+    pub(crate) fn get_token(
+        conn: &mut SqliteConnection,
+        token: String,
+    ) -> Result<Option<RefreshToken>, StoreError> {
+        let row: Option<RefreshTokenRow> = oauth_refresh_tokens::table
+            .find(token)
+            .first(conn)
+            .optional()
+            .map_err(diesel_err)?;
+        row.map(RefreshTokenRow::into_domain).transpose()
+    }
+
+    pub(crate) fn revoke_token(
+        conn: &mut SqliteConnection,
+        token: String,
+    ) -> Result<(), StoreError> {
+        diesel::delete(oauth_refresh_tokens::table.find(token))
+            .execute(conn)
+            .map_err(diesel_err)?;
+        Ok(())
+    }
+
+    pub(crate) fn consume_token(
+        conn: &mut SqliteConnection,
+        token: String,
+    ) -> Result<Option<RefreshToken>, StoreError> {
+        atomically(conn, |conn| {
+            let row: Option<RefreshTokenRow> = oauth_refresh_tokens::table
+                .find(&token)
+                .first(conn)
+                .optional()?;
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            // The DELETE, not the `find` above, is what's atomic: two
+            // concurrent consumers can both read the row present, but
+            // only the one whose DELETE actually removes it (checked
+            // via the affected-row count) may treat the token as
+            // consumed — same compare-and-swap reasoning as
+            // `consume_code`.
+            let affected =
+                diesel::delete(oauth_refresh_tokens::table.find(&token)).execute(conn)?;
+            if affected != 1 {
+                return Ok(None);
+            }
+            Ok::<_, diesel::result::Error>(Some(row))
+        })
+        .map_err(diesel_err)?
+        .map(RefreshTokenRow::into_domain)
+        .transpose()
+    }
+
+    pub(crate) fn store_device_code(
+        conn: &mut SqliteConnection,
+        row: DeviceCodeRow,
+    ) -> Result<(), StoreError> {
+        diesel::insert_into(oauth_device_codes::table)
+            .values(&row)
+            .execute(conn)
+            .map_err(diesel_err)?;
+        Ok(())
+    }
+
+    pub(crate) fn get_device_code(
+        conn: &mut SqliteConnection,
+        device_code: String,
+    ) -> Result<Option<DeviceCodeSession>, StoreError> {
+        let row: Option<DeviceCodeRow> = oauth_device_codes::table
+            .find(device_code)
+            .first(conn)
+            .optional()
+            .map_err(diesel_err)?;
+        row.map(DeviceCodeRow::into_domain).transpose()
+    }
+
+    pub(crate) fn get_by_user_code(
+        conn: &mut SqliteConnection,
+        user_code: String,
+    ) -> Result<Option<DeviceCodeSession>, StoreError> {
+        let row: Option<DeviceCodeRow> = oauth_device_codes::table
+            .filter(oauth_device_codes::user_code.eq(user_code))
+            .first(conn)
+            .optional()
+            .map_err(diesel_err)?;
+        row.map(DeviceCodeRow::into_domain).transpose()
+    }
+
+    pub(crate) fn update_device_code(
+        conn: &mut SqliteConnection,
+        row: DeviceCodeRow,
+        device_code: String,
+    ) -> Result<(), StoreError> {
+        diesel::update(oauth_device_codes::table.find(device_code))
+            .set(&row)
+            .execute(conn)
+            .map_err(diesel_err)?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_device_code(
+        conn: &mut SqliteConnection,
+        device_code: String,
+    ) -> Result<(), StoreError> {
+        diesel::delete(oauth_device_codes::table.find(device_code))
+            .execute(conn)
+            .map_err(diesel_err)?;
+        Ok(())
+    }
+
+    pub(crate) fn consume_device_code(
+        conn: &mut SqliteConnection,
+        device_code: String,
+    ) -> Result<Option<DeviceCodeSession>, StoreError> {
+        atomically(conn, |conn| {
+            let row: Option<DeviceCodeRow> = oauth_device_codes::table
+                .find(&device_code)
+                .first(conn)
+                .optional()?;
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            // Same compare-and-swap reasoning as `consume_token`: the
+            // DELETE's affected-row count, not the read above, decides
+            // whether this call wins the race against a concurrent
+            // consumer of the same device code.
+            let affected =
+                diesel::delete(oauth_device_codes::table.find(&device_code)).execute(conn)?;
+            if affected != 1 {
+                return Ok(None);
+            }
+            Ok::<_, diesel::result::Error>(Some(row))
+        })
+        .map_err(diesel_err)?
+        .map(DeviceCodeRow::into_domain)
+        .transpose()
+    }
+}
+
 #[async_trait]
 impl ClientStore for DieselOpStore {
     async fn find_client(
         &mut self,
         client_id: &str,
     ) -> Result<Option<ClientRegistration>, StoreError> {
-        let pool = self.pool.clone();
         let client_id = client_id.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            let row: Option<ClientRow> = oauth_clients::table
-                .find(client_id)
-                .first(&mut conn)
-                .optional()
-                .map_err(diesel_err)?;
-            row.map(ClientRow::into_domain).transpose()
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::find_client(conn, client_id))
+            .await
     }
 }
 
 #[async_trait]
 impl AuthorizationCodeStore for DieselOpStore {
     async fn store_code(&mut self, code: AuthorizationCode) -> Result<(), StoreError> {
-        let pool = self.pool.clone();
         let row = CodeRow::from_domain(&code)?;
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            diesel::insert_into(oauth_codes::table)
-                .values(&row)
-                .execute(&mut conn)
-                .map_err(diesel_err)?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::store_code(conn, row)).await
     }
-
     async fn consume_code(&mut self, code: &str) -> Result<Option<AuthorizationCode>, StoreError> {
-        let pool = self.pool.clone();
         let code = code.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            conn.immediate_transaction(|conn| {
-                let row: Option<CodeRow> = oauth_codes::table.find(&code).first(conn).optional()?;
-                let Some(mut row) = row else {
-                    return Ok(None);
-                };
-                // Single-use, atomically: the `UPDATE ... WHERE used =
-                // false` below is the actual compare-and-swap — two
-                // concurrent consumers can both reach this point having
-                // read `used: false` above, but only the one whose UPDATE
-                // affects a row (still `used = false` at write time) may
-                // treat the code as consumed. Same shape, and the same
-                // reasoning, as authkestra-store-sqlx's own consume_code;
-                // the `find` above is a read for the fields to return, not
-                // the authority on whether this call wins the race.
-                let affected = diesel::update(
-                    oauth_codes::table
-                        .filter(oauth_codes::code.eq(&code))
-                        .filter(oauth_codes::used.eq(false)),
-                )
-                .set(oauth_codes::used.eq(true))
-                .execute(conn)?;
-                if affected != 1 {
-                    return Ok(None);
-                }
-                row.used = true;
-                Ok::<_, diesel::result::Error>(Some(row))
-            })
-            .map_err(diesel_err)?
-            .map(CodeRow::into_domain)
-            .transpose()
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::consume_code(conn, code))
+            .await
     }
 }
 
 #[async_trait]
 impl RefreshTokenStore for DieselOpStore {
     async fn store_token(&mut self, token: RefreshToken) -> Result<(), StoreError> {
-        let pool = self.pool.clone();
         let row = RefreshTokenRow::from_domain(&token)?;
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            diesel::insert_into(oauth_refresh_tokens::table)
-                .values(&row)
-                .execute(&mut conn)
-                .map_err(diesel_err)?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::store_token(conn, row)).await
     }
-
     async fn get_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError> {
-        let pool = self.pool.clone();
         let token = token.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            let row: Option<RefreshTokenRow> = oauth_refresh_tokens::table
-                .find(token)
-                .first(&mut conn)
-                .optional()
-                .map_err(diesel_err)?;
-            row.map(RefreshTokenRow::into_domain).transpose()
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::get_token(conn, token)).await
     }
-
     async fn revoke_token(&mut self, token: &str) -> Result<(), StoreError> {
-        let pool = self.pool.clone();
         let token = token.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            diesel::delete(oauth_refresh_tokens::table.find(token))
-                .execute(&mut conn)
-                .map_err(diesel_err)?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::revoke_token(conn, token))
+            .await
     }
-
     async fn consume_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError> {
-        let pool = self.pool.clone();
         let token = token.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            conn.immediate_transaction(|conn| {
-                let row: Option<RefreshTokenRow> = oauth_refresh_tokens::table
-                    .find(&token)
-                    .first(conn)
-                    .optional()?;
-                let Some(row) = row else {
-                    return Ok(None);
-                };
-                // The DELETE, not the `find` above, is what's atomic: two
-                // concurrent consumers can both read the row present, but
-                // only the one whose DELETE actually removes it (checked
-                // via the affected-row count) may treat the token as
-                // consumed — same compare-and-swap reasoning as
-                // `consume_code`.
-                let affected =
-                    diesel::delete(oauth_refresh_tokens::table.find(&token)).execute(conn)?;
-                if affected != 1 {
-                    return Ok(None);
-                }
-                Ok::<_, diesel::result::Error>(Some(row))
-            })
-            .map_err(diesel_err)?
-            .map(RefreshTokenRow::into_domain)
-            .transpose()
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::consume_token(conn, token))
+            .await
     }
 }
 
 #[async_trait]
 impl DeviceCodeStore for DieselOpStore {
     async fn store_device_code(&mut self, session: DeviceCodeSession) -> Result<(), StoreError> {
-        let pool = self.pool.clone();
         let row = DeviceCodeRow::from_domain(&session)?;
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            diesel::insert_into(oauth_device_codes::table)
-                .values(&row)
-                .execute(&mut conn)
-                .map_err(diesel_err)?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::store_device_code(conn, row))
+            .await
     }
-
     async fn get_device_code(
         &mut self,
         device_code: &str,
     ) -> Result<Option<DeviceCodeSession>, StoreError> {
-        let pool = self.pool.clone();
         let device_code = device_code.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            let row: Option<DeviceCodeRow> = oauth_device_codes::table
-                .find(device_code)
-                .first(&mut conn)
-                .optional()
-                .map_err(diesel_err)?;
-            row.map(DeviceCodeRow::into_domain).transpose()
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::get_device_code(conn, device_code))
+            .await
     }
-
     async fn get_by_user_code(
         &mut self,
         user_code: &str,
     ) -> Result<Option<DeviceCodeSession>, StoreError> {
-        let pool = self.pool.clone();
         let user_code = user_code.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            let row: Option<DeviceCodeRow> = oauth_device_codes::table
-                .filter(oauth_device_codes::user_code.eq(user_code))
-                .first(&mut conn)
-                .optional()
-                .map_err(diesel_err)?;
-            row.map(DeviceCodeRow::into_domain).transpose()
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::get_by_user_code(conn, user_code))
+            .await
     }
-
     async fn update_device_code(&mut self, session: DeviceCodeSession) -> Result<(), StoreError> {
-        let pool = self.pool.clone();
         let row = DeviceCodeRow::from_domain(&session)?;
         let device_code = session.device_code.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            diesel::update(oauth_device_codes::table.find(device_code))
-                .set(&row)
-                .execute(&mut conn)
-                .map_err(diesel_err)?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::update_device_code(conn, row, device_code))
+            .await
     }
-
     async fn delete_device_code(&mut self, device_code: &str) -> Result<(), StoreError> {
-        let pool = self.pool.clone();
         let device_code = device_code.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            diesel::delete(oauth_device_codes::table.find(device_code))
-                .execute(&mut conn)
-                .map_err(diesel_err)?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::delete_device_code(conn, device_code))
+            .await
     }
-
     async fn consume_device_code(
         &mut self,
         device_code: &str,
     ) -> Result<Option<DeviceCodeSession>, StoreError> {
-        let pool = self.pool.clone();
         let device_code = device_code.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(pool_err)?;
-            conn.immediate_transaction(|conn| {
-                let row: Option<DeviceCodeRow> = oauth_device_codes::table
-                    .find(&device_code)
-                    .first(conn)
-                    .optional()?;
-                let Some(row) = row else {
-                    return Ok(None);
-                };
-                // Same compare-and-swap reasoning as `consume_token`: the
-                // DELETE's affected-row count, not the read above, decides
-                // whether this call wins the race against a concurrent
-                // consumer of the same device code.
-                let affected =
-                    diesel::delete(oauth_device_codes::table.find(&device_code)).execute(conn)?;
-                if affected != 1 {
-                    return Ok(None);
-                }
-                Ok::<_, diesel::result::Error>(Some(row))
-            })
-            .map_err(diesel_err)?
-            .map(DeviceCodeRow::into_domain)
-            .transpose()
-        })
-        .await
-        .map_err(|e| StoreError::Internal(format!("diesel worker task failed: {e}")))?
+        self.run(move |conn| queries::consume_device_code(conn, device_code))
+            .await
     }
 }
 
 impl OpStore for DieselOpStore {}
+
+#[async_trait]
+impl ClientStore for DieselOpStoreTx {
+    async fn find_client(
+        &mut self,
+        client_id: &str,
+    ) -> Result<Option<ClientRegistration>, StoreError> {
+        let client_id = client_id.to_string();
+        self.run(move |conn| queries::find_client(conn, client_id))
+            .await
+    }
+}
+
+#[async_trait]
+impl AuthorizationCodeStore for DieselOpStoreTx {
+    async fn store_code(&mut self, code: AuthorizationCode) -> Result<(), StoreError> {
+        let row = CodeRow::from_domain(&code)?;
+        self.run(move |conn| queries::store_code(conn, row)).await
+    }
+    async fn consume_code(&mut self, code: &str) -> Result<Option<AuthorizationCode>, StoreError> {
+        let code = code.to_string();
+        self.run(move |conn| queries::consume_code(conn, code))
+            .await
+    }
+}
+
+#[async_trait]
+impl RefreshTokenStore for DieselOpStoreTx {
+    async fn store_token(&mut self, token: RefreshToken) -> Result<(), StoreError> {
+        let row = RefreshTokenRow::from_domain(&token)?;
+        self.run(move |conn| queries::store_token(conn, row)).await
+    }
+    async fn get_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError> {
+        let token = token.to_string();
+        self.run(move |conn| queries::get_token(conn, token)).await
+    }
+    async fn revoke_token(&mut self, token: &str) -> Result<(), StoreError> {
+        let token = token.to_string();
+        self.run(move |conn| queries::revoke_token(conn, token))
+            .await
+    }
+    async fn consume_token(&mut self, token: &str) -> Result<Option<RefreshToken>, StoreError> {
+        let token = token.to_string();
+        self.run(move |conn| queries::consume_token(conn, token))
+            .await
+    }
+}
+
+#[async_trait]
+impl DeviceCodeStore for DieselOpStoreTx {
+    async fn store_device_code(&mut self, session: DeviceCodeSession) -> Result<(), StoreError> {
+        let row = DeviceCodeRow::from_domain(&session)?;
+        self.run(move |conn| queries::store_device_code(conn, row))
+            .await
+    }
+    async fn get_device_code(
+        &mut self,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeSession>, StoreError> {
+        let device_code = device_code.to_string();
+        self.run(move |conn| queries::get_device_code(conn, device_code))
+            .await
+    }
+    async fn get_by_user_code(
+        &mut self,
+        user_code: &str,
+    ) -> Result<Option<DeviceCodeSession>, StoreError> {
+        let user_code = user_code.to_string();
+        self.run(move |conn| queries::get_by_user_code(conn, user_code))
+            .await
+    }
+    async fn update_device_code(&mut self, session: DeviceCodeSession) -> Result<(), StoreError> {
+        let row = DeviceCodeRow::from_domain(&session)?;
+        let device_code = session.device_code.clone();
+        self.run(move |conn| queries::update_device_code(conn, row, device_code))
+            .await
+    }
+    async fn delete_device_code(&mut self, device_code: &str) -> Result<(), StoreError> {
+        let device_code = device_code.to_string();
+        self.run(move |conn| queries::delete_device_code(conn, device_code))
+            .await
+    }
+    async fn consume_device_code(
+        &mut self,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeSession>, StoreError> {
+        let device_code = device_code.to_string();
+        self.run(move |conn| queries::consume_device_code(conn, device_code))
+            .await
+    }
+}
+
+impl OpStore for DieselOpStoreTx {}

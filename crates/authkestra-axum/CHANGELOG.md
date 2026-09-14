@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.10.2...authkestra-axum-v0.11.0) - 2026-09-14
+
+### Added
+
+- *(op)* [**breaking**] honour max_age / prompt=login re-authentication at /authorize ([#383](https://github.com/marcjazz/authkestra/pull/383))
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+- *(engine)* [**breaking**] remove authkestra-engine's no-op `session` feature ([#375](https://github.com/marcjazz/authkestra/pull/375))
+
+## [0.10.2](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.10.1...authkestra-axum-v0.10.2) - 2026-09-14
+
+### Fixed
+
+- *(actix, axum)* no-op / missing feature-gate audit across the workspace ([#373](https://github.com/marcjazz/authkestra/pull/373))
+
+## [0.9.4](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.9.3...authkestra-axum-v0.9.4) - 2026-09-08
+
+### Other
+
+- *(actix)* share one callback helper instead of two copies of the CSRF check ([#361](https://github.com/marcjazz/authkestra/pull/361))
+
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.9.2...authkestra-axum-v0.9.3) - 2026-09-07
+
+### Added
+
+- instrument the token-validation path, and fix flaky log-capture tests ([#358](https://github.com/marcjazz/authkestra/pull/358))
+- *(adapters)* instrument the OAuth login, callback and logout handlers ([#355](https://github.com/marcjazz/authkestra/pull/355))
+
+### Fixed
+
+- *(macros)* anchor derive output so the state derives work through the facade ([#344](https://github.com/marcjazz/authkestra/pull/344))
+
+### Other
+
+- *(adapters)* cover the OpenID Provider handlers in both axum and actix ([#346](https://github.com/marcjazz/authkestra/pull/346))
+
+## [0.9.0](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.8.1...authkestra-axum-v0.9.0) - 2026-09-05
+
+### Fixed
+
+- *(axum)* [**breaking**] make AxumError non_exhaustive ([#331](https://github.com/marcjazz/authkestra/pull/331))
+- *(adapters)* [**breaking**] return 404 for an unknown OAuth provider, and stop the body being sniffed ([#323](https://github.com/marcjazz/authkestra/pull/323))
+
 ## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-axum-v0.7.2...authkestra-axum-v0.8.0) - 2026-09-03
 
 ### Other

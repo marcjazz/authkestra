@@ -1,6 +1,5 @@
 use crate::auth::session::{Session, SessionConfig, SessionStore};
 use crate::auth::{AuthError, AuthInput, AuthMethod, AuthResult, ErasedOAuthFlow, Identity};
-#[cfg(feature = "token")]
 use crate::token::TokenManager;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,11 +27,9 @@ impl SessionStoreState for Configured<Arc<dyn SessionStore>> {
 /// Trait for the token manager state in the `Engine`.
 pub trait TokenManagerState: Send + Sync + Clone {
     /// Returns the token manager if configured.
-    #[cfg(feature = "token")]
     fn get_manager(&self) -> Arc<TokenManager>;
 }
 
-#[cfg(feature = "token")]
 impl TokenManagerState for Configured<Arc<TokenManager>> {
     fn get_manager(&self) -> Arc<TokenManager> {
         self.0.clone()
@@ -58,7 +55,6 @@ pub struct Engine<S = Missing, T = Missing> {
     /// Configuration for session cookies.
     pub session_config: SessionConfig,
     /// Manager for JWT signing and verification.
-    #[cfg(feature = "token")]
     pub token_manager: T,
 }
 
@@ -75,7 +71,6 @@ where
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store.clone(),
             session_config: self.session_config.clone(),
-            #[cfg(feature = "token")]
             token_manager: self.token_manager.clone(),
         }
     }
@@ -94,7 +89,6 @@ impl Engine<Missing, Missing> {
             mfa_jwt_secret: secret,
             session_store: Missing,
             session_config: SessionConfig::default(),
-            #[cfg(feature = "token")]
             token_manager: Missing,
         }
     }
@@ -108,7 +102,6 @@ pub struct EngineBuilder<S = Missing, T = Missing> {
     mfa_jwt_secret: [u8; 32],
     session_store: S,
     session_config: SessionConfig,
-    #[cfg(feature = "token")]
     token_manager: T,
 }
 
@@ -175,13 +168,11 @@ impl<S, T> EngineBuilder<S, T> {
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: Configured(store),
             session_config: self.session_config,
-            #[cfg(feature = "token")]
             token_manager: self.token_manager,
         }
     }
 
     /// Set the token manager.
-    #[cfg(feature = "token")]
     pub fn token_manager(
         self,
         manager: Arc<TokenManager>,
@@ -198,7 +189,6 @@ impl<S, T> EngineBuilder<S, T> {
     }
 
     /// Set the JWT secret for the default token manager.
-    #[cfg(feature = "token")]
     pub fn jwt_secret(self, secret: &[u8]) -> EngineBuilder<S, Configured<Arc<TokenManager>>> {
         self.token_manager(Arc::new(TokenManager::new(secret, None)))
     }
@@ -218,7 +208,6 @@ impl<S, T> EngineBuilder<S, T> {
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store,
             session_config: self.session_config,
-            #[cfg(feature = "token")]
             token_manager: self.token_manager,
         }
     }
@@ -228,6 +217,13 @@ impl<S, T> Engine<S, T> {
     /// Attempt to authenticate a user.
     /// Returns `AuthResult::Success` if authentication is fully complete,
     /// or `AuthResult::MfaRequired` if a second factor is needed.
+    // `input` is skipped, not merely unformatted: `AuthInput` carries
+    // passwords and TOTP codes, and a span field would print them. The
+    // method name is recorded instead, once it is known.
+    #[tracing::instrument(
+        skip(self, input),
+        fields(auth_method = tracing::field::Empty, user_id = tracing::field::Empty)
+    )]
     pub async fn authenticate(&self, input: AuthInput) -> Result<AuthResult, AuthError> {
         // Handle MFA Challenge Continuation
         if let AuthInput::MfaChallenge {
@@ -236,16 +232,44 @@ impl<S, T> Engine<S, T> {
         } = input
         {
             // Verify MFA Token
+            let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+            // Stated rather than inherited, for the reason #350 gives: a
+            // tolerance nobody wrote down is one nobody can review. This is
+            // the last site that still took `jsonwebtoken`'s default
+            // silently, and it matters more here than most — the 15-minute
+            // TTL below is a deliberate bound on how long a half-completed
+            // login stays resumable, and an unstated grace period quietly
+            // widens it.
+            //
+            // The value is unchanged at `DEFAULT_LEEWAY_SECS`, so nothing
+            // about today's behaviour moves. It is more tolerance than this
+            // token needs, though: unlike an ID token or a client assertion,
+            // this one is minted and verified by the same deployment with the
+            // same secret, so the only clocks that can disagree belong to
+            // instances of the same service. Tightening it is a deliberate
+            // decision to make on its own, not a side effect of naming it.
+            validation.leeway = crate::token::DEFAULT_LEEWAY_SECS;
             let token_data = jsonwebtoken::decode::<crate::auth::state::MfaTokenClaims>(
                 &mfa_token,
                 &jsonwebtoken::DecodingKey::from_secret(&self.mfa_jwt_secret),
-                &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+                &validation,
             )
-            .map_err(|_| AuthError::InvalidInput)?;
+            .map_err(|e| {
+                // The caller deliberately learns nothing beyond
+                // `InvalidInput` — expired and forged must look alike from
+                // outside. Server-side there is no such reason to discard
+                // it, and "was that token stale or unsigned?" is the first
+                // question anyone debugging a stalled second factor asks.
+                tracing::warn!(error = %e, "MFA continuation token failed validation");
+                AuthError::InvalidInput
+            })?;
 
             if !token_data.claims.mfa_pending {
+                tracing::warn!("token presented as an MFA continuation is not marked mfa_pending");
                 return Err(AuthError::InvalidInput);
             }
+            tracing::Span::current().record("user_id", token_data.claims.sub.as_str());
+            tracing::debug!("resuming a login from a valid MFA continuation token");
 
             let method_name = match &*challenge_input {
                 #[cfg(feature = "totp")]
@@ -256,23 +280,78 @@ impl<S, T> Engine<S, T> {
             };
 
             if method_name.is_empty() {
+                tracing::warn!(
+                    "MFA challenge carries an input that maps to no second factor; \
+                     only Totp and WebAuthnAuthentication are dispatched here"
+                );
                 return Err(AuthError::InvalidInput);
             }
+            tracing::Span::current().record("auth_method", method_name);
 
             let method = self
                 .auth_methods
                 .get(method_name)
                 .or_else(|| self.mfa_methods.get(method_name))
                 .ok_or_else(|| {
+                    tracing::error!(
+                        method = method_name,
+                        "MFA method is not registered on this engine"
+                    );
                     AuthError::Internal(format!("MFA method {} not registered", method_name))
                 })?;
 
-            let identity = method.authenticate(*challenge_input).await?;
+            let mut identity = method.authenticate(*challenge_input).await.map_err(|e| {
+                tracing::warn!(error = %e, method = method_name, "second factor rejected");
+                e
+            })?;
 
             if identity.external_id != token_data.claims.sub {
+                // The second factor verified, but for a different user than
+                // the one the continuation token was minted for.
+                tracing::warn!(
+                    token_sub = %token_data.claims.sub,
+                    verified_user = %identity.external_id,
+                    "second factor verified a different user than the MFA token names"
+                );
                 return Err(AuthError::Credentials("MFA token user mismatch".into()));
             }
 
+            // Report the whole method chain — primary, carried across the
+            // continuation round-trip in the MFA token, plus this step-up
+            // factor — as `amr`, not just the factor that ran in this call.
+            // A completed step-up always satisfies this engine's (binary)
+            // step-up tier, regardless of which two methods were involved.
+            // An empty `primary_method` means this token predates that field
+            // (see `MfaTokenClaims::primary_method`) — we genuinely don't know
+            // what ran first, so report only the factor this call verified
+            // rather than inventing one or emitting an empty `amr` entry.
+            let mut amr_methods = Vec::new();
+            if !token_data.claims.primary_method.is_empty() {
+                amr_methods.push(token_data.claims.primary_method.clone());
+            }
+            if token_data.claims.primary_method != method_name {
+                amr_methods.push(method_name.to_string());
+            }
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AMR.to_string(),
+                amr_methods.join(" "),
+            );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
+                "true".to_string(),
+            );
+            // The step-up is what just completed, so it — not the earlier
+            // primary factor — is when this user most recently proved
+            // themselves. See `IDENTITY_ATTR_AUTH_TIME`.
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AUTH_TIME.to_string(),
+                chrono::Utc::now().timestamp().to_string(),
+            );
+
+            tracing::info!(
+                method = method_name,
+                "authentication completed via second factor"
+            );
             return Ok(AuthResult::Success(identity));
         }
 
@@ -287,17 +366,32 @@ impl<S, T> Engine<S, T> {
         };
 
         if method_name.is_empty() {
+            tracing::warn!("authentication input maps to no primary method");
             return Err(AuthError::InvalidInput);
         }
+        tracing::Span::current().record("auth_method", method_name);
+        tracing::debug!("dispatching primary authentication");
 
         let method = self.auth_methods.get(method_name).ok_or_else(|| {
+            // A configuration fault, not a credential one: the input named a
+            // method this engine was never given. Distinguishing the two is
+            // the point of logging it at `error!` rather than `warn!`.
+            tracing::error!(
+                method = method_name,
+                "primary auth method is not registered, or is registered as step-up only"
+            );
             AuthError::Internal(format!(
                 "Primary auth method {} not registered or is step-up only",
                 method_name
             ))
         })?;
 
-        let identity = method.authenticate(input).await?;
+        let mut identity = method.authenticate(input).await.map_err(|e| {
+            tracing::warn!(error = %e, "primary authentication rejected");
+            e
+        })?;
+        tracing::Span::current().record("user_id", identity.external_id.as_str());
+        tracing::debug!("primary authentication succeeded; checking for enrolled second factors");
 
         // Check if user has MFA enrolled
         let mut enrolled_methods = Vec::new();
@@ -315,23 +409,61 @@ impl<S, T> Engine<S, T> {
         // If this method was already an MFA method (e.g. WebAuthn primary), we don't prompt for MFA again.
         // Or if the user has no other MFA methods enrolled.
         if enrolled_methods.is_empty() || method.is_mfa_equivalent() {
+            // Two quite different reasons to skip the second factor, and an
+            // operator asked "why was MFA not enforced for this user?" needs
+            // to know which one applied.
+            tracing::info!(
+                mfa_equivalent = method.is_mfa_equivalent(),
+                enrolled_methods = enrolled_methods.len(),
+                "authentication completed without a second factor"
+            );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AMR.to_string(),
+                method_name.to_string(),
+            );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AUTH_TIME.to_string(),
+                chrono::Utc::now().timestamp().to_string(),
+            );
+            if method.is_mfa_equivalent() {
+                // No step-up ran, but the sole primary method already
+                // provides step-up-equivalent assurance (e.g. this engine's
+                // built-in WebAuthn), so the binary step-up tier is still
+                // satisfied.
+                identity.attributes.insert(
+                    crate::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
+                    "true".to_string(),
+                );
+            }
             Ok(AuthResult::Success(identity))
         } else {
             // Issue MFA Token
             let exp = chrono::Utc::now() + chrono::Duration::minutes(15);
-            let claims = crate::auth::state::MfaTokenClaims {
-                sub: identity.external_id.clone(),
-                mfa_pending: true,
-                exp: exp.timestamp() as usize,
-            };
+            let claims = crate::auth::state::MfaTokenClaims::new(
+                identity.external_id.clone(),
+                exp.timestamp() as usize,
+                method_name,
+            );
 
             let mfa_token = jsonwebtoken::encode(
                 &jsonwebtoken::Header::default(),
                 &claims,
                 &jsonwebtoken::EncodingKey::from_secret(&self.mfa_jwt_secret),
             )
-            .map_err(|e| AuthError::Internal(e.to_string()))?;
+            // Not covered by a test, and deliberately so: HS256 signing
+            // with a fixed 32-byte secret has no reachable failure mode, so
+            // exercising this would mean contriving one. It is logged rather
+            // than dropped because if it ever does fire, the login has
+            // failed for a reason nothing else would explain.
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to mint the MFA continuation token");
+                AuthError::Internal(e.to_string())
+            })?;
 
+            tracing::info!(
+                allowed_methods = ?enrolled_methods,
+                "primary authentication succeeded; a second factor is required"
+            );
             Ok(AuthResult::MfaRequired {
                 mfa_token,
                 user_id: identity.external_id,
@@ -401,7 +533,6 @@ impl<T> Engine<Configured<Arc<dyn SessionStore>>, T> {
     }
 }
 
-#[cfg(feature = "token")]
 impl<S> Engine<S, Configured<Arc<TokenManager>>> {
     /// Get the token manager.
     pub fn token_manager(&self) -> Arc<TokenManager> {
@@ -442,13 +573,11 @@ impl<T> HasSessionStore for Engine<Configured<Arc<dyn SessionStore>>, T> {
 }
 
 /// Trait for Engine instances that have a token manager configured.
-#[cfg(feature = "token")]
 pub trait HasTokenManager {
     /// Returns the token manager.
     fn token_manager(&self) -> Arc<TokenManager>;
 }
 
-#[cfg(feature = "token")]
 impl<S> HasTokenManager for Engine<S, Configured<Arc<TokenManager>>> {
     fn token_manager(&self) -> Arc<TokenManager> {
         self.token_manager.0.clone()

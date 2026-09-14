@@ -2,6 +2,54 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// The [`Identity::attributes`] key [`Engine::authenticate`](crate::Engine::authenticate)
+/// stamps with the space-delimited list of internal auth-method names that
+/// authenticated this identity (e.g. `"password"`, or `"password totp"`
+/// after a completed step-up) — in the order they ran, primary first.
+///
+/// This is the same "thread flow-local data through `Identity` without
+/// changing its shape" idiom already used for `"nonce"` (see
+/// `authkestra_engine::flow::oauth2`): a plain `HashMap<String, String>`
+/// entry rather than a new struct field, so registering a claim consumer
+/// (like `authkestra-op`'s `acr`/`amr` derivation) never requires touching
+/// every `Identity { .. }` literal in the workspace.
+///
+/// Absent for any `Identity` that did not come from `Engine::authenticate`
+/// (an OAuth-provider-sourced identity, for instance) — there is deliberately
+/// no fallback value, since fabricating one would assert an auth method that
+/// was never actually verified.
+pub const IDENTITY_ATTR_AMR: &str = "amr";
+
+/// The [`Identity::attributes`] key set to the literal `"true"` when this
+/// identity's authentication satisfies this engine's step-up tier: either a
+/// step-up (MFA) challenge was actually completed, or the sole primary
+/// [`AuthMethod`](crate::auth::AuthMethod) reported
+/// [`is_mfa_equivalent`](crate::auth::AuthMethod::is_mfa_equivalent). Absent
+/// (never `"false"`) otherwise. See [`IDENTITY_ATTR_AMR`] for why this lives
+/// in `attributes` rather than as a named field.
+pub const IDENTITY_ATTR_STEP_UP_SATISFIED: &str = "step_up_satisfied";
+
+/// The [`Identity::attributes`] key
+/// [`Engine::authenticate`](crate::Engine::authenticate) stamps with the Unix
+/// timestamp (seconds) at which this identity's authentication *completed* —
+/// the basis for OIDC's `auth_time` claim (OIDC Core §2).
+///
+/// For a login that completed a step-up challenge this is when the *step-up*
+/// finished, not when the primary factor ran: `auth_time` exists to answer
+/// "how recently did this user prove themselves", and a re-authentication
+/// gate asking that question means the most recent proof, not the first one.
+///
+/// Because this rides on the `Identity` itself, it survives being persisted
+/// alongside a refresh token and travels with it — so a token minted by the
+/// refresh-token or token-exchange grant reports when the user originally
+/// authenticated rather than when that later token was issued, which is what
+/// `auth_time` is defined to mean.
+///
+/// Absent for any `Identity` that did not come from `Engine::authenticate`,
+/// for the same reason as [`IDENTITY_ATTR_AMR`]: a fabricated timestamp would
+/// assert a freshness nothing actually verified.
+pub const IDENTITY_ATTR_AUTH_TIME: &str = "auth_time";
+
 /// A unified identity structure returned by all providers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
@@ -13,7 +61,9 @@ pub struct Identity {
     pub email: Option<String>,
     /// The user's username or display name, if available
     pub username: Option<String>,
-    /// Additional provider-specific attributes
+    /// Additional provider-specific attributes. Also the carrier for a few
+    /// pieces of flow-local bookkeeping that don't warrant their own named
+    /// field — see [`IDENTITY_ATTR_AMR`] and [`IDENTITY_ATTR_STEP_UP_SATISFIED`].
     pub attributes: HashMap<String, String>,
 }
 
@@ -34,7 +84,19 @@ pub enum AuthResult {
 }
 
 /// Claims inside the temporary MFA JWT token.
+///
+/// `#[non_exhaustive]`, so construct one with [`MfaTokenClaims::new`] rather
+/// than a struct literal. This type gains a field whenever a new piece of
+/// state has to survive the step-up continuation round-trip — `primary_method`
+/// below is the most recent — and without the attribute every one of those
+/// additions is a breaking change for downstream code that had nothing to do
+/// with the new field. Reading and assigning fields is unaffected; only
+/// literal construction and exhaustive destructuring are restricted.
+///
+/// This matches what the rest of the crate already does — see `Jwk`, which
+/// was given the same treatment for the same reason.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MfaTokenClaims {
     /// Subject (the user ID)
     pub sub: String,
@@ -42,6 +104,45 @@ pub struct MfaTokenClaims {
     pub mfa_pending: bool,
     /// Expiration timestamp
     pub exp: usize,
+    /// The internal name of the primary [`AuthMethod`](crate::auth::AuthMethod)
+    /// (e.g. `"password"`) that authenticated `sub` before this step-up
+    /// challenge was issued. Carried across the continuation round-trip so
+    /// that when the second factor completes, `Engine::authenticate` can
+    /// report the *whole* method chain — primary and step-up — as this
+    /// identity's `amr`, not just the second factor. See
+    /// [`IDENTITY_ATTR_AMR`].
+    ///
+    /// `#[serde(default)]` so that an MFA continuation token minted by a
+    /// version before this field existed still decodes across an upgrade:
+    /// without it, anyone mid-step-up when the new binary rolls out would
+    /// get an opaque "missing field" rejection and have to restart the
+    /// login. Such a token yields an empty string, which
+    /// `Engine::authenticate` drops from the method chain rather than
+    /// reporting as a method — so the resulting `amr` names only the
+    /// step-up factor that this call actually verified.
+    #[serde(default)]
+    pub primary_method: String,
+}
+
+impl MfaTokenClaims {
+    /// Creates the claims for a step-up continuation token: `sub` is the user
+    /// the primary factor authenticated, `exp` the token's expiry as a Unix
+    /// timestamp, and `primary_method` the internal name of the
+    /// [`AuthMethod`](crate::auth::AuthMethod) that ran first (see
+    /// [`primary_method`](Self::primary_method)).
+    ///
+    /// `mfa_pending` is set to `true`, which is the only value a real MFA
+    /// token carries — [`Engine::authenticate`](crate::Engine::authenticate)
+    /// rejects a token whose `mfa_pending` is `false`. The field stays public
+    /// so a test can still construct the rejected shape by assigning to it.
+    pub fn new(sub: impl Into<String>, exp: usize, primary_method: impl Into<String>) -> Self {
+        Self {
+            sub: sub.into(),
+            mfa_pending: true,
+            exp,
+            primary_method: primary_method.into(),
+        }
+    }
 }
 
 /// Represents the tokens returned by an OAuth2 provider.

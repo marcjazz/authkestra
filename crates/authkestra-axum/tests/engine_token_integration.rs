@@ -233,3 +233,21 @@ async fn protected_route_rejects_garbage_bearer_token() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The stateless router shares the third `providers.get()` site, which had the
+/// same 500-instead-of-404 bug. See
+/// https://github.com/marcjazz/authkestra/issues/320.
+#[tokio::test]
+async fn an_unknown_provider_is_not_found_on_the_stateless_router() {
+    let resp = build_app()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/callback/nope?code=valid-code&state=whatever")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

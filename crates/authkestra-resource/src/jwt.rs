@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use authkestra_engine::token::DEFAULT_LEEWAY_SECS;
 use authkestra_engine::{
     error::AuthError,
     strategy::AuthenticationStrategy,
@@ -94,14 +95,57 @@ impl Jwks {
         client: &reqwest::Client,
         jwks_uri: &str,
     ) -> Result<Self, ValidationError> {
-        let jwks = client.get(jwks_uri).send().await?.json::<Jwks>().await?;
+        // An unreachable, slow or malformed JWKS endpoint is among the most
+        // common ways a resource server stops working, and this whole path
+        // was silent: the error propagated as `ValidationError::Http` and was
+        // only ever seen if some caller happened to log it.
+        tracing::debug!(jwks_uri, "fetching JWKS");
+        let jwks = match client.get(jwks_uri).send().await {
+            Ok(response) => response.json::<Jwks>().await.map_err(|e| {
+                tracing::warn!(jwks_uri, error = %e, "JWKS response was not a usable key set");
+                ValidationError::Http(e)
+            })?,
+            Err(e) => {
+                tracing::warn!(jwks_uri, error = %e, "could not reach the JWKS endpoint");
+                return Err(ValidationError::Http(e));
+            }
+        };
+        tracing::debug!(jwks_uri, keys = jwks.keys.len(), "fetched JWKS");
         Ok(jwks)
     }
 
+    /// Selects the key a token should be verified against.
+    ///
+    /// Only keys that may actually *verify a signature* are considered
+    /// ([`Jwk::is_usable_for_signature_verification`]). A JWKS commonly
+    /// carries keys published for something else — a stock Keycloak realm
+    /// serves an RSA signing key and an RSA encryption key side by side,
+    /// identical in `kty` — and without this filter the `kid`-less fallback
+    /// below picks whichever of them JWKS member order happens to put first,
+    /// rejecting a good token with a bare `InvalidSignature` (#341). The
+    /// filter applies to the `kid` branch too: a `kid` naming an encryption
+    /// key is not a licence to verify with it.
+    ///
+    /// The `kid`-less fallback stays first-match, and so stays ambiguous when
+    /// a JWKS holds several *signing* keys. That ambiguity is inherent, and
+    /// [`JwksCache::require_kid`] is what closes it.
     pub fn find_key(&self, kid: Option<&str>) -> Option<&Jwk> {
+        let mut usable = self.keys.iter().filter(|k| {
+            if k.is_usable_for_signature_verification() {
+                return true;
+            }
+            tracing::warn!(
+                kid = ?k.kid,
+                key_use = ?k.r#use,
+                key_ops = ?k.key_ops,
+                "skipping a JWKS key that is not published for signature verification"
+            );
+            false
+        });
+
         match kid {
-            Some(id) => self.keys.iter().find(|k| k.kid.as_deref() == Some(id)),
-            None => self.keys.first(),
+            Some(id) => usable.find(|k| k.kid.as_deref() == Some(id)),
+            None => usable.next(),
         }
     }
 }
@@ -189,8 +233,27 @@ impl JwksCache {
         }
 
         // If key not found, try refreshing once in case of rotation
+        tracing::debug!(
+            kid,
+            "no key for this token in the cached JWKS; refreshing in case of rotation"
+        );
         let jwks = self.refresh().await?;
-        Ok(jwks.find_key(kid).cloned())
+        let key = jwks.find_key(kid).cloned();
+        if key.is_none() {
+            // Both mean "the endpoint answered and we still have no key", but
+            // they are different faults and must not share a message: with no
+            // `kid`, `find_key` falls back to the first key, so the only way
+            // to get here is an empty key set — the token named nothing.
+            match kid {
+                Some(kid) => {
+                    tracing::warn!(kid, "token names a key the issuer's JWKS does not contain")
+                }
+                None => tracing::warn!(
+                    "token carries no kid and the issuer's JWKS has no key to fall back to"
+                ),
+            }
+        }
+        Ok(key)
     }
 
     pub async fn refresh(&self) -> Result<Jwks, ValidationError> {
@@ -342,6 +405,18 @@ pub struct ValidationConfig {
     pub audience: Vec<String>,
     pub algorithms: Vec<Algorithm>,
     pub require_kid: bool,
+    /// Clock-skew allowance applied to `exp` and `nbf`, in seconds.
+    ///
+    /// Defaults to [`DEFAULT_LEEWAY_SECS`] (60) — the same constant
+    /// `TokenManager` uses, so a deployment does not have to discover that
+    /// the two halves of the system agreed on a tolerance neither of them
+    /// stated. Before #350 this was `jsonwebtoken`'s default, applied
+    /// silently and with no way to change it.
+    ///
+    /// Set it to `0` where issuer and validator share a clock, or in tests
+    /// that assert on expiry. Raising it widens the window in which an
+    /// expired token is still honoured.
+    pub leeway: u64,
     /// When `true`, enforce RFC 8705 §3.1 certificate binding: a token
     /// carrying a `cnf.x5t#S256` claim is only accepted if the same
     /// certificate (by SHA-256 thumbprint) was presented on the connection
@@ -431,6 +506,10 @@ pub struct ValidationConfigBuilder {
     audience: Vec<String>,
     algorithms: Vec<Algorithm>,
     require_kid: bool,
+    // `Option`, not a bare `u64`: the builder derives `Default`, where a
+    // `u64` would default to 0 and silently turn the documented 60-second
+    // tolerance into none at all.
+    leeway: Option<u64>,
     require_cert_binding: bool,
     require_dpop: bool,
     dpop_resource_origin: Option<String>,
@@ -524,6 +603,15 @@ impl ValidationConfigBuilder {
     /// [`JwksCache::require_kid`].
     pub fn require_kid(mut self, value: bool) -> Self {
         self.require_kid = value;
+        self
+    }
+
+    /// Sets the clock-skew allowance applied to `exp` and `nbf`, in seconds.
+    ///
+    /// Defaults to [`DEFAULT_LEEWAY_SECS`] (60). See
+    /// [`ValidationConfig::leeway`].
+    pub fn leeway(mut self, seconds: u64) -> Self {
+        self.leeway = Some(seconds);
         self
     }
 
@@ -648,6 +736,7 @@ impl ValidationConfigBuilder {
                 self.algorithms
             },
             require_kid: self.require_kid,
+            leeway: self.leeway.unwrap_or(DEFAULT_LEEWAY_SECS),
             require_cert_binding: self.require_cert_binding,
             require_dpop: self.require_dpop,
             dpop_resource_origin: self.dpop_resource_origin,
@@ -778,6 +867,10 @@ fn build_resolver(config: &ValidationConfig) -> Box<dyn JwksResolver> {
 fn build_validation(config: &ValidationConfig, multi_issuer: bool) -> Validation {
     let mut validation = Validation::new(config.algorithms[0]);
     validation.algorithms = config.algorithms.clone();
+    // Set explicitly rather than left to `jsonwebtoken`'s default, so the
+    // window in which an expired token is still honoured is this crate's
+    // decision and is visible in `ValidationConfig` (#350).
+    validation.leeway = config.leeway;
 
     // `set_issuer` has always taken a slice; the pre-#243 config simply had no
     // way to express more than one name. Every trusted issuer goes in, so a
@@ -823,6 +916,11 @@ impl<I> AuthenticationStrategy<I> for JwtStrategy<I>
 where
     I: for<'de> Deserialize<'de> + Send + Sync + 'static,
 {
+    // `skip_all`: `parts` carries the `Authorization` header, and a derived
+    // span field would print the bearer token. The span exists so the dozen
+    // rejection events in this function can be correlated to one request,
+    // which is what having none of them under a span cost (#353).
+    #[tracing::instrument(skip_all, name = "jwt_authenticate")]
     async fn authenticate(&self, parts: &Parts) -> Result<Option<I>, AuthError> {
         if let Some(presented) = extract_presented_token(&parts.headers) {
             let token = presented.token();
@@ -977,8 +1075,26 @@ where
                     }
                     Ok(Some(claims))
                 }
-                Err(ValidationError::InvalidToken(_)) | Err(ValidationError::Jwt(_)) => Ok(None),
-                Err(e) => Err(AuthError::Token(e.to_string())),
+                // A token that failed signature or claim validation. This
+                // returns `Ok(None)` — "declined", so another strategy may
+                // still run — and used to do so silently, which left the
+                // resource server unable to answer the one question anyone
+                // asks it: why was that token rejected? #335 is exactly that
+                // question, and answering it took reading a dependency's
+                // source. `debug!`, not `warn!`, to match the issuer-decline
+                // above: under a first-success policy a decline is ordinary.
+                Err(e @ (ValidationError::InvalidToken(_) | ValidationError::Jwt(_))) => {
+                    tracing::debug!(error = %e, "token failed validation; no identity");
+                    Ok(None)
+                }
+                // Everything else — a JWKS that could not be fetched, a key
+                // that could not be found, replay protection that could not
+                // be checked — is not "this credential is bad" but "we could
+                // not tell", and is propagated as a hard error.
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not determine whether the token is valid");
+                    Err(AuthError::Token(e.to_string()))
+                }
             }
         } else {
             Ok(None)
@@ -1313,9 +1429,65 @@ where
         .ok_or(ValidationError::KeyNotFound)?;
 
     let decoding_key = jwk.to_decoding_key()?;
-    let token_data = decode::<T>(token, &decoding_key, validation)?;
+    let validation = narrow_to_header_family(validation, header.alg)?;
+    let token_data = decode::<T>(token, &decoding_key, &validation)?;
 
     Ok(token_data.claims)
+}
+
+/// Restricts `validation` to the algorithms that share a key family with the
+/// token header's own `alg`.
+///
+/// `jsonwebtoken` does not merely require that the header's `alg` be *among*
+/// `validation.algorithms`; it requires that **every** entry of that list
+/// belong to the same key family as the verifying key
+/// (`decoding::verify_signature_body`). A policy naming more than one family
+/// is therefore unverifiable by construction: whatever the token is signed
+/// with, the first entry from another family fails the loop and the whole
+/// decode returns `InvalidAlgorithm`.
+///
+/// That is exactly the policy an OIDC discovery document produces. Keycloak
+/// advertises all twelve algorithms across the HMAC/RSA/EC/Ed families in
+/// `id_token_signing_alg_values_supported`, so `authkestra-oidc`'s
+/// discovery-derived default rejected *every* ID token from *every* Keycloak
+/// deployment with a bare `InvalidAlgorithm` (#335). The same applied to a
+/// `ValidationConfig` whose `algorithms` deliberately spans families, which
+/// is the natural way to write "this resource server accepts RS256 or ES256".
+///
+/// # Why this does not weaken the policy
+///
+/// The set is only ever *narrowed*, and only to algorithms the caller already
+/// listed — a token signed with an algorithm outside the caller's policy is
+/// still rejected, by the explicit check below. What narrowing removes is
+/// `jsonwebtoken`'s use of the list as a proxy for "which family is this key",
+/// and that proxy is not what protects against algorithm confusion: each
+/// verifier re-checks the key's own family when it is constructed
+/// (`DecodingKey::family` → `ErrorKind::InvalidKeyFormat`), so an RSA JWK
+/// presented for an `HS256` header still fails there, with the public key
+/// never reaching the HMAC verifier.
+fn narrow_to_header_family(
+    validation: &Validation,
+    header_alg: Algorithm,
+) -> Result<Validation, ValidationError> {
+    if !validation.algorithms.contains(&header_alg) {
+        return Err(ValidationError::InvalidToken(format!(
+            "token is signed with {header_alg:?}, which this validation policy does not accept \
+             (accepted: {:?})",
+            validation.algorithms
+        )));
+    }
+
+    let mut narrowed = validation.clone();
+    narrowed
+        .algorithms
+        .retain(|alg| alg.family() == header_alg.family());
+    tracing::debug!(
+        header_alg = ?header_alg,
+        accepted = ?validation.algorithms,
+        narrowed = ?narrowed.algorithms,
+        "narrowed the accepted algorithm set to the token header's key family"
+    );
+    Ok(narrowed)
 }
 
 /// Validates a PASETO V4 Local/Public token.

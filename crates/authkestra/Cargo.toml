@@ -11,12 +11,14 @@ categories.workspace = true
 readme.workspace = true
 
 [dependencies]
-authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-engine = { workspace = true, optional = true, default-features = false }
 authkestra-oidc = { workspace = true, optional = true, default-features = false }
 authkestra-axum = { workspace = true, optional = true, default-features = false }
 authkestra-actix = { workspace = true, optional = true, default-features = false }
 authkestra-providers = { workspace = true, optional = true, default-features = false }
 authkestra-resource = { workspace = true, optional = true, default-features = false }
+authkestra-op = { workspace = true, optional = true, default-features = false }
+authkestra-devsig = { workspace = true, optional = true }
 authkestra-ssf = { workspace = true, optional = true, default-features = false }
 
 [dev-dependencies]
@@ -25,7 +27,7 @@ serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 wiremock = "0.6"
 
-authkestra-engine = { workspace = true, features = ["token", "session", "memory", "redis", "totp", "webauthn"] }
+authkestra-engine = { workspace = true, features = ["memory", "redis", "totp", "webauthn"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
 authkestra-oidc = { workspace = true }
@@ -63,32 +65,74 @@ uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [features]
-default = ["rustls-aws-lc-rs"]
-full = ["session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
+default = ["engine", "rustls-aws-lc-rs"]
+# Every authentication capability this crate has. Two kinds of feature are
+# deliberately left out, and both are *choices* rather than capabilities:
+#
+# - The TLS backend (`rustls-*`): exactly one is meant to be active, and which
+#   one depends on the deployment (C toolchain vs pure Rust, `cargo-deny`
+#   policy). `default` picks one.
+# - The storage backends (`memory`, `redis`, `sql-*`): an application picks the
+#   store it actually runs. Naming them here would put a Redis client and three
+#   SQL drivers into every `full` build to no purpose, since only one gets
+#   used. `full` means "every way of authenticating"; the store is yours to
+#   name alongside it — e.g. `features = ["full", "sql-postgres"]`.
+#
+# This list drifts silently if left to discipline — it omitted twelve
+# features between #369 adding them and this being noticed — so
+# `authkestra-facade-tests` asserts it stays exhaustive rather than trusting
+# whoever adds the next one to remember. The two exclusions above are declared
+# there too, so removing one from this list without a reason fails the build.
+full = [
+    "engine",
+    "oidc",
+    "resource",
+    "axum",
+    "actix",
+    "github",
+    "google",
+    "discord",
+    "webauthn",
+    "totp",
+    "captcha",
+    "macros",
+    "op",
+    "devsig",
+    "ssf",
+]
+engine = ["dep:authkestra-engine"]
 
 # TLS backend, forwarded to every sub-crate that speaks HTTPS. See
 # authkestra-engine's documentation for the `rustls-no-provider` contract.
 rustls-aws-lc-rs = [
-    "authkestra-engine/rustls-aws-lc-rs",
+    "authkestra-engine?/rustls-aws-lc-rs",
     "authkestra-oidc?/rustls-aws-lc-rs",
     "authkestra-axum?/rustls-aws-lc-rs",
     "authkestra-actix?/rustls-aws-lc-rs",
     "authkestra-providers?/rustls-aws-lc-rs",
     "authkestra-resource?/rustls-aws-lc-rs",
+    "authkestra-op?/rustls-aws-lc-rs",
 ]
 rustls-no-provider = [
-    "authkestra-engine/rustls-no-provider",
+    "authkestra-engine?/rustls-no-provider",
     "authkestra-oidc?/rustls-no-provider",
     "authkestra-axum?/rustls-no-provider",
     "authkestra-actix?/rustls-no-provider",
     "authkestra-providers?/rustls-no-provider",
     "authkestra-resource?/rustls-no-provider",
+    "authkestra-op?/rustls-no-provider",
 ]
 
 # Core features
+#
+# There is deliberately no `session` or `token` feature here. Both became
+# empty once `authkestra-engine` dropped its own `session` feature (#375)
+# and made its token machinery unconditional (#377): they forwarded nothing,
+# and each gated a re-export that was itself a duplicate name for the engine
+# (see this crate's `src/lib.rs`). What they gated is reached through
+# `engine` — `authkestra::core`, and `authkestra::store` under any storage
+# backend below.
 
-session = ["authkestra-engine/session"]
-token = ["authkestra-engine/token"]
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
 # Shared Signals Framework / CAEP ingestion. No adapter feature to forward: `authkestra-ssf` is
@@ -104,28 +148,36 @@ github = ["authkestra-providers/github"]
 google = ["authkestra-providers/google"]
 discord = ["authkestra-providers/discord"]
 
+# Storage backends. Forwarded to the engine, and to `authkestra-op` where it
+# has a matching backend of its own, so an application picks a store once
+# rather than per sub-crate. Each backend requires the engine.
+memory = ["engine", "authkestra-engine/memory"]
+redis = ["engine", "authkestra-engine/redis", "authkestra-op?/redis"]
+sql-postgres = ["engine", "authkestra-engine/sql-postgres"]
+sql-mysql = ["engine", "authkestra-engine/sql-mysql"]
+sql-sqlite = ["engine", "authkestra-engine/sql-sqlite"]
 
+# Authentication methods beyond sessions and OAuth. Each method requires the engine.
+webauthn = ["engine", "authkestra-engine/webauthn"]
+totp = ["engine", "authkestra-engine/totp"]
+captcha = [
+    "engine",
+    "authkestra-engine/captcha",
+    "authkestra-axum?/captcha",
+    "authkestra-actix?/captcha",
+]
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-[[test]]
-name = "typestate_tests"
-required-features = ["full"]
-
+# Adapter extras. `?` throughout: turning one of these on must not drag in a
+# web framework the application never asked for.
+#
+# `macros` is a no-op for axum, whose facade feature already enables it, and
+# is the only way to reach the `ActixState` derive — that asymmetry predates
+# this and is left alone here, since removing it from `axum` would break
+# anyone relying on it.
+macros = ["authkestra-axum?/macros", "authkestra-actix?/macros"]
+op = ["dep:authkestra-op", "authkestra-axum?/op", "authkestra-actix?/op"]
+devsig = [
+    "dep:authkestra-devsig",
+    "authkestra-axum?/devsig",
+    "authkestra-actix?/devsig",
+]

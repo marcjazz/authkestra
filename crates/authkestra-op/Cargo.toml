@@ -12,7 +12,7 @@ readme.workspace = true
 
 [dependencies]
 redis = { version = "0.27", optional = true, features = ["tokio-comp", "connection-manager"] }
-authkestra-engine = { workspace = true, default-features = false, features = ["token", "memory"] }
+authkestra-engine = { workspace = true, default-features = false, features = ["memory"] }
 authkestra-resource = { workspace = true, default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -52,6 +52,10 @@ rustls-no-provider = [
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+# Test-only: the log-level policy in #353 has nothing holding it in place
+# unless something asserts it, so `log_level_policy_tests` captures emitted
+# output and checks that an ordinary malformed request produces no `warn!`.
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 # Test-only: `handlers/token/client_auth_tests.rs` hashes a client_secret
 # to exercise `client_secret_basic`/`client_secret_post` verification.
 # Version pinned to match authkestra-engine's own (non-dev) `argon2`
