@@ -238,9 +238,11 @@ normally request via UserInfo, and this RFC doesn't add a reason to.
   did this identity actually authenticate" today (no `auth_time` claim
   either), and building that is a genuinely separate, non-trivial feature
   (it touches session freshness tracking across every grant type, not just
-  ID token claim shape). **Filed as a follow-up issue**, referencing this
-  PR and this RFC, mirroring how issues #370 and #376 were split off from
-  their respective PRs this cycle.
+  ID token claim shape). **Filed as a follow-up: GitHub issue
+  [#381](https://github.com/marcjazz/authkestra/issues/381) — "Support OIDC
+  `max_age` / `prompt=login` re-authentication in `authkestra-op`"**,
+  referencing this PR (#380) and this RFC, mirroring how issues #370 and
+  #376 were split off from their respective PRs this cycle.
 - **A full NIST SP 800-63 AAL ladder / eIDAS LoA scheme.** Not deferred —
   actively rejected, per §4.3: this engine cannot back the guarantees such
   a scheme implies, and a narrower, honest scheme is preferable to a
