@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.10.0...authkestra-engine-v0.10.1) - 2026-09-14
+
+### Fixed
+
+- two Jwk test fixtures missed the r#use/key_ops fields from #342 ([#372](https://github.com/marcjazz/authkestra/pull/372))
+
 ## [0.10.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.9.5...authkestra-engine-v0.10.0) - 2026-09-14
 
 ### Fixed
