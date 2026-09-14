@@ -2,10 +2,15 @@
 //!
 //! A `full` that quietly omits things is worse than no `full` at all: the
 //! caller who picks it has explicitly said "don't make me choose", and gets a
-//! build missing passkeys or a storage backend with no indication anything is
+//! build missing passkeys or the OP server with no indication anything is
 //! absent. That is not hypothetical — between #369 adding twelve features to
 //! the facade and this test being written, `full` named none of them, so it
 //! delivered 7 of 19 while claiming to be complete.
+//!
+//! Omissions are allowed, but only *declared* ones: [`EXCLUDED_FROM_FULL`]
+//! carries the storage backends and the reason they are left to the
+//! application. The distinction this file enforces is between a decision and
+//! a lapse, not between complete and incomplete.
 //!
 //! Discipline demonstrably does not hold this invariant, so this asserts it.
 //! The manifest is read at compile time from the facade crate itself, which
@@ -15,15 +20,26 @@
 /// The facade's own manifest, parsed below.
 const FACADE_MANIFEST: &str = include_str!("../../authkestra/Cargo.toml");
 
-/// Features that are deliberately not capabilities and so are not expected in
-/// `full`:
-///
-/// - `default` and `full` themselves.
-/// - The `rustls-*` backends: exactly one is meant to be active, and which one
-///   is a deployment choice (C toolchain vs pure Rust, `cargo-deny` policy),
-///   not a capability to switch on. `default` picks one; naming both in `full`
-///   would enable a combination nothing wants.
+/// Not capabilities at all, so not candidates for `full`: the two aggregate
+/// features themselves, and the TLS backend, of which exactly one is meant to
+/// be active — which one is a deployment choice (C toolchain vs pure Rust,
+/// `cargo-deny` policy), and `default` makes it. Naming both in `full` would
+/// enable a combination nothing wants.
 const NOT_CAPABILITIES: &[&str] = &["default", "full", "rustls-aws-lc-rs", "rustls-no-provider"];
+
+/// Capabilities that `full` deliberately does **not** enable.
+///
+/// The storage backends. An application runs exactly one store, so pulling a
+/// Redis client and three SQL drivers into every `full` build would cost
+/// compile time, binary size and audit surface for four things that go unused.
+/// `full` means "every way of authenticating"; the store is named alongside it
+/// (`features = ["full", "sql-postgres"]`).
+///
+/// This list is the reason the exclusion is a decision rather than drift —
+/// which is the whole failure this test exists to prevent. Anything added here
+/// needs a reason written next to it, and the test below refuses an entry that
+/// is silently *also* in `full`, so the two cannot disagree.
+const EXCLUDED_FROM_FULL: &[&str] = &["memory", "redis", "sql-postgres", "sql-mysql", "sql-sqlite"];
 
 /// Collects the feature names declared in `[features]`, and the entries `full`
 /// itself lists.
@@ -112,6 +128,7 @@ fn full_names_every_capability_feature() {
     let expected: Vec<&String> = declared
         .iter()
         .filter(|f| !NOT_CAPABILITIES.contains(&f.as_str()))
+        .filter(|f| !EXCLUDED_FROM_FULL.contains(&f.as_str()))
         .collect();
 
     let missing: Vec<&&String> = expected.iter().filter(|f| !in_full.contains(f)).collect();
@@ -120,8 +137,48 @@ fn full_names_every_capability_feature() {
         missing.is_empty(),
         "`full` does not name every capability feature. Missing: {missing:?}.\n\
          Either add them to `full` in crates/authkestra/Cargo.toml, or — if one \
-         genuinely is not a capability (a backend *choice* like the rustls \
-         features) — add it to NOT_CAPABILITIES here with the reason."
+         is deliberately left out — add it to EXCLUDED_FROM_FULL here *with the \
+         reason*, so the next person reads a decision instead of guessing \
+         whether it was an oversight."
+    );
+}
+
+/// The exclusion list and `full` must not contradict each other. An entry
+/// claiming a feature is deliberately excluded, while `full` enables it
+/// anyway, is worse than either choice on its own: the comment explaining the
+/// exclusion becomes documentation of something that isn't true.
+#[test]
+fn nothing_is_both_excluded_and_included() {
+    let (_declared, in_full) = parse_features(FACADE_MANIFEST);
+
+    let contradictory: Vec<&&str> = EXCLUDED_FROM_FULL
+        .iter()
+        .filter(|f| in_full.contains(&f.to_string()))
+        .collect();
+
+    assert!(
+        contradictory.is_empty(),
+        "these are listed as deliberately excluded from `full`, but `full` \
+         enables them: {contradictory:?}. Remove them from one place or the other."
+    );
+}
+
+/// A feature that no longer exists must not linger in the exclusion list
+/// either — a stale entry there silently stops `full` being checked for a
+/// feature that may since have been re-added under the same name.
+#[test]
+fn the_exclusion_list_has_no_stale_entries() {
+    let (declared, _in_full) = parse_features(FACADE_MANIFEST);
+
+    let stale: Vec<&&str> = EXCLUDED_FROM_FULL
+        .iter()
+        .filter(|f| !declared.contains(&f.to_string()))
+        .collect();
+
+    assert!(
+        stale.is_empty(),
+        "EXCLUDED_FROM_FULL names features the facade no longer declares: \
+         {stale:?}. Drop them, so the list keeps meaning what it says."
     );
 }
 

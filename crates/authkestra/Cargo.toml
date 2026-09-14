@@ -65,15 +65,23 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [features]
 default = ["engine", "rustls-aws-lc-rs"]
-# Every feature this crate has, except the TLS backend (a choice, not a
-# capability — see `default`). "Full" is taken literally: a caller who asks
-# for it should not have to discover that passkeys or a storage backend were
-# not included.
+# Every authentication capability this crate has. Two kinds of feature are
+# deliberately left out, and both are *choices* rather than capabilities:
+#
+# - The TLS backend (`rustls-*`): exactly one is meant to be active, and which
+#   one depends on the deployment (C toolchain vs pure Rust, `cargo-deny`
+#   policy). `default` picks one.
+# - The storage backends (`memory`, `redis`, `sql-*`): an application picks the
+#   store it actually runs. Naming them here would put a Redis client and three
+#   SQL drivers into every `full` build to no purpose, since only one gets
+#   used. `full` means "every way of authenticating"; the store is yours to
+#   name alongside it — e.g. `features = ["full", "sql-postgres"]`.
 #
 # This list drifts silently if left to discipline — it omitted twelve
 # features between #369 adding them and this being noticed — so
 # `authkestra-facade-tests` asserts it stays exhaustive rather than trusting
-# whoever adds the next one to remember.
+# whoever adds the next one to remember. The two exclusions above are declared
+# there too, so removing one from this list without a reason fails the build.
 full = [
     "engine",
     "oidc",
@@ -83,11 +91,6 @@ full = [
     "github",
     "google",
     "discord",
-    "memory",
-    "redis",
-    "sql-postgres",
-    "sql-mysql",
-    "sql-sqlite",
     "webauthn",
     "totp",
     "captcha",
