@@ -151,7 +151,6 @@ where
     handle_oauth_callback_erased(req, flow, params, store, config, success_url).await
 }
 
-#[cfg(feature = "session")]
 /// Validates the callback's state cookie and exchanges the code for an
 /// identity, shared by both callbacks.
 ///
@@ -170,6 +169,7 @@ where
 /// tell a browser `SameSite` problem from a rotated `state_encryption_key`
 /// from a provider refusal — all three of which are otherwise an identical
 /// 401.
+#[cfg(any(feature = "session", feature = "token"))]
 async fn finalize_callback_erased(
     req: &HttpRequest,
     flow: &dyn ErasedOAuthFlow,
@@ -217,6 +217,7 @@ async fn finalize_callback_erased(
     Ok((identity, token, expected_state))
 }
 
+#[cfg(feature = "session")]
 pub async fn handle_oauth_callback_erased(
     req: HttpRequest,
     flow: &dyn ErasedOAuthFlow,

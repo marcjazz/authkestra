@@ -1,7 +1,12 @@
 #[cfg(feature = "resource")]
 use actix_web::HttpMessage;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
-use actix_web::{dev::Payload, http::header, web, Error, FromRequest, HttpRequest};
+use actix_web::{dev::Payload, web, Error, FromRequest, HttpRequest};
+// Only the `token` (`AuthToken`) and `resource` (`Jwt`) extractors read the
+// `Authorization` header directly; `session`'s `AuthSession` reads a cookie
+// instead, so `header` alone needs the narrower gate.
+#[cfg(any(feature = "token", feature = "resource"))]
+use actix_web::http::header;
 #[cfg(feature = "session")]
 pub use authkestra_engine::auth::{Session, SessionStore};
 #[cfg(feature = "resource")]

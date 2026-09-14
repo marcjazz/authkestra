@@ -5,7 +5,7 @@ pub use authkestra_engine::{Engine, Missing, SessionConfig};
 pub use authkestra_resource::Guard;
 #[allow(unused_imports)]
 use axum::extract::FromRef;
-#[cfg(feature = "session")]
+#[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use axum::extract::FromRequestParts;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use std::sync::Arc;
