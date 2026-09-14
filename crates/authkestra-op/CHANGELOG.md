@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.9.5...authkestra-op-v0.10.0) - 2026-09-14
+
+### Fixed
+
+- *(engine)* [**breaking**] enforce JWKS key-use separation when selecting a verification key ([#342](https://github.com/marcjazz/authkestra/pull/342))
+
 ## [0.9.5](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.9.4...authkestra-op-v0.9.5) - 2026-09-13
 
 ### Other
