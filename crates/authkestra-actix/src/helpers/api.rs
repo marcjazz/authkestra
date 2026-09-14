@@ -151,7 +151,6 @@ where
     handle_oauth_callback_erased(req, flow, params, store, config, success_url).await
 }
 
-#[cfg(feature = "session")]
 /// Validates the callback's state cookie and exchanges the code for an
 /// identity, shared by both callbacks.
 ///
@@ -217,6 +216,7 @@ async fn finalize_callback_erased(
     Ok((identity, token, expected_state))
 }
 
+#[cfg(feature = "session")]
 pub async fn handle_oauth_callback_erased(
     req: HttpRequest,
     flow: &dyn ErasedOAuthFlow,
