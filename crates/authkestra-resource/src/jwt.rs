@@ -114,10 +114,38 @@ impl Jwks {
         Ok(jwks)
     }
 
+    /// Selects the key a token should be verified against.
+    ///
+    /// Only keys that may actually *verify a signature* are considered
+    /// ([`Jwk::is_usable_for_signature_verification`]). A JWKS commonly
+    /// carries keys published for something else — a stock Keycloak realm
+    /// serves an RSA signing key and an RSA encryption key side by side,
+    /// identical in `kty` — and without this filter the `kid`-less fallback
+    /// below picks whichever of them JWKS member order happens to put first,
+    /// rejecting a good token with a bare `InvalidSignature` (#341). The
+    /// filter applies to the `kid` branch too: a `kid` naming an encryption
+    /// key is not a licence to verify with it.
+    ///
+    /// The `kid`-less fallback stays first-match, and so stays ambiguous when
+    /// a JWKS holds several *signing* keys. That ambiguity is inherent, and
+    /// [`JwksCache::require_kid`] is what closes it.
     pub fn find_key(&self, kid: Option<&str>) -> Option<&Jwk> {
+        let mut usable = self.keys.iter().filter(|k| {
+            if k.is_usable_for_signature_verification() {
+                return true;
+            }
+            tracing::warn!(
+                kid = ?k.kid,
+                key_use = ?k.r#use,
+                key_ops = ?k.key_ops,
+                "skipping a JWKS key that is not published for signature verification"
+            );
+            false
+        });
+
         match kid {
-            Some(id) => self.keys.iter().find(|k| k.kid.as_deref() == Some(id)),
-            None => self.keys.first(),
+            Some(id) => usable.find(|k| k.kid.as_deref() == Some(id)),
+            None => usable.next(),
         }
     }
 }
