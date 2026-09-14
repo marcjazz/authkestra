@@ -169,6 +169,7 @@ where
 /// tell a browser `SameSite` problem from a rotated `state_encryption_key`
 /// from a provider refusal — all three of which are otherwise an identical
 /// 401.
+#[cfg(any(feature = "session", feature = "token"))]
 async fn finalize_callback_erased(
     req: &HttpRequest,
     flow: &dyn ErasedOAuthFlow,
