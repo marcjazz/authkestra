@@ -86,10 +86,7 @@ async fn test_provider_mock() {
 #[tokio::test]
 async fn test_flow_mock() {
     let flow = MockFlow;
-    let ctx = FlowContext {
-        state: "test".to_string(),
-        params: HashMap::new(),
-    };
+    let ctx = FlowContext::new("test".to_string(), HashMap::new());
     let result = flow.execute(ctx).await.unwrap();
     if let FlowResult::Complete(identity) = result {
         assert_eq!(identity.external_id, "user123");

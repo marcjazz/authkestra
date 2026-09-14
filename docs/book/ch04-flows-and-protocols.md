@@ -12,10 +12,16 @@ Authkestra strictly adheres to the **OAuth 2.1** consolidation.
 - **No Implicit Grant**: `authkestra-op` starts from `response_types_supported: ["code"]`; there is no implicit or hybrid flow.
 - **Sender-Constraint**: **DPoP** (RFC 9449) is implemented on both sides — `authkestra-op` binds refresh tokens to a `jkt` and tracks proof `jti`s, and `authkestra-resource`'s `JwtStrategy` enforces `cnf.jkt` when `require_dpop` is on. Both replay guards fail closed: without a store wired, DPoP-bound requests are refused rather than waved through. RFC 8705 mutual-TLS binding (`cnf.x5t#S256`) is available the same way via `require_cert_binding`.
 
-## 2. GNAP (Grant Negotiation and Authorization Protocol) *(planned — not implemented)*
-> **Nothing in `authkestra-engine` implements GNAP (RFC 9635) today.** The roadmap's Phase 1 item
-> "Update the `Flow` trait for GNAP compatibility" is still open; `Flow` is currently
-> `id()` + `execute(FlowContext) -> FlowResult`, shaped around redirect and polling flows.
+## 2. GNAP (Grant Negotiation and Authorization Protocol) *(trait prep shipped; protocol not implemented)*
+> **`Flow` is now GNAP-*shaped*; nothing in `authkestra-engine` or `authkestra-op` speaks GNAP
+> (RFC 9635) yet.** The roadmap's Phase 1 item "Update the `Flow` trait for GNAP compatibility" is
+> closed: `Flow` gained a defaulted `execute_with_parts` method (raw method/URI/headers/body, for
+> key proofing), `FlowContext` gained an optional JSON `body`, and `FlowResult` gained a
+> `Document(serde_json::Value)` variant and is now `#[non_exhaustive]`. None of it is GNAP-specific
+> by name — it is the minimum shape a stateful, JSON-bodied, key-proofed protocol needs to fit
+> through `Flow` at all — and no grant endpoint, grant store, or key-proofing verifier exists yet.
+> See `docs/rfc-004-gnap-flow.md` for the full design record and the follow-up issue it links for
+> the actual GNAP AS implementation.
 
 The intended direction:
 - **Intent-Driven**: Clients negotiate specific access rights in a single JSON request.

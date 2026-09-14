@@ -104,16 +104,44 @@ pub trait Flow: Send + Sync {
 
     /// Execute the flow with the given context.
     async fn execute(&self, ctx: FlowContext) -> Result<FlowResult, AuthError>;
+
+    /// Like `execute`, but also given the raw transport facts of the inbound
+    /// request (`RequestParts`: method, URI, headers, raw body bytes).
+    /// Defaulted to ignore them and delegate to `execute`, so this method
+    /// costs existing implementors nothing. A protocol whose security model
+    /// depends on the exact request bytes — GNAP key proofing (RFC 9635
+    /// §7.3) is the motivating case — overrides it instead.
+    async fn execute_with_parts(
+        &self,
+        ctx: FlowContext,
+        parts: RequestParts<'_>,
+    ) -> Result<FlowResult, AuthError> { /* defaults to `self.execute(ctx)` */ }
 }
 
+#[non_exhaustive]
 pub enum FlowResult {
     Complete(Identity),
     Redirect(String),
     Pending,
+    /// A protocol response that is a JSON document rather than a redirect or
+    /// a bare identity — e.g. a GNAP grant response (RFC 9635 §3), which may
+    /// carry `continue` + `interact` + `access_token` + `subject`
+    /// simultaneously.
+    Document(serde_json::Value),
 }
 ```
 
-Shipped implementations: `OAuth2Flow`, `ClientCredentialsFlow`, `DeviceFlow`.
+`FlowContext` also gained a `body: Option<serde_json::Value>` field (for protocols that speak JSON
+end-to-end, like GNAP) and a `FlowContext::new(state, params)` constructor — it is
+`#[non_exhaustive]` with no public fields-only constructor otherwise, so this is the supported way
+to build one outside `authkestra-engine`'s own tests.
+
+Shipped implementations: `OAuth2Flow`, `ClientCredentialsFlow`, `DeviceFlow`. Only `OAuth2Flow`
+actually implements the `Flow` trait itself today; `ClientCredentialsFlow` and `DeviceFlow` expose
+their own inherent async methods instead (see `crates/authkestra-engine/examples/client_credentials.rs`
+and `examples/device_flow.rs`). None of the three needed any change to keep compiling against the
+additions above — see `docs/rfc-004-gnap-flow.md` for the full design rationale and what is still
+deliberately not implemented (a GNAP grant endpoint itself).
 
 ### Storage traits
 
