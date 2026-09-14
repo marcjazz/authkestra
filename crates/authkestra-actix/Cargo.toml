@@ -31,7 +31,7 @@ http = "1"
 
 [features]
 default = ["rustls-aws-lc-rs"]
-session = ["authkestra-engine/session"]
+session = []
 
 # authkestra-engine now always compiles its token machinery in (see
 # authkestra-engine's CHANGELOG / issue #376), so this no longer
@@ -85,3 +85,7 @@ required-features = ["resource"]
 [[test]]
 name = "op_integration"
 required-features = ["macros", "session", "token", "op"]
+
+[[test]]
+name = "devsig_test"
+required-features = ["devsig"]

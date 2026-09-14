@@ -57,6 +57,27 @@ jobs:
           cargo check --all-targets -p authkestra-providers --no-default-features \
             --features ${{ matrix.feature }},rustls-aws-lc-rs
 
+  facade-features:
+    # Verify that all facade features compile in isolation, without the default
+    # engine dependency. This ensures that `--no-default-features` actually means
+    # what it says, and that storage backends, auth methods, and adapter extras
+    # are properly gated. See https://github.com/marcjazz/authkestra/issues/325.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [session, token, webauthn, totp, captcha, memory, redis, sql-sqlite, sql-postgres, sql-mysql, macros, op, devsig]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry and build
+        uses: swatinem/rust-cache@v2
+      - name: Check facade feature in isolation
+        run: |
+          cargo check -p authkestra --no-default-features \
+            --features ${{ matrix.feature }},rustls-aws-lc-rs
+
   lint:
     runs-on: ubuntu-latest
     steps:

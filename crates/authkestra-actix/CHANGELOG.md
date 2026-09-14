@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2](https://github.com/marcjazz/authkestra/compare/authkestra-actix-v0.10.1...authkestra-actix-v0.10.2) - 2026-09-14
+
+### Fixed
+
+- *(actix, axum)* no-op / missing feature-gate audit across the workspace ([#373](https://github.com/marcjazz/authkestra/pull/373))
+
 ## [0.9.4](https://github.com/marcjazz/authkestra/compare/authkestra-actix-v0.9.3...authkestra-actix-v0.9.4) - 2026-09-08
 
 ### Other

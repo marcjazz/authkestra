@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2](https://github.com/marcjazz/authkestra/compare/authkestra-v0.10.1...authkestra-v0.10.2) - 2026-09-14
+
+### Other
+
+- Gate facade features, make authkestra-engine optional ([#325](https://github.com/marcjazz/authkestra/pull/325)) ([#369](https://github.com/marcjazz/authkestra/pull/369))
+
 ## [0.9.5](https://github.com/marcjazz/authkestra/compare/authkestra-v0.9.4...authkestra-v0.9.5) - 2026-09-13
 
 ### Other

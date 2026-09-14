@@ -75,7 +75,6 @@ default = ["rustls-aws-lc-rs"]
 rustls-aws-lc-rs = ["reqwest/rustls"]
 rustls-no-provider = ["reqwest/rustls-no-provider"]
 
-session = []
 memory = []
 redis = ["dep:redis"]
 sql-postgres = ["sqlx/postgres", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
