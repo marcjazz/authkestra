@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-actix-v0.10.2...authkestra-actix-v0.11.0) - 2026-09-14
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+- *(engine)* [**breaking**] remove authkestra-engine's no-op `session` feature ([#375](https://github.com/marcjazz/authkestra/pull/375))
+
 ## [0.10.2](https://github.com/marcjazz/authkestra/compare/authkestra-actix-v0.10.1...authkestra-actix-v0.10.2) - 2026-09-14
 
 ### Fixed
