@@ -296,7 +296,18 @@ pub async fn handle_authorize(
             // all, so the request fails closed: treated as maximally stale
             // rather than silently honoured with no freshness evidence.
             None => true,
-            Some(auth_time) => Utc::now().timestamp() - auth_time > max_age,
+            // Inclusive (`>=`): an identity exactly `max_age` seconds old has
+            // used up the allowance. The case this actually turns on is
+            // `max_age=0`, where a strict `>` makes the answer depend on
+            // sub-second timing the relying party cannot see — an
+            // authentication landing in the same wall-clock second as the
+            // request would give elapsed `0`, `0 > 0` is false, and a request
+            // asking for maximum freshness would be honoured without any
+            // re-authentication. A freshness control that intermittently
+            // doesn't apply is worse than one that is merely strict, and
+            // erring toward re-authentication is the right direction for a
+            // security control.
+            Some(auth_time) => Utc::now().timestamp() - auth_time >= max_age,
         }
     } else {
         false
@@ -1393,6 +1404,56 @@ mod tests {
             panic!("expected ReauthenticationRequired, got {outcome:?}");
         };
         assert!(reauth.max_age_exceeded);
+    }
+
+    /// The case `max_age=0` actually turns on: an authentication landing in
+    /// the *same wall-clock second* as the request. With a strict `>`
+    /// comparison the elapsed time is `0`, `0 > 0` is false, and the request
+    /// would be honoured without any re-authentication — so whether an RP
+    /// asking for maximum freshness gets it would depend on sub-second
+    /// timing it cannot see or control. A freshness control that
+    /// intermittently doesn't apply is worse than one that is merely strict,
+    /// so `max_age=0` always requires re-authentication.
+    #[tokio::test]
+    async fn max_age_zero_forces_reauthentication_even_within_the_same_second() {
+        let mut req = base_req();
+        req.max_age = Some(0);
+
+        let outcome = handle_authorize(
+            req,
+            identity_with_auth_time(0),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        let AuthorizeOutcome::ReauthenticationRequired(reauth) = outcome else {
+            panic!("expected ReauthenticationRequired for max_age=0, got {outcome:?}");
+        };
+        assert!(reauth.max_age_exceeded);
+    }
+
+    /// The boundary is inclusive: an identity exactly `max_age` seconds old
+    /// has used up the allowance. Erring toward re-authentication is the
+    /// right direction for a freshness control, and it keeps the `max_age=0`
+    /// rule above from being a special case bolted on the side.
+    #[tokio::test]
+    async fn an_identity_exactly_max_age_old_is_stale() {
+        let mut req = base_req();
+        req.max_age = Some(300);
+
+        let outcome = handle_authorize(
+            req,
+            identity_with_auth_time(300),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, AuthorizeOutcome::ReauthenticationRequired(_)),
+            "expected ReauthenticationRequired at the exact boundary, got {outcome:?}"
+        );
     }
 
     /// `prompt=login` forces re-authentication unconditionally — independent

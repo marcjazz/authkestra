@@ -159,20 +159,30 @@ the request-shape error goes back to the client exactly like an invalid
 ### 4.3. The freshness computation
 
 ```
-now - auth_time > max_age  =>  max_age_exceeded
+now - auth_time >= max_age  =>  max_age_exceeded
 ```
 
-taken directly from OIDC Core §3.1.2.1's own wording ("if it determines that
-too much time has elapsed since the last End-User authentication"). Two
-details matter:
+following OIDC Core §3.1.2.1's wording ("if it determines that too much time
+has elapsed since the last End-User authentication"). Three details matter:
 
 - **`max_age=0` is meaningful, not "unset."** `AuthorizeRequest::max_age` is
   `Option<i64>`, and the enforcement code branches on `Some`/`None`, never
   on the numeric value — there is no `if max_age > 0` anywhere that would
-  quietly treat `0` as "no freshness requirement." `max_age=0` behaves
-  exactly as the formula above says: any identity with `auth_time` in the
-  past (i.e. essentially always, since authentication and this request
-  cannot be simultaneous) fails the check.
+  quietly treat `0` as "no freshness requirement."
+- **The comparison is inclusive (`>=`), and that is load-bearing for
+  `max_age=0`.** An earlier revision used a strict `>` and justified it on
+  the grounds that "authentication and this request cannot be simultaneous."
+  That is false at second granularity: `auth_time` is a Unix timestamp in
+  whole seconds, so an authentication landing in the *same wall-clock
+  second* as the authorization request gives an elapsed time of exactly `0`,
+  and `0 > 0` is false. Under `>`, a relying party asking for maximum
+  freshness would have its request honoured with no re-authentication
+  whenever the timing happened to fall that way — a freshness control whose
+  applicability depends on sub-second timing the RP cannot see or control.
+  Intermittent is worse than strict here, so the boundary is inclusive: an
+  identity exactly `max_age` seconds old has used up its allowance, and
+  `max_age=0` always requires re-authentication. Erring toward
+  re-authentication is the correct direction for a security control.
 - **A missing `auth_time` fails closed.** OIDC Core §2 makes `auth_time`
   REQUIRED on the ID token whenever `max_age` was in the request. An
   `Identity` with no parseable `IDENTITY_ATTR_AUTH_TIME` — because it never
