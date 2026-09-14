@@ -3,7 +3,7 @@ use crate::code::AuthorizationCode;
 use crate::config::OpConfig;
 use crate::error::OpError;
 use crate::store::OpStore;
-use authkestra_engine::auth::state::Identity;
+use authkestra_engine::auth::state::{Identity, IDENTITY_ATTR_AUTH_TIME};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{Duration, Utc};
 use rand::RngCore;
@@ -39,15 +39,103 @@ pub struct AuthorizeRequest {
     pub code_challenge_method: Option<String>,
     /// OIDC nonce.
     pub nonce: Option<String>,
+    /// OIDC Core §3.1.2.1 `max_age`: the maximum number of seconds since the
+    /// End-User's last authentication that the relying party will accept.
+    /// `Some(0)` is a legal, meaningful value ("always require a fresh
+    /// authentication") and must not be treated the same as `None`
+    /// ("no freshness requirement was requested") — see
+    /// [`handle_authorize`]'s enforcement of it.
+    #[serde(default)]
+    pub max_age: Option<i64>,
+    /// OIDC Core §3.1.2.1 `prompt`: a space-delimited list of one or more of
+    /// `none`, `login`, `consent`, `select_account`. Kept as the raw string
+    /// (mirroring [`scope`](Self::scope)) rather than parsed here — the
+    /// values this handler actually acts on (`none`, `login`) are read out
+    /// of it directly in [`handle_authorize`].
+    #[serde(default)]
+    pub prompt: Option<String>,
 }
 
 /// The result of an authorization request handler.
+///
+/// `#[non_exhaustive]` for the same reason as
+/// [`Jwk`](authkestra_engine::token::jwk::Jwk) and
+/// [`MfaTokenClaims`](authkestra_engine::auth::state::MfaTokenClaims):
+/// [`ReauthenticationRequired`] is the first addition since this enum
+/// shipped, and it should not be the last variant this framework ever needs
+/// to signal at `/authorize` — the next one should cost downstream match
+/// arms nothing beyond adding a wildcard once, here.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AuthorizeOutcome {
     /// redirect_uri was valid; caller should redirect the browser here.
     Redirect(String),
     /// client_id or redirect_uri could not be verified — do NOT redirect.
     DirectError(OpError),
+    /// The request's `max_age` or `prompt=login` requires a fresher proof of
+    /// authentication than the presented `Identity` carries. The host
+    /// application must re-run its own login UI and call [`handle_authorize`]
+    /// again with a freshly authenticated `Identity` — `authkestra-op` owns
+    /// no login UI (decision 0005) and cannot perform the re-authentication
+    /// itself. See `docs/rfc-007-max-age-reauth.md`.
+    ///
+    /// Distinct from a `login_required` error [`Redirect`](Self::Redirect):
+    /// that outcome is for when the *client* explicitly forbade interaction
+    /// (`prompt=none`) and re-authentication would otherwise be needed —
+    /// OIDC Core §3.1.2.1 requires the error go back to the client via
+    /// redirect, not to the host application as this variant does.
+    ///
+    /// Boxed: [`ReauthenticationRequired`] carries a whole [`AuthorizeRequest`]
+    /// back, which otherwise makes this the dominant variant's size and
+    /// bloats every `AuthorizeOutcome` — including the far more common
+    /// [`Redirect`](Self::Redirect) — to match.
+    ReauthenticationRequired(Box<ReauthenticationRequired>),
+}
+
+/// Payload for [`AuthorizeOutcome::ReauthenticationRequired`]. See that
+/// variant's doc comment for when this is returned instead of a redirect.
+///
+/// `#[non_exhaustive]`, constructed via [`ReauthenticationRequired::new`],
+/// for the same reason as [`AuthorizeOutcome`] itself.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct ReauthenticationRequired {
+    /// The original request, handed back unmodified so the host application
+    /// does not need to independently persist or re-derive it while it
+    /// round-trips through its own login UI (e.g. as query parameters on its
+    /// own redirect to that UI, restored when the user returns and
+    /// `handle_authorize` is called a second time).
+    ///
+    /// Deliberately does *not* carry the `Identity` that was presented to
+    /// this call: that identity — and anything it asserted, including
+    /// [`IDENTITY_ATTR_STEP_UP_SATISFIED`](authkestra_engine::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED)
+    /// — is discarded here. There is nowhere in `authkestra-op` for it to be
+    /// carried forward to the retry, so whether the fresh authentication the
+    /// host application performs satisfies step-up again depends entirely on
+    /// what that fresh login flow actually runs, not on what the stale one
+    /// asserted. See `docs/rfc-007-max-age-reauth.md` §5 for why this is the
+    /// right answer to "does a `max_age` re-auth reset step-up state?".
+    pub request: AuthorizeRequest,
+    /// `true` when `max_age` requested a freshness that the presented
+    /// identity's `auth_time` — or its complete absence — does not satisfy.
+    /// See [`handle_authorize`] for exactly how this is computed, including
+    /// the deliberate choice to fail closed when `auth_time` is missing.
+    pub max_age_exceeded: bool,
+    /// `true` when the request's `prompt` parameter contained `login`,
+    /// which forces re-authentication unconditionally, independent of
+    /// `max_age`/`auth_time` entirely.
+    pub prompt_login: bool,
+}
+
+impl ReauthenticationRequired {
+    /// Creates a new payload for [`AuthorizeOutcome::ReauthenticationRequired`].
+    pub fn new(request: AuthorizeRequest, max_age_exceeded: bool, prompt_login: bool) -> Self {
+        Self {
+            request,
+            max_age_exceeded,
+            prompt_login,
+        }
+    }
 }
 
 /// Validates an incoming authorization request, enforces PKCE, and issues an authorization code.
@@ -163,7 +251,89 @@ pub async fn handle_authorize(
         return error_redirect("invalid_request", "code_challenge_method must be S256");
     }
 
-    // 7. Build an AuthorizationCode
+    // 7. Validate `prompt` (OIDC Core §3.1.2.1): a space-delimited list of
+    // `none`, `login`, `consent`, `select_account`. `none` MUST NOT be
+    // combined with any other value — the RP is asking for both "never
+    // interact" and something else in the same breath, which is
+    // unsatisfiable — so that combination is a request-shape error like any
+    // other rejected above.
+    let prompt_values: Vec<&str> = req
+        .prompt
+        .as_deref()
+        .map(|p| p.split_whitespace().collect())
+        .unwrap_or_default();
+    let prompt_none = prompt_values.contains(&"none");
+    let prompt_login = prompt_values.contains(&"login");
+    if prompt_none && prompt_values.len() > 1 {
+        tracing::debug!(
+            client_id = %req.client_id,
+            prompt = ?req.prompt,
+            "prompt=none combined with another prompt value"
+        );
+        return error_redirect(
+            "invalid_request",
+            "prompt=none must not be combined with any other prompt value",
+        );
+    }
+
+    // 8. Enforce `max_age` / `prompt=login` freshness (OIDC Core §3.1.2.1).
+    // `authkestra-op` cannot itself re-authenticate anyone — it owns no
+    // login UI and no user table (decision 0005) — so the most it can do is
+    // recognize that the presented `Identity` is not fresh enough and tell
+    // the caller so, letting the caller (or the client, for `prompt=none`)
+    // decide what happens next. See `docs/rfc-007-max-age-reauth.md`.
+    let max_age_exceeded = if let Some(max_age) = req.max_age {
+        match identity
+            .attributes
+            .get(IDENTITY_ATTR_AUTH_TIME)
+            .and_then(|raw| raw.parse::<i64>().ok())
+        {
+            // `auth_time` is REQUIRED on the resulting ID token whenever
+            // `max_age` was requested (OIDC Core §2). An identity with no
+            // parseable `auth_time` — one that never passed through
+            // `Engine::authenticate`, e.g. a federated identity handed
+            // straight to this handler — cannot support that requirement at
+            // all, so the request fails closed: treated as maximally stale
+            // rather than silently honoured with no freshness evidence.
+            None => true,
+            Some(auth_time) => Utc::now().timestamp() - auth_time > max_age,
+        }
+    } else {
+        false
+    };
+
+    if max_age_exceeded || prompt_login {
+        if prompt_none {
+            // The client explicitly forbade any interaction. OIDC Core
+            // §3.1.2.1 is explicit that the correct response to
+            // "re-authentication is needed, but you told me not to
+            // interact" is the `login_required` error delivered to the
+            // *client* via redirect — not a signal to the host application
+            // to show its login UI, which is exactly the interaction
+            // `prompt=none` ruled out.
+            tracing::info!(
+                client_id = %req.client_id,
+                max_age_exceeded,
+                prompt_login,
+                "re-authentication required but prompt=none forbids interaction"
+            );
+            return error_redirect(
+                "login_required",
+                "re-authentication is required but prompt=none was requested",
+            );
+        }
+        tracing::info!(
+            client_id = %req.client_id,
+            max_age_exceeded,
+            prompt_login,
+            "re-authentication required; deferring to the host application's login flow"
+        );
+        return AuthorizeOutcome::ReauthenticationRequired(Box::new(
+            ReauthenticationRequired::new(req, max_age_exceeded, prompt_login),
+        ));
+    }
+
+    // 9. Build an AuthorizationCode
     let code_val = {
         let mut rng = rand::rng();
         let mut code_bytes = [0u8; 32];
@@ -186,13 +356,13 @@ pub async fn handle_authorize(
     auth_code.code_challenge_method = req.code_challenge_method.clone();
     auth_code.nonce = req.nonce.clone();
 
-    // 8. Store the code
+    // 10. Store the code
     if let Err(e) = op_store.store_code(auth_code).await {
         tracing::error!(error = ?e, client_id = %req.client_id, "Failed to store authorization code");
         return error_redirect("server_error", "Failed to store authorization code");
     }
 
-    // 9. Return Redirect with code and state
+    // 11. Return Redirect with code and state
     let mut url = parsed_uri;
     {
         let mut query = url.query_pairs_mut();
@@ -280,6 +450,8 @@ mod tests {
             code_challenge: Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_string()),
             code_challenge_method: Some("S256".to_string()),
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &test_config(), &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -313,6 +485,8 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -383,6 +557,8 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -429,6 +605,8 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -478,6 +656,8 @@ mod tests {
             code_challenge: None, // Missing PKCE
             code_challenge_method: None,
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -525,6 +705,8 @@ mod tests {
             code_challenge: Some("challenge".to_string()),
             code_challenge_method: Some("plain".to_string()), // plain is rejected
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -572,6 +754,8 @@ mod tests {
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes.clone(), authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -646,6 +830,8 @@ mod tests {
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes.clone(), authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -786,6 +972,8 @@ mod tests {
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -855,6 +1043,8 @@ mod tests {
             code_challenge: None,
             code_challenge_method: Some("S256".to_string()), // Method provided without challenge
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(req, test_identity(), &config, &mut crate::store::CompositeOpStore::new(clients, codes, authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(), authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new())).await;
@@ -907,6 +1097,8 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(
@@ -970,6 +1162,8 @@ mod tests {
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(
@@ -1032,6 +1226,8 @@ mod tests {
             code_challenge: Some("s256challenge".to_string()),
             code_challenge_method: Some("S256".to_string()),
             nonce: None,
+            max_age: None,
+            prompt: None,
         };
 
         let outcome = handle_authorize(
@@ -1052,5 +1248,266 @@ mod tests {
         } else {
             panic!("Expected Redirect");
         }
+    }
+
+    // --- issue #381: `max_age` / `prompt=login` re-authentication ---
+
+    /// Shared fixture for the tests below: registers "client-1" exactly as
+    /// [`test_successful_authorization`] does, so each test only has to vary
+    /// the `AuthorizeRequest` and `Identity`.
+    async fn store_with_registered_client() -> crate::store::CompositeOpStore<
+        authkestra_engine::store::memory::MemoryStore<crate::client::ClientRegistration>,
+        authkestra_engine::store::memory::MemoryStore<crate::code::AuthorizationCode>,
+        authkestra_engine::store::memory::MemoryStore<crate::refresh::RefreshToken>,
+        authkestra_engine::store::memory::MemoryStore<crate::device::DeviceCodeSession>,
+    > {
+        let clients = authkestra_engine::store::memory::MemoryStore::<
+            crate::client::ClientRegistration,
+        >::new();
+        clients
+            .set(
+                "client-1",
+                ClientRegistration {
+                    client_id: "client-1".to_string(),
+                    client_secret_hash: None,
+                    redirect_uris: vec!["https://app.example.com/cb".to_string()],
+                    grant_types: vec![GrantType::AuthorizationCode],
+                    scopes: vec!["openid".to_string()],
+                    require_pkce: true,
+                    allowed_audiences: vec![],
+                    token_endpoint_auth_method: None,
+                    jwks: None,
+                },
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let codes =
+            authkestra_engine::store::memory::MemoryStore::<crate::code::AuthorizationCode>::new();
+        crate::store::CompositeOpStore::new(
+            clients,
+            codes,
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new(),
+            authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+        )
+    }
+
+    /// A minimal, otherwise-valid request against "client-1" — tests below
+    /// clone this and override `max_age`/`prompt`.
+    fn base_req() -> AuthorizeRequest {
+        AuthorizeRequest {
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://app.example.com/cb".to_string(),
+            response_type: "code".to_string(),
+            scope: "openid".to_string(),
+            state: None,
+            code_challenge: Some("s256challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            nonce: None,
+            max_age: None,
+            prompt: None,
+        }
+    }
+
+    /// `test_identity()` plus an `auth_time` `seconds_ago` seconds in the past.
+    fn identity_with_auth_time(seconds_ago: i64) -> Identity {
+        let mut identity = test_identity();
+        identity.attributes.insert(
+            IDENTITY_ATTR_AUTH_TIME.to_string(),
+            (Utc::now().timestamp() - seconds_ago).to_string(),
+        );
+        identity
+    }
+
+    /// An identity authenticated well within `max_age` must be accepted
+    /// exactly as if no freshness requirement had been requested — a code is
+    /// issued, not a re-authentication demand.
+    #[tokio::test]
+    async fn fresh_enough_auth_satisfies_max_age() {
+        let mut req = base_req();
+        req.max_age = Some(3600);
+
+        let outcome = handle_authorize(
+            req,
+            identity_with_auth_time(5),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, AuthorizeOutcome::Redirect(ref url) if url.contains("code=")),
+            "expected a code-issuing Redirect, got {outcome:?}"
+        );
+    }
+
+    /// An identity whose `auth_time` is older than the requested `max_age`
+    /// must not get a code — the host application has to re-authenticate it
+    /// and call `handle_authorize` again.
+    #[tokio::test]
+    async fn stale_auth_triggers_reauthentication_required() {
+        let mut req = base_req();
+        req.max_age = Some(60);
+
+        let outcome = handle_authorize(
+            req,
+            identity_with_auth_time(120),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        let AuthorizeOutcome::ReauthenticationRequired(reauth) = outcome else {
+            panic!("expected ReauthenticationRequired, got {outcome:?}");
+        };
+        assert!(reauth.max_age_exceeded);
+        assert!(!reauth.prompt_login);
+        // The original request is handed back unmodified, so the host
+        // application can resume it after its own login UI completes.
+        assert_eq!(reauth.request.client_id, "client-1");
+        assert_eq!(reauth.request.max_age, Some(60));
+    }
+
+    /// `max_age=0` is a meaningful, legal request ("always re-authenticate")
+    /// and must not be treated as "no `max_age` requested" — a naive
+    /// `if max_age > 0` guard would silently skip enforcement entirely for
+    /// this value.
+    #[tokio::test]
+    async fn max_age_zero_forces_reauthentication() {
+        let mut req = base_req();
+        req.max_age = Some(0);
+
+        // Authenticated one second ago: not stale by any conventional
+        // threshold, but `now - auth_time > 0` is still true.
+        let outcome = handle_authorize(
+            req,
+            identity_with_auth_time(1),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        let AuthorizeOutcome::ReauthenticationRequired(reauth) = outcome else {
+            panic!("expected ReauthenticationRequired, got {outcome:?}");
+        };
+        assert!(reauth.max_age_exceeded);
+    }
+
+    /// `prompt=login` forces re-authentication unconditionally — independent
+    /// of `max_age`/`auth_time` freshness entirely, including for an
+    /// identity that just authenticated.
+    #[tokio::test]
+    async fn prompt_login_forces_reauthentication_even_when_fresh() {
+        let mut req = base_req();
+        req.prompt = Some("login".to_string());
+
+        let outcome = handle_authorize(
+            req,
+            identity_with_auth_time(0),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        let AuthorizeOutcome::ReauthenticationRequired(reauth) = outcome else {
+            panic!("expected ReauthenticationRequired, got {outcome:?}");
+        };
+        assert!(reauth.prompt_login);
+        assert!(!reauth.max_age_exceeded);
+    }
+
+    /// OIDC Core §3.1.2.1: `prompt=none` MUST NOT cause any UI. When
+    /// re-authentication would otherwise be required, the correct response
+    /// is `login_required` returned to the *client* via redirect — never
+    /// `AuthorizeOutcome::ReauthenticationRequired`, which would ask the host
+    /// application to show interactive UI, exactly what `prompt=none` rules
+    /// out.
+    #[tokio::test]
+    async fn prompt_none_with_stale_auth_yields_login_required_via_redirect() {
+        let mut req = base_req();
+        req.max_age = Some(60);
+        req.prompt = Some("none".to_string());
+
+        let outcome = handle_authorize(
+            req,
+            identity_with_auth_time(120),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        let AuthorizeOutcome::Redirect(url) = outcome else {
+            panic!("expected a Redirect carrying login_required, got {outcome:?}");
+        };
+        assert!(url.contains("error=login_required"));
+    }
+
+    /// OIDC Core §3.1.2.1: combining `none` with any other `prompt` value is
+    /// an `invalid_request` error — the request asks for both "never
+    /// interact" and something else at once.
+    #[tokio::test]
+    async fn prompt_none_combined_with_another_value_is_invalid_request() {
+        let mut req = base_req();
+        req.prompt = Some("none login".to_string());
+
+        let outcome = handle_authorize(
+            req,
+            identity_with_auth_time(0),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        let AuthorizeOutcome::Redirect(url) = outcome else {
+            panic!("expected a Redirect carrying invalid_request, got {outcome:?}");
+        };
+        assert!(url.contains("error=invalid_request"));
+    }
+
+    /// An identity that never passed through `Engine::authenticate` (e.g. a
+    /// federated login handed straight to `handle_authorize`) carries no
+    /// `auth_time` at all. `max_age` cannot be honoured against a freshness
+    /// this crate has no evidence for, so this fails closed: treated as
+    /// maximally stale rather than silently granting the code.
+    #[tokio::test]
+    async fn max_age_against_an_identity_with_no_auth_time_forces_reauthentication() {
+        let mut req = base_req();
+        req.max_age = Some(3600);
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(), // no IDENTITY_ATTR_AUTH_TIME attribute at all
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        let AuthorizeOutcome::ReauthenticationRequired(reauth) = outcome else {
+            panic!("expected ReauthenticationRequired, got {outcome:?}");
+        };
+        assert!(reauth.max_age_exceeded);
+    }
+
+    /// No `max_age` and no `prompt=login` at all: existing behavior for
+    /// every request that predates this feature is untouched, regardless of
+    /// whether the identity carries `auth_time`.
+    #[tokio::test]
+    async fn no_freshness_request_is_unaffected_by_a_missing_auth_time() {
+        let req = base_req();
+
+        let outcome = handle_authorize(
+            req,
+            test_identity(),
+            &test_config(),
+            &mut store_with_registered_client().await,
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, AuthorizeOutcome::Redirect(ref url) if url.contains("code=")),
+            "expected a code-issuing Redirect, got {outcome:?}"
+        );
     }
 }

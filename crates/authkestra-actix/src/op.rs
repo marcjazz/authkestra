@@ -66,6 +66,25 @@ pub async fn actix_authorize_handler(
             "error": "invalid_request",
             "error_description": err.to_string()
         })),
+        // `max_age`/`prompt=login` requires a fresher authentication than
+        // the current session carries (issue #381). `authkestra-op` cannot
+        // perform that re-authentication itself, so — same as the
+        // no-session branch above — this sends the browser to the host
+        // application's own `/login`. As with that branch, the original
+        // request is not carried along yet (see the NOTE above): a
+        // deployment that wants `/login` to return here afterward has to
+        // thread `reauth.request` through itself for now, which is exactly
+        // the gap `return_to` encoding above already leaves open.
+        AuthorizeOutcome::ReauthenticationRequired(_reauth) => {
+            tracing::info!("authorize request needs fresher authentication, redirecting to /login");
+            HttpResponse::SeeOther()
+                .insert_header(("Location", "/login"))
+                .finish()
+        }
+        _ => HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "server_error",
+            "error_description": "unhandled authorize outcome"
+        })),
     }
 }
 

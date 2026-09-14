@@ -113,6 +113,27 @@ where
             })),
         )
             .into_response(),
+        // `max_age`/`prompt=login` requires a fresher authentication than
+        // the current session carries (issue #381). `authkestra-op` cannot
+        // perform that re-authentication itself, so — same as the
+        // no-session branch above — this sends the browser to the host
+        // application's own `/login`. The original request isn't threaded
+        // through here yet, for the same reason the unauthenticated branch
+        // above doesn't encode a `return_to`: a deployment that wants
+        // `/login` to resume here afterward has to carry `reauth.request`
+        // itself for now.
+        authkestra_op::handlers::authorize::AuthorizeOutcome::ReauthenticationRequired(_reauth) => {
+            tracing::info!("authorize request needs fresher authentication, redirecting to /login");
+            Redirect::to("/login").into_response()
+        }
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "server_error",
+                "error_description": "unhandled authorize outcome"
+            })),
+        )
+            .into_response(),
     };
     response
 }
