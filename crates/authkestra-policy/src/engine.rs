@@ -34,7 +34,7 @@ pub fn parse_policies(cedar_source: &str) -> Result<PolicySet, PolicyError> {
 
     let mut renamed = PolicySet::new();
     // Templates are carried over untouched: this crate does not link templates yet (see
-    // RFC-005), but dropping them silently would be worse than not supporting them.
+    // RFC-008), but dropping them silently would be worse than not supporting them.
     for template in parsed.templates() {
         renamed.add_template(template.clone()).map_err(|e| {
             PolicyError::PolicyParse(format!("could not add template {}: {e}", template.id()))
@@ -374,7 +374,7 @@ impl PolicyEngineBuilder {
     /// When a schema was supplied, the policy set is validated against it here and an invalid
     /// policy is rejected at *load* time rather than silently never matching at request time.
     /// Whether that validation should be mandatory rather than opt-in is left open — see the
-    /// "maintainer decisions" section of `docs/rfc-005-policy-engine.md`.
+    /// "maintainer decisions" section of `docs/rfc-008-policy-engine.md`.
     pub fn build(self) -> Result<PolicyEngine, PolicyError> {
         let policies = self.policies.unwrap_or_else(|| {
             Err(PolicyError::Configuration(
@@ -416,7 +416,7 @@ mod tests {
     fn engine_is_shareable_across_tasks() {
         fn assert_send_sync<T: Send + Sync>() {}
         // The whole design assumes one `Arc<PolicyEngine>` behind every handler; if this ever
-        // stops holding, the extractor integration in RFC-005 stops being possible.
+        // stops holding, the extractor integration in RFC-008 stops being possible.
         assert_send_sync::<PolicyEngine>();
     }
 

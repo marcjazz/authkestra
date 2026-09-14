@@ -6,13 +6,13 @@ A **proof-of-concept** authorization policy engine for the `authkestra` framewor
 hand-rolled `if role == "admin"` branches.
 
 Proposed in [authkestra#21](https://github.com/marcjazz/authkestra/issues/21). The full
-integration plan is [`docs/rfc-005-policy-engine.md`](../../docs/rfc-005-policy-engine.md).
+integration plan is [`docs/rfc-008-policy-engine.md`](../../docs/rfc-008-policy-engine.md).
 
 ## Status: proof of concept
 
 The engine works and is tested, but **nothing calls it yet**. There is no `authkestra-resource`
 guard, no axum/actix extractor, and no policy storage in `authkestra-op`. Those are designed in
-RFC-005 and deliberately not built here, so the design can be reviewed before it acquires
+RFC-008 and deliberately not built here, so the design can be reviewed before it acquires
 dependents. The public API should be expected to change.
 
 ## The one structural rule
@@ -130,10 +130,10 @@ Names that merely start with `policy`, like `policy-admin-override`, are fine.
 Supplying a Cedar schema via `.schema(..)` turns on two things: policies are validated at load
 time (a policy naming an action the schema does not declare is rejected instead of silently
 never matching), and each request's context is type-checked for that action. Whether it should
-be mandatory is an open maintainer decision — see RFC-005.
+be mandatory is an open maintainer decision — see RFC-008.
 
 ## Performance
 
 `cargo test -p authkestra-policy --all-features -- --ignored --nocapture perf_smoke` measures
 evaluation latency against a 10-policy RBAC set and a 414-entity store. Recorded numbers and
-what they imply for a per-request guard are in RFC-005 §7.
+what they imply for a per-request guard are in RFC-008 §7.

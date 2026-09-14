@@ -10,7 +10,7 @@
 //! ```
 //!
 //! The recorded numbers, the machine they came from, and what they imply for a per-request guard
-//! live in `docs/rfc-005-policy-engine.md`.
+//! live in `docs/rfc-008-policy-engine.md`.
 
 use std::time::{Duration, Instant};
 

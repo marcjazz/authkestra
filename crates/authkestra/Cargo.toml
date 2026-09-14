@@ -137,7 +137,7 @@ oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
 
 # Cedar policy engine (authkestra#21). Proof of concept: it evaluates policies, but nothing in
-# the adapters or in `authkestra-resource` calls it yet. See docs/rfc-005-policy-engine.md.
+# the adapters or in `authkestra-resource` calls it yet. See docs/rfc-008-policy-engine.md.
 policy = ["dep:authkestra-policy"]
 
 # Web frameworks

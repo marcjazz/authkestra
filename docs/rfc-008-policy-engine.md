@@ -1,4 +1,4 @@
-# RFC-005: Policy Engine (AWS Cedar)
+# RFC-008: Policy Engine (AWS Cedar)
 
 Status: **proof of concept landed, full integration not started.**
 Tracking issue: [authkestra#21](https://github.com/marcjazz/authkestra/issues/21).

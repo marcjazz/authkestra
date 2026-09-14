@@ -42,7 +42,7 @@ pub trait ResourceLoader: Send + Sync {
 ///
 /// Right for small, wholly-in-memory hierarchies (a config file of roles) and for tests. Wrong
 /// for anything per-tenant or large: the trait returns entities *by value*, so every request
-/// pays a full clone of the set — see `docs/rfc-005-policy-engine.md` for the measured cost and
+/// pays a full clone of the set — see `docs/rfc-008-policy-engine.md` for the measured cost and
 /// the `Arc<Entities>` alternative under consideration.
 #[derive(Debug, Clone, Default)]
 pub struct StaticResourceLoader {

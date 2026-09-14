@@ -8,7 +8,7 @@
 //!
 //! Proposed in [authkestra#21](https://github.com/marcjazz/authkestra/issues/21). The full
 //! integration plan — guards, extractors, where policies live, how principals are derived from
-//! an `AuthSession` — is `docs/rfc-005-policy-engine.md`. **None of that integration exists
+//! an `AuthSession` — is `docs/rfc-008-policy-engine.md`. **None of that integration exists
 //! yet**: nothing in `authkestra-resource`, `authkestra-axum`, or `authkestra-actix` calls this
 //! crate. It is usable on its own, and deliberately scoped to be judged on its own.
 //!
@@ -87,10 +87,10 @@
 //! ## What this crate deliberately does not do
 //!
 //! - **No framework wiring.** Per `AGENTS.md`'s framework-agnostic rule, any axum/actix
-//!   integration belongs in the adapter crates; RFC-005 sketches it, this crate does not ship it.
+//!   integration belongs in the adapter crates; RFC-008 sketches it, this crate does not ship it.
 //! - **No policy storage.** Policy *source text* comes from the caller — a file, a config value,
 //!   a database column, an admin API. Where it should live is a maintainer decision recorded in
-//!   RFC-005.
+//!   RFC-008.
 //! - **No mandatory schema.** A [`cedar_policy::Schema`] is optional; supplying one turns on
 //!   validation of policies at load time and type-checking of the request context.
 
