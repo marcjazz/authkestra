@@ -349,6 +349,8 @@ mod tests {
             e: None,
             crv: Some("P-256".to_string()),
             x: Some("irrelevant".to_string()),
+            r#use: None,
+            key_ops: None,
         };
 
         let (result, logs) = crate::test_support::capture(|| jwk.to_decoding_key());
@@ -390,6 +392,8 @@ mod tests {
             e: None,
             crv: Some("Ed25519".to_string()),
             x: Some(x),
+            r#use: None,
+            key_ops: None,
         };
 
         let (result, logs) = crate::test_support::capture(|| jwk.to_decoding_key());
