@@ -11,7 +11,7 @@ categories.workspace = true
 readme.workspace = true
 
 [dependencies]
-authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-engine = { workspace = true, optional = true, default-features = false }
 authkestra-oidc = { workspace = true, optional = true, default-features = false }
 authkestra-axum = { workspace = true, optional = true, default-features = false }
 authkestra-actix = { workspace = true, optional = true, default-features = false }
@@ -64,13 +64,14 @@ uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [features]
-default = ["rustls-aws-lc-rs"]
+default = ["engine", "rustls-aws-lc-rs"]
 full = ["session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
+engine = ["dep:authkestra-engine", "authkestra-engine/token"]
 
 # TLS backend, forwarded to every sub-crate that speaks HTTPS. See
 # authkestra-engine's documentation for the `rustls-no-provider` contract.
 rustls-aws-lc-rs = [
-    "authkestra-engine/rustls-aws-lc-rs",
+    "authkestra-engine?/rustls-aws-lc-rs",
     "authkestra-oidc?/rustls-aws-lc-rs",
     "authkestra-axum?/rustls-aws-lc-rs",
     "authkestra-actix?/rustls-aws-lc-rs",
@@ -79,7 +80,7 @@ rustls-aws-lc-rs = [
     "authkestra-op?/rustls-aws-lc-rs",
 ]
 rustls-no-provider = [
-    "authkestra-engine/rustls-no-provider",
+    "authkestra-engine?/rustls-no-provider",
     "authkestra-oidc?/rustls-no-provider",
     "authkestra-axum?/rustls-no-provider",
     "authkestra-actix?/rustls-no-provider",
@@ -90,8 +91,8 @@ rustls-no-provider = [
 
 # Core features
 
-session = []
-token = ["authkestra-engine/token"]
+session = ["engine"]
+token = ["engine", "authkestra-engine?/token"]
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
 
@@ -106,17 +107,18 @@ discord = ["authkestra-providers/discord"]
 
 # Storage backends. Forwarded to the engine, and to `authkestra-op` where it
 # has a matching backend of its own, so an application picks a store once
-# rather than per sub-crate.
-memory = ["authkestra-engine/memory"]
-redis = ["authkestra-engine/redis", "authkestra-op?/redis"]
-sql-postgres = ["authkestra-engine/sql-postgres"]
-sql-mysql = ["authkestra-engine/sql-mysql"]
-sql-sqlite = ["authkestra-engine/sql-sqlite"]
+# rather than per sub-crate. Each backend requires the engine.
+memory = ["engine", "authkestra-engine/memory"]
+redis = ["engine", "authkestra-engine/redis", "authkestra-op?/redis"]
+sql-postgres = ["engine", "authkestra-engine/sql-postgres"]
+sql-mysql = ["engine", "authkestra-engine/sql-mysql"]
+sql-sqlite = ["engine", "authkestra-engine/sql-sqlite"]
 
-# Authentication methods beyond sessions and OAuth.
-webauthn = ["authkestra-engine/webauthn"]
-totp = ["authkestra-engine/totp"]
+# Authentication methods beyond sessions and OAuth. Each method requires the engine.
+webauthn = ["engine", "authkestra-engine/webauthn"]
+totp = ["engine", "authkestra-engine/totp"]
 captcha = [
+    "engine",
     "authkestra-engine/captcha",
     "authkestra-axum?/captcha",
     "authkestra-actix?/captcha",
