@@ -31,7 +31,7 @@ http = "1"
 
 [features]
 default = ["rustls-aws-lc-rs"]
-session = ["authkestra-engine/session"]
+session = []
 
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
