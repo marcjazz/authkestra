@@ -3,6 +3,17 @@
 //! This crate serves as a facade, re-exporting functionality from other `authkestra-*` crates
 //! based on enabled features.
 
+/// The engine: `Engine`, the auth methods, the flows, the token machinery
+/// and the stores.
+///
+/// This is the *only* name the facade gives `authkestra-engine`. It used to
+/// also be re-exported as `flow` and `token`, from when `authkestra-flow` and
+/// `authkestra-token` were separate crates (RFC-001, since merged into
+/// `authkestra-engine`). Those aliases outlived the crates they were named
+/// after: all three resolved to the same crate, so `authkestra::flow::` handed
+/// you the token and session machinery too, and `token` was gated on
+/// `feature = "token"` while re-exporting everything that feature does not
+/// cover. Both are gone — reach any of it through `core`.
 #[cfg(feature = "engine")]
 pub use authkestra_engine as core;
 
@@ -11,16 +22,14 @@ pub use authkestra_engine as core;
 pub type Authkestra<S = authkestra_engine::Missing, T = authkestra_engine::Missing> =
     authkestra_engine::Engine<S, T>;
 
-#[cfg(feature = "engine")]
-pub use authkestra_engine as flow;
-
-#[cfg(feature = "session")]
-pub use authkestra_engine::store;
-
-#[cfg(feature = "token")]
-pub use authkestra_engine as token;
-
-/// Storage backends and persistence.
+/// Session, token and credential stores, plus the memory/Redis/SQL backends.
+///
+/// A short path to [`core::store`]; which backends exist inside it is decided
+/// by the engine's own feature gates, not re-gated here. The gate below is
+/// the union of every feature that pulls a store in — it was previously
+/// `feature = "session"` alone, with a *second* copy of the same module
+/// exported as `persistence` under this wider gate, so which name worked
+/// depended on which feature you happened to enable.
 #[cfg(any(
     feature = "session",
     feature = "memory",
@@ -29,7 +38,7 @@ pub use authkestra_engine as token;
     feature = "sql-mysql",
     feature = "sql-sqlite"
 ))]
-pub use authkestra_engine::store as persistence;
+pub use authkestra_engine::store;
 
 /// WebAuthn passkey authentication.
 #[cfg(feature = "webauthn")]

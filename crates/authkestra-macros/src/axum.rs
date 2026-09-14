@@ -7,7 +7,7 @@
 //!
 //! ```rust,ignore
 //! use authkestra_axum::AxumState;
-//! use authkestra::flow::Engine;
+//! use authkestra::core::Engine;
 //!
 //! #[derive(Clone, AxumState)]
 //! struct AppState {
