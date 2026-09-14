@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.10.2...authkestra-op-v0.11.0) - 2026-09-14
+
+### Added
+
+- *(op)* [**breaking**] honour max_age / prompt=login re-authentication at /authorize ([#383](https://github.com/marcjazz/authkestra/pull/383))
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+
+### Other
+
+- Add acr/amr claims to authkestra-op's issued ID tokens ([#380](https://github.com/marcjazz/authkestra/pull/380))
+
 ## [0.10.0](https://github.com/marcjazz/authkestra/compare/authkestra-op-v0.9.5...authkestra-op-v0.10.0) - 2026-09-14
 
 ### Fixed

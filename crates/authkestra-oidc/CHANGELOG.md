@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.10.2...authkestra-oidc-v0.11.0) - 2026-09-14
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+
 ## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.9.2...authkestra-oidc-v0.9.3) - 2026-09-07
 
 ### Added

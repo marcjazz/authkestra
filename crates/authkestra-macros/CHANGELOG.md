@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-macros-v0.10.2...authkestra-macros-v0.11.0) - 2026-09-14
+
+### Other
+
+- *(facade)* [**breaking**] one name for the engine, and drop the two empty features ([#384](https://github.com/marcjazz/authkestra/pull/384))
+
 ## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-macros-v0.9.2...authkestra-macros-v0.9.3) - 2026-09-07
 
 ### Fixed

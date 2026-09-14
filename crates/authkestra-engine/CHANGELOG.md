@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.10.2...authkestra-engine-v0.11.0) - 2026-09-14
+
+### Added
+
+- *(engine)* [**breaking**] make Flow trait GNAP-shaped (RFC-004 §11) ([#371](https://github.com/marcjazz/authkestra/pull/371))
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+- *(engine)* [**breaking**] remove authkestra-engine's no-op `session` feature ([#375](https://github.com/marcjazz/authkestra/pull/375))
+
+### Other
+
+- Add acr/amr claims to authkestra-op's issued ID tokens ([#380](https://github.com/marcjazz/authkestra/pull/380))
+
 ## [0.10.1](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.10.0...authkestra-engine-v0.10.1) - 2026-09-14
 
 ### Fixed
