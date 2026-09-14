@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "README.md"
 
 [dependencies]
-authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-engine = { workspace = true, default-features = false }
 authkestra-resource = { workspace = true, optional = true, default-features = false }
 authkestra-macros = { workspace = true, optional = true, features = ["axum"] }
 authkestra-op = { workspace = true, optional = true, default-features = false }
@@ -40,7 +40,10 @@ default = ["macros", "rustls-aws-lc-rs"]
 macros = ["authkestra-macros"]
 session = ["authkestra-engine/session"]
 
-token = ["authkestra-engine/token"]
+# authkestra-engine now always compiles its token machinery in (see
+# authkestra-engine's CHANGELOG / issue #376), so this no longer
+# forwards anything — it only gates this crate's own token-issuing helpers.
+token = []
 resource = ["dep:authkestra-resource"]
 op = ["dep:authkestra-op", "session", "token"]
 captcha = ["authkestra-engine/captcha"]
