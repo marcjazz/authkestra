@@ -38,7 +38,7 @@ bytes = { version = "1", optional = true }
 [features]
 default = ["macros", "rustls-aws-lc-rs"]
 macros = ["authkestra-macros"]
-session = ["authkestra-engine/session"]
+session = []
 
 token = ["authkestra-engine/token"]
 resource = ["dep:authkestra-resource"]
