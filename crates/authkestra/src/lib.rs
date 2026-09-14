@@ -25,13 +25,13 @@ pub type Authkestra<S = authkestra_engine::Missing, T = authkestra_engine::Missi
 /// Session, token and credential stores, plus the memory/Redis/SQL backends.
 ///
 /// A short path to [`core::store`]; which backends exist inside it is decided
-/// by the engine's own feature gates, not re-gated here. The gate below is
-/// the union of every feature that pulls a store in — it was previously
-/// `feature = "session"` alone, with a *second* copy of the same module
-/// exported as `persistence` under this wider gate, so which name worked
-/// depended on which feature you happened to enable.
+/// by the engine's own feature gates, not re-gated here. The gate is the set
+/// of storage backends — it was previously `feature = "session"` alone, with
+/// a *second* copy of the same module exported as `persistence` under a wider
+/// gate, so which name worked depended on which feature you happened to
+/// enable. The `session` feature itself no longer exists; the store traits
+/// live in [`core::auth`] and are reachable without picking a backend.
 #[cfg(any(
-    feature = "session",
     feature = "memory",
     feature = "redis",
     feature = "sql-postgres",

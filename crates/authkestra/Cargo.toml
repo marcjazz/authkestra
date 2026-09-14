@@ -65,7 +65,11 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [features]
 default = ["engine", "rustls-aws-lc-rs"]
-full = ["session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
+# `engine` is named explicitly: it used to arrive only via `session`/`token`,
+# so dropping those without this would have quietly taken `authkestra::core`
+# and `Authkestra` out of a `full` build. Nothing else in this list pulls the
+# engine in.
+full = ["engine", "oidc", "axum", "actix", "github", "google", "discord"]
 engine = ["dep:authkestra-engine"]
 
 # TLS backend, forwarded to every sub-crate that speaks HTTPS. See
@@ -90,15 +94,15 @@ rustls-no-provider = [
 ]
 
 # Core features
+#
+# There is deliberately no `session` or `token` feature here. Both became
+# empty once `authkestra-engine` dropped its own `session` feature (#375)
+# and made its token machinery unconditional (#377): they forwarded nothing,
+# and each gated a re-export that was itself a duplicate name for the engine
+# (see this crate's `src/lib.rs`). What they gated is reached through
+# `engine` — `authkestra::core`, and `authkestra::store` under any storage
+# backend below.
 
-# token: authkestra-engine's token machinery is now unconditional (#376),
-# so this no longer forwards a sub-feature — only `engine` itself, needed
-# because this crate's own #[cfg(feature = "token")] re-export in
-# src/lib.rs still requires authkestra-engine present in the graph. Kept
-# (rather than removed) because `full` and the axum/actix composite
-# features below still name it.
-session = ["engine"]
-token = ["engine"]
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
 
