@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "README.md"
 
 [dependencies]
-authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-engine = { workspace = true, default-features = false }
 authkestra-resource = { workspace = true, optional = true, default-features = false }
 authkestra-macros = { workspace = true, optional = true, features = ["axum"] }
 authkestra-op = { workspace = true, optional = true, default-features = false }
@@ -38,9 +38,12 @@ bytes = { version = "1", optional = true }
 [features]
 default = ["macros", "rustls-aws-lc-rs"]
 macros = ["authkestra-macros"]
-session = ["authkestra-engine/session"]
+session = []
 
-token = ["authkestra-engine/token"]
+# authkestra-engine now always compiles its token machinery in (see
+# authkestra-engine's CHANGELOG / issue #376), so this no longer
+# forwards anything — it only gates this crate's own token-issuing helpers.
+token = []
 resource = ["dep:authkestra-resource"]
 op = ["dep:authkestra-op", "session", "token"]
 captcha = ["authkestra-engine/captcha"]
@@ -67,6 +70,12 @@ rustls-no-provider = [
 
 [dev-dependencies]
 async-trait = "0.1"
+
+# Test-only: the OAuth callback's three failure modes all return 401, so the
+# only thing that tells a missing state cookie apart from an undecryptable one
+# is the log line. Capturing emitted output is the only way to assert that
+# (#353).
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }
 
@@ -82,3 +91,11 @@ required-features = ["macros", "session"]
 [[test]]
 name = "engine_token_integration"
 required-features = ["macros", "token"]
+
+[[test]]
+name = "op_integration"
+required-features = ["macros", "session", "token", "op"]
+
+[[test]]
+name = "devsig_test"
+required-features = ["devsig"]

@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.10.2...authkestra-engine-v0.11.0) - 2026-09-14
+
+### Added
+
+- *(engine)* [**breaking**] make Flow trait GNAP-shaped (RFC-004 §11) ([#371](https://github.com/marcjazz/authkestra/pull/371))
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+- *(engine)* [**breaking**] remove authkestra-engine's no-op `session` feature ([#375](https://github.com/marcjazz/authkestra/pull/375))
+
+### Other
+
+- Add acr/amr claims to authkestra-op's issued ID tokens ([#380](https://github.com/marcjazz/authkestra/pull/380))
+
+## [0.10.1](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.10.0...authkestra-engine-v0.10.1) - 2026-09-14
+
+### Fixed
+
+- two Jwk test fixtures missed the r#use/key_ops fields from #342 ([#372](https://github.com/marcjazz/authkestra/pull/372))
+
+## [0.10.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.9.5...authkestra-engine-v0.10.0) - 2026-09-14
+
+### Fixed
+
+- *(engine)* [**breaking**] enforce JWKS key-use separation when selecting a verification key ([#342](https://github.com/marcjazz/authkestra/pull/342))
+
+## [0.9.5](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.9.4...authkestra-engine-v0.9.5) - 2026-09-13
+
+### Other
+
+- Move the docs out, put a landing page in their place ([#362](https://github.com/marcjazz/authkestra/pull/362))
+
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.9.2...authkestra-engine-v0.9.3) - 2026-09-07
+
+### Added
+
+- instrument the token-validation path, and fix flaky log-capture tests ([#358](https://github.com/marcjazz/authkestra/pull/358))
+- *(engine)* instrument the authentication path ([#354](https://github.com/marcjazz/authkestra/pull/354))
+- *(engine)* name and expose the clock-skew leeway JWT validation applies ([#351](https://github.com/marcjazz/authkestra/pull/351))
+
+### Fixed
+
+- *(engine)* state the MFA continuation token's clock-skew window ([#352](https://github.com/marcjazz/authkestra/pull/352))
+- *(engine)* wait on a timer in DeviceFlow::poll_for_token instead of blocking ([#343](https://github.com/marcjazz/authkestra/pull/343))
+
+## [0.9.1](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.9.0...authkestra-engine-v0.9.1) - 2026-09-06
+
+### Fixed
+
+- *(engine)* derive a stable WebAuthn user handle instead of a random one ([#334](https://github.com/marcjazz/authkestra/pull/334))
+
+### Fixed
+
+- *(engine)* WebAuthn `start_register` no longer substitutes a random UUID for the user handle when
+  the application's `user_id` is not UUID-shaped. The handle is now derived deterministically with
+  the new `auth::webauthn::derive_user_handle`: a `user_id` that already parses as a UUID is used
+  verbatim (byte-identical to previous behaviour), and anything else is hashed into a UUIDv5 over
+  the documented `auth::webauthn::USER_HANDLE_NAMESPACE`. Previously, an application with non-UUID
+  user ids got a different, unstable handle on every registration, which silently broke discoverable
+  ("usernameless") sign-in ([#333](https://github.com/marcjazz/authkestra/issues/333)).
+
+  **This change is additive and does not re-map existing credentials.** A user handle is stored
+  inside the authenticator at registration time and cannot be rewritten server-side, so passkeys
+  already enrolled under a random handle keep that handle and must be re-enrolled to gain a stable
+  one. Applications with UUID user ids are unaffected.
+
+### Added
+
+- *(engine)* `auth::webauthn::WebAuthnAuthMethod::start_register_with_handle`, for applications that
+  allocate WebAuthn user handles themselves or need a display name distinct from the username
+  (`start_register` passes the username for both).
+- *(engine)* `auth::webauthn::derive_user_handle` and `auth::webauthn::USER_HANDLE_NAMESPACE`, so an
+  application can reproduce the same handle out-of-band and index credentials by it.
+
+## [0.9.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.8.1...authkestra-engine-v0.9.0) - 2026-09-05
+
+### Fixed
+
+- *(engine)* [**breaking**] replace stale TOTP secret on re-enrollment instead of accumulating it ([#330](https://github.com/marcjazz/authkestra/pull/330))
+
+## [0.8.1](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.8.0...authkestra-engine-v0.8.1) - 2026-09-04
+
+### Other
+
+- Generate an OAuth2 nonce only when the provider validates one ([#318](https://github.com/marcjazz/authkestra/pull/318))
+
 ## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.7.2...authkestra-engine-v0.8.0) - 2026-09-03
 
 ### Other

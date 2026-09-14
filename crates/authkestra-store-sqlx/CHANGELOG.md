@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5](https://github.com/marcjazz/authkestra/compare/authkestra-store-sqlx-v0.9.4...authkestra-store-sqlx-v0.9.5) - 2026-09-13
+
+### Other
+
+- Move the docs out, put a landing page in their place ([#362](https://github.com/marcjazz/authkestra/pull/362))
+
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-store-sqlx-v0.9.2...authkestra-store-sqlx-v0.9.3) - 2026-09-07
+
+### Added
+
+- instrument the token-validation path, and fix flaky log-capture tests ([#358](https://github.com/marcjazz/authkestra/pull/358))
+
 ## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-store-sqlx-v0.7.2...authkestra-store-sqlx-v0.8.0) - 2026-09-03
 
 ### Added

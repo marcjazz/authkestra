@@ -12,6 +12,7 @@
 use authkestra_engine::strategy::AuthenticationStrategy;
 use authkestra_engine::token::cert_binding::{x5t_s256_thumbprint, ClientCertificateDer};
 use authkestra_engine::token::jwk::Jwk;
+use authkestra_engine::token::DEFAULT_LEEWAY_SECS;
 use authkestra_resource::jwt::{
     validate_jwt_generic, validate_jwt_with_resolver, IssuerTrustMap, JwksCache, JwtStrategy,
     ValidationConfig, ValidationError,
@@ -60,17 +61,23 @@ fn generate_rsa_key(kid: Option<&str>) -> TestKey {
     let n = URL_SAFE_NO_PAD.encode(private_key.n().to_bytes_be());
     let e = URL_SAFE_NO_PAD.encode(private_key.e().to_bytes_be());
 
-    let jwk = Jwk {
-        kid: kid.map(|s| s.to_string()),
-        kty: "RSA".to_string(),
-        alg: Some("RS256".to_string()),
-        n: Some(n),
-        e: Some(e),
-        crv: None,
-        x: None,
-    };
+    // `use`/`key_ops` are left unset on purpose: that is the shape most IdPs
+    // publish, so the existing tests keep exercising the permissive path.
+    let mut jwk = Jwk::rsa(n, e).with_alg("RS256");
+    if let Some(kid) = kid {
+        jwk = jwk.with_kid(kid);
+    }
 
     TestKey { encoding_key, jwk }
+}
+
+/// As [`generate_rsa_key`], but stamps RFC 7517 §4.2 `use` on the published
+/// JWK — `"sig"` for a signing key, `"enc"` for an encryption key such as the
+/// RSA-OAEP key a stock Keycloak realm serves alongside its signing key.
+fn generate_rsa_key_for_use(kid: Option<&str>, key_use: &str) -> TestKey {
+    let mut key = generate_rsa_key(kid);
+    key.jwk.r#use = Some(key_use.to_string());
+    key
 }
 
 fn sign_token<T: Serialize>(key: &EncodingKey, kid: Option<&str>, claims: &T) -> String {
@@ -205,6 +212,137 @@ async fn single_audience_builder_validates_like_before() {
     assert!(matches!(err, ValidationError::Jwt(_)));
 }
 
+// --- Issue #350: clock-skew leeway ---
+//
+// `ValidationConfig` inherited `jsonwebtoken`'s 60-second tolerance on `exp`
+// with nothing naming it and no way to change it. It now carries the same
+// `DEFAULT_LEEWAY_SECS` constant `TokenManager` uses, so the two halves of a
+// deployment state the same tolerance instead of both borrowing one.
+
+/// Signs a token whose `exp` is `seconds_ago` in the past.
+fn expired_token(key: &TestKey, seconds_ago: usize) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize;
+    sign_token(
+        &key.encoding_key,
+        Some("kid-1"),
+        &TestClaims {
+            sub: "user-1".to_string(),
+            exp: now - seconds_ago,
+            aud: None,
+        },
+    )
+}
+
+fn validation_with_leeway(leeway: u64) -> Validation {
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+    validation.leeway = leeway;
+    validation
+}
+
+/// The builder defaults to the shared constant rather than to zero — the trap
+/// a plain `u64` field on a `#[derive(Default)]` builder would have set.
+#[test]
+fn the_builder_defaults_leeway_to_the_shared_constant() {
+    let config = ValidationConfig::builder()
+        .jwks_url("https://idp.example.com/jwks")
+        .build();
+    assert_eq!(config.leeway, DEFAULT_LEEWAY_SECS);
+
+    let configured = ValidationConfig::builder()
+        .jwks_url("https://idp.example.com/jwks")
+        .leeway(0)
+        .build();
+    assert_eq!(configured.leeway, 0);
+}
+
+/// The default tolerance accepts a token that has already expired...
+#[tokio::test]
+async fn a_token_expired_within_the_leeway_is_accepted() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+
+    let token = expired_token(&key, 30);
+
+    let validated: TestClaims =
+        validate_jwt_generic(&token, &cache, &validation_with_leeway(DEFAULT_LEEWAY_SECS))
+            .await
+            .expect("the default tolerance should still accept this token");
+    assert_eq!(validated.sub, "user-1");
+}
+
+/// ...and setting the leeway to zero is what makes expiry bite immediately.
+#[tokio::test]
+async fn leeway_zero_rejects_a_token_the_default_would_accept() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+
+    let token = expired_token(&key, 5);
+
+    // Precondition: this is a token the default would let through, so the
+    // rejection below is attributable to the setting and nothing else.
+    validate_jwt_generic::<TestClaims>(
+        &token,
+        &cache,
+        &validation_with_leeway(DEFAULT_LEEWAY_SECS),
+    )
+    .await
+    .expect("precondition: the default tolerance accepts this token");
+
+    let err = validate_jwt_generic::<TestClaims>(&token, &cache, &validation_with_leeway(0))
+        .await
+        .expect_err("with no tolerance an expired token must be refused");
+    assert!(
+        matches!(&err, ValidationError::Jwt(e) if matches!(e.kind(), ErrorKind::ExpiredSignature)),
+        "expected an expiry rejection, got: {err}"
+    );
+}
+
+/// The wiring, end to end through `JwtStrategy`.
+///
+/// The two tests above build a `Validation` by hand, so they would still pass
+/// if `build_validation` stopped copying `config.leeway` across. This one goes
+/// through the strategy, which is the path an application actually takes, so
+/// it fails if the config field is set but never applied.
+#[tokio::test]
+async fn the_strategy_applies_the_configured_leeway() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let token = expired_token(&key, 5);
+
+    async fn authenticate(config: ValidationConfig, token: &str) -> bool {
+        let strategy: JwtStrategy<TestClaims> = JwtStrategy::new(config);
+        let request = Request::builder()
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        matches!(strategy.authenticate(&parts).await, Ok(Some(_)))
+    }
+
+    let default_config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+    assert!(
+        authenticate(default_config, &token).await,
+        "precondition: the default tolerance accepts a token expired 5s ago"
+    );
+
+    let strict_config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .leeway(0)
+        .build();
+    assert!(
+        !authenticate(strict_config, &token).await,
+        "leeway(0) was set on the config but never reached the Validation"
+    );
+}
+
 #[tokio::test]
 async fn missing_kid_falls_back_to_first_key_by_default() {
     let key1 = generate_rsa_key(Some("k1"));
@@ -227,6 +365,120 @@ async fn missing_kid_falls_back_to_first_key_by_default() {
         .await
         .expect("kid-less token should fall back to the first JWKS key by default");
     assert_eq!(result.sub, "user-1");
+}
+
+/// Issue #341: a stock Keycloak realm publishes an RSA *encryption* key next to
+/// its RSA signing key, identical in `kty`. With no `kid` on the token the
+/// fallback used to take `keys.first()` — whichever JWKS member order happened
+/// to put first — so a good token could be rejected with a bare
+/// `InvalidSignature`. Key selection must skip the encryption key and find the
+/// signing key behind it.
+#[tokio::test]
+async fn missing_kid_skips_an_encryption_key_to_reach_the_signing_key() {
+    let enc = generate_rsa_key_for_use(Some("enc-key"), "enc");
+    let sig = generate_rsa_key_for_use(Some("sig-key"), "sig");
+    // Encryption key first, which is the ordering that used to break.
+    let server = start_jwks_server(vec![enc.jwk.clone(), sig.jwk.clone()]).await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&sig.encoding_key, None, &claims);
+
+    let validated: TestClaims = validate_jwt_generic(&token, &cache, &validation)
+        .await
+        .expect("the encryption key must be skipped in favour of the signing key");
+    assert_eq!(validated.sub, "user-1");
+}
+
+/// A `kid` naming an encryption key is not a licence to verify with it: the
+/// filter applies to the `kid` branch too, so the key is passed over and the
+/// lookup fails closed.
+#[tokio::test]
+async fn a_kid_naming_an_encryption_key_is_refused() {
+    let enc = generate_rsa_key_for_use(Some("enc-key"), "enc");
+    let server = start_jwks_server(vec![enc.jwk.clone()]).await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    // Genuinely signed by that key's private half — only its declared *use*
+    // makes it unacceptable.
+    let token = sign_token(&enc.encoding_key, Some("enc-key"), &claims);
+
+    let err = validate_jwt_generic::<TestClaims>(&token, &cache, &validation)
+        .await
+        .expect_err("an encryption key must never verify a signature");
+    assert!(
+        matches!(err, ValidationError::KeyNotFound),
+        "expected the key to be passed over, got: {err}"
+    );
+}
+
+/// `key_ops` is honoured on the same footing as `use` (RFC 7517 §4.3): a key
+/// whose declared operations do not include `verify` is not a verification key.
+#[tokio::test]
+async fn a_key_whose_key_ops_exclude_verify_is_refused() {
+    let mut key = generate_rsa_key(Some("kid-1"));
+    key.jwk.key_ops = Some(vec!["encrypt".to_string()]);
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+
+    let err = validate_jwt_generic::<TestClaims>(&token, &cache, &validation)
+        .await
+        .expect_err("a key that may not verify must not be selected");
+    assert!(
+        matches!(err, ValidationError::KeyNotFound),
+        "expected the key to be passed over, got: {err}"
+    );
+}
+
+/// The overwhelmingly common JWKS shape declares neither `use` nor `key_ops`.
+/// Those keys must stay usable, or the filter would fail closed on almost
+/// every IdP in existence.
+#[tokio::test]
+async fn a_key_declaring_neither_use_nor_key_ops_is_still_usable() {
+    let key = generate_rsa_key(Some("kid-1"));
+    assert!(key.jwk.r#use.is_none() && key.jwk.key_ops.is_none());
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+
+    let validated: TestClaims = validate_jwt_generic(&token, &cache, &validation)
+        .await
+        .expect("a key declaring no use restriction must remain usable");
+    assert_eq!(validated.sub, "user-1");
 }
 
 #[tokio::test]
@@ -1398,5 +1650,365 @@ async fn default_client_does_not_carry_the_injected_configuration() {
         cache.get_jwks().await.is_err(),
         "the default client sends no injected header, so the mock must not match -- if this \
          passes, the header is not actually discriminating and the sibling test proves nothing"
+    );
+}
+
+/// The twelve algorithms Keycloak advertises in
+/// `id_token_signing_alg_values_supported`, in the order a realm returns them —
+/// four key families in one list.
+fn keycloak_signing_algs() -> Vec<Algorithm> {
+    vec![
+        Algorithm::PS384,
+        Algorithm::RS384,
+        Algorithm::EdDSA,
+        Algorithm::ES384,
+        Algorithm::HS256,
+        Algorithm::HS512,
+        Algorithm::ES256,
+        Algorithm::RS256,
+        Algorithm::HS384,
+        Algorithm::PS256,
+        Algorithm::PS512,
+        Algorithm::RS512,
+    ]
+}
+
+/// Issue #335: a validation policy naming more than one key family — which is
+/// exactly what an OIDC discovery document yields — must still verify a token
+/// signed with one of the algorithms it lists.
+///
+/// `jsonwebtoken` requires every entry of `Validation::algorithms` to match the
+/// verifying key's family, not just the header's `alg`, so before the fix this
+/// list rejected every token from every Keycloak deployment with a bare
+/// `InvalidAlgorithm`.
+#[tokio::test]
+async fn multi_family_algorithm_policy_verifies_a_token_from_one_of_its_families() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(300));
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.algorithms = keycloak_signing_algs();
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+
+    let validated: TestClaims = validate_jwt_generic(&token, &cache, &validation)
+        .await
+        .expect("an RS256 token must verify against the RS256 key that signed it");
+    assert_eq!(validated.sub, "user-1");
+}
+
+/// Narrowing the policy to the header's family must not turn it into "any
+/// algorithm goes": an algorithm the caller never listed is still refused.
+#[tokio::test]
+async fn rejects_an_algorithm_the_policy_does_not_list() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(300));
+
+    // A policy that accepts EC and Ed only — the token below is neither.
+    let mut validation = Validation::new(Algorithm::ES256);
+    validation.algorithms = vec![Algorithm::ES256, Algorithm::ES384, Algorithm::EdDSA];
+    validation.validate_aud = false;
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+
+    let err = validate_jwt_generic::<TestClaims>(&token, &cache, &validation)
+        .await
+        .expect_err("RS256 is not in the policy and must be rejected");
+    assert!(
+        matches!(&err, ValidationError::InvalidToken(msg) if msg.contains("RS256")),
+        "expected an unaccepted-algorithm rejection naming RS256, got: {err}"
+    );
+}
+
+/// The classic algorithm-confusion attack: the attacker takes the *public* RSA
+/// key from the JWKS, uses its bytes as an HMAC secret, and presents an
+/// `HS256`-signed token. Keycloak's advertised list contains both `RS256` and
+/// `HS256`, so narrowing to the header's family leaves `HS256` in the policy —
+/// the attack must be stopped by the key's own family check instead, before the
+/// public key ever reaches an HMAC verifier.
+#[tokio::test]
+async fn rejects_hmac_token_verified_against_an_rsa_jwks_key() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(300));
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.algorithms = keycloak_signing_algs();
+    validation.validate_aud = false;
+
+    // Sign with the published modulus as the shared secret — everything the
+    // attacker needs is in the JWKS.
+    let public_bytes = URL_SAFE_NO_PAD
+        .decode(key.jwk.n.as_ref().expect("RSA JWK carries 'n'"))
+        .expect("'n' is base64url");
+    let mut header = Header::new(Algorithm::HS256);
+    header.kid = Some("kid-1".to_string());
+    let forged = encode(
+        &header,
+        &TestClaims {
+            sub: "attacker".to_string(),
+            exp: future_exp(),
+            aud: None,
+        },
+        &EncodingKey::from_secret(&public_bytes),
+    )
+    .expect("failed to forge token");
+
+    let err = validate_jwt_generic::<TestClaims>(&forged, &cache, &validation)
+        .await
+        .expect_err("an HS256 token must never be verified with an RSA JWKS key");
+    assert!(
+        matches!(&err, ValidationError::Jwt(e) if matches!(e.kind(), ErrorKind::InvalidKeyFormat)),
+        "expected the RSA key to be refused by the HMAC verifier, got: {err}"
+    );
+}
+
+// --- Why a token was rejected (#353) ---
+//
+// `JwtStrategy::authenticate` declines an invalid token with `Ok(None)` so
+// another strategy may still run. That decline used to be silent, which left
+// the resource server unable to answer the question #335 was filed to ask:
+// why was this token rejected? These assert the reason is now recorded, and
+// that the credential itself still is not.
+
+/// Routes each thread's `tracing` output to that thread's own buffer, and
+/// discards it on threads that are not capturing.
+///
+/// A **global** subscriber, installed once, rather than a thread-local one.
+/// `tracing` caches callsite interest globally and a thread-local subscriber
+/// does not invalidate that cache, so any test reaching a callsite while no
+/// subscriber is installed gets its interest cached as "never" — and a later
+/// thread-local capture there sees nothing. Rebuilding the cache does not fix
+/// it either, because the non-capturing tests run concurrently and re-cache
+/// "never" immediately after. Both were tried; both produced a capture that
+/// passed alone and failed in a parallel run (#353).
+mod capture {
+    use std::cell::RefCell;
+    use std::io;
+    use std::sync::{Arc, Mutex, Once};
+
+    thread_local! {
+        static SINK: RefCell<Option<Arc<Mutex<Vec<u8>>>>> = const { RefCell::new(None) };
+    }
+
+    #[derive(Clone, Copy, Default)]
+    pub struct ThreadSink;
+
+    impl io::Write for ThreadSink {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            SINK.with(|sink| {
+                if let Some(target) = sink.borrow().as_ref() {
+                    target.lock().unwrap().extend_from_slice(buf);
+                }
+            });
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ThreadSink {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            *self
+        }
+    }
+
+    static INSTALL: Once = Once::new();
+
+    fn install() {
+        INSTALL.call_once(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_writer(ThreadSink)
+                .with_max_level(tracing::Level::TRACE)
+                .without_time()
+                .try_init();
+        });
+    }
+
+    /// Starts capturing on this thread; the returned handle yields the output.
+    pub struct Handle(Arc<Mutex<Vec<u8>>>);
+
+    impl Handle {
+        pub fn contents(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            SINK.with(|sink| *sink.borrow_mut() = None);
+        }
+    }
+
+    pub fn start() -> Handle {
+        install();
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        SINK.with(|sink| *sink.borrow_mut() = Some(Arc::clone(&buffer)));
+        Handle(buffer)
+    }
+}
+
+/// Runs `strategy.authenticate` against a Bearer `token`, capturing logs.
+async fn authenticate_capturing(
+    config: ValidationConfig,
+    token: &str,
+) -> (
+    Result<Option<TestClaims>, authkestra_engine::error::AuthError>,
+    String,
+) {
+    let captured = capture::start();
+
+    let strategy: JwtStrategy<TestClaims> = JwtStrategy::new(config);
+    let request = Request::builder()
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .body(())
+        .unwrap();
+    let (parts, _) = request.into_parts();
+
+    let result = strategy.authenticate(&parts).await;
+    let logs = captured.contents();
+    (result, logs)
+}
+
+/// An expired token is declined, and the reason is now on the record. This is
+/// #335's question — "my token looks fine, why is it refused?" — answered at
+/// the layer that refused it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_token_that_fails_validation_records_why() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .leeway(0)
+        .build();
+
+    let token = expired_token(&key, 120);
+    let (result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        matches!(result, Ok(None)),
+        "an invalid token is a decline, not a hard error"
+    );
+    assert!(
+        logs.contains("token failed validation"),
+        "the decline should be recorded; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("ExpiredSignature"),
+        "and it should say which check failed; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains(&token),
+        "the bearer token must never be logged:\n{logs}"
+    );
+}
+
+/// An unreachable JWKS endpoint is not a bad credential — it is not knowing.
+/// It surfaces as a hard error rather than a decline, and both the fetch
+/// failure and that distinction are now visible.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unreachable_jwks_endpoint_is_reported_and_is_not_a_decline() {
+    let key = generate_rsa_key(Some("kid-1"));
+    // A port nothing is listening on.
+    let config = ValidationConfig::builder()
+        .jwks_url("http://127.0.0.1:1/.well-known/jwks.json")
+        .build();
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&key.encoding_key, Some("kid-1"), &claims);
+    let (result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        result.is_err(),
+        "not being able to reach the JWKS is 'we cannot tell', not 'the token is bad'"
+    );
+    assert!(
+        logs.contains("could not reach the JWKS endpoint"),
+        "the fetch failure should be reported at the point it happens; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("could not determine whether the token is valid"),
+        "and distinguished from a validation failure; got:\n{logs}"
+    );
+}
+
+/// A token naming a `kid` the issuer does not publish: the endpoint answered,
+/// the key is simply not there. Reported distinctly from a fetch failure,
+/// after the refresh-for-rotation retry.
+#[tokio::test(flavor = "current_thread")]
+async fn a_token_naming_an_unknown_kid_says_the_jwks_lacks_it() {
+    let served = generate_rsa_key(Some("kid-served"));
+    let other = generate_rsa_key(Some("kid-unknown"));
+    let server = start_jwks_server(vec![served.jwk.clone()]).await;
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    let token = sign_token(&other.encoding_key, Some("kid-unknown"), &claims);
+    let (_result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        logs.contains("refreshing in case of rotation"),
+        "the rotation retry should be visible; got:\n{logs}"
+    );
+    assert!(
+        logs.contains("does not contain"),
+        "and the give-up should say the JWKS lacks the key; got:\n{logs}"
+    );
+}
+
+/// Review finding on #358: with no `kid`, `find_key` falls back to the first
+/// key, so the only way to reach the give-up branch is an empty key set — the
+/// token named nothing. Reporting that as "token names a key the JWKS does not
+/// contain" described a fault that had not happened.
+#[tokio::test(flavor = "current_thread")]
+async fn an_empty_jwks_does_not_claim_the_token_named_a_missing_key() {
+    let key = generate_rsa_key(None);
+    // The endpoint answers, with no keys at all.
+    let server = start_jwks_server(vec![]).await;
+    let config = ValidationConfig::builder()
+        .jwks_url(jwks_url(&server))
+        .build();
+
+    let claims = TestClaims {
+        sub: "user-1".to_string(),
+        exp: future_exp(),
+        aud: None,
+    };
+    // No `kid` on the token either, which is what selects the fallback path.
+    let token = sign_token(&key.encoding_key, None, &claims);
+    let (_result, logs) = authenticate_capturing(config, &token).await;
+
+    assert!(
+        logs.contains("no kid and the issuer's JWKS has no key"),
+        "an empty key set should be reported as such; got:\n{logs}"
+    );
+    assert!(
+        !logs.contains("token names a key"),
+        "the token named no key, so it must not be blamed for one; got:\n{logs}"
     );
 }

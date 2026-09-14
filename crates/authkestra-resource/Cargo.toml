@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "README.md"
 
 [dependencies]
-authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-engine = { workspace = true, default-features = false }
 async-trait = "0.1"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -44,6 +44,10 @@ rustls-aws-lc-rs = ["authkestra-engine/rustls-aws-lc-rs"]
 rustls-no-provider = ["authkestra-engine/rustls-no-provider"]
 
 [dev-dependencies]
+# Test-only: a token that fails validation is declined with `Ok(None)`, so the
+# only record of *why* is the log line. Capturing emitted output is the only
+# way to assert it (#353).
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 wiremock = "0.6"
 rsa = "0.9.6"
 rand = "0.8"
@@ -55,4 +59,4 @@ ed25519-dalek = "2"
 # the dev-dependency, not the main one. A downstream deployment that wants
 # `MemoryStore` as a real `DpopReplayStore` still gets it by depending on
 # `authkestra-engine` directly with this feature enabled.
-authkestra-engine = { workspace = true, default-features = false, features = ["token", "memory"] }
+authkestra-engine = { workspace = true, default-features = false, features = ["memory"] }

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.10.2...authkestra-resource-v0.11.0) - 2026-09-14
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+
+## [0.10.0](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.9.5...authkestra-resource-v0.10.0) - 2026-09-14
+
+### Fixed
+
+- *(engine)* [**breaking**] enforce JWKS key-use separation when selecting a verification key ([#342](https://github.com/marcjazz/authkestra/pull/342))
+
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.9.2...authkestra-resource-v0.9.3) - 2026-09-07
+
+### Added
+
+- instrument the token-validation path, and fix flaky log-capture tests ([#358](https://github.com/marcjazz/authkestra/pull/358))
+- *(engine)* name and expose the clock-skew leeway JWT validation applies ([#351](https://github.com/marcjazz/authkestra/pull/351))
+
+## [0.9.2](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.9.1...authkestra-resource-v0.9.2) - 2026-09-06
+
+### Fixed
+
+- *(resource)* verify tokens under a multi-family algorithm policy ([#340](https://github.com/marcjazz/authkestra/pull/340))
+
 ## [0.7.1](https://github.com/marcjazz/authkestra/compare/authkestra-resource-v0.7.0...authkestra-resource-v0.7.1) - 2026-09-01
 
 ### Added

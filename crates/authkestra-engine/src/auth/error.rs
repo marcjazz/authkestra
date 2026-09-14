@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Errors that can occur during the authentication process.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum AuthError {
     /// An error returned by the authentication provider
     #[error("Provider error: {0}")]
@@ -39,6 +40,13 @@ pub enum AuthError {
     /// An internal or unexpected storage error occurred
     #[error("Internal error: {0}")]
     Internal(String),
+    /// The credential store does not support this operation.
+    /// When a store returns this, the operation has not been performed,
+    /// and the data remains unchanged. This is different from a successful
+    /// no-op — a store that silently ignores a revoke request is worse than
+    /// one that admits it cannot perform the operation.
+    #[error("Operation not supported by credential store")]
+    Unsupported,
 }
 
 /// Represents an error response from an OAuth2 provider.

@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'website/**'
+      - 'landing/**'
+      - 'design/**'
       - 'docs/**'
       - '**.md'
       - '.gitignore'
@@ -12,14 +13,31 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths-ignore:
-      - 'website/**'
+      - 'landing/**'
+      - 'design/**'
       - 'docs/**'
       - '**.md'
       - '.gitignore'
       - 'LICENSE*'
 
 jobs:
-  test:
+  doctests:
+    # Doctests only, on purpose. The `coverage` job below runs the unit and
+    # integration tests — `cargo llvm-cov` shells out to
+    # `cargo test --tests`, which selects test *targets* and so never runs a
+    # doctest. This job used to be `cargo test --workspace --all-features`,
+    # which re-ran every one of those test targets a second time for no extra
+    # signal: ~7 minutes of runner time to learn what `coverage` was already
+    # about to tell us.
+    #
+    # Splitting on that seam rather than deleting one job keeps the 9 real
+    # doctests (concentrated in authkestra-engine) covered — they are the one
+    # thing llvm-cov genuinely cannot see.
+    #
+    # `--workspace` is redundant today (the root manifest is virtual with no
+    # `default-members`, so all members are selected anyway) and kept
+    # deliberately: adding a root `[package]` or a `default-members` key would
+    # otherwise silently shrink this to a subset.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,8 +45,54 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo registry and build
         uses: swatinem/rust-cache@v2
-      - name: Run tests
-        run: cargo test --workspace --all-features
+      - name: Run doctests
+        run: cargo test --doc --workspace --all-features
+
+  provider-features:
+    # Every other job builds with --all-features, which is why a dependency
+    # gated behind one provider feature but used by all of them compiled
+    # cleanly here and broke for anyone selecting a single provider.
+    # See https://github.com/marcjazz/authkestra/issues/321.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [github, google, discord]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry and build
+        uses: swatinem/rust-cache@v2
+      - name: Build with one provider and nothing else
+        # --all-targets on purpose: without it this only compiles the lib, and
+        # the tests and examples — where a feature-gating slip is just as easy
+        # to make — are never built. Requires the provider tests to declare
+        # `required-features`, which they do.
+        run: |
+          cargo check --all-targets -p authkestra-providers --no-default-features \
+            --features ${{ matrix.feature }},rustls-aws-lc-rs
+
+  facade-features:
+    # Verify that all facade features compile in isolation, without the default
+    # engine dependency. This ensures that `--no-default-features` actually means
+    # what it says, and that storage backends, auth methods, and adapter extras
+    # are properly gated. See https://github.com/marcjazz/authkestra/issues/325.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [engine, webauthn, totp, captcha, memory, redis, sql-sqlite, sql-postgres, sql-mysql, macros, op, devsig]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry and build
+        uses: swatinem/rust-cache@v2
+      - name: Check facade feature in isolation
+        run: |
+          cargo check -p authkestra --no-default-features \
+            --features ${{ matrix.feature }},rustls-aws-lc-rs
 
   lint:
     runs-on: ubuntu-latest
@@ -62,8 +126,16 @@ jobs:
         uses: swatinem/rust-cache@v2
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Run coverage and fail if under threshold
-        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 84
+      # Run and report are separate steps so a red `coverage` job says which
+      # of the two things went wrong. This job now owns the test signal (the
+      # `doctests` job above no longer duplicates it), and "a test failed"
+      # and "line coverage dipped below the threshold" want very different
+      # responses — collapsing both into one step makes the annotation say
+      # only "coverage", which is actively misleading for the first case.
+      - name: Run tests under instrumentation
+        run: cargo llvm-cov --workspace --all-features --no-report
+      - name: Report coverage and fail if under threshold
+        run: cargo llvm-cov report --lcov --output-path lcov.info --fail-under-lines 84
       - name: Upload coverage to Codecov
         if: always()
         uses: codecov/codecov-action@v5

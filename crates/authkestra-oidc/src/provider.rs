@@ -242,6 +242,15 @@ impl OidcProvider {
 /// `iss` must equal the discovered issuer, `aud` must contain `client_id`,
 /// and `algorithms` is taken from the discovery document (falling back to
 /// RS256, the most common IdP default, if the document omits it).
+///
+/// # Clock skew
+///
+/// `leeway` is left at `jsonwebtoken`'s default of 60 seconds, so an ID token
+/// is accepted for about a minute past its `exp`. Unlike `TokenManager` and
+/// `ValidationConfig`, which name that tolerance themselves since #350, this
+/// one is deliberately not given a knob of its own: [`OidcProvider::
+/// with_validation`] already replaces the whole policy, which is the seam for
+/// changing it. Set `leeway` on the `Validation` you supply there.
 fn default_validation(metadata: &ProviderMetadata, client_id: &str) -> Validation {
     let algorithms = metadata
         .id_token_signing_alg_values_supported
@@ -387,6 +396,13 @@ impl Provider for OidcProvider {
 
 #[async_trait]
 impl OAuthProvider for OidcProvider {
+    /// This provider verifies the nonce against the ID token's `nonce`
+    /// claim and surfaces it in `Identity::attributes`, so
+    /// `OAuth2Flow` should generate one.
+    fn validates_nonce(&self) -> bool {
+        true
+    }
+
     fn provider_id(&self) -> &str {
         "oidc"
     }

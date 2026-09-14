@@ -220,7 +220,7 @@ pub async fn handle_token_with_client_cert(
     client_cert_der: Option<&[u8]>,
     dpop_header: Option<&str>,
 ) -> Result<TokenResponse, TokenErrorResponse> {
-    tracing::debug!(grant_type = %req.grant_type, "Processing token exchange request");
+    tracing::debug!(grant_type = %req.grant_type, "Processing token request");
 
     // 0. Work out which credential — if any — the request presents.
     let credential = extract_credential(
@@ -233,7 +233,7 @@ pub async fn handle_token_with_client_cert(
     let client_id = match resolve_client_id(req.client_id.as_deref(), &credential) {
         Some(id) => id,
         None => {
-            tracing::warn!("Missing client_id in token request");
+            tracing::debug!("Missing client_id in token request");
             return Err(TokenErrorResponse {
                 error: "invalid_client".to_string(),
                 error_description: "Client authentication failed".to_string(),
@@ -245,7 +245,11 @@ pub async fn handle_token_with_client_cert(
     let client = match op_store.find_client(&client_id).await {
         Ok(Some(c)) => c,
         Ok(None) => {
-            tracing::warn!(client_id = %client_id, "Unknown client ID during token exchange");
+            // Not "during token exchange": this is the token endpoint's own
+            // client lookup and fires for every grant type. The message was
+            // mislabelling every unknown-client rejection here, which nothing
+            // noticed because the branch had no test.
+            tracing::error!(client_id = %client_id, "Unknown client ID at the token endpoint");
             return Err(TokenErrorResponse {
                 error: "invalid_client".to_string(),
                 error_description: "Client authentication failed".to_string(),
@@ -380,7 +384,7 @@ pub async fn handle_token_with_client_cert(
         _ => {
             if !client.allows_grant_type(&crate::client::GrantType::Custom(req.grant_type.clone()))
             {
-                tracing::warn!(client_id = %client_id, grant_type = %req.grant_type, "Client not authorized for custom grant");
+                tracing::error!(client_id = %client_id, grant_type = %req.grant_type, "Client not authorized for custom grant");
                 return Err(TokenErrorResponse {
                     error: "unauthorized_client".to_string(),
                     error_description: "Client is not authorized to use this grant type"
@@ -463,7 +467,7 @@ pub(crate) fn extract_credential(
         Some(assertion) => match client_assertion_type {
             Some(CLIENT_ASSERTION_TYPE_JWT_BEARER) => Some(assertion.to_string()),
             _ => {
-                tracing::warn!(
+                tracing::debug!(
                     "client_assertion presented with a missing or unsupported \
                      client_assertion_type"
                 );
@@ -481,7 +485,7 @@ pub(crate) fn extract_credential(
     let presented =
         u8::from(basic.is_some()) + u8::from(post.is_some()) + u8::from(assertion.is_some());
     if presented > 1 {
-        tracing::warn!(
+        tracing::debug!(
             presented,
             "token request presents more than one client authentication method"
         );
@@ -626,7 +630,7 @@ async fn handle_device_code(
     use crate::device::DeviceCodeStatus;
 
     if !client.allows_grant_type(&GrantType::DeviceCode) {
-        tracing::warn!(client_id = %client_id, "Client not authorized for device_code grant");
+        tracing::error!(client_id = %client_id, "Client not authorized for device_code grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
             error_description: "Client is not authorized to use device_code grant type".to_string(),
@@ -636,7 +640,7 @@ async fn handle_device_code(
     let device_code_str = match req.device_code.as_deref() {
         Some(c) => c,
         None => {
-            tracing::warn!("Missing device_code in request");
+            tracing::debug!("Missing device_code in request");
             return Err(TokenErrorResponse {
                 error: "invalid_request".to_string(),
                 error_description: "device_code is required".to_string(),
@@ -735,7 +739,14 @@ async fn handle_device_code(
                 };
 
                 let id_token = if session.scope.contains("openid") {
-                    match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+                    let id_extra = crate::amr_acr::amr_acr_extra_claims(&identity);
+                    match tokens.issue_id_token_with_extra(
+                        identity.clone(),
+                        &client_id,
+                        None,
+                        expires_in,
+                        id_extra,
+                    ) {
                         Ok(t) => Some(t),
                         Err(_) => {
                             return Err(TokenErrorResponse {
@@ -826,7 +837,7 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     if !client.allows_grant_type(&GrantType::AuthorizationCode) {
-        tracing::warn!(client_id = %client_id, "Client not authorized for authorization_code grant");
+        tracing::error!(client_id = %client_id, "Client not authorized for authorization_code grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
             error_description: "Client is not authorized to use authorization_code grant type"
@@ -905,7 +916,7 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
     if let Some(challenge) = &auth_code.code_challenge {
         let verifier = req.code_verifier.as_deref().unwrap_or("");
         if verifier.is_empty() {
-            tracing::warn!("Missing code_verifier for PKCE-secured code");
+            tracing::debug!("Missing code_verifier for PKCE-secured code");
             return Err(TokenErrorResponse {
                 error: "invalid_grant".to_string(),
                 error_description: "code_verifier is required".to_string(),
@@ -980,11 +991,13 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
     };
 
     let id_token = if auth_code.scope.contains("openid") {
-        match tokens.issue_id_token(
+        let id_extra = crate::amr_acr::amr_acr_extra_claims(&auth_code.identity);
+        match tokens.issue_id_token_with_extra(
             auth_code.identity.clone(),
             &client_id,
             auth_code.nonce.clone(),
             expires_in,
+            id_extra,
         ) {
             Ok(t) => Some(t),
             Err(e) => {
@@ -1253,7 +1266,7 @@ async fn handle_client_credentials(
     client_cert_der: Option<&[u8]>,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     if !client.allows_grant_type(&GrantType::ClientCredentials) {
-        tracing::warn!(client_id = %client_id, "Client not authorized for client_credentials grant");
+        tracing::error!(client_id = %client_id, "Client not authorized for client_credentials grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
             error_description: "Client is not authorized to use client_credentials grant type"
@@ -1377,7 +1390,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     tokens: &TokenManager,
 ) -> Result<TokenResponse, TokenErrorResponse> {
     if !client.allows_grant_type(&GrantType::RefreshToken) {
-        tracing::warn!(client_id = %client_id, "Client not authorized for refresh_token grant");
+        tracing::error!(client_id = %client_id, "Client not authorized for refresh_token grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
             error_description: "Client is not authorized to use refresh_token grant type"
@@ -1388,7 +1401,7 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     let refresh_token_str = match req.refresh_token.as_deref() {
         Some(t) => t,
         None => {
-            tracing::warn!("Missing refresh_token in request");
+            tracing::debug!("Missing refresh_token in request");
             return Err(TokenErrorResponse {
                 error: "invalid_request".to_string(),
                 error_description: "refresh_token is required".to_string(),
@@ -1592,7 +1605,14 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     // `nonce` as OPTIONAL on a refreshed id_token, so omitting it is
     // conformant, not a shortcut.
     let id_token = if old_rt.scope.contains("openid") {
-        match tokens.issue_id_token(old_rt.identity.clone(), &client_id, None, expires_in) {
+        let id_extra = crate::amr_acr::amr_acr_extra_claims(&old_rt.identity);
+        match tokens.issue_id_token_with_extra(
+            old_rt.identity.clone(),
+            &client_id,
+            None,
+            expires_in,
+            id_extra,
+        ) {
             Ok(t) => Some(t),
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to issue id token");
@@ -1665,7 +1685,7 @@ pub async fn default_handle_token_exchange(
     }
 
     if !client.allows_grant_type(&GrantType::TokenExchange) {
-        tracing::warn!(client_id = %client_id, "Client not authorized for token_exchange grant");
+        tracing::error!(client_id = %client_id, "Client not authorized for token_exchange grant");
         return Err(TokenErrorResponse {
             error: "unauthorized_client".to_string(),
             error_description: "Client is not authorized to use token_exchange grant type"
@@ -1674,7 +1694,7 @@ pub async fn default_handle_token_exchange(
     }
 
     if req.actor_token.is_some() || req.actor_token_type.is_some() {
-        tracing::warn!("Delegation (actor_token) is not supported");
+        tracing::debug!("Delegation (actor_token) is not supported");
         return Err(TokenErrorResponse {
             error: "invalid_request".to_string(),
             error_description: "actor_token is not supported".to_string(),
@@ -1685,7 +1705,7 @@ pub async fn default_handle_token_exchange(
     if subject_token_type != "urn:ietf:params:oauth:token-type:access_token"
         && subject_token_type != "urn:ietf:params:oauth:token-type:id_token"
     {
-        tracing::warn!(subject_token_type = %subject_token_type, "Unsupported subject_token_type");
+        tracing::debug!(subject_token_type = %subject_token_type, "Unsupported subject_token_type");
         return Err(TokenErrorResponse {
             error: "invalid_request".to_string(),
             error_description: "Unsupported subject_token_type".to_string(),
@@ -1699,7 +1719,7 @@ pub async fn default_handle_token_exchange(
     if requested_token_type != "urn:ietf:params:oauth:token-type:access_token"
         && requested_token_type != "urn:ietf:params:oauth:token-type:id_token"
     {
-        tracing::warn!(requested_token_type = %requested_token_type, "Unsupported requested_token_type");
+        tracing::debug!(requested_token_type = %requested_token_type, "Unsupported requested_token_type");
         return Err(TokenErrorResponse {
             error: "invalid_request".to_string(),
             error_description:
@@ -1711,7 +1731,7 @@ pub async fn default_handle_token_exchange(
     let subject_token_str = match req.subject_token.as_deref() {
         Some(t) => t,
         None => {
-            tracing::warn!("Missing subject_token in request");
+            tracing::debug!("Missing subject_token in request");
             return Err(TokenErrorResponse {
                 error: "invalid_request".to_string(),
                 error_description: "subject_token is required".to_string(),
@@ -1740,7 +1760,7 @@ pub async fn default_handle_token_exchange(
         .as_ref()
         .is_some_and(|aud| aud.contains(&client_id));
     if !is_intended_aud {
-        tracing::warn!(
+        tracing::error!(
             client_id = %client_id,
             "Client is not authorized to exchange this token"
         );
@@ -1826,7 +1846,14 @@ pub async fn default_handle_token_exchange(
     // not depend on which requested_token_type value was sent. No nonce is
     // reflected, since RFC 8693 exchange requests don't carry one.
     let id_token = if granted_openid {
-        match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+        let id_extra = crate::amr_acr::amr_acr_extra_claims(&identity);
+        match tokens.issue_id_token_with_extra(
+            identity.clone(),
+            &client_id,
+            None,
+            expires_in,
+            id_extra,
+        ) {
             Ok(t) => Some(t),
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to issue id token during exchange");
@@ -3902,6 +3929,170 @@ mod tests {
             resp.id_token, None,
             "no openid scope should mean no id_token, same as before this feature existed"
         );
+    }
+
+    // --- `acr`/`amr` ID token claims ---
+    //
+    // `Engine::authenticate` stamps `IDENTITY_ATTR_AMR` (and, when this
+    // engine's step-up tier is satisfied,
+    // `IDENTITY_ATTR_STEP_UP_SATISFIED`) onto `Identity::attributes`; these
+    // exercise the other end, `crate::amr_acr::amr_acr_extra_claims`, through
+    // an actual issued ID token rather than just the unit tests in
+    // `amr_acr`. The refresh-token grant is used as the vehicle since it's
+    // the simplest of the four `issue_id_token_with_extra` call sites to
+    // stand a fixture up for; all four share the same helper, so this
+    // exercises them equally.
+
+    /// An identity carrying the `attributes` `Engine::authenticate` would
+    /// have stamped for a given login outcome.
+    fn identity_with_amr(amr: &str, step_up_satisfied: bool) -> Identity {
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            authkestra_engine::auth::state::IDENTITY_ATTR_AMR.to_string(),
+            amr.to_string(),
+        );
+        if step_up_satisfied {
+            attributes.insert(
+                authkestra_engine::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
+                "true".to_string(),
+            );
+        }
+        Identity {
+            provider_id: "test".to_string(),
+            external_id: "user123".to_string(),
+            username: Some("user123".to_string()),
+            email: None,
+            attributes,
+        }
+    }
+
+    /// Issues a refresh-token-grant ID token for `identity` and returns its
+    /// decoded claims, so a test can inspect `extra["amr"]`/`extra["acr"]`.
+    async fn id_token_claims_for(identity: Identity) -> authkestra_engine::token::Claims {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let mut refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        refresh
+            .store_token(RefreshToken::new(
+                "rt-amr".to_string(),
+                "client1".to_string(),
+                identity,
+                "openid profile".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let tokens = test_tokens();
+        let res = handle_token(
+            refresh_test_req("rt-amr"),
+            None,
+            &test_config(false),
+            &mut crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                refresh,
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &tokens,
+        )
+        .await
+        .unwrap();
+
+        let id_token = res
+            .id_token
+            .expect("openid scope requested, id_token expected");
+        tokens
+            .validate_token(&id_token, None)
+            .expect("issued id_token should validate against the issuer's own key")
+    }
+
+    #[tokio::test]
+    async fn primary_only_identity_gets_single_factor_acr_and_no_mfa_marker() {
+        let claims = id_token_claims_for(identity_with_amr("password", false)).await;
+
+        assert_eq!(claims.extra.get("amr"), Some(&serde_json::json!(["pwd"])));
+        assert_eq!(
+            claims.extra.get("acr"),
+            Some(&serde_json::json!(crate::amr_acr::ACR_SINGLE_FACTOR))
+        );
+    }
+
+    #[tokio::test]
+    async fn step_up_identity_gets_mfa_acr_and_both_methods_plus_marker() {
+        let claims = id_token_claims_for(identity_with_amr("password totp", true)).await;
+
+        assert_eq!(
+            claims.extra.get("amr"),
+            Some(&serde_json::json!(["pwd", "otp", "totp", "mfa"]))
+        );
+        assert_eq!(
+            claims.extra.get("acr"),
+            Some(&serde_json::json!(crate::amr_acr::ACR_MFA))
+        );
+    }
+
+    /// `auth_time` has to survive the round-trip into a real issued token,
+    /// not just the unit tests: it is the value a relying party compares
+    /// against `max_age`, and the refresh-token grant used here is exactly
+    /// the case where it must report the *original* authentication rather
+    /// than when this later token was minted.
+    #[tokio::test]
+    async fn auth_time_survives_into_an_issued_token_unchanged() {
+        let authenticated_at = 1_757_843_000_i64;
+        let mut identity = identity_with_amr("password", false);
+        identity.attributes.insert(
+            authkestra_engine::auth::state::IDENTITY_ATTR_AUTH_TIME.to_string(),
+            authenticated_at.to_string(),
+        );
+
+        let claims = id_token_claims_for(identity).await;
+
+        assert_eq!(
+            claims.extra.get("auth_time"),
+            Some(&serde_json::json!(authenticated_at)),
+            "auth_time must report when the user authenticated, not when this \
+             refreshed token was issued"
+        );
+        assert!(
+            (claims.iat as i64) > authenticated_at,
+            "the fixture is only meaningful if iat and auth_time actually differ"
+        );
+    }
+
+    /// The two outcomes above must actually differ — pinning that directly
+    /// guards against a regression that makes both branches converge (e.g.
+    /// `step_up_satisfied` silently defaulting to the same value either
+    /// way) even if each assertion above still individually passed.
+    #[tokio::test]
+    async fn primary_only_and_step_up_ids_are_visibly_different() {
+        let single = id_token_claims_for(identity_with_amr("password", false)).await;
+        let stepped_up = id_token_claims_for(identity_with_amr("password totp", true)).await;
+
+        assert_ne!(single.extra.get("amr"), stepped_up.extra.get("amr"));
+        assert_ne!(single.extra.get("acr"), stepped_up.extra.get("acr"));
+    }
+
+    #[tokio::test]
+    async fn an_identity_with_no_amr_attribute_gets_neither_claim() {
+        // `test_identity()` carries empty `attributes` — the shape of an
+        // `Identity` that never passed through `Engine::authenticate` (e.g.
+        // a federated login handed straight to `handle_authorize`).
+        let claims = id_token_claims_for(test_identity()).await;
+
+        assert!(!claims.extra.contains_key("amr"));
+        assert!(!claims.extra.contains_key("acr"));
     }
 
     // --- OpStore::handle_token_exchange override seam (issue #204) ---
@@ -6479,6 +6670,9 @@ mod device_tests;
 #[cfg(test)]
 #[allow(deprecated)] // `require_pkce` (authkestra#273) — these fixtures don't exercise it
 mod client_auth_tests;
+
+#[cfg(test)]
+mod log_level_policy_tests;
 
 impl TokenResponse {
     /// Creates a new TokenResponse.

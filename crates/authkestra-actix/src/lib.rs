@@ -1,7 +1,12 @@
 #[cfg(feature = "resource")]
 use actix_web::HttpMessage;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
-use actix_web::{dev::Payload, http::header, web, Error, FromRequest, HttpRequest};
+use actix_web::{dev::Payload, web, Error, FromRequest, HttpRequest};
+// Only the `token` (`AuthToken`) and `resource` (`Jwt`) extractors read the
+// `Authorization` header directly; `session`'s `AuthSession` reads a cookie
+// instead, so `header` alone needs the narrower gate.
+#[cfg(any(feature = "token", feature = "resource"))]
+use actix_web::http::header;
 #[cfg(feature = "session")]
 pub use authkestra_engine::auth::{Session, SessionStore};
 #[cfg(feature = "resource")]
@@ -411,4 +416,25 @@ where
             }
         })
     }
+}
+
+/// Re-exports the derive macros reach through. Not public API.
+///
+/// `#[derive(ActixState)]` expands to code naming `authkestra_engine` and
+/// `actix_web`. Emitting those as bare paths made the expansion depend on what
+/// the *caller* happens to have in scope, so the derive only compiled for
+/// someone with both crates as direct dependencies under exactly those
+/// names — anyone following the documented advice to depend on the
+/// `authkestra` facade got an error naming a crate they never wrote down
+/// (#332). Routing every emitted path through this module fixes that: the
+/// anchor is this crate, which the caller demonstrably *can* name, since
+/// that is where the derive itself came from.
+///
+/// A caller reaching this crate under another name — through the facade's
+/// `authkestra::actix` re-export, say — says so with
+/// `#[authkestra(crate = ...)]` on the struct.
+#[doc(hidden)]
+pub mod __private {
+    pub use actix_web;
+    pub use authkestra_engine;
 }

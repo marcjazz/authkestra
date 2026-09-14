@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use actix_web::{cookie::Cookie, http::header, web, HttpRequest, HttpResponse};
+use authkestra_engine::auth::{Identity, OAuthToken};
 pub use authkestra_engine::auth::{Session, SessionConfig, SessionStore};
 use authkestra_engine::pkce::Pkce;
 use authkestra_engine::{state::OAuth2State, Engine, ErasedOAuthFlow, OAuth2Flow};
@@ -8,6 +9,56 @@ use std::sync::Arc;
 
 #[cfg(feature = "session")]
 use super::cookie::create_actix_cookie;
+
+/// The cookie carrying the encrypted OAuth state between the authorization
+/// redirect and the callback. Named once: it was written as a literal at each
+/// of the three places that touch it.
+const STATE_COOKIE: &str = "ak_state";
+
+/// The provider name, bounded, for use in a response body.
+///
+/// The name is an unvalidated, URL-decoded path segment, and the 404 body
+/// echoes it back so the caller can see what was not found. Echoing it
+/// unbounded means an arbitrarily long attacker-controlled string is reflected
+/// into a response; bounding it keeps the message useful and the reflection
+/// finite. `authkestra-axum` bounds it identically — the two adapters return
+/// the same body by design, and a fix to one that skipped the other would
+/// quietly break that.
+///
+/// The budget is in **bytes**, not characters. What matters for a reflection is
+/// how much attacker-controlled data comes back, and 64 characters is up to 256
+/// bytes of UTF-8 — so a character bound does not actually bound the response.
+/// The cut is moved down to a `char` boundary so the result is still valid UTF-8.
+fn provider_for_display(provider: &str) -> String {
+    const MAX_BYTES: usize = 64;
+    if provider.len() <= MAX_BYTES {
+        return provider.to_string();
+    }
+    let mut end = MAX_BYTES;
+    while !provider.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\u{2026}", &provider[..end])
+}
+
+/// The 404 for an unregistered provider.
+///
+/// Built in one place because the `Content-Type` is load-bearing and easy to
+/// forget: `HttpResponseBuilder::body` sets no content type at all, and a
+/// response with none *and* an echoed path segment is sniffed as HTML by
+/// browsers — which turns this message into a reflected-XSS sink reachable from
+/// a plain link. `authkestra-axum` gets `text/plain` for free from
+/// `(StatusCode, String)`; actix does not, so it is set explicitly here, with
+/// `nosniff` as the belt to that braces.
+fn provider_not_found(provider: &str) -> HttpResponse {
+    HttpResponse::NotFound()
+        .content_type(actix_web::http::header::ContentType::plaintext())
+        .insert_header(("x-content-type-options", "nosniff"))
+        .body(format!(
+            "Provider {} not found",
+            provider_for_display(provider)
+        ))
+}
 
 #[derive(serde::Deserialize)]
 #[non_exhaustive]
@@ -54,9 +105,7 @@ pub fn initiate_oauth_login_erased(
         .encrypt(&config.state_encryption_key)
         .expect("Failed to encrypt OAuth state");
 
-    let cookie_name = "ak_state";
-
-    let cookie = Cookie::build(cookie_name, encrypted)
+    let cookie = Cookie::build(STATE_COOKIE, encrypted)
         .path("/")
         .http_only(true)
         .same_site(actix_web::cookie::SameSite::Lax)
@@ -64,7 +113,22 @@ pub fn initiate_oauth_login_erased(
         .max_age(actix_web::cookie::time::Duration::minutes(15))
         .finish();
 
-    HttpResponse::Found()
+    // 303, not 302: the target is fetched with GET regardless of how this
+    // route was reached, which is exactly what a redirect-to-the-provider
+    // means. `authkestra-axum` sends 303 here too — `Redirect::to` is 303 —
+    // and the two adapters must not disagree on the status code for the same
+    // request. See issue #320 for the class of bug that causes.
+    // Bound above the event rather than computed in the fields: a call inside
+    // a `tracing` field expands into regions no test can fully execute, so it
+    // reads as permanently uncovered however well the function is exercised.
+    let scope_count = scopes.len();
+    let has_success_url = auth_state.success_url.is_some();
+    tracing::debug!(
+        scopes = scope_count,
+        has_success_url,
+        "issued an OAuth authorization redirect and set the state cookie"
+    );
+    HttpResponse::SeeOther()
         .insert_header((header::LOCATION, url))
         .cookie(cookie)
         .finish()
@@ -87,6 +151,72 @@ where
     handle_oauth_callback_erased(req, flow, params, store, config, success_url).await
 }
 
+/// Validates the callback's state cookie and exchanges the code for an
+/// identity, shared by both callbacks.
+///
+/// Extracted for #356. This crate previously inlined the sequence twice, once
+/// per callback, while `authkestra-axum` routed both of its callbacks through
+/// a single helper of the same name. The duplicated part is the CSRF defence,
+/// and the part that legitimately differs — creating a session versus issuing
+/// a token — sat immediately after it, which is the shape that invites drift.
+///
+/// It did drift: the debug line reporting the resolved identity was added to
+/// one copy and missed from the other, in the change that introduced it
+/// (#355, corrected in #357). Sharing the block removes the possibility
+/// rather than the instance.
+///
+/// The three failure modes are reported distinctly here, so an operator can
+/// tell a browser `SameSite` problem from a rotated `state_encryption_key`
+/// from a provider refusal — all three of which are otherwise an identical
+/// 401.
+#[cfg(any(feature = "session", feature = "token"))]
+async fn finalize_callback_erased(
+    req: &HttpRequest,
+    flow: &dyn ErasedOAuthFlow,
+    params: &OAuthCallbackParams,
+    config: &SessionConfig,
+) -> Result<(Identity, OAuthToken, OAuth2State), actix_web::Error> {
+    let encrypted_state = req
+        .cookie(STATE_COOKIE)
+        .map(|c: Cookie| c.value().to_string())
+        .ok_or_else(|| {
+            // No cookie at all, which is usually the browser rather than the
+            // user: a `SameSite`/`Secure` mismatch, or a callback arriving
+            // after the fifteen-minute lifetime.
+            tracing::warn!("OAuth callback carries no state cookie; cannot validate CSRF");
+            actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
+        })?;
+
+    let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
+        .map_err(|e| {
+            // The cookie arrived but would not decrypt. A rotated
+            // `state_encryption_key` fails every in-flight login exactly
+            // like this, and nothing else in the system would say so.
+            tracing::warn!(
+                error = %e,
+                "OAuth state cookie could not be decrypted; if the state encryption key \
+                 was rotated, logins started before the rotation will all fail this way"
+            );
+            actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}"))
+        })?;
+
+    let (identity, token) = flow
+        .finalize_login(&params.code, &params.state, &expected_state)
+        .await
+        .map_err(|e| {
+            // The state checked out; the provider exchange is what failed.
+            tracing::warn!(error = %e, "OAuth code exchange failed after state validation");
+            actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}"))
+        })?;
+
+    tracing::debug!(
+        external_id = %identity.external_id,
+        "OAuth callback validated and exchanged for an identity"
+    );
+
+    Ok((identity, token, expected_state))
+}
+
 #[cfg(feature = "session")]
 pub async fn handle_oauth_callback_erased(
     req: HttpRequest,
@@ -96,22 +226,8 @@ pub async fn handle_oauth_callback_erased(
     config: SessionConfig,
     _success_url: &str,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let cookie_name = "ak_state";
-    let encrypted_state = req
-        .cookie(cookie_name)
-        .map(|c: Cookie| c.value().to_string())
-        .ok_or_else(|| {
-            actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
-        })?;
-
-    let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
-        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}")))?;
-
-    // Exchange code
-    let (mut identity, token) = flow
-        .finalize_login(&params.code, &params.state, &expected_state)
-        .await
-        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
+    let (mut identity, token, expected_state) =
+        finalize_callback_erased(&req, flow, &params, &config).await?;
 
     // Store tokens in identity attributes for convenience
     identity
@@ -135,14 +251,18 @@ pub async fn handle_oauth_callback_erased(
         chrono::Utc::now() + session_duration,
     );
 
+    let session_id = session.id.clone();
+    let user_id = session.identity.external_id.clone();
     store.save_session(&session).await.map_err(|e| {
+        tracing::error!(error = %e, "failed to persist the session after a successful login");
         actix_web::error::ErrorInternalServerError(format!("Failed to save session: {e}"))
     })?;
+    tracing::info!(%session_id, %user_id, "OAuth login completed; session created");
 
     let cookie = create_actix_cookie(&config, session.id);
 
     // Remove the flow cookie
-    let remove_cookie = Cookie::build(cookie_name, "")
+    let remove_cookie = Cookie::build(STATE_COOKIE, "")
         .path("/")
         .secure(true)
         .max_age(actix_web::cookie::time::Duration::ZERO)
@@ -152,7 +272,7 @@ pub async fn handle_oauth_callback_erased(
         .success_url
         .unwrap_or_else(|| "/".to_string());
 
-    Ok(HttpResponse::Found()
+    Ok(HttpResponse::SeeOther()
         .insert_header((header::LOCATION, final_success_url))
         .cookie(cookie)
         .cookie(remove_cookie)
@@ -167,7 +287,7 @@ pub async fn actix_login_handler<S, T>(
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return HttpResponse::NotFound().body(format!("Provider {provider} not found"));
+            return provider_not_found(&provider);
         }
     };
 
@@ -199,7 +319,7 @@ where
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Ok(HttpResponse::NotFound().body(format!("Provider {provider} not found")));
+            return Ok(provider_not_found(&provider));
         }
     };
 
@@ -248,15 +368,20 @@ pub async fn logout(
         .map(|c: Cookie| c.value().to_string());
 
     if let Some(id) = session_id {
-        store
-            .delete_session(&id)
-            .await
-            .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+        store.delete_session(&id).await.map_err(|e| {
+            tracing::error!(error = %e, "failed to delete the session during logout");
+            actix_web::error::ErrorInternalServerError(e.to_string())
+        })?;
+        tracing::info!(session_id = %id, "session deleted on logout");
+    } else {
+        // Still clears the cookie below, so this is a no-op logout rather
+        // than an error.
+        tracing::debug!("logout with no session cookie present; clearing the cookie anyway");
     }
 
     let remove_cookie = create_actix_cookie(&config, "".to_string());
 
-    Ok(HttpResponse::Found()
+    Ok(HttpResponse::SeeOther()
         .insert_header((header::LOCATION, redirect_to))
         .cookie(remove_cookie)
         .finish())
@@ -272,32 +397,27 @@ pub async fn handle_oauth_callback_jwt_erased(
     expires_in_secs: u64,
     config: SessionConfig,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let cookie_name = "ak_state";
+    let (identity, _token, _expected_state) =
+        finalize_callback_erased(req, flow, &params, &config).await?;
 
-    let encrypted_state = req
-        .cookie(cookie_name)
-        .map(|c: Cookie| c.value().to_string())
-        .ok_or_else(|| {
-            actix_web::error::ErrorUnauthorized("CSRF validation failed or session expired")
-        })?;
-
-    let expected_state = OAuth2State::decrypt(&encrypted_state, &config.state_encryption_key)
-        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Invalid state cookie: {e}")))?;
-
-    // Exchange code
-    let (identity, _token) = flow
-        .finalize_login(&params.code, &params.state, &expected_state)
-        .await
-        .map_err(|e| actix_web::error::ErrorUnauthorized(format!("Authentication failed: {e}")))?;
-
+    let user_id = identity.external_id.clone();
     let jwt = token_manager
         .issue_user_token(identity, expires_in_secs, None, None)
-        .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Token error: {e}")))?;
+        // Not covered by a test, deliberately: signing with a fixed secret
+        // has no reachable failure mode, so exercising this would mean
+        // contriving one. Logged rather than dropped because if it ever does
+        // fire, the login has failed for a reason nothing else would explain.
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to issue a token after a successful login");
+            actix_web::error::ErrorInternalServerError(format!("Token error: {e}"))
+        })?;
+    // The token itself is a credential and is not logged.
+    tracing::info!(%user_id, expires_in_secs, "OAuth login completed; token issued");
 
     let mut res = HttpResponse::Ok();
 
     // Remove the flow cookie
-    let remove_cookie = Cookie::build(cookie_name, "")
+    let remove_cookie = Cookie::build(STATE_COOKIE, "")
         .path("/")
         .max_age(actix_web::cookie::time::Duration::ZERO)
         .secure(true)
@@ -344,7 +464,7 @@ where
     let flow: &std::sync::Arc<dyn ErasedOAuthFlow> = match authkestra.providers.get(&provider) {
         Some(f) => f,
         None => {
-            return Ok(HttpResponse::NotFound().body(format!("Provider {provider} not found")));
+            return Ok(provider_not_found(&provider));
         }
     };
 

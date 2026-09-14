@@ -5,7 +5,7 @@ pub use authkestra_engine::{Engine, Missing, SessionConfig};
 pub use authkestra_resource::Guard;
 #[allow(unused_imports)]
 use axum::extract::FromRef;
-#[cfg(feature = "session")]
+#[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use axum::extract::FromRequestParts;
 #[cfg(any(feature = "session", feature = "token", feature = "resource"))]
 use std::sync::Arc;
@@ -275,4 +275,25 @@ impl<S: Clone + Send + Sync + 'static, T: Clone + Send + Sync + 'static> AxumSta
                 get(helpers::axum_callback_handler_stateless::<AppState, S, T>),
             )
     }
+}
+
+/// Re-exports the derive macros reach through. Not public API.
+///
+/// `#[derive(AxumState)]` expands to code naming `authkestra_engine` and
+/// `axum`. Emitting those as bare paths made the expansion depend on what
+/// the *caller* happens to have in scope, so the derive only compiled for
+/// someone with both crates as direct dependencies under exactly those
+/// names — anyone following the documented advice to depend on the
+/// `authkestra` facade got an error naming a crate they never wrote down
+/// (#332). Routing every emitted path through this module fixes that: the
+/// anchor is this crate, which the caller demonstrably *can* name, since
+/// that is where the derive itself came from.
+///
+/// A caller reaching this crate under another name — through the facade's
+/// `authkestra::axum` re-export, say — says so with
+/// `#[authkestra(crate = ...)]` on the struct.
+#[doc(hidden)]
+pub mod __private {
+    pub use authkestra_engine;
+    pub use axum;
 }

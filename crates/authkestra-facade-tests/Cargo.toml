@@ -1,0 +1,47 @@
+[package]
+name = "authkestra-facade-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Compile-time tests that the authkestra facade reaches what it claims to"
+# Never released: this exists only to hold the facade's dependency surface
+# honest from the outside.
+publish = false
+
+[dependencies]
+
+# `authkestra` and nothing else from the workspace. That is the entire point:
+# `crates/authkestra`'s own tests cannot verify what the facade forwards,
+# because its dev-dependencies name the sub-crates directly and Cargo unifies
+# features across normal and dev dependencies. A sub-crate feature enabled
+# there is on during the test build whether or not the facade forwards it, so
+# an in-crate test passes with the forwarding entry deleted. Verified: removing
+# `authkestra-engine/webauthn` from the facade's `webauthn` feature left that
+# suite green.
+#
+# From here there is no such dependency, so every path named in `tests/` can
+# only resolve if the facade genuinely forwarded the feature.
+[dev-dependencies]
+authkestra = { path = "../authkestra", features = [
+    # No "session"/"token": both were removed from the facade once they
+    # forwarded nothing. `engine` is what they actually delivered.
+    "engine",
+    "axum",
+    "actix",
+    "memory",
+    "redis",
+    "sql-sqlite",
+    "webauthn",
+    "totp",
+    "captcha",
+    "macros",
+    "op",
+    "devsig",
+] }
+# None of these are workspace crates, so none of them mask anything. The web
+# frameworks are needed only to name the types the state derives generate
+# against (`FromRef`, `ServiceConfig`); tokio, to run the async tests.
+actix-web = "4"
+axum = "0.8.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

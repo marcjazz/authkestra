@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-v0.10.2...authkestra-v0.11.0) - 2026-09-14
+
+### Fixed
+
+- *(engine)* de-feature token — always compile token machinery in ([#377](https://github.com/marcjazz/authkestra/pull/377))
+- *(engine)* [**breaking**] remove authkestra-engine's no-op `session` feature ([#375](https://github.com/marcjazz/authkestra/pull/375))
+
+### Other
+
+- *(facade)* [**breaking**] one name for the engine, and drop the two empty features ([#384](https://github.com/marcjazz/authkestra/pull/384))
+
+## [0.10.2](https://github.com/marcjazz/authkestra/compare/authkestra-v0.10.1...authkestra-v0.10.2) - 2026-09-14
+
+### Other
+
+- Gate facade features, make authkestra-engine optional ([#325](https://github.com/marcjazz/authkestra/pull/325)) ([#369](https://github.com/marcjazz/authkestra/pull/369))
+
+## [0.9.5](https://github.com/marcjazz/authkestra/compare/authkestra-v0.9.4...authkestra-v0.9.5) - 2026-09-13
+
+### Other
+
+- Move the docs out, put a landing page in their place ([#362](https://github.com/marcjazz/authkestra/pull/362))
+
+## [0.9.3](https://github.com/marcjazz/authkestra/compare/authkestra-v0.9.2...authkestra-v0.9.3) - 2026-09-07
+
+### Added
+
+- *(facade)* forward the sub-crate features the facade never exposed ([#347](https://github.com/marcjazz/authkestra/pull/347))
+
+### Other
+
+- *(facade)* move the facade tests where they can actually fail ([#348](https://github.com/marcjazz/authkestra/pull/348))
+
 ## [0.8.0](https://github.com/marcjazz/authkestra/compare/authkestra-v0.7.2...authkestra-v0.8.0) - 2026-09-03
 
 ### Other

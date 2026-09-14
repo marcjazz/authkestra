@@ -31,7 +31,7 @@ rand = { workspace = true }
 
 # From authkestra-flow
 serde_json = "1.0"
-uuid = { version = "1.0", features = ["v4"] }
+uuid = { version = "1.0", features = ["v4", "v5"] }
 tracing = "0.1"
 
 # From authkestra-token
@@ -54,8 +54,7 @@ authkestra-crypto-util.workspace = true
 argon2 = { version = "0.6.0", features = ["password-hash"] }
 
 [features]
-default = ["token", "rustls-aws-lc-rs"]
-token = []
+default = ["rustls-aws-lc-rs"]
 
 # TLS backend for the outbound HTTP client. Exactly one of these must be
 # enabled; the crate does not compile without a backend.
@@ -76,7 +75,6 @@ token = []
 rustls-aws-lc-rs = ["reqwest/rustls"]
 rustls-no-provider = ["reqwest/rustls-no-provider"]
 
-session = []
 memory = []
 redis = ["dep:redis"]
 sql-postgres = ["sqlx/postgres", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
@@ -111,4 +109,18 @@ actix-files = "0.6"
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["redis"] }
 wiremock = "0.6.5"
+
+# Test-only: captures emitted `tracing` output so the instrumentation on
+# `Engine::authenticate` can be asserted on directly — both that it exists and,
+# more importantly, that a password handed to it never reaches a log line
+# (#353). Without a capturing subscriber that second property is unassertable,
+# and it is precisely the one that would matter if it broke.
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+# Test-only: `test-util` brings `#[tokio::test(start_paused = true)]`, which
+# `full` does not include. The device-flow tests use the paused clock to prove
+# `poll_for_token` waits on a timer rather than blocking the thread (#306) --
+# under a paused clock a real timer costs no wall-clock time, so a blocking
+# sleep is unmistakable.
+tokio = { version = "1.0", features = ["full", "test-util"] }
 authkestra-store-testsuite = { path = "../authkestra-store-testsuite" }

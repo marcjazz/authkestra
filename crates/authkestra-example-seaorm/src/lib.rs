@@ -8,4 +8,4 @@ mod entities;
 mod store;
 
 pub use entities::{client, code, device_code, refresh_token};
-pub use store::SeaOrmOpStore;
+pub use store::{SeaOrmOpStore, SeaOrmOpStoreTx};

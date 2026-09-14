@@ -21,12 +21,13 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 authkestra-actix = { version = "0.7", features = ["session", "token"] }
-authkestra-engine = { version = "0.7", features = ["session", "memory"] }
+authkestra-engine = { version = "0.7", features = ["memory"] }
 actix-web = "4"
 ```
 
-Token support lives in `authkestra-engine` behind its `token` feature; there is no separate
-`authkestra-token` crate.
+`authkestra-engine`'s token machinery is always compiled in — it has no `token` feature of its
+own to enable. `authkestra-actix`'s `token` feature only gates this crate's own token-issuing
+helpers and extractors; there is no separate `authkestra-token` crate.
 
 ### Extractors
 

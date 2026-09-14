@@ -21,6 +21,13 @@ pub use error::OpError;
 pub mod client;
 pub use client::{ClientRegistration, ClientStore, GrantType, TokenEndpointAuthMethod};
 
+/// Derives the `acr`/`amr` ID token claims (OIDC Core §2) from the
+/// auth-method bookkeeping `authkestra_engine::Engine::authenticate` stamps
+/// onto an `Identity`. See the module docs for the AMR value set and ACR
+/// scheme this crate uses.
+pub mod amr_acr;
+pub use amr_acr::{amr_acr_extra_claims, ACR_MFA, ACR_SINGLE_FACTOR, AMR_MFA_MARKER, AMR_PASSWORD};
+
 /// Asymmetric client authentication (`private_key_jwt`, RFC 7523 §2.2):
 /// assertion verification and the replay tracking it depends on.
 pub mod client_assertion;

@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "README.md"
 
 [dependencies]
-authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-engine = { workspace = true, default-features = false }
 authkestra-resource = { workspace = true, default-features = false }
 # TLS backend comes from authkestra-engine's `rustls-*` features (see below).
 reqwest = { version = "0.13.1", default-features = false, features = [

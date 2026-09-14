@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="design/logo/mark-on-dark.svg">
+  <img src="design/logo/mark-on-light.svg" alt="Authkestra" width="56" height="56">
+</picture>
+
 # Authkestra
 
 [![CI](https://github.com/marcjazz/authkestra/actions/workflows/ci.yml/badge.svg)](https://github.com/marcjazz/authkestra/actions)
