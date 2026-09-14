@@ -226,7 +226,21 @@ async fn test_mfa_equivalent_bypasses_mfa() {
         .unwrap();
 
     match res {
-        AuthResult::Success(_) => {}
+        AuthResult::Success(identity) => {
+            // No step-up ran, but an `is_mfa_equivalent` primary satisfies
+            // this engine's (binary) step-up tier on its own — see
+            // `IDENTITY_ATTR_STEP_UP_SATISFIED`.
+            assert_eq!(
+                identity.attributes.get(crate::auth::IDENTITY_ATTR_AMR),
+                Some(&"webauthn".to_string())
+            );
+            assert_eq!(
+                identity
+                    .attributes
+                    .get(crate::auth::IDENTITY_ATTR_STEP_UP_SATISFIED),
+                Some(&"true".to_string())
+            );
+        }
         _ => panic!("Expected Success"),
     }
 }
@@ -331,11 +345,11 @@ mod mfa_token_leeway {
     /// thing wrong with it.
     fn expired_mfa_token<S, T>(engine: &crate::Engine<S, T>, seconds_ago: i64) -> String {
         let exp = chrono::Utc::now() - chrono::Duration::seconds(seconds_ago);
-        let claims = crate::auth::state::MfaTokenClaims {
-            sub: "user123".to_string(),
-            mfa_pending: true,
-            exp: exp.timestamp() as usize,
-        };
+        let claims = crate::auth::state::MfaTokenClaims::new(
+            "user123",
+            exp.timestamp() as usize,
+            "password",
+        );
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &claims,
@@ -532,11 +546,14 @@ mod authenticate_error_paths {
     }
 
     fn mfa_token<S, T>(engine: &Engine<S, T>, sub: &str, mfa_pending: bool) -> String {
-        let claims = crate::auth::state::MfaTokenClaims {
-            sub: sub.to_string(),
-            mfa_pending,
-            exp: (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp() as usize,
-        };
+        let mut claims = crate::auth::state::MfaTokenClaims::new(
+            sub,
+            (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp() as usize,
+            "password",
+        );
+        // `new` sets the only value a real MFA token carries; assigning here
+        // is how a test reaches the shape `authenticate` is supposed to reject.
+        claims.mfa_pending = mfa_pending;
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &claims,
@@ -687,5 +704,290 @@ mod authenticate_error_paths {
             engine.authenticate(totp_challenge(token)).await,
             Ok(AuthResult::Success(_))
         ));
+    }
+}
+
+// --- `amr`/step-up bookkeeping stamped onto `Identity::attributes` ---
+//
+// `Engine::authenticate` is the only place that knows which `AuthMethod`(s)
+// actually ran for a given login, so it is responsible for recording that
+// onto the returned `Identity` (see `IDENTITY_ATTR_AMR` /
+// `IDENTITY_ATTR_STEP_UP_SATISFIED`) — `authkestra-op` reads it back out to
+// populate the `amr`/`acr` ID token claims. These pin the three cases that
+// claim derivation distinguishes: primary-only, a completed step-up, and an
+// `is_mfa_equivalent` primary that skips step-up entirely (covered by
+// `test_mfa_equivalent_bypasses_mfa` above).
+#[cfg(all(test, feature = "totp"))]
+mod amr_step_up_bookkeeping {
+    use super::*;
+    use crate::auth::{AuthResult, IDENTITY_ATTR_AMR, IDENTITY_ATTR_STEP_UP_SATISFIED};
+    use crate::Engine;
+
+    struct TestPasswordMethod;
+    #[async_trait]
+    impl AuthMethod for TestPasswordMethod {
+        fn name(&self) -> &str {
+            "password"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Ok(Identity {
+                provider_id: "password".to_string(),
+                external_id: "user123".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+    }
+
+    struct TestTotpStepUpMethod;
+    #[async_trait]
+    impl AuthMethod for TestTotpStepUpMethod {
+        fn name(&self) -> &str {
+            "totp"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Ok(Identity {
+                provider_id: "totp".to_string(),
+                external_id: "user123".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+        async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
+            Ok(true)
+        }
+    }
+
+    /// A plain password login with no MFA enrolled: `amr` names the single
+    /// primary method, and the step-up marker is absent (not `"false"` —
+    /// see `IDENTITY_ATTR_STEP_UP_SATISFIED`'s doc comment).
+    #[tokio::test]
+    async fn primary_only_login_stamps_amr_and_no_step_up_marker() {
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .build();
+
+        let res = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "irrelevant".to_string(),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::Success(identity) => {
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_AMR),
+                    Some(&"password".to_string())
+                );
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_STEP_UP_SATISFIED),
+                    None
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// Primary auth followed by a completed step-up: `amr` names *both*
+    /// methods, primary first, and the step-up marker is set — this is the
+    /// case that must look visibly different from the primary-only case
+    /// above once `authkestra-op` turns it into `acr`/`amr` claims.
+    #[tokio::test]
+    async fn completed_step_up_stamps_amr_with_both_methods() {
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .with_mfa_method(TestTotpStepUpMethod)
+            .build();
+
+        let primary = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "irrelevant".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let mfa_token = match primary {
+            AuthResult::MfaRequired { mfa_token, .. } => mfa_token,
+            other => panic!("expected MfaRequired (TOTP is enrolled), got {other:?}"),
+        };
+
+        let res = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token,
+                challenge_input: Box::new(AuthInput::Totp {
+                    user_id: "user123".to_string(),
+                    code: "000000".to_string(),
+                }),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::Success(identity) => {
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_AMR),
+                    Some(&"password totp".to_string())
+                );
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_STEP_UP_SATISFIED),
+                    Some(&"true".to_string())
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// `auth_time` must reflect the *step-up* completing, not the primary
+    /// factor that ran a round-trip earlier: a re-authentication gate asking
+    /// "did you prove yourself in the last N seconds" means the most recent
+    /// proof. Pinned by checking the stamped value lands at or after a
+    /// timestamp taken *after* the primary factor already ran.
+    #[tokio::test]
+    async fn step_up_stamps_auth_time_at_the_step_up_not_the_primary() {
+        use crate::auth::IDENTITY_ATTR_AUTH_TIME;
+
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .with_mfa_method(TestTotpStepUpMethod)
+            .build();
+
+        let primary = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "irrelevant".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let mfa_token = match primary {
+            AuthResult::MfaRequired { mfa_token, .. } => mfa_token,
+            other => panic!("expected MfaRequired, got {other:?}"),
+        };
+
+        // Taken after the primary factor has already completed, so a stamp
+        // from the primary would fall strictly before this.
+        let after_primary = chrono::Utc::now().timestamp();
+
+        let res = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token,
+                challenge_input: Box::new(AuthInput::Totp {
+                    user_id: "user123".to_string(),
+                    code: "000000".to_string(),
+                }),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::Success(identity) => {
+                let stamped: i64 = identity
+                    .attributes
+                    .get(IDENTITY_ATTR_AUTH_TIME)
+                    .expect("auth_time must be stamped on a completed step-up")
+                    .parse()
+                    .expect("auth_time must be a parseable Unix timestamp");
+                assert!(
+                    stamped >= after_primary,
+                    "auth_time ({stamped}) should mark the step-up completing, \
+                     not the earlier primary factor (>= {after_primary})"
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// A primary-only login stamps `auth_time` too — freshness is not
+    /// step-up-specific.
+    #[tokio::test]
+    async fn primary_only_login_also_stamps_auth_time() {
+        use crate::auth::IDENTITY_ATTR_AUTH_TIME;
+
+        let before = chrono::Utc::now().timestamp();
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .build();
+
+        let res = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "irrelevant".to_string(),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::Success(identity) => {
+                let stamped: i64 = identity
+                    .attributes
+                    .get(IDENTITY_ATTR_AUTH_TIME)
+                    .expect("auth_time must be stamped on a primary-only login")
+                    .parse()
+                    .expect("auth_time must be a parseable Unix timestamp");
+                assert!(stamped >= before);
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// An MFA continuation token minted *before* `primary_method` existed
+    /// must still complete step-up after an upgrade. Without
+    /// `#[serde(default)]` on that field, anyone mid-step-up when a new
+    /// binary rolls out would get an opaque "missing field" rejection and
+    /// have to restart the login — a 15-minute window, but a needlessly
+    /// confusing one. The resulting `amr` names only the factor this call
+    /// actually verified, since the primary genuinely isn't recoverable
+    /// from such a token.
+    #[tokio::test]
+    async fn a_pre_upgrade_mfa_token_without_primary_method_still_completes() {
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .with_mfa_method(TestTotpStepUpMethod)
+            .build();
+
+        // The old claim shape: no `primary_method` key at all.
+        let legacy_claims = serde_json::json!({
+            "sub": "user123",
+            "mfa_pending": true,
+            "exp": (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp(),
+        });
+        let legacy_token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &legacy_claims,
+            &jsonwebtoken::EncodingKey::from_secret(&engine.mfa_jwt_secret),
+        )
+        .unwrap();
+
+        let res = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token: legacy_token,
+                challenge_input: Box::new(AuthInput::Totp {
+                    user_id: "user123".to_string(),
+                    code: "000000".to_string(),
+                }),
+            })
+            .await
+            .expect("a pre-upgrade MFA token must still decode and complete");
+
+        match res {
+            AuthResult::Success(identity) => {
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_AMR),
+                    Some(&"totp".to_string()),
+                    "only the verified factor should be reported; the primary \
+                     is not recoverable from a pre-upgrade token"
+                );
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_STEP_UP_SATISFIED),
+                    Some(&"true".to_string())
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
     }
 }

@@ -300,7 +300,7 @@ impl<S, T> Engine<S, T> {
                     AuthError::Internal(format!("MFA method {} not registered", method_name))
                 })?;
 
-            let identity = method.authenticate(*challenge_input).await.map_err(|e| {
+            let mut identity = method.authenticate(*challenge_input).await.map_err(|e| {
                 tracing::warn!(error = %e, method = method_name, "second factor rejected");
                 e
             })?;
@@ -315,6 +315,38 @@ impl<S, T> Engine<S, T> {
                 );
                 return Err(AuthError::Credentials("MFA token user mismatch".into()));
             }
+
+            // Report the whole method chain — primary, carried across the
+            // continuation round-trip in the MFA token, plus this step-up
+            // factor — as `amr`, not just the factor that ran in this call.
+            // A completed step-up always satisfies this engine's (binary)
+            // step-up tier, regardless of which two methods were involved.
+            // An empty `primary_method` means this token predates that field
+            // (see `MfaTokenClaims::primary_method`) — we genuinely don't know
+            // what ran first, so report only the factor this call verified
+            // rather than inventing one or emitting an empty `amr` entry.
+            let mut amr_methods = Vec::new();
+            if !token_data.claims.primary_method.is_empty() {
+                amr_methods.push(token_data.claims.primary_method.clone());
+            }
+            if token_data.claims.primary_method != method_name {
+                amr_methods.push(method_name.to_string());
+            }
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AMR.to_string(),
+                amr_methods.join(" "),
+            );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
+                "true".to_string(),
+            );
+            // The step-up is what just completed, so it — not the earlier
+            // primary factor — is when this user most recently proved
+            // themselves. See `IDENTITY_ATTR_AUTH_TIME`.
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AUTH_TIME.to_string(),
+                chrono::Utc::now().timestamp().to_string(),
+            );
 
             tracing::info!(
                 method = method_name,
@@ -354,7 +386,7 @@ impl<S, T> Engine<S, T> {
             ))
         })?;
 
-        let identity = method.authenticate(input).await.map_err(|e| {
+        let mut identity = method.authenticate(input).await.map_err(|e| {
             tracing::warn!(error = %e, "primary authentication rejected");
             e
         })?;
@@ -385,15 +417,33 @@ impl<S, T> Engine<S, T> {
                 enrolled_methods = enrolled_methods.len(),
                 "authentication completed without a second factor"
             );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AMR.to_string(),
+                method_name.to_string(),
+            );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AUTH_TIME.to_string(),
+                chrono::Utc::now().timestamp().to_string(),
+            );
+            if method.is_mfa_equivalent() {
+                // No step-up ran, but the sole primary method already
+                // provides step-up-equivalent assurance (e.g. this engine's
+                // built-in WebAuthn), so the binary step-up tier is still
+                // satisfied.
+                identity.attributes.insert(
+                    crate::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
+                    "true".to_string(),
+                );
+            }
             Ok(AuthResult::Success(identity))
         } else {
             // Issue MFA Token
             let exp = chrono::Utc::now() + chrono::Duration::minutes(15);
-            let claims = crate::auth::state::MfaTokenClaims {
-                sub: identity.external_id.clone(),
-                mfa_pending: true,
-                exp: exp.timestamp() as usize,
-            };
+            let claims = crate::auth::state::MfaTokenClaims::new(
+                identity.external_id.clone(),
+                exp.timestamp() as usize,
+                method_name,
+            );
 
             let mfa_token = jsonwebtoken::encode(
                 &jsonwebtoken::Header::default(),
