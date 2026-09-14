@@ -65,11 +65,36 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [features]
 default = ["engine", "rustls-aws-lc-rs"]
-# `engine` is named explicitly: it used to arrive only via `session`/`token`,
-# so dropping those without this would have quietly taken `authkestra::core`
-# and `Authkestra` out of a `full` build. Nothing else in this list pulls the
-# engine in.
-full = ["engine", "oidc", "axum", "actix", "github", "google", "discord"]
+# Every feature this crate has, except the TLS backend (a choice, not a
+# capability — see `default`). "Full" is taken literally: a caller who asks
+# for it should not have to discover that passkeys or a storage backend were
+# not included.
+#
+# This list drifts silently if left to discipline — it omitted twelve
+# features between #369 adding them and this being noticed — so
+# `authkestra-facade-tests` asserts it stays exhaustive rather than trusting
+# whoever adds the next one to remember.
+full = [
+    "engine",
+    "oidc",
+    "resource",
+    "axum",
+    "actix",
+    "github",
+    "google",
+    "discord",
+    "memory",
+    "redis",
+    "sql-postgres",
+    "sql-mysql",
+    "sql-sqlite",
+    "webauthn",
+    "totp",
+    "captcha",
+    "macros",
+    "op",
+    "devsig",
+]
 engine = ["dep:authkestra-engine"]
 
 # TLS backend, forwarded to every sub-crate that speaks HTTPS. See
