@@ -339,6 +339,52 @@ async fn authorize_with_an_unknown_session_cookie_redirects_to_login() {
     assert_eq!(location(&resp), "/login");
 }
 
+/// A session that exists but is not *fresh enough* — `prompt=login` demands a
+/// new authentication regardless of age (#381) — must reach the host app's
+/// `/login`, not the client's `redirect_uri` with a code.
+///
+/// This pins the adapter's `ReauthenticationRequired` arm specifically. With a
+/// valid session present the request would otherwise return a code, and if
+/// that arm were missing the now-`#[non_exhaustive]` `AuthorizeOutcome` match
+/// would fall through to the catch-all and answer 500 — so neither the
+/// no-session path nor a broken mapping can make this pass. The axum adapter
+/// has the identical pair; the two must agree, which is the hole #329 exists
+/// to close.
+#[actix_web::test]
+async fn authorize_with_prompt_login_redirects_to_login_despite_a_session() {
+    let app = op_app!(true);
+    let (name, value) = session_cookie();
+    let req = test::TestRequest::get()
+        .uri(&format!("{}&prompt=login", authorize_uri(CLIENT_ID)))
+        .cookie(actix_web::cookie::Cookie::new(name, value))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "re-authentication must redirect, not 500 through the catch-all arm"
+    );
+    assert_eq!(location(&resp), "/login");
+}
+
+/// The same for `max_age`: the fixture session carries no `auth_time`, which
+/// cannot satisfy a freshness requirement, so the OP fails closed and the
+/// adapter must route that to `/login` too.
+#[actix_web::test]
+async fn authorize_with_max_age_redirects_to_login_despite_a_session() {
+    let app = op_app!(true);
+    let (name, value) = session_cookie();
+    let req = test::TestRequest::get()
+        .uri(&format!("{}&max_age=60", authorize_uri(CLIENT_ID)))
+        .cookie(actix_web::cookie::Cookie::new(name, value))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&resp), "/login");
+}
+
 /// The `AuthorizeOutcome::Redirect` arm: back to the client's registered
 /// `redirect_uri`, carrying a code and echoing `state`.
 #[actix_web::test]
