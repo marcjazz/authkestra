@@ -78,6 +78,16 @@ pub struct MfaTokenClaims {
     /// report the *whole* method chain — primary and step-up — as this
     /// identity's `amr`, not just the second factor. See
     /// [`IDENTITY_ATTR_AMR`].
+    ///
+    /// `#[serde(default)]` so that an MFA continuation token minted by a
+    /// version before this field existed still decodes across an upgrade:
+    /// without it, anyone mid-step-up when the new binary rolls out would
+    /// get an opaque "missing field" rejection and have to restart the
+    /// login. Such a token yields an empty string, which
+    /// `Engine::authenticate` drops from the method chain rather than
+    /// reporting as a method — so the resulting `amr` names only the
+    /// step-up factor that this call actually verified.
+    #[serde(default)]
     pub primary_method: String,
 }
 

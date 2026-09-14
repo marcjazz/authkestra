@@ -840,4 +840,60 @@ mod amr_step_up_bookkeeping {
             other => panic!("expected Success, got {other:?}"),
         }
     }
+
+    /// An MFA continuation token minted *before* `primary_method` existed
+    /// must still complete step-up after an upgrade. Without
+    /// `#[serde(default)]` on that field, anyone mid-step-up when a new
+    /// binary rolls out would get an opaque "missing field" rejection and
+    /// have to restart the login — a 15-minute window, but a needlessly
+    /// confusing one. The resulting `amr` names only the factor this call
+    /// actually verified, since the primary genuinely isn't recoverable
+    /// from such a token.
+    #[tokio::test]
+    async fn a_pre_upgrade_mfa_token_without_primary_method_still_completes() {
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .with_mfa_method(TestTotpStepUpMethod)
+            .build();
+
+        // The old claim shape: no `primary_method` key at all.
+        let legacy_claims = serde_json::json!({
+            "sub": "user123",
+            "mfa_pending": true,
+            "exp": (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp(),
+        });
+        let legacy_token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &legacy_claims,
+            &jsonwebtoken::EncodingKey::from_secret(&engine.mfa_jwt_secret),
+        )
+        .unwrap();
+
+        let res = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token: legacy_token,
+                challenge_input: Box::new(AuthInput::Totp {
+                    user_id: "user123".to_string(),
+                    code: "000000".to_string(),
+                }),
+            })
+            .await
+            .expect("a pre-upgrade MFA token must still decode and complete");
+
+        match res {
+            AuthResult::Success(identity) => {
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_AMR),
+                    Some(&"totp".to_string()),
+                    "only the verified factor should be reported; the primary \
+                     is not recoverable from a pre-upgrade token"
+                );
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_STEP_UP_SATISFIED),
+                    Some(&"true".to_string())
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
 }
