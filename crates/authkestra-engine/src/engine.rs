@@ -1,6 +1,5 @@
 use crate::auth::session::{Session, SessionConfig, SessionStore};
 use crate::auth::{AuthError, AuthInput, AuthMethod, AuthResult, ErasedOAuthFlow, Identity};
-#[cfg(feature = "token")]
 use crate::token::TokenManager;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,11 +27,9 @@ impl SessionStoreState for Configured<Arc<dyn SessionStore>> {
 /// Trait for the token manager state in the `Engine`.
 pub trait TokenManagerState: Send + Sync + Clone {
     /// Returns the token manager if configured.
-    #[cfg(feature = "token")]
     fn get_manager(&self) -> Arc<TokenManager>;
 }
 
-#[cfg(feature = "token")]
 impl TokenManagerState for Configured<Arc<TokenManager>> {
     fn get_manager(&self) -> Arc<TokenManager> {
         self.0.clone()
@@ -58,7 +55,6 @@ pub struct Engine<S = Missing, T = Missing> {
     /// Configuration for session cookies.
     pub session_config: SessionConfig,
     /// Manager for JWT signing and verification.
-    #[cfg(feature = "token")]
     pub token_manager: T,
 }
 
@@ -75,7 +71,6 @@ where
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store.clone(),
             session_config: self.session_config.clone(),
-            #[cfg(feature = "token")]
             token_manager: self.token_manager.clone(),
         }
     }
@@ -94,7 +89,6 @@ impl Engine<Missing, Missing> {
             mfa_jwt_secret: secret,
             session_store: Missing,
             session_config: SessionConfig::default(),
-            #[cfg(feature = "token")]
             token_manager: Missing,
         }
     }
@@ -108,7 +102,6 @@ pub struct EngineBuilder<S = Missing, T = Missing> {
     mfa_jwt_secret: [u8; 32],
     session_store: S,
     session_config: SessionConfig,
-    #[cfg(feature = "token")]
     token_manager: T,
 }
 
@@ -175,13 +168,11 @@ impl<S, T> EngineBuilder<S, T> {
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: Configured(store),
             session_config: self.session_config,
-            #[cfg(feature = "token")]
             token_manager: self.token_manager,
         }
     }
 
     /// Set the token manager.
-    #[cfg(feature = "token")]
     pub fn token_manager(
         self,
         manager: Arc<TokenManager>,
@@ -198,7 +189,6 @@ impl<S, T> EngineBuilder<S, T> {
     }
 
     /// Set the JWT secret for the default token manager.
-    #[cfg(feature = "token")]
     pub fn jwt_secret(self, secret: &[u8]) -> EngineBuilder<S, Configured<Arc<TokenManager>>> {
         self.token_manager(Arc::new(TokenManager::new(secret, None)))
     }
@@ -218,7 +208,6 @@ impl<S, T> EngineBuilder<S, T> {
             mfa_jwt_secret: self.mfa_jwt_secret,
             session_store: self.session_store,
             session_config: self.session_config,
-            #[cfg(feature = "token")]
             token_manager: self.token_manager,
         }
     }
@@ -494,7 +483,6 @@ impl<T> Engine<Configured<Arc<dyn SessionStore>>, T> {
     }
 }
 
-#[cfg(feature = "token")]
 impl<S> Engine<S, Configured<Arc<TokenManager>>> {
     /// Get the token manager.
     pub fn token_manager(&self) -> Arc<TokenManager> {
@@ -535,13 +523,11 @@ impl<T> HasSessionStore for Engine<Configured<Arc<dyn SessionStore>>, T> {
 }
 
 /// Trait for Engine instances that have a token manager configured.
-#[cfg(feature = "token")]
 pub trait HasTokenManager {
     /// Returns the token manager.
     fn token_manager(&self) -> Arc<TokenManager>;
 }
 
-#[cfg(feature = "token")]
 impl<S> HasTokenManager for Engine<S, Configured<Arc<TokenManager>>> {
     fn token_manager(&self) -> Arc<TokenManager> {
         self.token_manager.0.clone()

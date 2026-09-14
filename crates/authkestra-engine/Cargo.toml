@@ -54,8 +54,7 @@ authkestra-crypto-util.workspace = true
 argon2 = { version = "0.6.0", features = ["password-hash"] }
 
 [features]
-default = ["token", "rustls-aws-lc-rs"]
-token = []
+default = ["rustls-aws-lc-rs"]
 
 # TLS backend for the outbound HTTP client. Exactly one of these must be
 # enabled; the crate does not compile without a backend.

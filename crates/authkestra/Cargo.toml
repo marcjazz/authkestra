@@ -26,7 +26,7 @@ serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 wiremock = "0.6"
 
-authkestra-engine = { workspace = true, features = ["token", "memory", "redis", "totp", "webauthn"] }
+authkestra-engine = { workspace = true, features = ["memory", "redis", "totp", "webauthn"] }
 authkestra-resource = { workspace = true }
 authkestra-providers = { workspace = true, features = ["github", "google", "discord"] }
 authkestra-oidc = { workspace = true }
@@ -66,7 +66,7 @@ chrono = { version = "0.4", features = ["serde"] }
 [features]
 default = ["engine", "rustls-aws-lc-rs"]
 full = ["session", "token", "oidc", "axum", "actix", "github", "google", "discord"]
-engine = ["dep:authkestra-engine", "authkestra-engine/token"]
+engine = ["dep:authkestra-engine"]
 
 # TLS backend, forwarded to every sub-crate that speaks HTTPS. See
 # authkestra-engine's documentation for the `rustls-no-provider` contract.
@@ -91,8 +91,14 @@ rustls-no-provider = [
 
 # Core features
 
+# token: authkestra-engine's token machinery is now unconditional (#376),
+# so this no longer forwards a sub-feature — only `engine` itself, needed
+# because this crate's own #[cfg(feature = "token")] re-export in
+# src/lib.rs still requires authkestra-engine present in the graph. Kept
+# (rather than removed) because `full` and the axum/actix composite
+# features below still name it.
 session = ["engine"]
-token = ["engine", "authkestra-engine?/token"]
+token = ["engine"]
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
 

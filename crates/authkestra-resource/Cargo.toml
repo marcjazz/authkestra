@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "README.md"
 
 [dependencies]
-authkestra-engine = { workspace = true, default-features = false, features = ["token"] }
+authkestra-engine = { workspace = true, default-features = false }
 async-trait = "0.1"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -59,4 +59,4 @@ ed25519-dalek = "2"
 # the dev-dependency, not the main one. A downstream deployment that wants
 # `MemoryStore` as a real `DpopReplayStore` still gets it by depending on
 # `authkestra-engine` directly with this feature enabled.
-authkestra-engine = { workspace = true, default-features = false, features = ["token", "memory"] }
+authkestra-engine = { workspace = true, default-features = false, features = ["memory"] }
