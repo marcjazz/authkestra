@@ -164,11 +164,18 @@ to RFC 8176 where a value fits exactly, and staying engine-specific where
 the registry's nearest term would either be ambiguous or overclaim:
 
 - `"password"` → `"pwd"` (`AMR_PASSWORD`) — RFC 8176's canonical token.
-- `"totp"` stays `"totp"` — RFC 8176's closest generic value is `"otp"`,
-  which doesn't distinguish TOTP from HOTP or a mailed/SMS code; this
-  engine only ever implements TOTP, so the specific name is more
-  informative, and RFC 8176 §2 explicitly allows registering (or, as here,
-  using outside the registry) new values.
+- `"totp"` → **both** `"otp"` (`AMR_OTP`) and `"totp"` (`AMR_TOTP`).
+  An earlier revision of this RFC emitted only `"totp"`, reasoning that the
+  registry's `"otp"` is ambiguous between TOTP, HOTP and mailed/SMS codes,
+  so the specific name is more informative. That reasoning is sound but
+  incomplete: a relying party matching *strictly* against the RFC 8176
+  registry — which off-the-shelf RP libraries commonly do — would see a
+  token whose `amr` names no second factor it recognises, and conclude no
+  second factor was used. Since `amr` is an array, there is no tradeoff to
+  make: emit the registry term so a strict matcher recognises the factor,
+  and the specific one so a consumer that cares learns what `"otp"` alone
+  loses. RFC 8176 §2 explicitly permits values outside the registry, which
+  is what makes `"totp"` legal alongside it.
 - `"webauthn"` stays `"webauthn"` — RFC 8176 has `"hwk"` (hardware key) and
   `"swk"` (software key), but this crate's WebAuthn integration doesn't
   distinguish a roaming authenticator from a platform one, so asserting
@@ -183,6 +190,39 @@ the registry's nearest term would either be ambiguous or overclaim:
   registered) passes through unchanged — `authkestra-op` has no basis for
   remapping a name it doesn't recognize, and passing it through verbatim is
   more honest than dropping it.
+
+### 4.4a. `auth_time`: the freshness half
+
+OIDC Core §2 defines `acr`, `amr` and `auth_time` as one cluster — `auth_time`
+is REQUIRED whenever `max_age` is in the request — so shipping the first two
+without the third would be shipping a partial feature. It is derived
+independently of `amr` (`IDENTITY_ATTR_AUTH_TIME`, stamped by
+`Engine::authenticate` alongside the other two): "how recently did this user
+prove themselves" is a different question from "with what", and an identity
+carrying one but not the other still gets whatever it can support.
+
+Three decisions worth stating, because none is forced:
+
+1. **For a completed step-up it marks the step-up, not the primary factor.**
+   `auth_time` exists so a relying party can ask "was this proven recently
+   enough", and the answer a re-authentication gate wants is the *most
+   recent* proof, not the first one in the chain.
+2. **It rides on the `Identity`, so it survives into later grants.** A token
+   minted by the refresh-token or token-exchange grant reports when the user
+   originally authenticated, not when that token was issued — which is what
+   `auth_time` is defined to mean, and the reason it isn't simply `now()` at
+   issuance. This is a second argument for the `attributes`-bag mechanism of
+   §4.1: the value is persisted with the identity for free.
+3. **A malformed stored value is omitted, not guessed at.** A non-numeric
+   `auth_time` is dropped rather than coerced: a relying party comparing a
+   nonsense timestamp against `max_age` gets a wrong answer, where a missing
+   claim it can detect and handle.
+
+This is deliberately only the *observability* half. Enforcing freshness —
+honouring a `max_age` request parameter, `prompt=login`, or a re-authentication
+gate in front of a security-critical operation — is [#381](https://github.com/marcjazz/authkestra/issues/381).
+Until that lands, an application can read `auth_time` and enforce its own
+policy, but the OP does not enforce one.
 
 ### 4.5. Plain (non-step-up) OAuth2/OIDC logins still get both claims
 

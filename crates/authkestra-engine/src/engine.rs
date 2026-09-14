@@ -340,6 +340,13 @@ impl<S, T> Engine<S, T> {
                 crate::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
                 "true".to_string(),
             );
+            // The step-up is what just completed, so it — not the earlier
+            // primary factor — is when this user most recently proved
+            // themselves. See `IDENTITY_ATTR_AUTH_TIME`.
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AUTH_TIME.to_string(),
+                chrono::Utc::now().timestamp().to_string(),
+            );
 
             tracing::info!(
                 method = method_name,
@@ -413,6 +420,10 @@ impl<S, T> Engine<S, T> {
             identity.attributes.insert(
                 crate::auth::state::IDENTITY_ATTR_AMR.to_string(),
                 method_name.to_string(),
+            );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AUTH_TIME.to_string(),
+                chrono::Utc::now().timestamp().to_string(),
             );
             if method.is_mfa_equivalent() {
                 // No step-up ran, but the sole primary method already

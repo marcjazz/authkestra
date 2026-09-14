@@ -842,6 +842,99 @@ mod amr_step_up_bookkeeping {
         }
     }
 
+    /// `auth_time` must reflect the *step-up* completing, not the primary
+    /// factor that ran a round-trip earlier: a re-authentication gate asking
+    /// "did you prove yourself in the last N seconds" means the most recent
+    /// proof. Pinned by checking the stamped value lands at or after a
+    /// timestamp taken *after* the primary factor already ran.
+    #[tokio::test]
+    async fn step_up_stamps_auth_time_at_the_step_up_not_the_primary() {
+        use crate::auth::IDENTITY_ATTR_AUTH_TIME;
+
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .with_mfa_method(TestTotpStepUpMethod)
+            .build();
+
+        let primary = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "irrelevant".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let mfa_token = match primary {
+            AuthResult::MfaRequired { mfa_token, .. } => mfa_token,
+            other => panic!("expected MfaRequired, got {other:?}"),
+        };
+
+        // Taken after the primary factor has already completed, so a stamp
+        // from the primary would fall strictly before this.
+        let after_primary = chrono::Utc::now().timestamp();
+
+        let res = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token,
+                challenge_input: Box::new(AuthInput::Totp {
+                    user_id: "user123".to_string(),
+                    code: "000000".to_string(),
+                }),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::Success(identity) => {
+                let stamped: i64 = identity
+                    .attributes
+                    .get(IDENTITY_ATTR_AUTH_TIME)
+                    .expect("auth_time must be stamped on a completed step-up")
+                    .parse()
+                    .expect("auth_time must be a parseable Unix timestamp");
+                assert!(
+                    stamped >= after_primary,
+                    "auth_time ({stamped}) should mark the step-up completing, \
+                     not the earlier primary factor (>= {after_primary})"
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// A primary-only login stamps `auth_time` too — freshness is not
+    /// step-up-specific.
+    #[tokio::test]
+    async fn primary_only_login_also_stamps_auth_time() {
+        use crate::auth::IDENTITY_ATTR_AUTH_TIME;
+
+        let before = chrono::Utc::now().timestamp();
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .build();
+
+        let res = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "irrelevant".to_string(),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::Success(identity) => {
+                let stamped: i64 = identity
+                    .attributes
+                    .get(IDENTITY_ATTR_AUTH_TIME)
+                    .expect("auth_time must be stamped on a primary-only login")
+                    .parse()
+                    .expect("auth_time must be a parseable Unix timestamp");
+                assert!(stamped >= before);
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
     /// An MFA continuation token minted *before* `primary_method` existed
     /// must still complete step-up after an upgrade. Without
     /// `#[serde(default)]` on that field, anyone mid-step-up when a new

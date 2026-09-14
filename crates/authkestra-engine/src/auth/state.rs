@@ -29,6 +29,27 @@ pub const IDENTITY_ATTR_AMR: &str = "amr";
 /// in `attributes` rather than as a named field.
 pub const IDENTITY_ATTR_STEP_UP_SATISFIED: &str = "step_up_satisfied";
 
+/// The [`Identity::attributes`] key
+/// [`Engine::authenticate`](crate::Engine::authenticate) stamps with the Unix
+/// timestamp (seconds) at which this identity's authentication *completed* —
+/// the basis for OIDC's `auth_time` claim (OIDC Core §2).
+///
+/// For a login that completed a step-up challenge this is when the *step-up*
+/// finished, not when the primary factor ran: `auth_time` exists to answer
+/// "how recently did this user prove themselves", and a re-authentication
+/// gate asking that question means the most recent proof, not the first one.
+///
+/// Because this rides on the `Identity` itself, it survives being persisted
+/// alongside a refresh token and travels with it — so a token minted by the
+/// refresh-token or token-exchange grant reports when the user originally
+/// authenticated rather than when that later token was issued, which is what
+/// `auth_time` is defined to mean.
+///
+/// Absent for any `Identity` that did not come from `Engine::authenticate`,
+/// for the same reason as [`IDENTITY_ATTR_AMR`]: a fabricated timestamp would
+/// assert a freshness nothing actually verified.
+pub const IDENTITY_ATTR_AUTH_TIME: &str = "auth_time";
+
 /// A unified identity structure returned by all providers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {

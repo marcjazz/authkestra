@@ -22,11 +22,14 @@
 //! IANA registry in RFC 8176 where a value already fits it exactly:
 //!
 //! - `"password"` → [`AMR_PASSWORD`] (`"pwd"`, RFC 8176's canonical token).
-//! - `"totp"` stays `"totp"`: RFC 8176's closest generic value is `"otp"`,
-//!   which doesn't distinguish TOTP from HOTP or a mailed/SMS code. This
-//!   engine only ever implements TOTP, so the specific, unambiguous name is
-//!   more informative to a relying party than the vaguer registry term — and
-//!   the registry is explicitly extensible (RFC 8176 §2), not closed.
+//! - `"totp"` emits **both** [`AMR_OTP`] (`"otp"`, the RFC 8176 registry
+//!   term) and [`AMR_TOTP`] (`"totp"`, the specific one). `amr` is an array,
+//!   so there is nothing to trade off: a relying party matching strictly
+//!   against the registry — which off-the-shelf RP libraries commonly do —
+//!   finds `"otp"` and recognises the factor, while a consumer that cares
+//!   reads `"totp"` and learns what `"otp"` alone loses (not HOTP, not a
+//!   mailed or SMS code). Emitting only the specific value would leave the
+//!   strict matcher seeing a token that names no second factor it knows.
 //! - `"webauthn"` stays `"webauthn"`: RFC 8176 has `"hwk"` (hardware key)
 //!   and `"swk"` (software key), but this crate's WebAuthn integration
 //!   doesn't distinguish a roaming authenticator from a platform one, so
@@ -59,9 +62,29 @@
 //! omitting `acr`/`amr` is legal per OIDC Core §2 (both OPTIONAL), and
 //! asserting a scheme this crate has no evidence for would be worse than
 //! saying nothing.
+//!
+//! ## `auth_time`
+//!
+//! Derived independently of `acr`/`amr` from
+//! [`IDENTITY_ATTR_AUTH_TIME`](authkestra_engine::auth::IDENTITY_ATTR_AUTH_TIME):
+//! "how recently did this user prove themselves" is a different question from
+//! "with what", and OIDC Core §2 defines all three as separate OPTIONAL
+//! claims. For a login that completed a step-up it is when the *step-up*
+//! finished — the most recent proof, which is what a re-authentication gate
+//! asking "prove it again within N seconds" actually needs.
+//!
+//! Because the value rides on the `Identity`, a token minted later by the
+//! refresh-token or token-exchange grant reports when the user originally
+//! authenticated rather than when that token was issued — which is what
+//! `auth_time` is defined to mean, and the reason it is not simply `now()`
+//! at issuance time.
+//!
+//! Enforcing freshness — honouring a `max_age` request parameter or
+//! `prompt=login` — is deliberately *not* here; this is the observability
+//! half. See issue #381.
 
 use authkestra_engine::auth::state::{
-    Identity, IDENTITY_ATTR_AMR, IDENTITY_ATTR_STEP_UP_SATISFIED,
+    Identity, IDENTITY_ATTR_AMR, IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_STEP_UP_SATISFIED,
 };
 use std::collections::HashMap;
 
@@ -83,12 +106,32 @@ pub const AMR_MFA_MARKER: &str = "mfa";
 /// internal auth-method name for the same thing is `"password"`.
 pub const AMR_PASSWORD: &str = "pwd";
 
+/// RFC 8176's generic one-time-password value. Emitted alongside [`AMR_TOTP`]
+/// for a TOTP factor so that a relying party matching strictly against the
+/// registry still recognises the factor.
+pub const AMR_OTP: &str = "otp";
+
+/// The specific value for a TOTP factor, emitted alongside [`AMR_OTP`]. Not
+/// an RFC 8176 registry entry — the registry is explicitly extensible — and
+/// it carries what `"otp"` alone loses: this was TOTP, not HOTP and not a
+/// mailed or SMS code.
+pub const AMR_TOTP: &str = "totp";
+
 /// Remaps an `authkestra-engine` internal auth-method name to its wire AMR
 /// value. See the module docs for the reasoning behind each mapping.
-fn internal_method_to_amr(method: &str) -> String {
+fn internal_method_to_amr(method: &str) -> Vec<String> {
     match method {
-        "password" => AMR_PASSWORD.to_string(),
-        other => other.to_string(),
+        "password" => vec![AMR_PASSWORD.to_string()],
+        // Both, deliberately. `"otp"` is the RFC 8176 registry term, and a
+        // relying party matching strictly against the registry — which
+        // off-the-shelf RP libraries commonly do — would otherwise see a
+        // token naming no second factor it recognises. `"totp"` carries the
+        // detail the registry term loses (not HOTP, not a mailed or SMS
+        // code). `amr` is an array, so there is no reason to choose: the
+        // strict matcher finds `"otp"`, and a consumer that cares about the
+        // distinction reads `"totp"`.
+        "totp" => vec![AMR_OTP.to_string(), AMR_TOTP.to_string()],
+        other => vec![other.to_string()],
     }
 }
 
@@ -104,13 +147,28 @@ fn internal_method_to_amr(method: &str) -> String {
 pub fn amr_acr_extra_claims(identity: &Identity) -> HashMap<String, serde_json::Value> {
     let mut extra = HashMap::new();
 
+    // `auth_time` is derived independently of `amr`: it answers "how recently
+    // did this user prove themselves", which is a different question from
+    // "with what", and OIDC Core §2 defines them as separate OPTIONAL claims.
+    // A malformed value is dropped rather than guessed at — emitting a
+    // non-numeric or unparseable `auth_time` would be worse than omitting it,
+    // since a relying party comparing it against `max_age` would get a
+    // nonsense answer instead of a missing one.
+    if let Some(parsed) = identity
+        .attributes
+        .get(IDENTITY_ATTR_AUTH_TIME)
+        .and_then(|raw| raw.parse::<i64>().ok())
+    {
+        extra.insert("auth_time".to_string(), serde_json::json!(parsed));
+    }
+
     let Some(raw_amr) = identity.attributes.get(IDENTITY_ATTR_AMR) else {
         return extra;
     };
 
     let mut amr: Vec<String> = raw_amr
         .split_whitespace()
-        .map(internal_method_to_amr)
+        .flat_map(internal_method_to_amr)
         .collect();
 
     let step_up_satisfied = identity
@@ -186,14 +244,72 @@ mod tests {
             (IDENTITY_ATTR_STEP_UP_SATISFIED, "true"),
         ]);
         let extra = amr_acr_extra_claims(&identity);
+        // TOTP contributes both the registry term and the specific one, so a
+        // relying party matching strictly on RFC 8176 still recognises it.
         assert_eq!(
             extra.get("amr"),
-            Some(&serde_json::json!(["pwd", "totp", "mfa"]))
+            Some(&serde_json::json!(["pwd", "otp", "totp", "mfa"]))
         );
         assert_eq!(
             extra.get("acr"),
             Some(&serde_json::Value::String(ACR_MFA.to_string()))
         );
+    }
+
+    /// A relying party that only knows RFC 8176's registry must still find a
+    /// value it recognises for a TOTP second factor — that is the whole point
+    /// of emitting `"otp"` alongside `"totp"`.
+    #[test]
+    fn totp_emits_the_registry_term_alongside_the_specific_one() {
+        let identity = identity_with(&[(IDENTITY_ATTR_AMR, "totp")]);
+        let extra = amr_acr_extra_claims(&identity);
+        let amr = extra.get("amr").expect("amr present");
+        assert_eq!(amr, &serde_json::json!(["otp", "totp"]));
+        assert!(
+            amr.as_array().unwrap().contains(&serde_json::json!("otp")),
+            "a strict RFC 8176 matcher must find a value it knows"
+        );
+    }
+
+    #[test]
+    fn auth_time_is_emitted_as_a_number_when_present() {
+        let identity = identity_with(&[
+            (IDENTITY_ATTR_AMR, "password"),
+            (IDENTITY_ATTR_AUTH_TIME, "1757843000"),
+        ]);
+        let extra = amr_acr_extra_claims(&identity);
+        assert_eq!(extra.get("auth_time"), Some(&serde_json::json!(1757843000)));
+    }
+
+    /// `auth_time` answers a different question from `amr`, so it is derived
+    /// independently — an identity carrying one but not the other still gets
+    /// what it can support.
+    #[test]
+    fn auth_time_is_independent_of_amr() {
+        let only_auth_time = identity_with(&[(IDENTITY_ATTR_AUTH_TIME, "1757843000")]);
+        let extra = amr_acr_extra_claims(&only_auth_time);
+        assert_eq!(extra.get("auth_time"), Some(&serde_json::json!(1757843000)));
+        assert_eq!(extra.get("amr"), None);
+        assert_eq!(extra.get("acr"), None);
+
+        let only_amr = identity_with(&[(IDENTITY_ATTR_AMR, "password")]);
+        let extra = amr_acr_extra_claims(&only_amr);
+        assert_eq!(extra.get("auth_time"), None);
+        assert_eq!(extra.get("amr"), Some(&serde_json::json!(["pwd"])));
+    }
+
+    /// An unparseable timestamp is dropped rather than guessed at: a relying
+    /// party comparing a nonsense `auth_time` against `max_age` would get a
+    /// wrong answer, where a missing one it can detect and handle.
+    #[test]
+    fn a_malformed_auth_time_is_omitted_rather_than_emitted() {
+        let identity = identity_with(&[
+            (IDENTITY_ATTR_AMR, "password"),
+            (IDENTITY_ATTR_AUTH_TIME, "not-a-timestamp"),
+        ]);
+        let extra = amr_acr_extra_claims(&identity);
+        assert_eq!(extra.get("auth_time"), None);
+        assert_eq!(extra.get("amr"), Some(&serde_json::json!(["pwd"])));
     }
 
     #[test]

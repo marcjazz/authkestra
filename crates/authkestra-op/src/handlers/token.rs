@@ -4035,11 +4035,39 @@ mod tests {
 
         assert_eq!(
             claims.extra.get("amr"),
-            Some(&serde_json::json!(["pwd", "totp", "mfa"]))
+            Some(&serde_json::json!(["pwd", "otp", "totp", "mfa"]))
         );
         assert_eq!(
             claims.extra.get("acr"),
             Some(&serde_json::json!(crate::amr_acr::ACR_MFA))
+        );
+    }
+
+    /// `auth_time` has to survive the round-trip into a real issued token,
+    /// not just the unit tests: it is the value a relying party compares
+    /// against `max_age`, and the refresh-token grant used here is exactly
+    /// the case where it must report the *original* authentication rather
+    /// than when this later token was minted.
+    #[tokio::test]
+    async fn auth_time_survives_into_an_issued_token_unchanged() {
+        let authenticated_at = 1_757_843_000_i64;
+        let mut identity = identity_with_amr("password", false);
+        identity.attributes.insert(
+            authkestra_engine::auth::state::IDENTITY_ATTR_AUTH_TIME.to_string(),
+            authenticated_at.to_string(),
+        );
+
+        let claims = id_token_claims_for(identity).await;
+
+        assert_eq!(
+            claims.extra.get("auth_time"),
+            Some(&serde_json::json!(authenticated_at)),
+            "auth_time must report when the user authenticated, not when this \
+             refreshed token was issued"
+        );
+        assert!(
+            (claims.iat as i64) > authenticated_at,
+            "the fixture is only meaningful if iat and auth_time actually differ"
         );
     }
 
