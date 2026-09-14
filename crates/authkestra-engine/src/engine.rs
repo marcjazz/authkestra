@@ -428,12 +428,11 @@ impl<S, T> Engine<S, T> {
         } else {
             // Issue MFA Token
             let exp = chrono::Utc::now() + chrono::Duration::minutes(15);
-            let claims = crate::auth::state::MfaTokenClaims {
-                sub: identity.external_id.clone(),
-                mfa_pending: true,
-                exp: exp.timestamp() as usize,
-                primary_method: method_name.to_string(),
-            };
+            let claims = crate::auth::state::MfaTokenClaims::new(
+                identity.external_id.clone(),
+                exp.timestamp() as usize,
+                method_name,
+            );
 
             let mfa_token = jsonwebtoken::encode(
                 &jsonwebtoken::Header::default(),

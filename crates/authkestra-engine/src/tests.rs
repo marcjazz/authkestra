@@ -345,12 +345,11 @@ mod mfa_token_leeway {
     /// thing wrong with it.
     fn expired_mfa_token<S, T>(engine: &crate::Engine<S, T>, seconds_ago: i64) -> String {
         let exp = chrono::Utc::now() - chrono::Duration::seconds(seconds_ago);
-        let claims = crate::auth::state::MfaTokenClaims {
-            sub: "user123".to_string(),
-            mfa_pending: true,
-            exp: exp.timestamp() as usize,
-            primary_method: "password".to_string(),
-        };
+        let claims = crate::auth::state::MfaTokenClaims::new(
+            "user123",
+            exp.timestamp() as usize,
+            "password",
+        );
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &claims,
@@ -547,12 +546,14 @@ mod authenticate_error_paths {
     }
 
     fn mfa_token<S, T>(engine: &Engine<S, T>, sub: &str, mfa_pending: bool) -> String {
-        let claims = crate::auth::state::MfaTokenClaims {
-            sub: sub.to_string(),
-            mfa_pending,
-            exp: (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp() as usize,
-            primary_method: "password".to_string(),
-        };
+        let mut claims = crate::auth::state::MfaTokenClaims::new(
+            sub,
+            (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp() as usize,
+            "password",
+        );
+        // `new` sets the only value a real MFA token carries; assigning here
+        // is how a test reaches the shape `authenticate` is supposed to reject.
+        claims.mfa_pending = mfa_pending;
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
             &claims,

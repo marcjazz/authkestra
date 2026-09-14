@@ -63,7 +63,19 @@ pub enum AuthResult {
 }
 
 /// Claims inside the temporary MFA JWT token.
+///
+/// `#[non_exhaustive]`, so construct one with [`MfaTokenClaims::new`] rather
+/// than a struct literal. This type gains a field whenever a new piece of
+/// state has to survive the step-up continuation round-trip — `primary_method`
+/// below is the most recent — and without the attribute every one of those
+/// additions is a breaking change for downstream code that had nothing to do
+/// with the new field. Reading and assigning fields is unaffected; only
+/// literal construction and exhaustive destructuring are restricted.
+///
+/// This matches what the rest of the crate already does — see `Jwk`, which
+/// was given the same treatment for the same reason.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MfaTokenClaims {
     /// Subject (the user ID)
     pub sub: String,
@@ -89,6 +101,27 @@ pub struct MfaTokenClaims {
     /// step-up factor that this call actually verified.
     #[serde(default)]
     pub primary_method: String,
+}
+
+impl MfaTokenClaims {
+    /// Creates the claims for a step-up continuation token: `sub` is the user
+    /// the primary factor authenticated, `exp` the token's expiry as a Unix
+    /// timestamp, and `primary_method` the internal name of the
+    /// [`AuthMethod`](crate::auth::AuthMethod) that ran first (see
+    /// [`primary_method`](Self::primary_method)).
+    ///
+    /// `mfa_pending` is set to `true`, which is the only value a real MFA
+    /// token carries — [`Engine::authenticate`](crate::Engine::authenticate)
+    /// rejects a token whose `mfa_pending` is `false`. The field stays public
+    /// so a test can still construct the rejected shape by assigning to it.
+    pub fn new(sub: impl Into<String>, exp: usize, primary_method: impl Into<String>) -> Self {
+        Self {
+            sub: sub.into(),
+            mfa_pending: true,
+            exp,
+            primary_method: primary_method.into(),
+        }
+    }
 }
 
 /// Represents the tokens returned by an OAuth2 provider.
