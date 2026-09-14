@@ -739,7 +739,14 @@ async fn handle_device_code(
                 };
 
                 let id_token = if session.scope.contains("openid") {
-                    match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+                    let id_extra = crate::amr_acr::amr_acr_extra_claims(&identity);
+                    match tokens.issue_id_token_with_extra(
+                        identity.clone(),
+                        &client_id,
+                        None,
+                        expires_in,
+                        id_extra,
+                    ) {
                         Ok(t) => Some(t),
                         Err(_) => {
                             return Err(TokenErrorResponse {
@@ -984,11 +991,13 @@ pub async fn default_handle_authorization_code<S: OpStore + ?Sized>(
     };
 
     let id_token = if auth_code.scope.contains("openid") {
-        match tokens.issue_id_token(
+        let id_extra = crate::amr_acr::amr_acr_extra_claims(&auth_code.identity);
+        match tokens.issue_id_token_with_extra(
             auth_code.identity.clone(),
             &client_id,
             auth_code.nonce.clone(),
             expires_in,
+            id_extra,
         ) {
             Ok(t) => Some(t),
             Err(e) => {
@@ -1596,7 +1605,14 @@ pub(crate) async fn default_handle_refresh_token<S: OpStore + ?Sized>(
     // `nonce` as OPTIONAL on a refreshed id_token, so omitting it is
     // conformant, not a shortcut.
     let id_token = if old_rt.scope.contains("openid") {
-        match tokens.issue_id_token(old_rt.identity.clone(), &client_id, None, expires_in) {
+        let id_extra = crate::amr_acr::amr_acr_extra_claims(&old_rt.identity);
+        match tokens.issue_id_token_with_extra(
+            old_rt.identity.clone(),
+            &client_id,
+            None,
+            expires_in,
+            id_extra,
+        ) {
             Ok(t) => Some(t),
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to issue id token");
@@ -1830,7 +1846,14 @@ pub async fn default_handle_token_exchange(
     // not depend on which requested_token_type value was sent. No nonce is
     // reflected, since RFC 8693 exchange requests don't carry one.
     let id_token = if granted_openid {
-        match tokens.issue_id_token(identity.clone(), &client_id, None, expires_in) {
+        let id_extra = crate::amr_acr::amr_acr_extra_claims(&identity);
+        match tokens.issue_id_token_with_extra(
+            identity.clone(),
+            &client_id,
+            None,
+            expires_in,
+            id_extra,
+        ) {
             Ok(t) => Some(t),
             Err(e) => {
                 tracing::error!(error = ?e, "Failed to issue id token during exchange");
@@ -3906,6 +3929,142 @@ mod tests {
             resp.id_token, None,
             "no openid scope should mean no id_token, same as before this feature existed"
         );
+    }
+
+    // --- `acr`/`amr` ID token claims ---
+    //
+    // `Engine::authenticate` stamps `IDENTITY_ATTR_AMR` (and, when this
+    // engine's step-up tier is satisfied,
+    // `IDENTITY_ATTR_STEP_UP_SATISFIED`) onto `Identity::attributes`; these
+    // exercise the other end, `crate::amr_acr::amr_acr_extra_claims`, through
+    // an actual issued ID token rather than just the unit tests in
+    // `amr_acr`. The refresh-token grant is used as the vehicle since it's
+    // the simplest of the four `issue_id_token_with_extra` call sites to
+    // stand a fixture up for; all four share the same helper, so this
+    // exercises them equally.
+
+    /// An identity carrying the `attributes` `Engine::authenticate` would
+    /// have stamped for a given login outcome.
+    fn identity_with_amr(amr: &str, step_up_satisfied: bool) -> Identity {
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            authkestra_engine::auth::state::IDENTITY_ATTR_AMR.to_string(),
+            amr.to_string(),
+        );
+        if step_up_satisfied {
+            attributes.insert(
+                authkestra_engine::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
+                "true".to_string(),
+            );
+        }
+        Identity {
+            provider_id: "test".to_string(),
+            external_id: "user123".to_string(),
+            username: Some("user123".to_string()),
+            email: None,
+            attributes,
+        }
+    }
+
+    /// Issues a refresh-token-grant ID token for `identity` and returns its
+    /// decoded claims, so a test can inspect `extra["amr"]`/`extra["acr"]`.
+    async fn id_token_claims_for(identity: Identity) -> authkestra_engine::token::Claims {
+        let clients = authkestra_engine::store::memory::MemoryStore::<ClientRegistration>::new();
+        clients
+            .set(
+                "client1",
+                refresh_test_client(),
+                std::time::Duration::from_secs(31536000),
+            )
+            .await
+            .unwrap();
+
+        let mut refresh =
+            authkestra_engine::store::memory::MemoryStore::<crate::refresh::RefreshToken>::new();
+        refresh
+            .store_token(RefreshToken::new(
+                "rt-amr".to_string(),
+                "client1".to_string(),
+                identity,
+                "openid profile".to_string(),
+                Utc::now() + Duration::days(1),
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let tokens = test_tokens();
+        let res = handle_token(
+            refresh_test_req("rt-amr"),
+            None,
+            &test_config(false),
+            &mut crate::store::CompositeOpStore::new(
+                clients,
+                authkestra_engine::store::memory::MemoryStore::<AuthorizationCode>::new(),
+                refresh,
+                authkestra_engine::store::memory::MemoryStore::<crate::device::DeviceCodeSession>::new(
+            ),
+            ),
+            &tokens,
+        )
+        .await
+        .unwrap();
+
+        let id_token = res
+            .id_token
+            .expect("openid scope requested, id_token expected");
+        tokens
+            .validate_token(&id_token, None)
+            .expect("issued id_token should validate against the issuer's own key")
+    }
+
+    #[tokio::test]
+    async fn primary_only_identity_gets_single_factor_acr_and_no_mfa_marker() {
+        let claims = id_token_claims_for(identity_with_amr("password", false)).await;
+
+        assert_eq!(claims.extra.get("amr"), Some(&serde_json::json!(["pwd"])));
+        assert_eq!(
+            claims.extra.get("acr"),
+            Some(&serde_json::json!(crate::amr_acr::ACR_SINGLE_FACTOR))
+        );
+    }
+
+    #[tokio::test]
+    async fn step_up_identity_gets_mfa_acr_and_both_methods_plus_marker() {
+        let claims = id_token_claims_for(identity_with_amr("password totp", true)).await;
+
+        assert_eq!(
+            claims.extra.get("amr"),
+            Some(&serde_json::json!(["pwd", "totp", "mfa"]))
+        );
+        assert_eq!(
+            claims.extra.get("acr"),
+            Some(&serde_json::json!(crate::amr_acr::ACR_MFA))
+        );
+    }
+
+    /// The two outcomes above must actually differ — pinning that directly
+    /// guards against a regression that makes both branches converge (e.g.
+    /// `step_up_satisfied` silently defaulting to the same value either
+    /// way) even if each assertion above still individually passed.
+    #[tokio::test]
+    async fn primary_only_and_step_up_ids_are_visibly_different() {
+        let single = id_token_claims_for(identity_with_amr("password", false)).await;
+        let stepped_up = id_token_claims_for(identity_with_amr("password totp", true)).await;
+
+        assert_ne!(single.extra.get("amr"), stepped_up.extra.get("amr"));
+        assert_ne!(single.extra.get("acr"), stepped_up.extra.get("acr"));
+    }
+
+    #[tokio::test]
+    async fn an_identity_with_no_amr_attribute_gets_neither_claim() {
+        // `test_identity()` carries empty `attributes` — the shape of an
+        // `Identity` that never passed through `Engine::authenticate` (e.g.
+        // a federated login handed straight to `handle_authorize`).
+        let claims = id_token_claims_for(test_identity()).await;
+
+        assert!(!claims.extra.contains_key("amr"));
+        assert!(!claims.extra.contains_key("acr"));
     }
 
     // --- OpStore::handle_token_exchange override seam (issue #204) ---

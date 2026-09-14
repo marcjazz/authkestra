@@ -300,7 +300,7 @@ impl<S, T> Engine<S, T> {
                     AuthError::Internal(format!("MFA method {} not registered", method_name))
                 })?;
 
-            let identity = method.authenticate(*challenge_input).await.map_err(|e| {
+            let mut identity = method.authenticate(*challenge_input).await.map_err(|e| {
                 tracing::warn!(error = %e, method = method_name, "second factor rejected");
                 e
             })?;
@@ -315,6 +315,24 @@ impl<S, T> Engine<S, T> {
                 );
                 return Err(AuthError::Credentials("MFA token user mismatch".into()));
             }
+
+            // Report the whole method chain — primary, carried across the
+            // continuation round-trip in the MFA token, plus this step-up
+            // factor — as `amr`, not just the factor that ran in this call.
+            // A completed step-up always satisfies this engine's (binary)
+            // step-up tier, regardless of which two methods were involved.
+            let mut amr_methods = vec![token_data.claims.primary_method.clone()];
+            if token_data.claims.primary_method != method_name {
+                amr_methods.push(method_name.to_string());
+            }
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AMR.to_string(),
+                amr_methods.join(" "),
+            );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
+                "true".to_string(),
+            );
 
             tracing::info!(
                 method = method_name,
@@ -354,7 +372,7 @@ impl<S, T> Engine<S, T> {
             ))
         })?;
 
-        let identity = method.authenticate(input).await.map_err(|e| {
+        let mut identity = method.authenticate(input).await.map_err(|e| {
             tracing::warn!(error = %e, "primary authentication rejected");
             e
         })?;
@@ -385,6 +403,20 @@ impl<S, T> Engine<S, T> {
                 enrolled_methods = enrolled_methods.len(),
                 "authentication completed without a second factor"
             );
+            identity.attributes.insert(
+                crate::auth::state::IDENTITY_ATTR_AMR.to_string(),
+                method_name.to_string(),
+            );
+            if method.is_mfa_equivalent() {
+                // No step-up ran, but the sole primary method already
+                // provides step-up-equivalent assurance (e.g. this engine's
+                // built-in WebAuthn), so the binary step-up tier is still
+                // satisfied.
+                identity.attributes.insert(
+                    crate::auth::state::IDENTITY_ATTR_STEP_UP_SATISFIED.to_string(),
+                    "true".to_string(),
+                );
+            }
             Ok(AuthResult::Success(identity))
         } else {
             // Issue MFA Token
@@ -393,6 +425,7 @@ impl<S, T> Engine<S, T> {
                 sub: identity.external_id.clone(),
                 mfa_pending: true,
                 exp: exp.timestamp() as usize,
+                primary_method: method_name.to_string(),
             };
 
             let mfa_token = jsonwebtoken::encode(

@@ -226,7 +226,21 @@ async fn test_mfa_equivalent_bypasses_mfa() {
         .unwrap();
 
     match res {
-        AuthResult::Success(_) => {}
+        AuthResult::Success(identity) => {
+            // No step-up ran, but an `is_mfa_equivalent` primary satisfies
+            // this engine's (binary) step-up tier on its own — see
+            // `IDENTITY_ATTR_STEP_UP_SATISFIED`.
+            assert_eq!(
+                identity.attributes.get(crate::auth::IDENTITY_ATTR_AMR),
+                Some(&"webauthn".to_string())
+            );
+            assert_eq!(
+                identity
+                    .attributes
+                    .get(crate::auth::IDENTITY_ATTR_STEP_UP_SATISFIED),
+                Some(&"true".to_string())
+            );
+        }
         _ => panic!("Expected Success"),
     }
 }
@@ -335,6 +349,7 @@ mod mfa_token_leeway {
             sub: "user123".to_string(),
             mfa_pending: true,
             exp: exp.timestamp() as usize,
+            primary_method: "password".to_string(),
         };
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
@@ -536,6 +551,7 @@ mod authenticate_error_paths {
             sub: sub.to_string(),
             mfa_pending,
             exp: (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp() as usize,
+            primary_method: "password".to_string(),
         };
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
@@ -687,5 +703,141 @@ mod authenticate_error_paths {
             engine.authenticate(totp_challenge(token)).await,
             Ok(AuthResult::Success(_))
         ));
+    }
+}
+
+// --- `amr`/step-up bookkeeping stamped onto `Identity::attributes` ---
+//
+// `Engine::authenticate` is the only place that knows which `AuthMethod`(s)
+// actually ran for a given login, so it is responsible for recording that
+// onto the returned `Identity` (see `IDENTITY_ATTR_AMR` /
+// `IDENTITY_ATTR_STEP_UP_SATISFIED`) — `authkestra-op` reads it back out to
+// populate the `amr`/`acr` ID token claims. These pin the three cases that
+// claim derivation distinguishes: primary-only, a completed step-up, and an
+// `is_mfa_equivalent` primary that skips step-up entirely (covered by
+// `test_mfa_equivalent_bypasses_mfa` above).
+#[cfg(all(test, feature = "totp"))]
+mod amr_step_up_bookkeeping {
+    use super::*;
+    use crate::auth::{AuthResult, IDENTITY_ATTR_AMR, IDENTITY_ATTR_STEP_UP_SATISFIED};
+    use crate::Engine;
+
+    struct TestPasswordMethod;
+    #[async_trait]
+    impl AuthMethod for TestPasswordMethod {
+        fn name(&self) -> &str {
+            "password"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Ok(Identity {
+                provider_id: "password".to_string(),
+                external_id: "user123".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+    }
+
+    struct TestTotpStepUpMethod;
+    #[async_trait]
+    impl AuthMethod for TestTotpStepUpMethod {
+        fn name(&self) -> &str {
+            "totp"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Ok(Identity {
+                provider_id: "totp".to_string(),
+                external_id: "user123".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+        async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
+            Ok(true)
+        }
+    }
+
+    /// A plain password login with no MFA enrolled: `amr` names the single
+    /// primary method, and the step-up marker is absent (not `"false"` —
+    /// see `IDENTITY_ATTR_STEP_UP_SATISFIED`'s doc comment).
+    #[tokio::test]
+    async fn primary_only_login_stamps_amr_and_no_step_up_marker() {
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .build();
+
+        let res = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "irrelevant".to_string(),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::Success(identity) => {
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_AMR),
+                    Some(&"password".to_string())
+                );
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_STEP_UP_SATISFIED),
+                    None
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// Primary auth followed by a completed step-up: `amr` names *both*
+    /// methods, primary first, and the step-up marker is set — this is the
+    /// case that must look visibly different from the primary-only case
+    /// above once `authkestra-op` turns it into `acr`/`amr` claims.
+    #[tokio::test]
+    async fn completed_step_up_stamps_amr_with_both_methods() {
+        let engine = Engine::builder()
+            .with_auth_method(TestPasswordMethod)
+            .with_mfa_method(TestTotpStepUpMethod)
+            .build();
+
+        let primary = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "irrelevant".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let mfa_token = match primary {
+            AuthResult::MfaRequired { mfa_token, .. } => mfa_token,
+            other => panic!("expected MfaRequired (TOTP is enrolled), got {other:?}"),
+        };
+
+        let res = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token,
+                challenge_input: Box::new(AuthInput::Totp {
+                    user_id: "user123".to_string(),
+                    code: "000000".to_string(),
+                }),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::Success(identity) => {
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_AMR),
+                    Some(&"password totp".to_string())
+                );
+                assert_eq!(
+                    identity.attributes.get(IDENTITY_ATTR_STEP_UP_SATISFIED),
+                    Some(&"true".to_string())
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
     }
 }

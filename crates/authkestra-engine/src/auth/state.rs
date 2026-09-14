@@ -2,6 +2,33 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// The [`Identity::attributes`] key [`Engine::authenticate`](crate::Engine::authenticate)
+/// stamps with the space-delimited list of internal auth-method names that
+/// authenticated this identity (e.g. `"password"`, or `"password totp"`
+/// after a completed step-up) — in the order they ran, primary first.
+///
+/// This is the same "thread flow-local data through `Identity` without
+/// changing its shape" idiom already used for `"nonce"` (see
+/// `authkestra_engine::flow::oauth2`): a plain `HashMap<String, String>`
+/// entry rather than a new struct field, so registering a claim consumer
+/// (like `authkestra-op`'s `acr`/`amr` derivation) never requires touching
+/// every `Identity { .. }` literal in the workspace.
+///
+/// Absent for any `Identity` that did not come from `Engine::authenticate`
+/// (an OAuth-provider-sourced identity, for instance) — there is deliberately
+/// no fallback value, since fabricating one would assert an auth method that
+/// was never actually verified.
+pub const IDENTITY_ATTR_AMR: &str = "amr";
+
+/// The [`Identity::attributes`] key set to the literal `"true"` when this
+/// identity's authentication satisfies this engine's step-up tier: either a
+/// step-up (MFA) challenge was actually completed, or the sole primary
+/// [`AuthMethod`](crate::auth::AuthMethod) reported
+/// [`is_mfa_equivalent`](crate::auth::AuthMethod::is_mfa_equivalent). Absent
+/// (never `"false"`) otherwise. See [`IDENTITY_ATTR_AMR`] for why this lives
+/// in `attributes` rather than as a named field.
+pub const IDENTITY_ATTR_STEP_UP_SATISFIED: &str = "step_up_satisfied";
+
 /// A unified identity structure returned by all providers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
@@ -13,7 +40,9 @@ pub struct Identity {
     pub email: Option<String>,
     /// The user's username or display name, if available
     pub username: Option<String>,
-    /// Additional provider-specific attributes
+    /// Additional provider-specific attributes. Also the carrier for a few
+    /// pieces of flow-local bookkeeping that don't warrant their own named
+    /// field — see [`IDENTITY_ATTR_AMR`] and [`IDENTITY_ATTR_STEP_UP_SATISFIED`].
     pub attributes: HashMap<String, String>,
 }
 
@@ -42,6 +71,14 @@ pub struct MfaTokenClaims {
     pub mfa_pending: bool,
     /// Expiration timestamp
     pub exp: usize,
+    /// The internal name of the primary [`AuthMethod`](crate::auth::AuthMethod)
+    /// (e.g. `"password"`) that authenticated `sub` before this step-up
+    /// challenge was issued. Carried across the continuation round-trip so
+    /// that when the second factor completes, `Engine::authenticate` can
+    /// report the *whole* method chain — primary and step-up — as this
+    /// identity's `amr`, not just the second factor. See
+    /// [`IDENTITY_ATTR_AMR`].
+    pub primary_method: String,
 }
 
 /// Represents the tokens returned by an OAuth2 provider.

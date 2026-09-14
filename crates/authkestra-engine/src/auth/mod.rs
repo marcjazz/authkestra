@@ -20,7 +20,10 @@ pub use error::AuthError;
 
 /// A unified identity structure returned by all providers.
 pub mod state;
-pub use state::{AuthResult, Identity, OAuth2State, OAuthToken};
+pub use state::{
+    AuthResult, Identity, OAuth2State, OAuthToken, IDENTITY_ATTR_AMR,
+    IDENTITY_ATTR_STEP_UP_SATISFIED,
+};
 
 /// Discovery utilities for OAuth2 providers.
 pub mod discovery;
