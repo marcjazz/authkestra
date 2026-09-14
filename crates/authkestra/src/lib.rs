@@ -21,7 +21,14 @@ pub use authkestra_engine::store;
 pub use authkestra_engine as token;
 
 /// Storage backends and persistence.
-#[cfg(any(feature = "session", feature = "memory", feature = "redis", feature = "sql-postgres", feature = "sql-mysql", feature = "sql-sqlite"))]
+#[cfg(any(
+    feature = "session",
+    feature = "memory",
+    feature = "redis",
+    feature = "sql-postgres",
+    feature = "sql-mysql",
+    feature = "sql-sqlite"
+))]
 pub use authkestra_engine::store as persistence;
 
 /// WebAuthn passkey authentication.
