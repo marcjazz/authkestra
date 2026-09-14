@@ -3,12 +3,15 @@
 //! This crate serves as a facade, re-exporting functionality from other `authkestra-*` crates
 //! based on enabled features.
 
+#[cfg(feature = "engine")]
 pub use authkestra_engine as core;
 
 /// Type alias for the Engine to support the Authkestra::builder() pattern.
+#[cfg(feature = "engine")]
 pub type Authkestra<S = authkestra_engine::Missing, T = authkestra_engine::Missing> =
     authkestra_engine::Engine<S, T>;
 
+#[cfg(feature = "engine")]
 pub use authkestra_engine as flow;
 
 #[cfg(feature = "session")]
@@ -16,6 +19,18 @@ pub use authkestra_engine::store;
 
 #[cfg(feature = "token")]
 pub use authkestra_engine as token;
+
+/// Storage backends and persistence.
+#[cfg(any(feature = "session", feature = "memory", feature = "redis", feature = "sql-postgres", feature = "sql-mysql", feature = "sql-sqlite"))]
+pub use authkestra_engine::store as persistence;
+
+/// WebAuthn passkey authentication.
+#[cfg(feature = "webauthn")]
+pub use authkestra_engine::webauthn;
+
+/// Time-based One-Time Password (TOTP) authentication.
+#[cfg(feature = "totp")]
+pub use authkestra_engine::totp;
 
 #[cfg(feature = "oidc")]
 pub use authkestra_oidc as oidc;
