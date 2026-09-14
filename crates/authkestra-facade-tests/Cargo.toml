@@ -24,8 +24,9 @@ publish = false
 # only resolve if the facade genuinely forwarded the feature.
 [dev-dependencies]
 authkestra = { path = "../authkestra", features = [
-    "session",
-    "token",
+    # No "session"/"token": both were removed from the facade once they
+    # forwarded nothing. `engine` is what they actually delivered.
+    "engine",
     "axum",
     "actix",
     "memory",
