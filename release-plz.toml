@@ -77,5 +77,9 @@ version_group = "authkestra"
 # "make the exclusion explicit" is what broke the release run after #348.
 
 [[package]]
+name = "authkestra-ssf"
+version_group = "authkestra"
+
+[[package]]
 name = "authkestra-policy"
 version_group = "authkestra"

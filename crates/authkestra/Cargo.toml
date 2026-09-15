@@ -20,6 +20,7 @@ authkestra-resource = { workspace = true, optional = true, default-features = fa
 authkestra-op = { workspace = true, optional = true, default-features = false }
 authkestra-devsig = { workspace = true, optional = true }
 authkestra-policy = { workspace = true, optional = true, default-features = false }
+authkestra-ssf = { workspace = true, optional = true, default-features = false }
 
 [dev-dependencies]
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
@@ -99,6 +100,7 @@ full = [
     "op",
     "devsig",
     "policy",
+    "ssf",
 ]
 engine = ["dep:authkestra-engine"]
 
@@ -135,6 +137,9 @@ rustls-no-provider = [
 
 oidc = ["dep:authkestra-oidc"]
 resource = ["dep:authkestra-resource", "authkestra-actix?/resource", "authkestra-axum?/resource"]
+# Shared Signals Framework / CAEP ingestion. No adapter feature to forward: `authkestra-ssf` is
+# framework-agnostic and ships no axum/actix wiring yet (see authkestra#25).
+ssf = ["dep:authkestra-ssf"]
 
 # Cedar policy engine (authkestra#21). Proof of concept: it evaluates policies, but nothing in
 # the adapters or in `authkestra-resource` calls it yet. See docs/rfc-008-policy-engine.md.
