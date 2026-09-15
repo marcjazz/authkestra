@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/marcjazz/authkestra/compare/authkestra-store-testsuite-v0.11.0...authkestra-store-testsuite-v0.11.1) - 2026-09-15
+
+### Added
+
+- *(policy)* Cedar policy engine proof of concept + RFC-005 ([#310](https://github.com/marcjazz/authkestra/pull/310))
+- *(ssf)* ingest and validate Security Event Tokens (RFC 8417) with typed CAEP events ([#309](https://github.com/marcjazz/authkestra/pull/309))
+
 ## [0.9.5](https://github.com/marcjazz/authkestra/compare/authkestra-store-testsuite-v0.9.4...authkestra-store-testsuite-v0.9.5) - 2026-09-13
 
 ### Other
