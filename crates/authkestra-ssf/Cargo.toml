@@ -1,0 +1,29 @@
+[package]
+exclude.workspace = true
+name = "authkestra-ssf"
+version.workspace = true
+edition.workspace = true
+description = "Shared Signals Framework for the authkestra framework: ingest and validate Security Event Tokens (RFC 8417), decode typed OpenID CAEP 1.0 events, and receive them over the RFC 8935 push delivery method"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[dependencies]
+async-trait = "0.1"
+# Raw base64 decoding of the JOSE header, *before* `jsonwebtoken`'s typed API sees it. See
+# `crate::verify` for why `alg: "none"` and a missing/wrong `typ` cannot be told apart from a
+# corrupt token any other way.
+base64 = "0.22.1"
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0.18"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+[features]
+default = []

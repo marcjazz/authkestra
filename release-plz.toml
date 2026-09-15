@@ -75,3 +75,7 @@ version_group = "authkestra"
 #
 # The manifest is the single source of truth by design. Adding entries to
 # "make the exclusion explicit" is what broke the release run after #348.
+
+[[package]]
+name = "authkestra-ssf"
+version_group = "authkestra"
