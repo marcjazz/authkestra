@@ -1,0 +1,24 @@
+[package]
+exclude.workspace = true
+name = "authkestra-policy"
+version.workspace = true
+edition.workspace = true
+description = "Proof-of-concept AWS Cedar policy engine for the authkestra framework: evaluates Cedar policies against entities hydrated by a caller-supplied ResourceLoader, with runtime policy reload"
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[dependencies]
+async-trait = "0.1"
+cedar-policy = "4.12"
+serde_json = "1.0"
+thiserror = "2.0.18"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+[features]
+default = []
