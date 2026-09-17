@@ -193,19 +193,45 @@ explicit argument, because an application that maintains its own handle index
 is the whole reason that method exists. The credential is still filed under
 `identity.external_id` at completion.
 
-### 4.7. Gate the start of a ceremony, not both ends
+### 4.7. Gate the start of a ceremony, and bind the subject into its state
 
 WebAuthn registration is two calls. The check runs in
 `start_register_with_handle` — the choke point `start_register` delegates to,
 so it runs exactly once per ceremony — and not again in `finish_register`.
+Re-checking at the end would buy nothing and would fail a user whose window
+expired while they were touching their authenticator.
 
-`finish_register` accepts only a `PasskeyRegistration` that
-`start_register_with_handle` minted, so a ceremony that was never started
-cannot be finished. Re-checking at the end would buy nothing and would fail a
-user whose window expired while they were touching their authenticator.
+That leaves §4.6's problem in the second half. `webauthn-rs`' own
+`PasskeyRegistration` is opaque and says nothing about *who* the ceremony was
+opened for, so `finish_register(identity, response, state)` would let the two
+arguments disagree — the same confused-deputy shape, moved to completion. An
+earlier revision of this design took the `Identity` at completion and called
+that sufficient; it was not. Nothing related the identity at finish to the one
+whose re-proof minted the state, so the guarantee was a caller contract
+described as an enforced property.
 
-`finish_register` still takes the `Identity` rather than a bare id, for §4.6's
-reason: the two halves must not be able to name different accounts.
+So the subject is bound into the ceremony state instead:
+
+```rust
+#[non_exhaustive]
+pub struct PasskeyEnrolment {
+    pub subject: String,          // external_id whose re-proof opened this
+    pub state: PasskeyRegistration,
+}
+```
+
+`start_register*` returns one; `finish_register` consumes one and takes no
+account argument at all. This removes the possibility rather than checking for
+it — there is no second argument left to mismatch. It is deliberately
+*stronger* than validating a passed-in identity against the state, which would
+have caught the mismatch but still required the caller to supply something it
+could get wrong.
+
+`PasskeyEnrolment` is `Serialize`/`Deserialize` because the application has to
+carry it across the round trip to the authenticator (`authkestra-engine`
+enables `webauthn-rs`' `danger-allow-state-serialisation` for exactly this).
+It is server-side state: handing it to the client would let the client choose
+the account the credential lands on.
 
 ## 5. Implementation summary
 
@@ -214,7 +240,7 @@ reason: the two halves must not be able to name different accounts.
 | `crates/authkestra-engine/src/auth/reproof.rs` | New. `ReproofRequirement`, `ReproofFailure`, `From<ReproofFailure> for AuthError`, and the module's tests. |
 | `auth/mod.rs` | Exports `reproof`, `ReproofRequirement`, `ReproofFailure`. |
 | `auth/totp.rs` | `register_totp` takes `&Identity` + `&ReproofRequirement` in place of `user_id`; checks before touching the store. |
-| `auth/webauthn.rs` | `start_register` / `start_register_with_handle` take `&Identity` + `&ReproofRequirement`; `finish_register` takes `&Identity`. |
+| `auth/webauthn.rs` | `start_register` / `start_register_with_handle` take `&Identity` + `&ReproofRequirement` and return a `PasskeyEnrolment`; `finish_register` consumes one and takes no account argument. |
 | `examples/totp_webauthn.rs` | Shows building the gate and where a failure sends the user. |
 
 `ReproofFailure` maps to `AuthError::Credentials`, not `InvalidInput`:

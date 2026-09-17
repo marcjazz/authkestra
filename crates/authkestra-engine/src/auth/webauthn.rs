@@ -56,6 +56,34 @@ pub struct WebAuthnAuthMethod<S: CredentialStore> {
     store: S,
 }
 
+/// A started passkey registration, carrying the account it was started for.
+///
+/// `webauthn-rs`' own `PasskeyRegistration` is opaque and says nothing about
+/// *who* the ceremony was opened for, so passing it to
+/// [`WebAuthnAuthMethod::finish_register`] alongside a separately supplied
+/// account id would leave the two free to disagree — the same confused-deputy
+/// shape the enrolment gate exists to close, just moved to the second half of
+/// the ceremony. Binding the subject into the state removes the possibility
+/// rather than checking for it: there is no second argument left to mismatch.
+///
+/// `subject` is the `external_id` of the identity whose re-proof satisfied the
+/// gate at [`WebAuthnAuthMethod::start_register_with_handle`], and it is what
+/// the finished credential is filed under.
+///
+/// Serializable, because an application has to carry this across the round
+/// trip to the authenticator — typically in the same server-side session that
+/// holds everything else about the ceremony. It must be treated as
+/// server-side state: handing it to the client would let the client choose
+/// the account the credential lands on.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct PasskeyEnrolment {
+    /// The `external_id` whose re-proof opened this ceremony.
+    pub subject: String,
+    /// `webauthn-rs`' ceremony state.
+    pub state: PasskeyRegistration,
+}
+
 impl<S: CredentialStore> WebAuthnAuthMethod<S> {
     /// Create a new `WebAuthnAuthMethod` with a WebAuthn config and a CredentialStore.
     pub fn new(webauthn: Arc<Webauthn>, store: S) -> Self {
@@ -77,7 +105,7 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
         identity: &Identity,
         gate: &ReproofRequirement,
         username: &str,
-    ) -> Result<(CreationChallengeResponse, PasskeyRegistration), AuthError> {
+    ) -> Result<(CreationChallengeResponse, PasskeyEnrolment), AuthError> {
         self.start_register_with_handle(
             identity,
             gate,
@@ -104,16 +132,15 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
     /// re-proof check lives here and runs exactly once per ceremony:
     /// `identity` must satisfy `gate` or no challenge is issued. Gating the
     /// *start* is what matters — [`WebAuthnAuthMethod::finish_register`]
-    /// accepts only a `PasskeyRegistration` this method produced, so a
-    /// ceremony that was never started cannot be finished. See
-    /// [`ReproofRequirement`] for why a live session is not enough on its
-    /// own.
+    /// consumes a [`PasskeyEnrolment`] only this method mints, so a ceremony
+    /// that was never started cannot be finished. See [`ReproofRequirement`]
+    /// for why a live session is not enough on its own.
     ///
     /// `handle` stays an explicit argument because an application that keeps
-    /// its own handle index is the whole reason this method exists, but the
-    /// credential is filed under `identity.external_id` at completion — the
-    /// account being enrolled is named by the re-proved identity, never
-    /// separately from it.
+    /// its own handle index is the whole reason this method exists. The
+    /// account being enrolled does not: it is carried in the returned
+    /// [`PasskeyEnrolment`], so the credential can only ever be filed under
+    /// the identity whose re-proof opened the ceremony.
     pub fn start_register_with_handle(
         &self,
         identity: &Identity,
@@ -121,35 +148,45 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
         handle: Uuid,
         username: &str,
         display_name: &str,
-    ) -> Result<(CreationChallengeResponse, PasskeyRegistration), AuthError> {
+    ) -> Result<(CreationChallengeResponse, PasskeyEnrolment), AuthError> {
         gate.check(identity)?;
         tracing::debug!(user_handle = %handle, username, "starting WebAuthn registration");
 
-        self.webauthn
+        let (challenge, state) = self
+            .webauthn
             .start_passkey_registration(handle, username, display_name, None)
             .map_err(|e| {
                 tracing::warn!(error = %e, user_handle = %handle, "WebAuthn registration failed to start");
                 AuthError::Internal(format!("WebAuthn registration failed to start: {e}"))
-            })
+            })?;
+
+        Ok((
+            challenge,
+            PasskeyEnrolment {
+                subject: identity.external_id.clone(),
+                state,
+            },
+        ))
     }
 
     /// Helper to finalize passkey registration and return the serialized Passkey to store.
     ///
-    /// Takes the `Identity` rather than a bare user id so the credential
-    /// cannot be filed against an account other than the one whose re-proof
-    /// opened the ceremony — see
-    /// [`WebAuthnAuthMethod::start_register_with_handle`]. The gate itself is
-    /// not re-run here: `state` is a `PasskeyRegistration` only that method
-    /// mints, so reaching this point already implies it was satisfied, and
-    /// re-checking would fail a user whose window expired while they were
-    /// touching their authenticator.
+    /// Takes the whole [`PasskeyEnrolment`] rather than a ceremony state plus
+    /// a separately supplied account, so the credential is filed under the
+    /// identity whose re-proof opened the ceremony and there is no second
+    /// argument that could name a different one.
+    ///
+    /// The gate itself is not re-run: reaching this point means
+    /// [`WebAuthnAuthMethod::start_register_with_handle`] already satisfied
+    /// it, and re-checking would fail a user whose window expired while they
+    /// were touching their authenticator.
     pub async fn finish_register(
         &self,
-        identity: &Identity,
+        enrolment: PasskeyEnrolment,
         reg_response: RegisterPublicKeyCredential,
-        state: PasskeyRegistration,
     ) -> Result<Passkey, AuthError> {
-        let user_id = identity.external_id.as_str();
+        let PasskeyEnrolment { subject, state } = enrolment;
+        let user_id = subject.as_str();
         let passkey = self
             .webauthn
             .finish_passkey_registration(&reg_response, &state)
@@ -349,6 +386,40 @@ mod tests {
                 .unwrap(),
         );
         WebAuthnAuthMethod::new(webauthn, DummyCredentialStore)
+    }
+
+    /// The subject is carried in the ceremony state, not supplied again at
+    /// completion — so the account a credential lands on is fixed at the
+    /// moment the gate passed and cannot be renamed afterwards.
+    #[test]
+    fn the_enrolment_carries_the_re_proved_subject() {
+        let method = build_method();
+        let identity = fresh_identity("alice");
+
+        let (_, enrolment) = method
+            .start_register(&identity, &permissive_gate(), "alice")
+            .unwrap();
+
+        assert_eq!(enrolment.subject, "alice");
+    }
+
+    /// Same for the explicit-handle entry point: a caller-chosen `handle`
+    /// does not get to imply a different account.
+    #[test]
+    fn an_explicit_handle_does_not_change_the_subject() {
+        let method = build_method();
+
+        let (_, enrolment) = method
+            .start_register_with_handle(
+                &fresh_identity("alice"),
+                &permissive_gate(),
+                derive_user_handle("someone-else"),
+                "alice",
+                "Alice",
+            )
+            .unwrap();
+
+        assert_eq!(enrolment.subject, "alice");
     }
 
     /// The vulnerability this gate closes (#382). A stale identity is what a
