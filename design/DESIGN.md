@@ -271,12 +271,24 @@ snippet coloured like a rainbow is harder to read than one that colours only
 what separates its lines.
 
 The three hues are warm and fan out from the rust ramp — coral at 16, amber at
-35, olive at 75 — close enough to read as one family, far enough apart to stay
-tellable at 13px. On a page about a Rust library, code is the last place that
-should look like someone else's editor. Keywords take `--ak-rust-300`, a step
-lighter than the accent itself, so the family reads while the exact accent shade
-stays reserved for links and calls to action; a `let` should never look
-clickable.
+35, olive at 75 — close enough to read as one family. On a page about a Rust
+library, code is the last place that should look like someone else's editor.
+
+Hue is what that family gives up, so it is not what tells the three apart:
+inside a 60° arc, red-green colour-vision deficiency flattens all three to the
+same tan. **Lightness carries the distinction instead**, and the three sit at
+deliberately different ramp steps — coral 79%, amber 62%, olive 81% — so they
+interleave with the neutral code roles rather than stack against them. Measured
+under a Machado et al. (2009) deuteranopia/protanopia simulation, the tightest
+of the fifteen code-role pairs separates by ΔL* 3.6. That is a floor, not
+headroom: six roles share the L* 66.5–98.3 band, so a further distinction needs
+a non-colour cue rather than a fourth hue.
+
+Keywords take `--ak-coral-200`, two steps lighter than the accent rather than
+one, so the family reads while the exact accent shade stays reserved for links
+and calls to action; a `let` should never look clickable. One step did not
+deliver that — `--ak-rust-300` sat 1.27:1 from the accent and 1° of hue away,
+which is not a perceptible step at 13px.
 
 **This depends on where liveness is marked.** Inside a code block the accent's
 only other job is to say which line or which snippet is live, and that mark has
