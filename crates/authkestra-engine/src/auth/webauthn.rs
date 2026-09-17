@@ -1,4 +1,6 @@
-use crate::auth::{error::AuthError, state::Identity, AuthInput, AuthMethod, CredentialStore};
+use crate::auth::{
+    error::AuthError, state::Identity, AuthInput, AuthMethod, CredentialStore, ReproofRequirement,
+};
 use async_trait::async_trait;
 use std::sync::Arc;
 use webauthn_rs::prelude::*;
@@ -67,12 +69,22 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
     /// [`WebAuthnAuthMethod::start_register_with_handle`] when the application
     /// allocates handles itself, or when the display name differs from the
     /// username (this method passes `username` for both).
+    ///
+    /// Gated on `gate`; see [`WebAuthnAuthMethod::start_register_with_handle`],
+    /// which performs the check for both entry points.
     pub fn start_register(
         &self,
-        user_id: &str,
+        identity: &Identity,
+        gate: &ReproofRequirement,
         username: &str,
     ) -> Result<(CreationChallengeResponse, PasskeyRegistration), AuthError> {
-        self.start_register_with_handle(derive_user_handle(user_id), username, username)
+        self.start_register_with_handle(
+            identity,
+            gate,
+            derive_user_handle(&identity.external_id),
+            username,
+            username,
+        )
     }
 
     /// Helper to generate a registration challenge for an explicit user handle.
@@ -85,12 +97,32 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
     /// keeps its own handle-to-user index; otherwise use
     /// [`WebAuthnAuthMethod::start_register`], which derives a stable handle
     /// from the user id.
+    ///
+    /// # Re-proof
+    ///
+    /// This is the choke point both entry points funnel through, so the
+    /// re-proof check lives here and runs exactly once per ceremony:
+    /// `identity` must satisfy `gate` or no challenge is issued. Gating the
+    /// *start* is what matters — [`WebAuthnAuthMethod::finish_register`]
+    /// accepts only a `PasskeyRegistration` this method produced, so a
+    /// ceremony that was never started cannot be finished. See
+    /// [`ReproofRequirement`] for why a live session is not enough on its
+    /// own.
+    ///
+    /// `handle` stays an explicit argument because an application that keeps
+    /// its own handle index is the whole reason this method exists, but the
+    /// credential is filed under `identity.external_id` at completion — the
+    /// account being enrolled is named by the re-proved identity, never
+    /// separately from it.
     pub fn start_register_with_handle(
         &self,
+        identity: &Identity,
+        gate: &ReproofRequirement,
         handle: Uuid,
         username: &str,
         display_name: &str,
     ) -> Result<(CreationChallengeResponse, PasskeyRegistration), AuthError> {
+        gate.check(identity)?;
         tracing::debug!(user_handle = %handle, username, "starting WebAuthn registration");
 
         self.webauthn
@@ -102,12 +134,22 @@ impl<S: CredentialStore> WebAuthnAuthMethod<S> {
     }
 
     /// Helper to finalize passkey registration and return the serialized Passkey to store.
+    ///
+    /// Takes the `Identity` rather than a bare user id so the credential
+    /// cannot be filed against an account other than the one whose re-proof
+    /// opened the ceremony — see
+    /// [`WebAuthnAuthMethod::start_register_with_handle`]. The gate itself is
+    /// not re-run here: `state` is a `PasskeyRegistration` only that method
+    /// mints, so reaching this point already implies it was satisfied, and
+    /// re-checking would fail a user whose window expired while they were
+    /// touching their authenticator.
     pub async fn finish_register(
         &self,
-        user_id: &str,
+        identity: &Identity,
         reg_response: RegisterPublicKeyCredential,
         state: PasskeyRegistration,
     ) -> Result<Passkey, AuthError> {
+        let user_id = identity.external_id.as_str();
         let passkey = self
             .webauthn
             .finish_passkey_registration(&reg_response, &state)
@@ -272,8 +314,110 @@ impl<S: CredentialStore + 'static> AuthMethod for WebAuthnAuthMethod<S> {
 mod tests {
     use super::*;
 
-    use crate::auth::WebAuthnStarter;
+    use crate::auth::{state::IDENTITY_ATTR_AUTH_TIME, WebAuthnStarter};
     use std::sync::Arc;
+
+    /// An identity that authenticated just now, as `Engine::authenticate`
+    /// would have stamped it — enough to satisfy [`permissive_gate`].
+    fn fresh_identity(user_id: &str) -> Identity {
+        let mut attributes = std::collections::HashMap::new();
+        attributes.insert(
+            IDENTITY_ATTR_AUTH_TIME.to_string(),
+            chrono::Utc::now().timestamp().to_string(),
+        );
+        Identity {
+            provider_id: "test".to_string(),
+            external_id: user_id.to_string(),
+            email: None,
+            username: None,
+            attributes,
+        }
+    }
+
+    /// A wide window, so these tests exercise registration rather than the
+    /// gate. The gate has its own tests in `auth::reproof`.
+    fn permissive_gate() -> ReproofRequirement {
+        ReproofRequirement::new(3600)
+    }
+
+    fn build_method() -> WebAuthnAuthMethod<DummyCredentialStore> {
+        let site_url = Url::parse("http://localhost").unwrap();
+        let webauthn = Arc::new(
+            WebauthnBuilder::new("localhost", &site_url)
+                .unwrap()
+                .build()
+                .unwrap(),
+        );
+        WebAuthnAuthMethod::new(webauthn, DummyCredentialStore)
+    }
+
+    /// The vulnerability this gate closes (#382). A stale identity is what a
+    /// stolen session looks like: still valid, but carrying no recent proof.
+    /// No challenge may be issued for it — a passkey enrolled this way would
+    /// be a factor the account's owner never knows about.
+    #[test]
+    fn a_stale_identity_cannot_start_a_registration() {
+        let method = build_method();
+
+        let mut attributes = std::collections::HashMap::new();
+        attributes.insert(
+            IDENTITY_ATTR_AUTH_TIME.to_string(),
+            (chrono::Utc::now().timestamp() - 3600).to_string(),
+        );
+        let stale = Identity {
+            provider_id: "test".to_string(),
+            external_id: "victim".to_string(),
+            email: None,
+            username: None,
+            attributes,
+        };
+
+        let result = method.start_register(&stale, &ReproofRequirement::new(300), "victim");
+        assert!(matches!(result, Err(AuthError::Credentials(_))));
+    }
+
+    /// An identity that never passed through `Engine::authenticate` has no
+    /// `auth_time` to check, and is refused rather than waved through.
+    #[test]
+    fn an_identity_with_no_auth_time_cannot_start_a_registration() {
+        let method = build_method();
+
+        let unproven = Identity {
+            provider_id: "test".to_string(),
+            external_id: "victim".to_string(),
+            email: None,
+            username: None,
+            attributes: std::collections::HashMap::new(),
+        };
+
+        let result = method.start_register(&unproven, &ReproofRequirement::new(300), "victim");
+        assert!(matches!(result, Err(AuthError::Credentials(_))));
+    }
+
+    /// The explicit-handle entry point is the choke point both funnel
+    /// through, so it has to refuse on its own account and not merely
+    /// inherit the check from `start_register`.
+    #[test]
+    fn the_explicit_handle_entry_point_is_gated_too() {
+        let method = build_method();
+
+        let unproven = Identity {
+            provider_id: "test".to_string(),
+            external_id: "victim".to_string(),
+            email: None,
+            username: None,
+            attributes: std::collections::HashMap::new(),
+        };
+
+        let result = method.start_register_with_handle(
+            &unproven,
+            &ReproofRequirement::new(300),
+            Uuid::new_v4(),
+            "victim",
+            "Victim",
+        );
+        assert!(matches!(result, Err(AuthError::Credentials(_))));
+    }
 
     struct DummyCredentialStore;
     #[async_trait]
@@ -329,7 +473,9 @@ mod tests {
         let enrolled = method.has_enrolled("user-1").await.unwrap();
         assert!(!enrolled);
 
-        let (challenge, _passkey_reg) = method.start_register("user-1", "user-1").unwrap();
+        let (challenge, _passkey_reg) = method
+            .start_register(&fresh_identity("user-1"), &permissive_gate(), "user-1")
+            .unwrap();
         assert_eq!(challenge.public_key.rp.id, "localhost");
 
         let _ = method.start_authentication(&[]).unwrap();
@@ -404,8 +550,10 @@ mod tests {
         let method = WebAuthnAuthMethod::new(webauthn, DummyCredentialStore);
 
         let cuid = "clh3k2j1x0000qwer1234asdf";
-        let (first, _) = method.start_register(cuid, "ada").unwrap();
-        let (second, _) = method.start_register(cuid, "ada").unwrap();
+        let identity = fresh_identity(cuid);
+        let gate = permissive_gate();
+        let (first, _) = method.start_register(&identity, &gate, "ada").unwrap();
+        let (second, _) = method.start_register(&identity, &gate, "ada").unwrap();
 
         assert_eq!(
             first.public_key.user.id, second.public_key.user.id,
@@ -418,7 +566,11 @@ mod tests {
         );
 
         let (other, _) = method
-            .start_register("clh3k2j1x0000qwer1234asdg", "grace")
+            .start_register(
+                &fresh_identity("clh3k2j1x0000qwer1234asdg"),
+                &permissive_gate(),
+                "grace",
+            )
             .unwrap();
         assert_ne!(
             first.public_key.user.id, other.public_key.user.id,
@@ -439,7 +591,13 @@ mod tests {
 
         let handle = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
         let (challenge, _) = method
-            .start_register_with_handle(handle, "ada", "Ada Lovelace")
+            .start_register_with_handle(
+                &fresh_identity("ada"),
+                &permissive_gate(),
+                handle,
+                "ada",
+                "Ada Lovelace",
+            )
             .unwrap();
 
         assert_eq!(challenge.public_key.user.id.as_ref(), handle.as_bytes());

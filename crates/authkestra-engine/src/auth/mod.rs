@@ -25,6 +25,10 @@ pub use state::{
     IDENTITY_ATTR_STEP_UP_SATISFIED,
 };
 
+/// Requiring a fresh re-proof of identity before a security-posture change.
+pub mod reproof;
+pub use reproof::{ReproofFailure, ReproofRequirement};
+
 /// Discovery utilities for OAuth2 providers.
 pub mod discovery;
 
