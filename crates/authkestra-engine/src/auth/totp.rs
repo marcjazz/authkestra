@@ -1,4 +1,6 @@
-use crate::auth::{error::AuthError, state::Identity, AuthInput, AuthMethod, CredentialStore};
+use crate::auth::{
+    error::AuthError, state::Identity, AuthInput, AuthMethod, CredentialStore, ReproofRequirement,
+};
 use async_trait::async_trait;
 use totp_rs::{Algorithm, TOTP};
 
@@ -22,12 +24,34 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
     ///
     /// The new secret is saved *before* the old ones are removed, so a failure part way through
     /// never leaves the user without a working TOTP credential; see the comments below.
+    ///
+    /// # Re-proof
+    ///
+    /// Enrolment is gated on `gate`: `identity` must satisfy it or nothing is
+    /// written and the call fails with [`AuthError::Credentials`]. A live
+    /// session is deliberately not enough — a stolen one would otherwise be
+    /// able to enrol a factor its holder controls and the account's owner
+    /// does not know about. See [`ReproofRequirement`] for the full
+    /// reasoning, and pick the window there rather than here.
+    ///
+    /// The secret is filed under `identity.external_id`, which is why the
+    /// account to enrol is named by the re-proved identity rather than by a
+    /// separate `user_id` argument. Letting the caller pass the two
+    /// independently would reinstate the same vulnerability one level up: a
+    /// freshly re-proved session for one account could name another
+    /// account's id. It is also the id the authentication path already
+    /// requires — [`AuthInput::Totp`]'s `user_id` is the credential-store
+    /// key, and `Engine::authenticate` rejects a step-up whose verified
+    /// identity does not match the `sub` its continuation token names.
     pub async fn register_totp(
         &self,
-        user_id: &str,
+        identity: &Identity,
+        gate: &ReproofRequirement,
         issuer: &str,
         account_name: &str,
     ) -> Result<(String, String), AuthError> {
+        gate.check(identity)?;
+        let user_id = identity.external_id.as_str();
         let secret = totp_rs::Secret::generate_secret();
         let secret_b32 = match secret.to_encoded() {
             totp_rs::Secret::Encoded(s) => s,
@@ -287,8 +311,35 @@ impl<S: CredentialStore + 'static> AuthMethod for TotpAuthMethod<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::auth::state::IDENTITY_ATTR_AUTH_TIME;
+
     use std::collections::HashMap;
     use std::sync::Mutex;
+
+    /// An identity that authenticated just now, as `Engine::authenticate`
+    /// would have stamped it — enough to satisfy [`permissive_gate`].
+    fn fresh_identity(user_id: &str) -> Identity {
+        let mut attributes = std::collections::HashMap::new();
+        attributes.insert(
+            IDENTITY_ATTR_AUTH_TIME.to_string(),
+            chrono::Utc::now().timestamp().to_string(),
+        );
+        Identity {
+            provider_id: "test".to_string(),
+            external_id: user_id.to_string(),
+            email: None,
+            username: None,
+            attributes,
+        }
+    }
+
+    /// A wide window, so these tests exercise enrolment rather than the gate.
+    /// The gate has its own tests in `auth::reproof`, and the tests that
+    /// assert it actually blocks enrolment build their own narrow one.
+    fn permissive_gate() -> ReproofRequirement {
+        ReproofRequirement::new(3600)
+    }
 
     struct MockStore {
         creds: Mutex<HashMap<String, Vec<serde_json::Value>>>,
@@ -388,6 +439,115 @@ mod tests {
         }
     }
 
+    /// The vulnerability this gate closes (#382): a session alone must not
+    /// be enough to enrol a factor. A stale identity is what a stolen cookie
+    /// looks like — still a valid session, but no recent proof of identity —
+    /// and it must not be able to write a secret it controls.
+    #[tokio::test]
+    async fn a_stale_identity_cannot_enrol_a_secret() {
+        let store = MockStore {
+            creds: Mutex::new(HashMap::new()),
+        };
+        let totp_method = TotpAuthMethod::new(store);
+
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            IDENTITY_ATTR_AUTH_TIME.to_string(),
+            (chrono::Utc::now().timestamp() - 3600).to_string(),
+        );
+        let stale = Identity {
+            provider_id: "test".to_string(),
+            external_id: "victim".to_string(),
+            email: None,
+            username: None,
+            attributes,
+        };
+
+        let result = totp_method
+            .register_totp(&stale, &ReproofRequirement::new(300), "Engine", "victim")
+            .await;
+
+        assert!(matches!(result, Err(AuthError::Credentials(_))));
+        // The point of the assertion: not merely that the call reported an
+        // error, but that nothing was written. An attacker who gets a secret
+        // stored and *then* sees an error has still taken the account.
+        assert!(totp_method
+            .store
+            .get_credentials("victim", "totp")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    /// An identity that never went through `Engine::authenticate` carries no
+    /// `auth_time`, and is refused rather than waved through.
+    #[tokio::test]
+    async fn an_identity_with_no_auth_time_cannot_enrol_a_secret() {
+        let store = MockStore {
+            creds: Mutex::new(HashMap::new()),
+        };
+        let totp_method = TotpAuthMethod::new(store);
+
+        let unproven = Identity {
+            provider_id: "test".to_string(),
+            external_id: "victim".to_string(),
+            email: None,
+            username: None,
+            attributes: HashMap::new(),
+        };
+
+        let result = totp_method
+            .register_totp(&unproven, &ReproofRequirement::new(300), "Engine", "victim")
+            .await;
+
+        assert!(matches!(result, Err(AuthError::Credentials(_))));
+        assert!(totp_method
+            .store
+            .get_credentials("victim", "totp")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    /// The secret is filed under the re-proved identity, never under a
+    /// separately supplied id — which is what stops a freshly re-proved
+    /// session for one account from enrolling a factor against another.
+    #[tokio::test]
+    async fn the_secret_is_filed_under_the_re_proved_identity() {
+        let store = MockStore {
+            creds: Mutex::new(HashMap::new()),
+        };
+        let totp_method = TotpAuthMethod::new(store);
+
+        totp_method
+            .register_totp(
+                &fresh_identity("attacker"),
+                &permissive_gate(),
+                "Engine",
+                "victim@example.com",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            totp_method
+                .store
+                .get_credentials("attacker", "totp")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // The account name is only ever cosmetic — it lands in the otpauth
+        // URI, not in the store key.
+        assert!(totp_method
+            .store
+            .get_credentials("victim@example.com", "totp")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
     #[tokio::test]
     async fn test_totp_flow() {
         let store = MockStore {
@@ -397,7 +557,12 @@ mod tests {
 
         // Register a TOTP key for user
         let (secret_b32, uri) = totp_method
-            .register_totp("user123", "Engine", "user123")
+            .register_totp(
+                &fresh_identity("user123"),
+                &permissive_gate(),
+                "Engine",
+                "user123",
+            )
             .await
             .unwrap();
         assert!(!secret_b32.is_empty());
@@ -459,7 +624,12 @@ mod tests {
 
         // First enrollment
         let (secret1_b32, _) = totp_method
-            .register_totp("user123", "Engine", "user123")
+            .register_totp(
+                &fresh_identity("user123"),
+                &permissive_gate(),
+                "Engine",
+                "user123",
+            )
             .await
             .unwrap();
 
@@ -489,7 +659,12 @@ mod tests {
 
         // Second enrollment (re-registration)
         let (secret2_b32, _) = totp_method
-            .register_totp("user123", "Engine", "user123")
+            .register_totp(
+                &fresh_identity("user123"),
+                &permissive_gate(),
+                "Engine",
+                "user123",
+            )
             .await
             .unwrap();
 
@@ -582,7 +757,12 @@ mod tests {
 
         let totp_method = TotpAuthMethod::new(store);
         let (new_secret_b32, _) = totp_method
-            .register_totp("user123", "Engine", "user123")
+            .register_totp(
+                &fresh_identity("user123"),
+                &permissive_gate(),
+                "Engine",
+                "user123",
+            )
             .await
             .unwrap();
 
