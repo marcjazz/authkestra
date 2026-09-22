@@ -47,13 +47,63 @@ pub async fn verify(
     jwks: &IssuerJwks,
     replay_store: &dyn ReplayStore,
 ) -> Result<DeviceIdentity, VerifyError> {
+    // Reported once here rather than at each rejection point inside, matching
+    // how `verify_dpop_proof` reports its eleven (#353 tier 1).
+    //
+    // Some checks already spoke for themselves — the issuer, device status
+    // and binding rejections each have their own event, and the binding one
+    // says something this boundary cannot, so they stay. But every rejection
+    // in `signature.rs` from the request-signature check onward (bad
+    // signature, expired, lifetime too long, and the method, path, audience,
+    // query and body mismatches) emitted nothing at all, which is eight of
+    // the nineteen ways this can refuse a request. A caller sees one
+    // flattened `VerifyError` and the adapters map the whole family onto a
+    // single 401, so for those eight the reason existed nowhere.
+    //
+    // Doing it at the boundary rather than adding eight more call sites also
+    // means the set cannot drift: a check added later is reported without
+    // anyone remembering to report it.
+    //
+    // `error.code()` carries the stable slug its own doc offers for exactly
+    // this; the `Display` text goes alongside for the variants that carry
+    // detail. Neither credential is logged: both are the credential.
+    let outcome = verify_inner(request, config, jwks, replay_store).await;
+
+    match &outcome {
+        Ok(identity) => tracing::debug!(
+            target: "authkestra_devsig",
+            subject = %identity.subject,
+            device = %identity.device,
+            method = %request.method,
+            path = %request.path,
+            "device-signature request accepted"
+        ),
+        Err(error) => tracing::warn!(
+            target: "authkestra_devsig",
+            reason = error.code(),
+            %error,
+            method = %request.method,
+            path = %request.path,
+            "device-signature request rejected"
+        ),
+    }
+
+    outcome
+}
+
+/// The verification itself. Split out so [`verify`] can report the outcome in
+/// one place; see the comment there.
+async fn verify_inner(
+    request: &SignedRequest<'_>,
+    config: &VerifierConfig,
+    jwks: &IssuerJwks,
+    replay_store: &dyn ReplayStore,
+) -> Result<DeviceIdentity, VerifyError> {
     // --- Step 1: PRESENCE ---
     let (sig_token, att_token) = match (request.signature, request.attestation) {
         (Some(s), Some(a)) => (s, a),
-        _ => {
-            tracing::debug!(target: "authkestra_devsig", "rejecting request: missing_credential");
-            return Err(VerifyError::MissingCredential);
-        }
+        // Not logged here: the boundary reports every rejection uniformly.
+        _ => return Err(VerifyError::MissingCredential),
     };
 
     let now = current_unix_time();
@@ -73,22 +123,26 @@ pub async fn verify(
     let ttl = Duration::from_secs((sig.exp - now).max(0) as u64);
     match replay_store.put_if_absent(&sig.jti, ttl).await {
         Ok(true) => {}
+        // These two keep their own events despite the boundary above, because
+        // each carries something it cannot see: the `jti` that was replayed,
+        // and the store's own error — which flattens into a plain
+        // `ReplayDetected`, so a fail-closed outage would otherwise be
+        // indistinguishable from a genuine replay in the logs. They are also
+        // different kinds of event: one is a client being refused, the other
+        // is this service degrading.
         Ok(false) => {
-            tracing::warn!(target: "authkestra_devsig", jti = %sig.jti, "rejecting request: jti already seen (replay_detected)");
+            tracing::warn!(target: "authkestra_devsig", jti = %sig.jti, "jti already seen");
             return Err(VerifyError::ReplayDetected);
         }
         Err(store_err) => {
-            tracing::error!(target: "authkestra_devsig", error = %store_err, "rejecting request: replay store unreachable, failing closed");
+            tracing::error!(
+                target: "authkestra_devsig",
+                error = %store_err,
+                "replay store unreachable; failing closed"
+            );
             return Err(VerifyError::ReplayDetected);
         }
     }
-
-    tracing::debug!(
-        target: "authkestra_devsig",
-        subject = %att.sub,
-        device = %att.did,
-        "device-signature request accepted"
-    );
 
     Ok(DeviceIdentity::new(
         att.sub,

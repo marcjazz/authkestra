@@ -2,6 +2,12 @@
 //! wire format `verify()` expects, since no live Issuer exists in this repo yet
 //! (`authkestra-op`'s enrolment/attestation-minting side is tracked separately in
 //! [authkestra#136](https://github.com/marcjazz/authkestra/issues/136)).
+// Shared by several test targets, each of which uses a different part of it.
+// Rust checks dead code per target, so anything `conformance.rs` needs is
+// unused from `rejection_logging.rs`'s point of view and vice versa — without
+// this, adding a second target that uses half the fixtures turns the other
+// half into errors under `-D warnings`.
+#![allow(dead_code)]
 
 use std::cell::Cell;
 use std::sync::OnceLock;
