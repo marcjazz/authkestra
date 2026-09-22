@@ -44,6 +44,11 @@ pub const METHOD_NAME_TOTP: &str = "totp";
 /// be the single source of the string.
 pub const METHOD_NAME_PASSWORD: &str = "password";
 
+/// The [`AuthMethod`](crate::auth::AuthMethod) name this workspace's
+/// magic-link method reports. Unconditional for the reason given on
+/// [`METHOD_NAME_WEBAUTHN`].
+pub const METHOD_NAME_MAGIC_LINK: &str = "magic-link";
+
 /// Every auth-method name this workspace assigns a deliberate `amr` meaning
 /// to.
 ///
@@ -54,8 +59,12 @@ pub const METHOD_NAME_PASSWORD: &str = "password";
 /// is the whole point: the alternative is a new method silently inheriting
 /// pass-through, which is right for some methods and wrong for others, with
 /// nothing to distinguish them. See issue #395.
-pub const FIRST_PARTY_METHOD_NAMES: &[&str] =
-    &[METHOD_NAME_PASSWORD, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN];
+pub const FIRST_PARTY_METHOD_NAMES: &[&str] = &[
+    METHOD_NAME_PASSWORD,
+    METHOD_NAME_TOTP,
+    METHOD_NAME_WEBAUTHN,
+    METHOD_NAME_MAGIC_LINK,
+];
 
 /// The [`Identity::attributes`] key set to the literal `"true"` when this
 /// identity's authentication satisfies this engine's step-up tier: either a
