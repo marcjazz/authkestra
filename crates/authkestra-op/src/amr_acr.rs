@@ -85,6 +85,7 @@
 
 use authkestra_engine::auth::state::{
     Identity, IDENTITY_ATTR_AMR, IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_STEP_UP_SATISFIED,
+    METHOD_NAME_PASSWORD, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN,
 };
 use std::collections::HashMap;
 
@@ -117,22 +118,51 @@ pub const AMR_OTP: &str = "otp";
 /// mailed or SMS code.
 pub const AMR_TOTP: &str = "totp";
 
+/// What each first-party auth-method name emits on the wire.
+///
+/// A table rather than a `match` arm so a test can read it. Every name in
+/// [`FIRST_PARTY_METHOD_NAMES`] must appear here, which is what stops a new
+/// built-in method from silently inheriting the pass-through below — see
+/// `every_first_party_method_name_has_a_deliberate_mapping` and issue #395.
+///
+/// A row that repeats the method's own name is a *decision to pass through*,
+/// not a missing mapping. The two are indistinguishable in behaviour and
+/// entirely different in meaning, and the difference is the reason this
+/// table exists.
+const FIRST_PARTY_AMR: &[(&str, &[&str])] = &[
+    (METHOD_NAME_PASSWORD, &[AMR_PASSWORD]),
+    // Both, deliberately. `"otp"` is the RFC 8176 registry term, and a
+    // relying party matching strictly against the registry — which
+    // off-the-shelf RP libraries commonly do — would otherwise see a
+    // token naming no second factor it recognises. `"totp"` carries the
+    // detail the registry term loses (not HOTP, not a mailed or SMS
+    // code). `amr` is an array, so there is no reason to choose: the
+    // strict matcher finds `"otp"`, and a consumer that cares about the
+    // distinction reads `"totp"`.
+    (METHOD_NAME_TOTP, &[AMR_OTP, AMR_TOTP]),
+    // Pass-through, chosen rather than fallen into. RFC 8176 has `"hwk"`
+    // and `"swk"`, but this workspace's WebAuthn integration cannot tell a
+    // roaming authenticator from a platform one, so either would overclaim
+    // what was verified. The factor is not invisible to a strict matcher
+    // regardless: WebAuthn reports `is_mfa_equivalent`, so `AMR_MFA_MARKER`
+    // is always appended alongside it.
+    (METHOD_NAME_WEBAUTHN, &[METHOD_NAME_WEBAUTHN]),
+];
+
 /// Remaps an `authkestra-engine` internal auth-method name to its wire AMR
 /// value. See the module docs for the reasoning behind each mapping.
+///
+/// An unrecognised name passes through unchanged. That is correct for a
+/// custom [`AuthMethod`](authkestra_engine::auth::AuthMethod) an integrator
+/// registered — this crate has no way to know what it should map to — and is
+/// prevented from quietly applying to first-party methods by
+/// [`FIRST_PARTY_AMR`].
 fn internal_method_to_amr(method: &str) -> Vec<String> {
-    match method {
-        "password" => vec![AMR_PASSWORD.to_string()],
-        // Both, deliberately. `"otp"` is the RFC 8176 registry term, and a
-        // relying party matching strictly against the registry — which
-        // off-the-shelf RP libraries commonly do — would otherwise see a
-        // token naming no second factor it recognises. `"totp"` carries the
-        // detail the registry term loses (not HOTP, not a mailed or SMS
-        // code). `amr` is an array, so there is no reason to choose: the
-        // strict matcher finds `"otp"`, and a consumer that cares about the
-        // distinction reads `"totp"`.
-        "totp" => vec![AMR_OTP.to_string(), AMR_TOTP.to_string()],
-        other => vec![other.to_string()],
-    }
+    FIRST_PARTY_AMR
+        .iter()
+        .find(|(name, _)| *name == method)
+        .map(|(_, values)| values.iter().map(|v| v.to_string()).collect())
+        .unwrap_or_else(|| vec![method.to_string()])
 }
 
 /// Builds the `amr`/`acr` entries for an `extra` claims map (as taken by
@@ -203,7 +233,55 @@ pub fn amr_acr_extra_claims(identity: &Identity) -> HashMap<String, serde_json::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use authkestra_engine::auth::state::FIRST_PARTY_METHOD_NAMES;
     use std::collections::HashMap as StdHashMap;
+
+    /// The guard for issue #395.
+    ///
+    /// `internal_method_to_amr` passes an unrecognised name through
+    /// unchanged, which is right for a custom method an integrator
+    /// registered and wrong for one this workspace ships — and nothing in
+    /// the behaviour distinguishes them. So the engine lists its own method
+    /// names, and this asserts each has a row here.
+    ///
+    /// If you added a built-in method and this failed: decide what it emits
+    /// on the wire and add it to `FIRST_PARTY_AMR`. Passing the name through
+    /// may well be the right answer (it is for WebAuthn), but it should be a
+    /// row that says so rather than a default nobody chose. Email/SMS OTP is
+    /// the case where it would be wrong — `"otp"` fits it exactly.
+    #[test]
+    fn every_first_party_method_name_has_a_deliberate_mapping() {
+        for name in FIRST_PARTY_METHOD_NAMES {
+            assert!(
+                FIRST_PARTY_AMR.iter().any(|(mapped, _)| mapped == name),
+                "`{name}` is a first-party auth method with no row in \
+                 FIRST_PARTY_AMR, so it would fall through to pass-through \
+                 by default rather than by decision. See issue #395."
+            );
+        }
+    }
+
+    /// The table is the source of the mapping, so a duplicate row would make
+    /// the second one dead code that looks live.
+    #[test]
+    fn the_amr_table_names_each_method_once() {
+        let mut seen: Vec<&str> = Vec::new();
+        for (name, _) in FIRST_PARTY_AMR {
+            assert!(!seen.contains(name), "`{name}` appears twice");
+            seen.push(name);
+        }
+    }
+
+    /// Pins the pass-through that is *not* covered by the table: a method
+    /// this crate has never heard of still reaches the wire under its own
+    /// name rather than being dropped.
+    #[test]
+    fn an_unknown_custom_method_still_passes_through() {
+        assert_eq!(
+            internal_method_to_amr("acme-badge-reader"),
+            vec!["acme-badge-reader".to_string()]
+        );
+    }
 
     fn identity_with(attrs: &[(&str, &str)]) -> Identity {
         let mut attributes = StdHashMap::new();

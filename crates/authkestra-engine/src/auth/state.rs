@@ -20,6 +20,43 @@ use serde::{Deserialize, Serialize};
 /// was never actually verified.
 pub const IDENTITY_ATTR_AMR: &str = "amr";
 
+/// The [`AuthMethod`](crate::auth::AuthMethod) name this workspace's WebAuthn
+/// method reports, and which therefore appears in [`IDENTITY_ATTR_AMR`].
+///
+/// Defined unconditionally, *not* behind `#[cfg(feature = "webauthn")]`. The
+/// name is half of a wire contract — `authkestra-op` turns it into the `amr`
+/// claim of an issued ID token — and the crate that does that translation
+/// depends on this one without enabling the method features. A gated constant
+/// would be invisible exactly where it is needed.
+pub const METHOD_NAME_WEBAUTHN: &str = "webauthn";
+
+/// The [`AuthMethod`](crate::auth::AuthMethod) name this workspace's TOTP
+/// method reports. Unconditional for the reason given on
+/// [`METHOD_NAME_WEBAUTHN`].
+pub const METHOD_NAME_TOTP: &str = "totp";
+
+/// The name conventionally used for a password [`AuthMethod`](crate::auth::AuthMethod).
+///
+/// Unlike the other two this names no built-in: the framework owns no user
+/// table and ships no password method, so this is the spelling an
+/// application's own method is expected to use if it wants the standard
+/// mapping. It is listed here because the mapping exists and something has to
+/// be the single source of the string.
+pub const METHOD_NAME_PASSWORD: &str = "password";
+
+/// Every auth-method name this workspace assigns a deliberate `amr` meaning
+/// to.
+///
+/// This exists to be iterated by a test, not by production code. Adding a
+/// built-in method means adding its name here, which fails
+/// `authkestra-op`'s `every_first_party_method_name_has_a_deliberate_mapping`
+/// until that crate states what the new method should emit on the wire. That
+/// is the whole point: the alternative is a new method silently inheriting
+/// pass-through, which is right for some methods and wrong for others, with
+/// nothing to distinguish them. See issue #395.
+pub const FIRST_PARTY_METHOD_NAMES: &[&str] =
+    &[METHOD_NAME_PASSWORD, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN];
+
 /// The [`Identity::attributes`] key set to the literal `"true"` when this
 /// identity's authentication satisfies this engine's step-up tier: either a
 /// step-up (MFA) challenge was actually completed, or the sole primary

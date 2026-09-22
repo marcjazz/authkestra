@@ -227,7 +227,7 @@ impl<S: CredentialStore + 'static> crate::auth::WebAuthnStarter for WebAuthnAuth
 #[async_trait]
 impl<S: CredentialStore + 'static> AuthMethod for WebAuthnAuthMethod<S> {
     fn name(&self) -> &str {
-        "webauthn"
+        crate::auth::state::METHOD_NAME_WEBAUTHN
     }
 
     fn as_webauthn_starter(&self) -> Option<&dyn crate::auth::WebAuthnStarter> {
