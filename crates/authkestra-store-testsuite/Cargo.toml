@@ -23,6 +23,17 @@ authkestra-op = { workspace = true, default-features = true }
 # of this now-published crate for no reason.
 tokio = { version = "1", features = ["rt", "time"] }
 async-trait = "0.1"
+# Only the CredentialStore suite needs it (credentials are JSON blobs), but
+# an optional dependency activated by that feature is simpler than the
+# alternative and it is already in every consumer's graph via the engine.
+serde_json = { version = "1", optional = true }
+
+[features]
+# The `CredentialStore` conformance suite. `authkestra-engine` gates
+# `auth::store` behind the methods that enrol something, so the trait is only
+# in scope when one of them is on — `totp` is the cheapest that exposes it.
+# Opt-in, so a consumer wanting only the KvStore suites pays nothing.
+credential-store = ["authkestra-engine/totp", "dep:serde_json"]
 
 [dev-dependencies]
 # Only this crate's own `tests/redis_store.rs` needs the `redis` feature —
@@ -30,7 +41,14 @@ async-trait = "0.1"
 # feature set a consumer pulls in merely by depending on this crate, and
 # out of the feature-unification a *dev*-dependent (e.g. authkestra-engine
 # itself, which dev-depends on this crate to self-test) gets forced into.
-authkestra-engine = { workspace = true, default-features = true, features = ["redis"] }
+authkestra-engine = { workspace = true, default-features = true, features = [
+    "redis",
+    # Only `tests/sqlx_store.rs` needs these: `sql-sqlite` for
+    # `SqlxCredentialStore`, and `totp` because that is what puts
+    # `CredentialStore` in scope at all.
+    "sql-sqlite",
+    "totp",
+] }
 authkestra-op = { workspace = true, default-features = true, features = ["redis"] }
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["redis", "postgres", "mysql"] }

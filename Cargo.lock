@@ -838,6 +838,7 @@ dependencies = [
  "authkestra-engine",
  "authkestra-op",
  "authkestra-store-sqlx",
+ "serde_json",
  "sqlx",
  "testcontainers",
  "testcontainers-modules",
