@@ -210,11 +210,27 @@ impl PolicyEngine {
         // The context is type-checked against the schema for *this action* when one is
         // configured, which is what turns a typo'd context key into a rejected request instead
         // of a silently unsatisfied `when` clause.
+        // Logged, unlike before: every other outcome of this function already
+        // says something — the loader failing, a policy erroring, a refused
+        // Allow, the decision itself — and these two were the only paths that
+        // returned in silence. A typo'd context key is precisely the failure
+        // the schema check exists to turn into a rejection rather than a
+        // silently unsatisfied `when` clause, and an operator debugging one
+        // needs to be told which key.
         let context = Context::from_json_value(
             request.context.clone(),
             self.schema.as_ref().map(|s| (s, &request.action)),
         )
-        .map_err(|e| PolicyError::InvalidRequest(format!("invalid context: {e}")))?;
+        .map_err(|e| {
+            tracing::warn!(
+                error = %e,
+                principal = %request.principal,
+                action = %request.action,
+                resource = %request.resource,
+                "authorization request rejected: context does not conform to the schema"
+            );
+            PolicyError::InvalidRequest(format!("invalid context: {e}"))
+        })?;
 
         let cedar_request = Request::new(
             request.principal.clone(),
@@ -223,7 +239,16 @@ impl PolicyEngine {
             context,
             self.schema.as_ref(),
         )
-        .map_err(|e| PolicyError::InvalidRequest(format!("request rejected by schema: {e}")))?;
+        .map_err(|e| {
+            tracing::warn!(
+                error = %e,
+                principal = %request.principal,
+                action = %request.action,
+                resource = %request.resource,
+                "authorization request rejected: shape forbidden by the schema"
+            );
+            PolicyError::InvalidRequest(format!("request rejected by schema: {e}"))
+        })?;
 
         // Only now — with the request known to be well-formed — is the entity store hydrated.
         let entities = self.loader.load_entities(request).await.inspect_err(|e| {

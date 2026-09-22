@@ -1398,7 +1398,14 @@ pub async fn validate_jwt_with_resolver<T>(
 where
     T: for<'de> Deserialize<'de>,
 {
-    let cache = resolve_cache(token, resolver).await?;
+    // Reported here rather than left to the callee: this happens *before*
+    // `validate_jwt_generic`, so its span does not exist yet and its outcome
+    // line never runs. `UntrustedIssuer` and `MissingIssuer` are exactly the
+    // misconfigurations an operator needs named — a token from an issuer the
+    // trust map does not carry is otherwise just "rejected".
+    let cache = resolve_cache(token, resolver).await.inspect_err(|error| {
+        tracing::warn!(%error, "could not resolve a JWKS for this token's issuer");
+    })?;
     validate_jwt_generic::<T>(token, &cache, validation).await
 }
 
@@ -1412,7 +1419,46 @@ pub async fn validate_jwt(
 }
 
 /// Validates a JWT against the cached JWKS with generic claims.
+#[tracing::instrument(
+    name = "validate_jwt",
+    // `token` is the credential and `cache` holds key material; neither is a
+    // span field. `kid` and `alg` are not known until the header is decoded,
+    // so they are declared empty and recorded once they are.
+    skip_all,
+    fields(kid = tracing::field::Empty, alg = tracing::field::Empty)
+)]
 pub async fn validate_jwt_generic<T>(
+    token: &str,
+    cache: &JwksCache,
+    validation: &Validation,
+) -> Result<T, ValidationError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    // A span, because this is the one place every caller converges: both
+    // `validate_jwt` and `validate_jwt_with_resolver` delegate here, so it is
+    // where per-request events can be correlated. #353 named the absence of
+    // one as what makes this path expensive to debug, and #335 is the
+    // evidence — an `InvalidAlgorithm` that could only be diagnosed by
+    // reading `jsonwebtoken`'s source.
+    //
+    // The outcome is reported once here rather than at each of the six ways
+    // this can fail, matching `verify_dpop_proof` (#353 tier 1). Every one of
+    // them arrived by `?` and emitted nothing, so a rejected token said only
+    // that it was rejected.
+    let outcome = validate_jwt_generic_inner::<T>(token, cache, validation).await;
+
+    match &outcome {
+        Ok(_) => tracing::debug!("token accepted"),
+        Err(error) => tracing::warn!(%error, "token rejected"),
+    }
+
+    outcome
+}
+
+/// The validation itself. Split out so [`validate_jwt_generic`] can report the
+/// outcome in one place; see the comment there.
+async fn validate_jwt_generic_inner<T>(
     token: &str,
     cache: &JwksCache,
     validation: &Validation,
@@ -1422,6 +1468,14 @@ where
 {
     let header = decode_header(token)?;
     let kid = header.kid.as_deref();
+
+    // Recorded as soon as they are known, so even a failure below carries the
+    // two fields anyone debugging this actually asks for first.
+    let span = tracing::Span::current();
+    span.record("alg", tracing::field::debug(header.alg));
+    if let Some(kid) = kid {
+        span.record("kid", kid);
+    }
 
     let jwk = cache
         .get_key(kid)
