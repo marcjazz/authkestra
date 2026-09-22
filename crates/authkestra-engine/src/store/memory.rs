@@ -41,8 +41,9 @@ pub struct MemoryStore<T> {
     /// that method for why this exists and how it's used.
     insert_only_expiry_queue: Arc<Mutex<ExpiryQueue>>,
     /// Retry budgets, kept apart from `data` because they are bare integers
-    /// rather than `T` — see [`AtomicDecrement`].
-    counters: Arc<Mutex<HashMap<String, (u32, Option<Instant>)>>>,
+    /// rather than `T` — see [`AtomicDecrement`]. Reuses `StoreEntry` for its
+    /// expiry handling rather than repeating it.
+    counters: Arc<Mutex<HashMap<String, StoreEntry<u32>>>>,
 }
 
 impl<T> Default for MemoryStore<T> {
@@ -129,11 +130,13 @@ impl<T: Clone + Send + Sync + 'static> AtomicConsume<T> for MemoryStore<T> {
 impl<T: Clone + Send + Sync + 'static> AtomicDecrement<T> for MemoryStore<T> {
     async fn init_counter(&self, key: &str, value: u32, ttl: Duration) -> Result<(), StoreError> {
         tracing::debug!(key = %key, value, "initialising a counter in memory store");
-        let expires_at = Some(Instant::now() + ttl);
-        self.counters
-            .lock()
-            .unwrap()
-            .insert(key.to_string(), (value, expires_at));
+        self.counters.lock().unwrap().insert(
+            key.to_string(),
+            StoreEntry {
+                value,
+                expires_at: Some(Instant::now() + ttl),
+            },
+        );
         Ok(())
     }
 
@@ -141,18 +144,18 @@ impl<T: Clone + Send + Sync + 'static> AtomicDecrement<T> for MemoryStore<T> {
         // The whole operation runs under one lock, which is what makes it
         // atomic: two callers cannot both observe the pre-decrement value.
         let mut counters = self.counters.lock().unwrap();
-        let Some((value, expires_at)) = counters.get_mut(key) else {
+        let Some(entry) = counters.get_mut(key) else {
             tracing::debug!(key = %key, "no counter to decrement");
             return Ok(None);
         };
-        if expires_at.is_some_and(|at| Instant::now() >= at) {
+        if entry.is_expired() {
             counters.remove(key);
             tracing::debug!(key = %key, "counter had expired");
             return Ok(None);
         }
         // Saturating, so a spent counter cannot be wrapped back around.
-        *value = value.saturating_sub(1);
-        let remaining = *value;
+        entry.value = entry.value.saturating_sub(1);
+        let remaining = entry.value;
         tracing::debug!(key = %key, remaining, "decremented a counter");
         Ok(Some(remaining))
     }

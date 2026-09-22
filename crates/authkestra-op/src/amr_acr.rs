@@ -84,8 +84,9 @@
 //! half. See issue #381.
 
 use authkestra_engine::auth::state::{
-    Identity, IDENTITY_ATTR_AMR, IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_STEP_UP_SATISFIED,
-    METHOD_NAME_MAGIC_LINK, METHOD_NAME_PASSWORD, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN,
+    Identity, IDENTITY_ATTR_AMR, IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_OTP_CHANNEL,
+    IDENTITY_ATTR_STEP_UP_SATISFIED, METHOD_NAME_MAGIC_LINK, METHOD_NAME_OTP, METHOD_NAME_PASSWORD,
+    METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN, OTP_CHANNEL_SMS,
 };
 use std::collections::HashMap;
 
@@ -111,6 +112,12 @@ pub const AMR_PASSWORD: &str = "pwd";
 /// for a TOTP factor so that a relying party matching strictly against the
 /// registry still recognises the factor.
 pub const AMR_OTP: &str = "otp";
+
+/// RFC 8176's value for a code delivered by SMS. Emitted alongside
+/// [`AMR_OTP`] when, and only when, the identity says that is how the code
+/// travelled — an emailed code claiming `sms` would be a plain falsehood
+/// about the channel a relying party may well be making decisions on.
+pub const AMR_SMS: &str = "sms";
 
 /// The specific value for a TOTP factor, emitted alongside [`AMR_OTP`]. Not
 /// an RFC 8176 registry entry — the registry is explicitly extensible — and
@@ -159,6 +166,16 @@ const FIRST_PARTY_AMR: &[(&str, &[&str])] = &[
     // not copy this row. `"otp"` fits it exactly, and pass-through there
     // would hide a real second factor from every RP that matches strictly.
     (METHOD_NAME_MAGIC_LINK, &[METHOD_NAME_MAGIC_LINK]),
+    // The base mapping, and the case #395 was written for: a delivered code
+    // is exactly what RFC 8176's `"otp"` means, so passing `"otp"` through as
+    // its own name — which is what the fall-through would have done — happens
+    // to be right here by coincidence rather than by decision. The row says
+    // it is a decision.
+    //
+    // A code delivered by SMS additionally claims `"sms"`, which this table
+    // cannot express because it cannot see the channel. That refinement is in
+    // `amr_acr_extra_claims`, which can.
+    (METHOD_NAME_OTP, &[AMR_OTP]),
 ];
 
 /// Remaps an `authkestra-engine` internal auth-method name to its wire AMR
@@ -219,6 +236,22 @@ pub fn amr_acr_extra_claims(identity: &Identity) -> HashMap<String, serde_json::
         .map(|v| v == "true")
         .unwrap_or(false);
 
+    // The channel refinement the static table cannot make. RFC 8176 registers
+    // `sms` as its own value, so a texted code claims both it and `otp` —
+    // more specific first, matching how the `totp` row orders its pair. An
+    // emailed code must not claim `sms`, which is the whole reason the
+    // channel rides on the identity at all.
+    if amr.iter().any(|m| m == AMR_OTP)
+        && identity
+            .attributes
+            .get(IDENTITY_ATTR_OTP_CHANNEL)
+            .is_some_and(|c| c == OTP_CHANNEL_SMS)
+        && !amr.iter().any(|m| m == AMR_SMS)
+    {
+        let at = amr.iter().position(|m| m == AMR_OTP).unwrap_or(0);
+        amr.insert(at, AMR_SMS.to_string());
+    }
+
     if step_up_satisfied && !amr.iter().any(|m| m == AMR_MFA_MARKER) {
         amr.push(AMR_MFA_MARKER.to_string());
     }
@@ -275,6 +308,47 @@ mod tests {
 
     /// The table is the source of the mapping, so a duplicate row would make
     /// the second one dead code that looks live.
+    #[test]
+    fn an_emailed_code_claims_otp_but_never_sms() {
+        let identity = identity_with(&[
+            (IDENTITY_ATTR_AMR, METHOD_NAME_OTP),
+            (IDENTITY_ATTR_OTP_CHANNEL, "email"),
+        ]);
+        let extra = amr_acr_extra_claims(&identity);
+        assert_eq!(extra.get("amr"), Some(&serde_json::json!(["otp"])));
+    }
+
+    #[test]
+    fn a_texted_code_claims_sms_before_otp() {
+        let identity = identity_with(&[
+            (IDENTITY_ATTR_AMR, METHOD_NAME_OTP),
+            (IDENTITY_ATTR_OTP_CHANNEL, OTP_CHANNEL_SMS),
+        ]);
+        let extra = amr_acr_extra_claims(&identity);
+        assert_eq!(extra.get("amr"), Some(&serde_json::json!(["sms", "otp"])));
+    }
+
+    /// A code with no channel recorded claims `otp` and nothing more. It must
+    /// not guess, since `sms` is a statement about how the secret travelled.
+    #[test]
+    fn a_code_with_no_channel_does_not_guess_one() {
+        let identity = identity_with(&[(IDENTITY_ATTR_AMR, METHOD_NAME_OTP)]);
+        let extra = amr_acr_extra_claims(&identity);
+        assert_eq!(extra.get("amr"), Some(&serde_json::json!(["otp"])));
+    }
+
+    /// The channel attribute is meaningless without an `otp` factor, and must
+    /// not conjure one onto an unrelated login.
+    #[test]
+    fn the_channel_alone_adds_nothing_to_another_method() {
+        let identity = identity_with(&[
+            (IDENTITY_ATTR_AMR, METHOD_NAME_PASSWORD),
+            (IDENTITY_ATTR_OTP_CHANNEL, OTP_CHANNEL_SMS),
+        ]);
+        let extra = amr_acr_extra_claims(&identity);
+        assert_eq!(extra.get("amr"), Some(&serde_json::json!(["pwd"])));
+    }
+
     #[test]
     fn the_amr_table_names_each_method_once() {
         let mut seen: Vec<&str> = Vec::new();

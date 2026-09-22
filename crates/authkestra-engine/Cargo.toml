@@ -52,6 +52,7 @@ webauthn-rs = { version = "0.5.0", optional = true, features = ["danger-allow-st
 totp-rs = { version = "5.7", features = ["gen_secret", "otpauth"], optional = true }
 authkestra-crypto-util.workspace = true
 argon2 = { version = "0.6.0", features = ["password-hash"] }
+subtle = { version = "2.6", optional = true }
 
 [features]
 default = ["rustls-aws-lc-rs"]
@@ -86,6 +87,10 @@ totp = ["dep:totp-rs"]
 # both of which the crate already pulls in. The gate exists to keep the
 # AuthInput variant and the module out of builds that do not want them.
 magic-link = []
+# `subtle` is not optional decoration here: OTP allows several attempts by
+# design, which is the condition that makes an early-exit comparison
+# exploitable. See rfc-011 §4.7.
+otp = ["dep:subtle"]
 captcha = []
 
 [[example]]

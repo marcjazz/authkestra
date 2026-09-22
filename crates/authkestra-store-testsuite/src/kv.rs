@@ -33,8 +33,6 @@ async fn test_atomic_decrement<
 >(
     store: S,
 ) {
-    use authkestra_engine::store::AtomicDecrement;
-
     // Absent is absent, not zero.
     assert_eq!(store.decrement("budget").await.unwrap(), None);
 

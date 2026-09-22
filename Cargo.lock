@@ -632,6 +632,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlx",
+ "subtle",
  "testcontainers",
  "testcontainers-modules",
  "thiserror 2.0.19",
