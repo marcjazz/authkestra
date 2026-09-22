@@ -21,7 +21,7 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 # Use the facade with the features you need
-authkestra = { version = "0.7", features = ["axum", "github"] }
+authkestra = { version = "0.13", features = ["axum", "github"] }
 ```
 
 For advanced users, individual crates are still available and can be used independently if preferred.
@@ -43,7 +43,7 @@ provider yourself:
 
 ```toml
 [dependencies]
-authkestra = { version = "0.7", default-features = false, features = ["axum", "github", "rustls-no-provider"] }
+authkestra = { version = "0.13", default-features = false, features = ["axum", "github", "rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 ```
 
@@ -69,6 +69,8 @@ check with `cargo tree -i aws-lc-rs -e features`.
 - **Flexible Chaining**: Chain multiple authentication strategies (Token, Session, Basic, Custom) seamlessly.
 - **OpenID Connect Provider (OP)**: Build your own identity provider and authorization server using `authkestra-op`.
 - **Session Management**: Built-in support for in-memory, Redis, and SQL via `sqlx`.
+- **Passwordless-native authentication**: passkeys (WebAuthn), TOTP, **magic links**, **email/SMS one-time codes** and **recovery codes** — the last three added in 0.13. Recovery codes are a factor-agnostic look-up secret authenticator (NIST SP 800-63B §5.1.2), not TOTP-specific backup codes, so they work for an account that never enrolled TOTP.
+- **Re-proof gating**: enrolling a second factor demands a *fresh* proof of identity, not merely a live session (`ReproofRequirement`). Method-agnostic by design — the framework owns no password to re-prompt for, and an account that has only a passkey should not be locked out of enrolment.
 - **SD-JWT (Selective Disclosure)**: Issue a single JWT carrying selectively disclosable claims (`draft-ietf-oauth-selective-disclosure-jwt`); the holder decides, per presentation, which claims to reveal to each verifier.
 
 ## 📦 Workspace Crates
@@ -87,6 +89,8 @@ check with `cargo tree -i aws-lc-rs -e features`.
 | [`authkestra-crypto-util`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-crypto-util) | Shared strict signature/key verification helpers used by the OP and devsig crates. |
 | [`authkestra-policy`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-policy)       | **Proof of concept** ([#21](https://github.com/marcjazz/authkestra/issues/21)): AWS Cedar authorization policies, not yet wired into any guard. |
 | [`authkestra-ssf`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-ssf)             | Shared Signals Framework: Security Event Token (RFC 8417) ingestion and CAEP events. |
+| [`authkestra-store-sqlx`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-store-sqlx) | `OpStore` backed by `sqlx` (PostgreSQL, MySQL, SQLite).                  |
+| [`authkestra-store-testsuite`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-store-testsuite) | Shared conformance suites a store implementation runs against, so a third-party backend can prove it honours the traits' atomicity contracts. |
 | [`authkestra-macros`](https://github.com/marcjazz/authkestra/tree/main/crates/authkestra-macros)       | Procedural macros for simplifying Authkestra integration.                 |
 
 ## 🛠️ Usage
