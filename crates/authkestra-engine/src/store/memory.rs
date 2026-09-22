@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::store::{
-    ttl_ceil_secs, AtomicConsume, AtomicInsert, IndexedKvStore, KvStore, StoreError,
+    ttl_ceil_secs, AtomicConsume, AtomicDecrement, AtomicInsert, IndexedKvStore, KvStore,
+    StoreError,
 };
 use async_trait::async_trait;
 
@@ -39,6 +40,9 @@ pub struct MemoryStore<T> {
     /// Expiry order for entries written through `insert_if_absent` — see
     /// that method for why this exists and how it's used.
     insert_only_expiry_queue: Arc<Mutex<ExpiryQueue>>,
+    /// Retry budgets, kept apart from `data` because they are bare integers
+    /// rather than `T` — see [`AtomicDecrement`].
+    counters: Arc<Mutex<HashMap<String, (u32, Option<Instant>)>>>,
 }
 
 impl<T> Default for MemoryStore<T> {
@@ -47,6 +51,7 @@ impl<T> Default for MemoryStore<T> {
             data: Arc::new(Mutex::new(HashMap::new())),
             indices: Arc::new(Mutex::new(HashMap::new())),
             insert_only_expiry_queue: Arc::new(Mutex::new(BinaryHeap::new())),
+            counters: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -117,6 +122,39 @@ impl<T: Clone + Send + Sync + 'static> AtomicConsume<T> for MemoryStore<T> {
             return Ok(Some(entry.value));
         }
         Ok(None)
+    }
+}
+
+#[async_trait]
+impl<T: Clone + Send + Sync + 'static> AtomicDecrement<T> for MemoryStore<T> {
+    async fn init_counter(&self, key: &str, value: u32, ttl: Duration) -> Result<(), StoreError> {
+        tracing::debug!(key = %key, value, "initialising a counter in memory store");
+        let expires_at = Some(Instant::now() + ttl);
+        self.counters
+            .lock()
+            .unwrap()
+            .insert(key.to_string(), (value, expires_at));
+        Ok(())
+    }
+
+    async fn decrement(&self, key: &str) -> Result<Option<u32>, StoreError> {
+        // The whole operation runs under one lock, which is what makes it
+        // atomic: two callers cannot both observe the pre-decrement value.
+        let mut counters = self.counters.lock().unwrap();
+        let Some((value, expires_at)) = counters.get_mut(key) else {
+            tracing::debug!(key = %key, "no counter to decrement");
+            return Ok(None);
+        };
+        if expires_at.is_some_and(|at| Instant::now() >= at) {
+            counters.remove(key);
+            tracing::debug!(key = %key, "counter had expired");
+            return Ok(None);
+        }
+        // Saturating, so a spent counter cannot be wrapped back around.
+        *value = value.saturating_sub(1);
+        let remaining = *value;
+        tracing::debug!(key = %key, remaining, "decremented a counter");
+        Ok(Some(remaining))
     }
 }
 
