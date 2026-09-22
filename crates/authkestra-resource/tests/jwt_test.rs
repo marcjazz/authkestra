@@ -2012,3 +2012,91 @@ async fn an_empty_jwks_does_not_claim_the_token_named_a_missing_key() {
         "the token named no key, so it must not be blamed for one; got:\n{logs}"
     );
 }
+
+// --- #353: the validation path names why it refused -------------------------
+//
+// Every way `validate_jwt_generic` can fail arrived by `?` and emitted
+// nothing, so a rejected token said only that it was rejected. There was also
+// no span, so nothing tied the events of one validation together — which #353
+// names as what makes this path expensive to debug, with #335's
+// `InvalidAlgorithm` as the evidence.
+
+/// A rejection now says what went wrong.
+#[tokio::test]
+async fn a_rejected_token_is_logged_with_its_reason() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let token = expired_token(&key, 5);
+
+    let captured = capture::start();
+    let result =
+        validate_jwt_generic::<TestClaims>(&token, &cache, &validation_with_leeway(0)).await;
+    let logs = captured.contents();
+
+    assert!(result.is_err(), "precondition: zero leeway rejects this");
+    assert!(logs.contains("token rejected"), "got:\n{logs}");
+    assert!(
+        logs.contains("ExpiredSignature"),
+        "the reason must survive into the log; got:\n{logs}"
+    );
+}
+
+/// The span carries the two fields anyone debugging this asks for first, and
+/// carries them even when the validation then fails.
+#[tokio::test]
+async fn the_validation_span_records_kid_and_alg() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let token = expired_token(&key, 5);
+
+    let captured = capture::start();
+    let _ = validate_jwt_generic::<TestClaims>(&token, &cache, &validation_with_leeway(0)).await;
+    let logs = captured.contents();
+
+    assert!(logs.contains("validate_jwt"), "no span; got:\n{logs}");
+    assert!(logs.contains("kid-1"), "kid not recorded; got:\n{logs}");
+    assert!(logs.contains("RS256"), "alg not recorded; got:\n{logs}");
+}
+
+/// An accepted token is observable too — otherwise the logs only ever show
+/// failures, and "did this request authenticate at all?" stays unanswerable.
+#[tokio::test]
+async fn an_accepted_token_is_logged() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let token = expired_token(&key, 30);
+
+    let captured = capture::start();
+    let result = validate_jwt_generic::<TestClaims>(
+        &token,
+        &cache,
+        &validation_with_leeway(DEFAULT_LEEWAY_SECS),
+    )
+    .await;
+    let logs = captured.contents();
+
+    assert!(result.is_ok());
+    assert!(logs.contains("token accepted"), "got:\n{logs}");
+}
+
+/// The token is the credential. A rejection that echoed it would put a live
+/// bearer token into whatever collects the logs.
+#[tokio::test]
+async fn the_validation_path_never_logs_the_token() {
+    let key = generate_rsa_key(Some("kid-1"));
+    let server = start_jwks_server(vec![key.jwk.clone()]).await;
+    let cache = JwksCache::new(jwks_url(&server), Duration::from_secs(3600));
+    let token = expired_token(&key, 5);
+
+    let captured = capture::start();
+    let _ = validate_jwt_generic::<TestClaims>(&token, &cache, &validation_with_leeway(0)).await;
+    let logs = captured.contents();
+
+    assert!(
+        !logs.contains(&token),
+        "the token reached the logs:\n{logs}"
+    );
+}
