@@ -1,9 +1,10 @@
 # RFC-010: Magic-link authentication
 
 > **Status: proposed**, not implemented. This document is the design record for
-> the first item on the passwordless-native track (`docs/roadmap.md`), and is
-> written to be the shared foundation for the email/SMS OTP work that follows
-> it — see §4.9.
+> the magic-link item in
+> [Phase 2: Passwordless-Native Authentication](./roadmap.md#phase-2-passwordless-native-authentication),
+> and is written to be the shared foundation for the email/SMS OTP work that
+> follows it there — see §4.9.
 
 ## 1. Summary
 
