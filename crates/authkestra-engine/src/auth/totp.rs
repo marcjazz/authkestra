@@ -194,7 +194,7 @@ impl<S: CredentialStore> TotpAuthMethod<S> {
 #[async_trait]
 impl<S: CredentialStore + 'static> AuthMethod for TotpAuthMethod<S> {
     fn name(&self) -> &str {
-        "totp"
+        crate::auth::state::METHOD_NAME_TOTP
     }
 
     async fn has_enrolled(&self, user_id: &str) -> Result<bool, AuthError> {
