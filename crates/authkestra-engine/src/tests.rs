@@ -991,3 +991,150 @@ mod amr_step_up_bookkeeping {
         }
     }
 }
+
+/// A recovery code must be usable as a step-up, not merely advertised as one.
+///
+/// Review on #404 found the two halves disagreed: the enrolment probe lists
+/// any registered method whose `has_enrolled` is true — which recovery codes
+/// are, whenever unredeemed codes exist — while the MFA continuation dispatch
+/// recognised only `Totp` and `WebAuthnAuthentication` and rejected everything
+/// else as `InvalidInput`. So the engine would offer `recovery-code` in
+/// `allowed_methods` and then refuse the reply, leaving the advertised
+/// fallback unusable at exactly the moment an account needs it.
+///
+/// Magic link and OTP never hit this because their `has_enrolled` is false, so
+/// they are never advertised. Recovery codes are the first method for which
+/// both halves are live, which is why this only surfaced now.
+#[cfg(feature = "recovery-codes")]
+mod recovery_code_step_up {
+    use super::*;
+    use crate::auth::AuthResult;
+    use crate::Engine;
+
+    struct StubPasswordMethod;
+
+    #[async_trait]
+    impl AuthMethod for StubPasswordMethod {
+        fn name(&self) -> &str {
+            "password"
+        }
+        async fn authenticate(&self, _input: AuthInput) -> Result<Identity, AuthError> {
+            Ok(Identity {
+                provider_id: "password".to_string(),
+                external_id: "user123".to_string(),
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+    }
+
+    struct StubRecoveryMethod;
+
+    #[async_trait]
+    impl AuthMethod for StubRecoveryMethod {
+        fn name(&self) -> &str {
+            crate::auth::state::METHOD_NAME_RECOVERY_CODE
+        }
+        async fn authenticate(&self, input: AuthInput) -> Result<Identity, AuthError> {
+            let AuthInput::RecoveryCode { user_id, .. } = input else {
+                return Err(AuthError::InvalidInput);
+            };
+            Ok(Identity {
+                provider_id: crate::auth::state::METHOD_NAME_RECOVERY_CODE.to_string(),
+                external_id: user_id,
+                email: None,
+                username: None,
+                attributes: HashMap::new(),
+            })
+        }
+        async fn has_enrolled(&self, _user_id: &str) -> Result<bool, AuthError> {
+            Ok(true)
+        }
+    }
+
+    fn mfa_token<S, T>(engine: &Engine<S, T>, sub: &str) -> String {
+        let exp = chrono::Utc::now() + chrono::Duration::seconds(600);
+        let claims =
+            crate::auth::state::MfaTokenClaims::new(sub, exp.timestamp() as usize, "password");
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(&engine.mfa_jwt_secret),
+        )
+        .expect("signing the MFA token should succeed")
+    }
+
+    /// The half that was already true: the engine offers it.
+    #[tokio::test]
+    async fn an_enrolled_recovery_set_is_advertised_as_a_second_factor() {
+        let engine = Engine::builder()
+            .with_auth_method(StubPasswordMethod)
+            .with_mfa_method(StubRecoveryMethod)
+            .build();
+
+        let res = engine
+            .authenticate(AuthInput::Password {
+                identifier: "user123".to_string(),
+                password: "password".to_string(),
+            })
+            .await
+            .unwrap();
+
+        match res {
+            AuthResult::MfaRequired {
+                allowed_methods, ..
+            } => assert_eq!(allowed_methods, vec!["recovery-code"]),
+            other => panic!("expected MfaRequired, got {other:?}"),
+        }
+    }
+
+    /// The half that was not: redeeming what was offered has to work.
+    #[tokio::test]
+    async fn a_recovery_code_completes_the_step_up_it_was_offered_for() {
+        let engine = Engine::builder()
+            .with_mfa_method(StubRecoveryMethod)
+            .build();
+        let token = mfa_token(&engine, "user123");
+
+        let result = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token: token,
+                challenge_input: Box::new(AuthInput::RecoveryCode {
+                    user_id: "user123".to_string(),
+                    code: "ABCD-EFGH-IJKL-MNOP".to_string(),
+                }),
+            })
+            .await;
+
+        assert!(
+            matches!(result, Ok(AuthResult::Success(_))),
+            "an advertised recovery code must be dispatchable, got {result:?}"
+        );
+    }
+
+    /// The generic guard still applies: a code that verifies somebody else
+    /// must not satisfy this token.
+    #[tokio::test]
+    async fn a_recovery_code_for_another_user_is_refused() {
+        let engine = Engine::builder()
+            .with_mfa_method(StubRecoveryMethod)
+            .build();
+        let token = mfa_token(&engine, "user123");
+
+        let result = engine
+            .authenticate(AuthInput::MfaChallenge {
+                mfa_token: token,
+                challenge_input: Box::new(AuthInput::RecoveryCode {
+                    user_id: "somebody-else".to_string(),
+                    code: "ABCD-EFGH-IJKL-MNOP".to_string(),
+                }),
+            })
+            .await;
+
+        assert!(
+            matches!(result, Err(AuthError::Credentials(_))),
+            "got {result:?}"
+        );
+    }
+}

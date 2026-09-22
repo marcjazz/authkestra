@@ -57,6 +57,11 @@ pub const METHOD_NAME_MAGIC_LINK: &str = "magic-link";
 /// instead, because it changes the `amr` claim but not which method ran.
 pub const METHOD_NAME_OTP: &str = "otp";
 
+/// The [`AuthMethod`](crate::auth::AuthMethod) name this workspace's recovery
+/// code method reports. Unconditional for the reason given on
+/// [`METHOD_NAME_WEBAUTHN`].
+pub const METHOD_NAME_RECOVERY_CODE: &str = "recovery-code";
+
 /// The [`Identity::attributes`] key naming the channel a one-time code
 /// arrived on, set to [`OTP_CHANNEL_EMAIL`] or [`OTP_CHANNEL_SMS`].
 ///
@@ -89,6 +94,7 @@ pub const FIRST_PARTY_METHOD_NAMES: &[&str] = &[
     METHOD_NAME_WEBAUTHN,
     METHOD_NAME_MAGIC_LINK,
     METHOD_NAME_OTP,
+    METHOD_NAME_RECOVERY_CODE,
 ];
 
 /// The [`Identity::attributes`] key set to the literal `"true"` when this

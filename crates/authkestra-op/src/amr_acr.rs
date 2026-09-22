@@ -86,7 +86,7 @@
 use authkestra_engine::auth::state::{
     Identity, IDENTITY_ATTR_AMR, IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_OTP_CHANNEL,
     IDENTITY_ATTR_STEP_UP_SATISFIED, METHOD_NAME_MAGIC_LINK, METHOD_NAME_OTP, METHOD_NAME_PASSWORD,
-    METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN, OTP_CHANNEL_SMS,
+    METHOD_NAME_RECOVERY_CODE, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN, OTP_CHANNEL_SMS,
 };
 use std::collections::HashMap;
 
@@ -176,6 +176,15 @@ const FIRST_PARTY_AMR: &[(&str, &[&str])] = &[
     // cannot express because it cannot see the channel. That refinement is in
     // `amr_acr_extra_claims`, which can.
     (METHOD_NAME_OTP, &[AMR_OTP]),
+    // Pass-through, and the registry genuinely offers nothing. RFC 8176 has
+    // no value for a look-up secret: `"otp"` would be a lie (this is neither
+    // one-time-password machinery nor time-based), and `"mfa"` is ruled out
+    // because recovery codes report `is_mfa_equivalent() == false` — whoever
+    // holds the paper holds the account.
+    //
+    // Same call as magic link's row, for the same reason: name the mechanism
+    // rather than overclaim a registry term.
+    (METHOD_NAME_RECOVERY_CODE, &[METHOD_NAME_RECOVERY_CODE]),
 ];
 
 /// Remaps an `authkestra-engine` internal auth-method name to its wire AMR

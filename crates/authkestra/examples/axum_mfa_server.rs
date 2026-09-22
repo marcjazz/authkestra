@@ -61,17 +61,22 @@ impl CredentialStore for MemoryCredentialStore {
         Ok(())
     }
 
+    // Not implemented rather than a silent no-op. `Ok(false)` would claim
+    // the credential did not exist, which is a different statement from "this
+    // store cannot delete" — and a caller redeeming a single-use credential
+    // would read it as "somebody else got there first" and refuse a perfectly
+    // good code. See `CredentialStore::delete_credential`.
     async fn delete_credential(
         &self,
         _user_id: &str,
         _cred_type: &str,
         _credential_id: &str,
     ) -> Result<bool, AuthError> {
-        Ok(false)
+        Err(AuthError::Unsupported)
     }
 
     async fn delete_credentials(&self, _user_id: &str, _cred_type: &str) -> Result<u64, AuthError> {
-        Ok(0)
+        Err(AuthError::Unsupported)
     }
 }
 
