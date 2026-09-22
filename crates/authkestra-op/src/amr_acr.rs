@@ -85,7 +85,7 @@
 
 use authkestra_engine::auth::state::{
     Identity, IDENTITY_ATTR_AMR, IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_STEP_UP_SATISFIED,
-    METHOD_NAME_PASSWORD, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN,
+    METHOD_NAME_MAGIC_LINK, METHOD_NAME_PASSWORD, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN,
 };
 use std::collections::HashMap;
 
@@ -147,6 +147,18 @@ const FIRST_PARTY_AMR: &[(&str, &[&str])] = &[
     // regardless: WebAuthn reports `is_mfa_equivalent`, so `AMR_MFA_MARKER`
     // is always appended alongside it.
     (METHOD_NAME_WEBAUTHN, &[METHOD_NAME_WEBAUTHN]),
+    // Pass-through, and for once the registry genuinely offers nothing.
+    // RFC 8176 has no value meaning "followed a link sent to an inbox":
+    // `"otp"` would be a lie, since nothing here is a one-time *password*
+    // and nothing is typed, and `"mfa"` is unavailable because magic link
+    // reports `is_mfa_equivalent() == false` — proving control of an inbox
+    // is one factor. So a strict registry matcher sees no factor it
+    // recognises, correctly: there isn't one.
+    //
+    // Email/SMS OTP, next on the same track, is the opposite case and must
+    // not copy this row. `"otp"` fits it exactly, and pass-through there
+    // would hide a real second factor from every RP that matches strictly.
+    (METHOD_NAME_MAGIC_LINK, &[METHOD_NAME_MAGIC_LINK]),
 ];
 
 /// Remaps an `authkestra-engine` internal auth-method name to its wire AMR
