@@ -271,18 +271,32 @@ impl<S, T> Engine<S, T> {
             tracing::Span::current().record("user_id", token_data.claims.sub.as_str());
             tracing::debug!("resuming a login from a valid MFA continuation token");
 
+            // Spelled with the shared constants rather than literals, so a
+            // name here cannot drift from what the method's `name()` returns
+            // and silently stop resolving.
             let method_name = match &*challenge_input {
                 #[cfg(feature = "totp")]
-                AuthInput::Totp { .. } => "totp",
+                AuthInput::Totp { .. } => crate::auth::state::METHOD_NAME_TOTP,
                 #[cfg(feature = "webauthn")]
-                AuthInput::WebAuthnAuthentication { .. } => "webauthn",
+                AuthInput::WebAuthnAuthentication { .. } => {
+                    crate::auth::state::METHOD_NAME_WEBAUTHN
+                }
+                // A recovery code is a fallback *across* whichever factors an
+                // account has, so it has to be dispatchable as a step-up.
+                // Without this arm the enrolment probe below would advertise
+                // it in `allowed_methods` — it reports `has_enrolled` true
+                // whenever unredeemed codes exist — and then reject the reply
+                // as `InvalidInput`, leaving the advertised fallback unusable
+                // at precisely the moment somebody needs it.
+                #[cfg(feature = "recovery-codes")]
+                AuthInput::RecoveryCode { .. } => crate::auth::state::METHOD_NAME_RECOVERY_CODE,
                 _ => "",
             };
 
             if method_name.is_empty() {
                 tracing::warn!(
-                    "MFA challenge carries an input that maps to no second factor; \
-                     only Totp and WebAuthnAuthentication are dispatched here"
+                    "MFA challenge carries an input that maps to no second factor \
+                     this engine dispatches"
                 );
                 return Err(AuthError::InvalidInput);
             }

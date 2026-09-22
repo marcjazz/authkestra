@@ -211,12 +211,46 @@ impl<S: CredentialStore> RecoveryCodeAuthMethod<S> {
         Ok(self.load(&identity.external_id).await?.len())
     }
 
+    /// Loads the unredeemed set.
+    ///
+    /// An entry that will not deserialise is skipped rather than failing the
+    /// whole call — one unreadable record should not deny an account the
+    /// codes that are still good. But it is never skipped *silently*: this
+    /// list is what `remaining` reports, what `has_enrolled` answers with,
+    /// and therefore what RFC-009's step-up decision is driven from, so a
+    /// dropped entry quietly shrinks the account's fallback and, at the
+    /// limit, flips `has_enrolled` to false. That is not something anybody
+    /// should have to infer from a support ticket.
     async fn load(&self, user_id: &str) -> Result<Vec<RecoveryCodeCredential>, AuthError> {
         let raw = self.store.get_credentials(user_id, CRED_TYPE).await?;
-        Ok(raw
+        let total = raw.len();
+
+        let codes: Vec<RecoveryCodeCredential> = raw
             .into_iter()
-            .filter_map(|v| serde_json::from_value(v).ok())
-            .collect())
+            .filter_map(|v| match serde_json::from_value(v) {
+                Ok(credential) => Some(credential),
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        user_id = %user_id,
+                        "a stored recovery code could not be read and has been skipped; \
+                         this account has fewer usable codes than it was issued"
+                    );
+                    None
+                }
+            })
+            .collect();
+
+        if codes.len() != total {
+            tracing::error!(
+                user_id = %user_id,
+                stored = total,
+                usable = codes.len(),
+                "recovery code set is partly unreadable"
+            );
+        }
+
+        Ok(codes)
     }
 }
 
