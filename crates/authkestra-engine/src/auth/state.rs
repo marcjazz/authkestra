@@ -49,6 +49,30 @@ pub const METHOD_NAME_PASSWORD: &str = "password";
 /// [`METHOD_NAME_WEBAUTHN`].
 pub const METHOD_NAME_MAGIC_LINK: &str = "magic-link";
 
+/// The [`AuthMethod`](crate::auth::AuthMethod) name this workspace's
+/// delivered one-time code method reports. Unconditional for the reason given
+/// on [`METHOD_NAME_WEBAUTHN`].
+///
+/// One name for both channels: the channel rides on the identity's attributes
+/// instead, because it changes the `amr` claim but not which method ran.
+pub const METHOD_NAME_OTP: &str = "otp";
+
+/// The [`Identity::attributes`] key naming the channel a one-time code
+/// arrived on, set to [`OTP_CHANNEL_EMAIL`] or [`OTP_CHANNEL_SMS`].
+///
+/// Unconditional, like the method names and for the same reason: `amr`
+/// derivation lives in `authkestra-op`, which depends on this crate without
+/// enabling `otp` and never sees the challenge. It needs this key because
+/// RFC 8176 registers `sms` as its own value, so an emailed code and a texted
+/// one are not the same claim.
+pub const IDENTITY_ATTR_OTP_CHANNEL: &str = "otp_channel";
+
+/// [`IDENTITY_ATTR_OTP_CHANNEL`]'s value for a code delivered to a mailbox.
+pub const OTP_CHANNEL_EMAIL: &str = "email";
+
+/// [`IDENTITY_ATTR_OTP_CHANNEL`]'s value for a code delivered to a phone.
+pub const OTP_CHANNEL_SMS: &str = "sms";
+
 /// Every auth-method name this workspace assigns a deliberate `amr` meaning
 /// to.
 ///
@@ -64,6 +88,7 @@ pub const FIRST_PARTY_METHOD_NAMES: &[&str] = &[
     METHOD_NAME_TOTP,
     METHOD_NAME_WEBAUTHN,
     METHOD_NAME_MAGIC_LINK,
+    METHOD_NAME_OTP,
 ];
 
 /// The [`Identity::attributes`] key set to the literal `"true"` when this

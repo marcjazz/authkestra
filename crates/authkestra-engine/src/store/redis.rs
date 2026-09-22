@@ -134,7 +134,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> KvStore<T> for Red
     }
 }
 
-use crate::store::{ttl_ceil_secs, AtomicConsume, AtomicInsert, IndexedKvStore};
+use crate::store::{ttl_ceil_secs, AtomicConsume, AtomicDecrement, AtomicInsert, IndexedKvStore};
 
 #[async_trait]
 impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicInsert<T> for RedisStore {
@@ -236,7 +236,94 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicConsume<T> f
     }
 }
 
+#[async_trait]
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicDecrement<T> for RedisStore {
+    #[tracing::instrument(skip(self))]
+    async fn init_counter(&self, key: &str, value: u32, ttl: Duration) -> Result<(), StoreError> {
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis connection error");
+                StoreError::Internal(format!("Redis connection error: {e}"))
+            })?;
+
+        // Whole seconds only, rounded up — same reasoning as every other
+        // TTL here; see `ttl_ceil_secs`.
+        let ttl_secs = ttl_ceil_secs(ttl);
+        let _: () = conn
+            .set_ex(self.counter_key(key), value, ttl_secs)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis counter init error");
+                StoreError::Internal(format!("Redis counter init error: {e}"))
+            })?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn decrement(&self, key: &str) -> Result<Option<u32>, StoreError> {
+        let mut conn = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis connection error");
+                StoreError::Internal(format!("Redis connection error: {e}"))
+            })?;
+
+        // A script rather than a bare `DECR` for two reasons: `DECR` on a
+        // missing key creates it at -1, which would turn an expired counter
+        // into an unlimited one, and it has no floor, so a spent counter
+        // would run negative. Both are handled here inside the same atomic
+        // evaluation, so no caller can observe a value between the read and
+        // the write.
+        //
+        // An exhausted counter returns nil, not 0 — the contract requires
+        // "already spent" to be distinguishable from "took the last attempt",
+        // so a count is only ever returned for an attempt actually granted.
+        let script = redis::Script::new(
+            r#"
+            local current = redis.call('GET', KEYS[1])
+            if not current then
+                return nil
+            end
+            local n = tonumber(current)
+            if n <= 0 then
+                return nil
+            end
+            return redis.call('DECR', KEYS[1])
+            "#,
+        );
+
+        let remaining: Option<i64> = script
+            .key(self.counter_key(key))
+            .invoke_async(&mut conn)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Redis decrement script error");
+                StoreError::Internal(format!("Redis decrement script error: {e}"))
+            })?;
+
+        // The script floors at zero, so a negative value here would mean the
+        // key was written by something other than `init_counter`. Clamping
+        // rather than trusting it keeps a malformed counter from reading as
+        // an enormous budget once it is cast to `u32`.
+        Ok(remaining.map(|n| n.max(0) as u32))
+    }
+}
+
 impl RedisStore {
+    /// Where the retry budget for `key` lives.
+    ///
+    /// A sibling key rather than a field inside the stored value, so the
+    /// decrement is a plain integer operation Redis can do atomically. See
+    /// [`AtomicDecrement`].
+    fn counter_key(&self, id: &str) -> String {
+        format!("{prefix}:ctr:{id}", prefix = self.prefix)
+    }
+
     fn index_key(&self, index: &str) -> String {
         format!("{prefix}:idx:{index}", prefix = self.prefix)
     }

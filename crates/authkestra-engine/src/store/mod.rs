@@ -51,6 +51,52 @@ pub trait AtomicInsert<T>: KvStore<T> {
     ) -> Result<bool, StoreError>;
 }
 
+/// Backends that can atomically decrement a counter implement this.
+///
+/// The third of the atomic primitives, and the one that exists because a
+/// count cannot be maintained safely with [`KvStore`] alone. Reading a
+/// counter, subtracting one and writing it back is the same check-then-set
+/// race [`AtomicInsert`] was added to avoid: two concurrent callers both read
+/// 3 and both write 2, so a caller who parallelises gets far more decrements
+/// than the counter permits. For a retry budget on a guessable secret that is
+/// not a rounding error — it is the difference between a limit and the
+/// appearance of one.
+///
+/// The counter is deliberately a bare integer under its own key rather than a
+/// field inside a stored value. Decrementing a field inside a serialised
+/// record would mean read-modify-write at the backend too, or JSON surgery
+/// inside a Lua script; an integer key is something every backend can already
+/// change atomically (`DECR` on Redis, a mutex in memory, `UPDATE ...
+/// RETURNING` in SQL).
+///
+/// See `docs/rfc-011-otp.md` §4.3 for the case that motivated it.
+#[async_trait]
+pub trait AtomicDecrement<T>: KvStore<T> {
+    /// Start a counter at `value`, replacing any existing one under `key`.
+    async fn init_counter(&self, key: &str, value: u32, ttl: Duration) -> Result<(), StoreError>;
+
+    /// Take one from the budget, reporting what remains.
+    ///
+    /// `Ok(Some(n))` means **this call took an attempt** and `n` remain.
+    /// `Ok(Some(0))` therefore means this call took the *last* one.
+    ///
+    /// `Ok(None)` means no attempt was available: no counter under `key`
+    /// (never set, or expired), or one already at zero. A caller treating
+    /// that as "no attempts left" is correct; a caller treating it as
+    /// "unlimited" has inverted the guard.
+    ///
+    /// The distinction matters and is not cosmetic. An earlier version of
+    /// this contract saturated instead, returning `Some(0)` both for "took
+    /// the last attempt" and "was already spent" — indistinguishable states,
+    /// so a caller could not tell whether the budget had authorised the
+    /// operation it was about to perform. Never returning a count for an
+    /// attempt that was not granted removes the ambiguity at the source.
+    ///
+    /// A spent counter stays spent: repeated calls keep reporting `None`
+    /// rather than wrapping. Must be a single atomic operation.
+    async fn decrement(&self, key: &str) -> Result<Option<u32>, StoreError>;
+}
+
 /// Rounds a [`Duration`] up to the nearest whole second, flooring at 1.
 ///
 /// Every [`AtomicInsert`] backend whose storage only expresses TTL in

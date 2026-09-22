@@ -96,6 +96,7 @@ full = [
     "webauthn",
     "totp",
     "magic-link",
+    "otp",
     "captcha",
     "macros",
     "op",
@@ -168,6 +169,7 @@ sql-sqlite = ["engine", "authkestra-engine/sql-sqlite"]
 webauthn = ["engine", "authkestra-engine/webauthn"]
 totp = ["engine", "authkestra-engine/totp"]
 magic-link = ["engine", "authkestra-engine/magic-link"]
+otp = ["engine", "authkestra-engine/otp"]
 captcha = [
     "engine",
     "authkestra-engine/captcha",

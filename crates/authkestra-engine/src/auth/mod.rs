@@ -22,8 +22,9 @@ pub use error::AuthError;
 pub mod state;
 pub use state::{
     AuthResult, Identity, OAuth2State, OAuthToken, FIRST_PARTY_METHOD_NAMES, IDENTITY_ATTR_AMR,
-    IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_STEP_UP_SATISFIED, METHOD_NAME_MAGIC_LINK,
-    METHOD_NAME_PASSWORD, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN,
+    IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_OTP_CHANNEL, IDENTITY_ATTR_STEP_UP_SATISFIED,
+    METHOD_NAME_MAGIC_LINK, METHOD_NAME_OTP, METHOD_NAME_PASSWORD, METHOD_NAME_TOTP,
+    METHOD_NAME_WEBAUTHN, OTP_CHANNEL_EMAIL, OTP_CHANNEL_SMS,
 };
 
 /// Magic-link authentication. See `docs/rfc-010-magic-link.md`.
@@ -31,6 +32,12 @@ pub use state::{
 pub mod magic_link;
 #[cfg(feature = "magic-link")]
 pub use magic_link::{MagicLinkAuthMethod, MagicLinkBinding, MagicLinkRecord, MagicLinkToken};
+
+/// Email and SMS one-time codes. See `docs/rfc-011-otp.md`.
+#[cfg(feature = "otp")]
+pub mod otp;
+#[cfg(feature = "otp")]
+pub use otp::{OtpAuthMethod, OtpChallenge, OtpChannel, OtpCode};
 
 /// Requiring a fresh re-proof of identity before a security-posture change.
 pub mod reproof;
@@ -136,6 +143,16 @@ pub enum AuthInput {
         /// does not need one; one minted with `SameContext` is rejected
         /// without it.
         binding: Option<String>,
+    },
+    /// One-time code completion input.
+    #[cfg(feature = "otp")]
+    Otp {
+        /// The subject the application resolved before minting. The challenge
+        /// is keyed by this rather than by the code — see
+        /// `docs/rfc-011-otp.md` §2.2 for why a short code cannot be the key.
+        subject: String,
+        /// The digits the user typed.
+        code: String,
     },
     /// TOTP validation input
     #[cfg(feature = "totp")]

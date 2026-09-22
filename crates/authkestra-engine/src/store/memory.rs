@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::store::{
-    ttl_ceil_secs, AtomicConsume, AtomicInsert, IndexedKvStore, KvStore, StoreError,
+    ttl_ceil_secs, AtomicConsume, AtomicDecrement, AtomicInsert, IndexedKvStore, KvStore,
+    StoreError,
 };
 use async_trait::async_trait;
 
@@ -39,6 +40,10 @@ pub struct MemoryStore<T> {
     /// Expiry order for entries written through `insert_if_absent` — see
     /// that method for why this exists and how it's used.
     insert_only_expiry_queue: Arc<Mutex<ExpiryQueue>>,
+    /// Retry budgets, kept apart from `data` because they are bare integers
+    /// rather than `T` — see [`AtomicDecrement`]. Reuses `StoreEntry` for its
+    /// expiry handling rather than repeating it.
+    counters: Arc<Mutex<HashMap<String, StoreEntry<u32>>>>,
 }
 
 impl<T> Default for MemoryStore<T> {
@@ -47,6 +52,7 @@ impl<T> Default for MemoryStore<T> {
             data: Arc::new(Mutex::new(HashMap::new())),
             indices: Arc::new(Mutex::new(HashMap::new())),
             insert_only_expiry_queue: Arc::new(Mutex::new(BinaryHeap::new())),
+            counters: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -117,6 +123,54 @@ impl<T: Clone + Send + Sync + 'static> AtomicConsume<T> for MemoryStore<T> {
             return Ok(Some(entry.value));
         }
         Ok(None)
+    }
+}
+
+#[async_trait]
+impl<T: Clone + Send + Sync + 'static> AtomicDecrement<T> for MemoryStore<T> {
+    async fn init_counter(&self, key: &str, value: u32, ttl: Duration) -> Result<(), StoreError> {
+        tracing::debug!(key = %key, value, "initialising a counter in memory store");
+        let mut counters = self.counters.lock().unwrap();
+        // Opportunistic sweep, in the same spirit as `insert_if_absent`'s.
+        // A counter is only ever reclaimed by a later `decrement` on its own
+        // key, so a challenge that is minted and then abandoned — the common
+        // case, since most codes are simply never submitted — would otherwise
+        // leak an entry for the life of the process.
+        counters.retain(|_, entry| !entry.is_expired());
+        counters.insert(
+            key.to_string(),
+            StoreEntry {
+                value,
+                expires_at: Some(Instant::now() + ttl),
+            },
+        );
+        Ok(())
+    }
+
+    async fn decrement(&self, key: &str) -> Result<Option<u32>, StoreError> {
+        // The whole operation runs under one lock, which is what makes it
+        // atomic: two callers cannot both observe the pre-decrement value.
+        let mut counters = self.counters.lock().unwrap();
+        let Some(entry) = counters.get_mut(key) else {
+            tracing::debug!(key = %key, "no counter to decrement");
+            return Ok(None);
+        };
+        if entry.is_expired() {
+            counters.remove(key);
+            tracing::debug!(key = %key, "counter had expired");
+            return Ok(None);
+        }
+        if entry.value == 0 {
+            // Already spent. Reported as "no attempt available" rather than
+            // `Some(0)`, so a caller can tell an authorised last attempt from
+            // one that was never granted.
+            tracing::debug!(key = %key, "counter already spent");
+            return Ok(None);
+        }
+        entry.value -= 1;
+        let remaining = entry.value;
+        tracing::debug!(key = %key, remaining, "decremented a counter");
+        Ok(Some(remaining))
     }
 }
 
@@ -270,6 +324,36 @@ impl<T: Clone + Send + Sync + 'static> IndexedKvStore<T> for MemoryStore<T> {
 mod tests {
 
     use super::*;
+
+    /// Counters are only reclaimed by a later `decrement` on their own key,
+    /// so a challenge that is minted and never submitted — the common case —
+    /// would otherwise leak an entry for the life of the process. `init_counter`
+    /// sweeps opportunistically, in the same spirit as `insert_if_absent`.
+    #[tokio::test]
+    async fn init_counter_sweeps_expired_counters_under_other_keys() {
+        let store = MemoryStore::<String>::new();
+
+        for i in 0..5 {
+            store
+                .init_counter(&format!("abandoned-{i}"), 3, Duration::from_millis(10))
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.counters.lock().unwrap().len(), 5);
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        store
+            .init_counter("fresh", 3, Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let held = store.counters.lock().unwrap().len();
+        assert_eq!(
+            held, 1,
+            "expired counters should have been swept, {held} still held"
+        );
+    }
 
     #[tokio::test]
     async fn test_get_set_delete() {
