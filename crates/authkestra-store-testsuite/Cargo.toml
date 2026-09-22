@@ -70,3 +70,10 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 # declared explicitly rather than relying on it arriving via
 # feature-unification from testcontainers' own tokio dependency.
 tokio = { version = "1", features = ["macros", "rt"] }
+
+# Only built when the feature it needs is on. Without this the target would
+# fail to compile under a plain `cargo test -p authkestra-store-testsuite`,
+# and pass in CI purely because CI happens to use `--all-features`.
+[[test]]
+name = "sqlx_credential_store"
+required-features = ["credential-store"]
