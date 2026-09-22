@@ -82,6 +82,10 @@ sql-mysql = ["sqlx/mysql", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/jso
 sql-sqlite = ["sqlx/sqlite", "sqlx/chrono", "sqlx/runtime-tokio-rustls", "sqlx/json"]
 webauthn = ["dep:webauthn-rs"]
 totp = ["dep:totp-rs"]
+# No optional dependency: the secret is CSPRNG bytes and a SHA-256 hash,
+# both of which the crate already pulls in. The gate exists to keep the
+# AuthInput variant and the module out of builds that do not want them.
+magic-link = []
 captcha = []
 
 [[example]]

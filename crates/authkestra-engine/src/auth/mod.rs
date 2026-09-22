@@ -22,9 +22,15 @@ pub use error::AuthError;
 pub mod state;
 pub use state::{
     AuthResult, Identity, OAuth2State, OAuthToken, FIRST_PARTY_METHOD_NAMES, IDENTITY_ATTR_AMR,
-    IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_STEP_UP_SATISFIED, METHOD_NAME_PASSWORD,
-    METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN,
+    IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_STEP_UP_SATISFIED, METHOD_NAME_MAGIC_LINK,
+    METHOD_NAME_PASSWORD, METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN,
 };
+
+/// Magic-link authentication. See `docs/rfc-010-magic-link.md`.
+#[cfg(feature = "magic-link")]
+pub mod magic_link;
+#[cfg(feature = "magic-link")]
+pub use magic_link::{MagicLinkAuthMethod, MagicLinkBinding, MagicLinkRecord, MagicLinkToken};
 
 /// Requiring a fresh re-proof of identity before a security-posture change.
 pub mod reproof;
@@ -114,6 +120,22 @@ pub enum AuthInput {
         /// Optional authentication state serialized as JSON (injected by the server session, not the client)
         #[serde(default)]
         auth_state_json: Option<String>,
+    },
+    /// Magic-link completion input.
+    #[cfg(feature = "magic-link")]
+    MagicLink {
+        /// The secret from the link the user followed.
+        token: String,
+        /// The binding value the application recorded when it minted the
+        /// link — typically a nonce it set as a cookie. Server-supplied, not
+        /// client-supplied: letting the caller name its own binding would
+        /// let it satisfy the check it is meant to fail.
+        ///
+        /// `None` when the application has none to present. A link minted
+        /// with [`MagicLinkBinding::AnyContext`](magic_link::MagicLinkBinding::AnyContext)
+        /// does not need one; one minted with `SameContext` is rejected
+        /// without it.
+        binding: Option<String>,
     },
     /// TOTP validation input
     #[cfg(feature = "totp")]

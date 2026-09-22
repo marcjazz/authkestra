@@ -95,6 +95,7 @@ full = [
     "discord",
     "webauthn",
     "totp",
+    "magic-link",
     "captcha",
     "macros",
     "op",
@@ -166,6 +167,7 @@ sql-sqlite = ["engine", "authkestra-engine/sql-sqlite"]
 # Authentication methods beyond sessions and OAuth. Each method requires the engine.
 webauthn = ["engine", "authkestra-engine/webauthn"]
 totp = ["engine", "authkestra-engine/totp"]
+magic-link = ["engine", "authkestra-engine/magic-link"]
 captcha = [
     "engine",
     "authkestra-engine/captcha",
