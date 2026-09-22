@@ -266,24 +266,31 @@ This also settles the RFC-009 interaction: the re-proof gate protects
 *enrolment*, and magic link has nothing to enrol, so no gated surface is added
 here. The gate becomes relevant again at recovery codes, which do enrol.
 
-### 4.11. `amr` is the method's own name, following existing practice
+### 4.11. `amr` is `"magic-link"`, and passes through the mapping unchanged
 
-The returned `Identity` carries `IDENTITY_ATTR_AMR` set to `"magic-link"`.
+The `Identity` carries `IDENTITY_ATTR_AMR` set to `"magic-link"`.
 
-This looks like it needs a decision and does not. RFC 8176 registers no value
-meaning "followed a link sent to an inbox" — but the engine does not emit
-RFC 8176 values in the first place. `engine.rs` stamps `amr` with the
-`AuthMethod`'s own `name()`, and the two names that exist today are
-`"webauthn"` and `"totp"`, neither of which is registered either (the registry
-spells those `swk`/`hwk` and `otp`). Magic link follows the established
-convention rather than inventing a second one alongside it.
+Two layers are involved and it matters which is which. `Engine::authenticate`
+stamps the `AuthMethod`'s own `name()`; `authkestra-op::amr_acr` then maps that
+internal name to the wire value in the issued ID token. The mapping is not a
+pass-through — `"password"` becomes `"pwd"`, `"totp"` becomes **both** `"otp"`
+and `"totp"`, and RFC 8176's `"mfa"` marker is appended whenever step-up is
+satisfied. Every method that exists today therefore emits at least one
+registered value.
 
-Whether that convention is the right one is a real question, and a
-project-wide one rather than anything to do with magic link: a relying party
-consuming these ID tokens will recognise `otp` and `hwk` and will not
-recognise `totp` or `webauthn`. It is tracked in #395. This RFC's position
-is only that magic link must not be the one method that answers it
-differently.
+Magic link adds no arm to that mapping, and that is the right answer rather
+than an omission. RFC 8176 registers nothing meaning "followed a link sent to
+an inbox": `"otp"` would be a lie (there is no one-time *password* here, and
+the thing is not typed), and `"mfa"` is unavailable because §4.10 already
+established this is not a second factor. Passing `"magic-link"` through
+verbatim is the same call `amr_acr` already makes for `"webauthn"`, for the
+same reason — naming the actual mechanism beats asserting a registry term that
+overclaims what was verified.
+
+Email/SMS OTP, next on the track, is the opposite case and must **not** copy
+this: `"otp"` fits it exactly, and pass-through there would be a real miss.
+That asymmetry, and the fact that nothing currently forces a new method to
+consider it, is tracked in #395.
 
 ## 5. Proposed surface
 
