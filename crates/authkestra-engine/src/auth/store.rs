@@ -41,9 +41,31 @@ pub trait CredentialStore: Send + Sync {
     /// `Ok(false)` if the credential did not exist,
     /// and `Err(AuthError::Unsupported)` if the store does not implement deletion.
     ///
+    /// # Atomicity
+    ///
+    /// `Ok(true)` means **this call** removed the credential. Among
+    /// concurrent callers naming the same `credential_id`, at most one may
+    /// observe `true`.
+    ///
+    /// This is a requirement on implementations, not a description of what
+    /// most of them happen to do, because callers are entitled to treat the
+    /// `true` as winning a race. A single-use credential — a recovery code,
+    /// say — is redeemed by looking it up and then accepting only if this
+    /// returns `true`, which is sound exactly as far as this promise holds. A
+    /// store implementing deletion as "look it up, then delete it" would let
+    /// two concurrent redemptions of the same code both see `true`, and the
+    /// resulting defect is invisible in serial tests.
+    ///
+    /// A single `DELETE ... WHERE id = ?` reporting affected rows satisfies
+    /// this, as does a map removal under a lock. A read followed by a
+    /// separate write does not.
+    ///
     /// The default implementation returns `Err(AuthError::Unsupported)`.
     /// Out-of-tree stores that cannot implement deletion will receive an error
-    /// rather than a silent no-op, making revocation failures visible to the caller.
+    /// rather than a silent no-op, making revocation failures visible to the
+    /// caller. A store that cannot delete atomically should return that error
+    /// too: `Ok(false)` from a store that never deletes anything is the silent
+    /// no-op this contract exists to rule out.
     async fn delete_credential(
         &self,
         user_id: &str,

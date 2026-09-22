@@ -53,6 +53,9 @@ totp-rs = { version = "5.7", features = ["gen_secret", "otpauth"], optional = tr
 authkestra-crypto-util.workspace = true
 argon2 = { version = "0.6.0", features = ["password-hash"] }
 subtle = { version = "2.6", optional = true }
+# Already in the dependency graph transitively; a direct, optional entry
+# pulls nothing new into a build.
+base32 = { version = "0.5", optional = true }
 
 [features]
 default = ["rustls-aws-lc-rs"]
@@ -91,6 +94,10 @@ magic-link = []
 # design, which is the condition that makes an early-exit comparison
 # exploitable. See rfc-011 §4.7.
 otp = ["dep:subtle"]
+# Base32 rather than base64 for the codes: these are read off paper and
+# typed, so case sensitivity and `+/` cost more than the denser alphabet
+# saves.
+recovery-codes = ["dep:base32"]
 captcha = []
 
 [[example]]

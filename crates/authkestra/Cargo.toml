@@ -97,6 +97,7 @@ full = [
     "totp",
     "magic-link",
     "otp",
+    "recovery-codes",
     "captcha",
     "macros",
     "op",
@@ -170,6 +171,7 @@ webauthn = ["engine", "authkestra-engine/webauthn"]
 totp = ["engine", "authkestra-engine/totp"]
 magic-link = ["engine", "authkestra-engine/magic-link"]
 otp = ["engine", "authkestra-engine/otp"]
+recovery-codes = ["engine", "authkestra-engine/recovery-codes"]
 captcha = [
     "engine",
     "authkestra-engine/captcha",

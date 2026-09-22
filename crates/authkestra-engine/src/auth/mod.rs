@@ -23,8 +23,8 @@ pub mod state;
 pub use state::{
     AuthResult, Identity, OAuth2State, OAuthToken, FIRST_PARTY_METHOD_NAMES, IDENTITY_ATTR_AMR,
     IDENTITY_ATTR_AUTH_TIME, IDENTITY_ATTR_OTP_CHANNEL, IDENTITY_ATTR_STEP_UP_SATISFIED,
-    METHOD_NAME_MAGIC_LINK, METHOD_NAME_OTP, METHOD_NAME_PASSWORD, METHOD_NAME_TOTP,
-    METHOD_NAME_WEBAUTHN, OTP_CHANNEL_EMAIL, OTP_CHANNEL_SMS,
+    METHOD_NAME_MAGIC_LINK, METHOD_NAME_OTP, METHOD_NAME_PASSWORD, METHOD_NAME_RECOVERY_CODE,
+    METHOD_NAME_TOTP, METHOD_NAME_WEBAUTHN, OTP_CHANNEL_EMAIL, OTP_CHANNEL_SMS,
 };
 
 /// Magic-link authentication. See `docs/rfc-010-magic-link.md`.
@@ -39,6 +39,13 @@ pub mod otp;
 #[cfg(feature = "otp")]
 pub use otp::{OtpAuthMethod, OtpChallenge, OtpChannel, OtpCode};
 
+/// Recovery codes as a look-up secret authenticator. See
+/// `docs/rfc-012-recovery-codes.md`.
+#[cfg(feature = "recovery-codes")]
+pub mod recovery;
+#[cfg(feature = "recovery-codes")]
+pub use recovery::{RecoveryCodeAuthMethod, RecoveryCodeCredential};
+
 /// Requiring a fresh re-proof of identity before a security-posture change.
 pub mod reproof;
 pub use reproof::{ReproofFailure, ReproofRequirement};
@@ -51,9 +58,12 @@ pub mod session;
 pub use session::{Session, SessionConfig, SessionStore};
 
 /// Credential storage traits.
-#[cfg(any(feature = "webauthn", feature = "totp"))]
+///
+/// Gated on the methods that enrol something, since a build with none of
+/// them has nothing to store.
+#[cfg(any(feature = "webauthn", feature = "totp", feature = "recovery-codes"))]
 pub mod store;
-#[cfg(any(feature = "webauthn", feature = "totp"))]
+#[cfg(any(feature = "webauthn", feature = "totp", feature = "recovery-codes"))]
 pub use store::CredentialStore;
 
 /// WebAuthn authentication method.
@@ -152,6 +162,17 @@ pub enum AuthInput {
         /// `docs/rfc-011-otp.md` §2.2 for why a short code cannot be the key.
         subject: String,
         /// The digits the user typed.
+        code: String,
+    },
+    /// Recovery code redemption input.
+    #[cfg(feature = "recovery-codes")]
+    RecoveryCode {
+        /// The account redeeming a code — the credential-store key, and the
+        /// same id `Engine::authenticate` checks a step-up's continuation
+        /// token against.
+        user_id: String,
+        /// The code as the user typed it. Separators and case are
+        /// normalised, so it need not be retyped exactly as printed.
         code: String,
     },
     /// TOTP validation input
