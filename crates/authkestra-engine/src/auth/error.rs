@@ -40,6 +40,19 @@ pub enum AuthError {
     /// An internal or unexpected storage error occurred
     #[error("Internal error: {0}")]
     Internal(String),
+    /// The operation was refused because it was attempted too soon after a
+    /// previous one.
+    ///
+    /// Distinct from [`AuthError::InvalidCredentials`] on purpose: nothing was
+    /// wrong with what the caller presented, and retrying later will work.
+    ///
+    /// **Do not echo this to an unauthenticated caller verbatim.** It is
+    /// scoped to a subject, so revealing it tells whoever asked that somebody
+    /// recently requested something for that account — an enumeration signal
+    /// the surrounding endpoint is responsible for not leaking, exactly as it
+    /// is for the rest of these.
+    #[error("Throttled")]
+    Throttled,
     /// The credential store does not support this operation.
     /// When a store returns this, the operation has not been performed,
     /// and the data remains unchanged. This is different from a successful

@@ -31,7 +31,7 @@ use crate::auth::state::{
     IDENTITY_ATTR_OTP_CHANNEL, METHOD_NAME_OTP, OTP_CHANNEL_EMAIL, OTP_CHANNEL_SMS,
 };
 use crate::auth::{AuthError, AuthInput, AuthMethod, Identity};
-use crate::store::{AtomicConsume, AtomicDecrement, KvStore};
+use crate::store::{AtomicConsume, AtomicDecrement, AtomicInsert, KvStore};
 
 /// How many digits a code has.
 ///
@@ -84,6 +84,16 @@ pub struct OtpChallenge {
     pub channel: OtpChannel,
 }
 
+/// Derives the key that holds a subject's resend cooldown.
+///
+/// Distinct from [`challenge_key`], so a cooldown can outlive the challenge
+/// it followed — which it must, since the point is to refuse the *next* mint.
+fn cooldown_key(subject: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(subject.as_bytes());
+    format!("otp:cooldown:{}", URL_SAFE_NO_PAD.encode(hasher.finalize()))
+}
+
 /// Derives the store key for a subject's live challenge.
 fn challenge_key(subject: &str) -> String {
     let mut hasher = Sha256::new();
@@ -121,15 +131,68 @@ fn generate_code() -> String {
 /// One-time codes delivered out of band.
 pub struct OtpAuthMethod<S> {
     store: S,
+    resend_cooldown: Option<Duration>,
+}
+
+/// What the cooldown key holds.
+///
+/// Nothing reads it — only whether the insert succeeded matters. It is
+/// challenge-shaped because the store is typed to `OtpChallenge`, and its
+/// hash is deliberately empty: [`hash_code`] always produces a non-empty
+/// digest, so this can never match a presented code even if some future bug
+/// routed a lookup at this key.
+fn cooldown_marker() -> OtpChallenge {
+    OtpChallenge {
+        code_hash: String::new(),
+        channel: OtpChannel::Email,
+    }
 }
 
 impl<S> OtpAuthMethod<S>
 where
-    S: KvStore<OtpChallenge> + AtomicConsume<OtpChallenge> + AtomicDecrement<OtpChallenge>,
+    S: KvStore<OtpChallenge>
+        + AtomicConsume<OtpChallenge>
+        + AtomicDecrement<OtpChallenge>
+        + AtomicInsert<OtpChallenge>,
 {
     /// Wrap a store.
     pub fn new(store: S) -> Self {
-        Self { store }
+        Self {
+            store,
+            resend_cooldown: None,
+        }
+    }
+
+    /// Refuse to mint again for the same subject within `interval`.
+    ///
+    /// Off by default, because the right interval depends on how the codes
+    /// travel and no framework-chosen number would be reviewed as often as it
+    /// was obeyed.
+    ///
+    /// Worth turning on, and more so for SMS than for email. Minting is free
+    /// to the caller and costs the *operator* a message each time, so an
+    /// unthrottled endpoint is a way to spend someone else's money at a rate
+    /// an attacker chooses — and to bury a victim's phone under messages they
+    /// did not ask for. That is a worse failure than the mail-bombing an
+    /// emailed link risks.
+    ///
+    /// This does not replace rate limiting at the HTTP edge, and is not
+    /// trying to. Edge limits are per-IP and an attacker rotating addresses
+    /// walks through them; this is per-subject, which is the dimension the
+    /// abuse actually has. The same argument the attempt budget rests on.
+    ///
+    /// Enforced with [`AtomicInsert::insert_if_absent`], so two simultaneous
+    /// requests cannot both find the coast clear — and the TTL does the
+    /// expiry, so nothing has to sweep it.
+    ///
+    /// That primitive rounds its TTL up to whole seconds and floors it at
+    /// one, deliberately (see `ttl_ceil_secs`), so sub-second intervals are
+    /// not honoured as written and the effective minimum is one second. That
+    /// is not a limitation worth working around: a sub-second resend brake
+    /// would stop nothing a human does and nothing an attacker minds.
+    pub fn with_resend_cooldown(mut self, interval: Duration) -> Self {
+        self.resend_cooldown = Some(interval);
+        self
     }
 
     /// Mint a code for an already-resolved subject, replacing any live
@@ -158,6 +221,21 @@ where
             return Err(AuthError::InvalidInput);
         }
 
+        // Before anything is generated or written: a refused mint should cost
+        // nothing and leave no trace.
+        if let Some(cooldown) = self.resend_cooldown {
+            let claimed = self
+                .store
+                .insert_if_absent(&cooldown_key(subject), cooldown_marker(), cooldown)
+                .await
+                .map_err(|e| AuthError::Internal(format!("otp cooldown check failed: {e}")))?;
+
+            if !claimed {
+                tracing::warn!(subject = %subject, "otp mint refused: still within the resend cooldown");
+                return Err(AuthError::Throttled);
+            }
+        }
+
         let code = generate_code();
         let key = challenge_key(subject);
 
@@ -166,18 +244,19 @@ where
             channel,
         };
 
-        self.store
-            .set(&key, challenge, ttl)
+        // Anything that fails from here on has to hand the cooldown back. It
+        // was claimed before the write — it must be, or two simultaneous
+        // requests would both get past the check — but a claim that outlives
+        // a mint which never delivered anything is a lockout for the whole
+        // interval caused by one transient store error. The user would be
+        // refused a code they never received.
+        if let Err(e) = self
+            .write_challenge(&key, challenge, ttl, max_attempts)
             .await
-            .map_err(|e| AuthError::Internal(format!("otp store write failed: {e}")))?;
-
-        // After the challenge, so a crash between the two leaves a challenge
-        // with no budget — which fails closed, since a missing counter reads
-        // as no attempts left.
-        self.store
-            .init_counter(&key, max_attempts, ttl)
-            .await
-            .map_err(|e| AuthError::Internal(format!("otp counter init failed: {e}")))?;
+        {
+            self.release_cooldown(subject).await;
+            return Err(e);
+        }
 
         let expires_at = chrono::Utc::now().timestamp() + ttl.as_secs() as i64;
         tracing::debug!(
@@ -189,6 +268,52 @@ where
         );
 
         Ok(OtpCode { code, expires_at })
+    }
+
+    /// Writes the challenge and its budget.
+    ///
+    /// Split out so [`Self::mint`] has a single fallible step to unwind the
+    /// cooldown around, rather than two places to remember.
+    async fn write_challenge(
+        &self,
+        key: &str,
+        challenge: OtpChallenge,
+        ttl: Duration,
+        max_attempts: u32,
+    ) -> Result<(), AuthError> {
+        self.store
+            .set(key, challenge, ttl)
+            .await
+            .map_err(|e| AuthError::Internal(format!("otp store write failed: {e}")))?;
+
+        // After the challenge, so a crash between the two leaves a challenge
+        // with no budget — which fails closed, since a missing counter reads
+        // as no attempts left.
+        self.store
+            .init_counter(key, max_attempts, ttl)
+            .await
+            .map_err(|e| AuthError::Internal(format!("otp counter init failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Hands back a cooldown claimed for a mint that then failed.
+    ///
+    /// Best effort, and loud when it fails: at that point the subject really
+    /// is locked out for the interval with nothing to show for it, which is a
+    /// double fault worth finding in the logs rather than in a support queue.
+    async fn release_cooldown(&self, subject: &str) {
+        if self.resend_cooldown.is_none() {
+            return;
+        }
+        if let Err(e) = self.store.delete(&cooldown_key(subject)).await {
+            tracing::error!(
+                error = %e,
+                subject = %subject,
+                "could not release the resend cooldown after a failed mint; \
+                 this subject cannot request a code until it expires"
+            );
+        }
     }
 
     /// Drops a challenge whose budget is gone.
@@ -213,6 +338,7 @@ where
     S: KvStore<OtpChallenge>
         + AtomicConsume<OtpChallenge>
         + AtomicDecrement<OtpChallenge>
+        + AtomicInsert<OtpChallenge>
         + Send
         + Sync
         + 'static,
@@ -524,6 +650,203 @@ mod tests {
 
         let second = m.mint("alice", TTL, OtpChannel::Email, 1).await.unwrap();
         assert!(m.authenticate(submit("alice", &second.code)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn without_a_cooldown_minting_again_is_allowed() {
+        let m = method();
+        assert!(m.mint("alice", TTL, OtpChannel::Email, 3).await.is_ok());
+        assert!(
+            m.mint("alice", TTL, OtpChannel::Email, 3).await.is_ok(),
+            "the cooldown is opt-in; off by default nothing should refuse"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cooldown_refuses_an_immediate_resend() {
+        let m =
+            OtpAuthMethod::new(MemoryStore::new()).with_resend_cooldown(Duration::from_secs(60));
+
+        assert!(m.mint("alice", TTL, OtpChannel::Email, 3).await.is_ok());
+        assert!(matches!(
+            m.mint("alice", TTL, OtpChannel::Email, 3).await,
+            Err(AuthError::Throttled)
+        ));
+    }
+
+    /// The cooldown is per-subject, which is the dimension the abuse has.
+    /// Throttling one account must not throttle everybody.
+    #[tokio::test]
+    async fn a_cooldown_is_scoped_to_one_subject() {
+        let m =
+            OtpAuthMethod::new(MemoryStore::new()).with_resend_cooldown(Duration::from_secs(60));
+
+        assert!(m.mint("alice", TTL, OtpChannel::Email, 3).await.is_ok());
+        assert!(m.mint("alice", TTL, OtpChannel::Email, 3).await.is_err());
+        assert!(
+            m.mint("bob", TTL, OtpChannel::Email, 3).await.is_ok(),
+            "bob has not asked for anything"
+        );
+    }
+
+    /// One second, not less: `insert_if_absent` floors its TTL there on
+    /// purpose, so a shorter cooldown would silently be rounded up and this
+    /// test would be asserting something the API does not promise.
+    #[tokio::test]
+    async fn a_cooldown_lapses() {
+        let m = OtpAuthMethod::new(MemoryStore::new()).with_resend_cooldown(Duration::from_secs(1));
+
+        assert!(m.mint("alice", TTL, OtpChannel::Email, 3).await.is_ok());
+        assert!(m.mint("alice", TTL, OtpChannel::Email, 3).await.is_err());
+
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        assert!(
+            m.mint("alice", TTL, OtpChannel::Email, 3).await.is_ok(),
+            "the cooldown should expire on its own"
+        );
+    }
+
+    /// A refused mint must leave the previous challenge intact. Otherwise a
+    /// resend an attacker triggers would invalidate the code the real user is
+    /// in the middle of typing — turning a throttle into a denial of service.
+    #[tokio::test]
+    async fn a_refused_resend_does_not_disturb_the_live_challenge() {
+        let m =
+            OtpAuthMethod::new(MemoryStore::new()).with_resend_cooldown(Duration::from_secs(60));
+
+        let first = m.mint("alice", TTL, OtpChannel::Email, 3).await.unwrap();
+        assert!(m.mint("alice", TTL, OtpChannel::Email, 3).await.is_err());
+
+        assert!(
+            m.authenticate(submit("alice", &first.code)).await.is_ok(),
+            "the original code must still work"
+        );
+    }
+
+    /// Two simultaneous resends must not both get through. `insert_if_absent`
+    /// is what makes that true rather than a check-then-mint that races.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_resends_yield_one_mint() {
+        let m = std::sync::Arc::new(
+            OtpAuthMethod::new(MemoryStore::new()).with_resend_cooldown(Duration::from_secs(60)),
+        );
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let m = m.clone();
+            handles.push(tokio::spawn(async move {
+                m.mint("alice", TTL, OtpChannel::Email, 3).await.is_ok()
+            }));
+        }
+        let mut minted = 0;
+        for h in handles {
+            if h.await.unwrap() {
+                minted += 1;
+            }
+        }
+        assert_eq!(minted, 1, "{minted} codes were sent for one request");
+    }
+
+    /// A store whose `set` fails once, to exercise the unwind path.
+    #[derive(Clone)]
+    struct FailingSetStore {
+        inner: MemoryStore<OtpChallenge>,
+        fail_next_set: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl FailingSetStore {
+        fn new() -> Self {
+            Self {
+                inner: MemoryStore::new(),
+                fail_next_set: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl KvStore<OtpChallenge> for FailingSetStore {
+        async fn get(&self, key: &str) -> Result<Option<OtpChallenge>, crate::store::StoreError> {
+            self.inner.get(key).await
+        }
+        async fn set(
+            &self,
+            key: &str,
+            value: OtpChallenge,
+            ttl: Duration,
+        ) -> Result<(), crate::store::StoreError> {
+            if self
+                .fail_next_set
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(crate::store::StoreError::Internal("boom".into()));
+            }
+            self.inner.set(key, value, ttl).await
+        }
+        async fn delete(&self, key: &str) -> Result<(), crate::store::StoreError> {
+            self.inner.delete(key).await
+        }
+    }
+
+    #[async_trait]
+    impl AtomicConsume<OtpChallenge> for FailingSetStore {
+        async fn consume(
+            &self,
+            key: &str,
+        ) -> Result<Option<OtpChallenge>, crate::store::StoreError> {
+            self.inner.consume(key).await
+        }
+    }
+
+    #[async_trait]
+    impl AtomicDecrement<OtpChallenge> for FailingSetStore {
+        async fn init_counter(
+            &self,
+            key: &str,
+            value: u32,
+            ttl: Duration,
+        ) -> Result<(), crate::store::StoreError> {
+            self.inner.init_counter(key, value, ttl).await
+        }
+        async fn decrement(&self, key: &str) -> Result<Option<u32>, crate::store::StoreError> {
+            self.inner.decrement(key).await
+        }
+    }
+
+    #[async_trait]
+    impl AtomicInsert<OtpChallenge> for FailingSetStore {
+        async fn insert_if_absent(
+            &self,
+            key: &str,
+            value: OtpChallenge,
+            ttl: Duration,
+        ) -> Result<bool, crate::store::StoreError> {
+            self.inner.insert_if_absent(key, value, ttl).await
+        }
+    }
+
+    /// A mint that fails after claiming the cooldown must hand it back.
+    ///
+    /// Otherwise one transient store error locks the subject out for the
+    /// whole interval while no code was ever delivered — a user refused a
+    /// code they never received, which is worse than the abuse the cooldown
+    /// exists to stop.
+    #[tokio::test]
+    async fn a_failed_mint_does_not_leave_the_subject_throttled() {
+        let m = OtpAuthMethod::new(FailingSetStore::new())
+            .with_resend_cooldown(Duration::from_secs(60));
+
+        // First mint fails inside the store, after the cooldown was claimed.
+        assert!(matches!(
+            m.mint("alice", TTL, OtpChannel::Email, 3).await,
+            Err(AuthError::Internal(_))
+        ));
+
+        // The retry must not be refused.
+        let minted = m
+            .mint("alice", TTL, OtpChannel::Email, 3)
+            .await
+            .expect("a retry after a failed mint must not be throttled");
+        assert!(m.authenticate(submit("alice", &minted.code)).await.is_ok());
     }
 
     #[tokio::test]

@@ -318,10 +318,17 @@ default is wrong for somebody and the failure is silent.
    general `AtomicApply`/compare-and-swap that the next counter can also use?
    A narrow trait is easier to implement correctly on every backend; a general
    one is likelier to be reused. Leaning narrow.
-2. **Should `mint` refuse to replace a challenge younger than some floor**, as
-   a cheap resend-abuse brake, or is that entirely the edge's job? §4.2 makes
-   replacement free, which also makes it free for an attacker triggering SMS
-   sends.
+2. ~~**Should `mint` refuse to replace a challenge younger than some floor**,
+   as a cheap resend-abuse brake, or is that entirely the edge's job?~~
+   **Settled: yes, and not the edge's job alone.** `with_resend_cooldown`
+   makes it opt-in and off by default, for the reason §4.2 gives about
+   defaults generally. The argument for putting it in the engine at all is
+   the one the attempt budget already rests on: edge limits are per-IP and an
+   attacker rotating addresses walks through them, while the abuse — spending
+   the operator's money on SMS, and burying a victim's phone — is per-subject.
+   Enforced with `AtomicInsert::insert_if_absent`, so simultaneous requests
+   cannot both find the coast clear, and the TTL handles expiry. Note that
+   primitive floors its TTL at one second, so the cooldown does too.
 3. **Does `OtpChannel` want a third variant** for voice delivery, which RFC
    8176 also registers (`tel`)? Cheap to add now, breaking to add to a
    `#[non_exhaustive]` enum later only in the sense that every match must
