@@ -14,11 +14,29 @@ use crate::auth::error::AuthError;
 use crate::auth::store::CredentialStore;
 
 /// SQLx implementation of the `CredentialStore` trait.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub struct SqlxCredentialStore<DB: Database> {
     pub pool: sqlx::Pool<DB>,
     pub table_name: String,
+}
+
+/// Cloned by hand rather than derived.
+///
+/// `#[derive(Clone)]` would add a `DB: Clone` bound, and `DB` here is a
+/// backend marker — `sqlx::Sqlite`, `sqlx::Postgres`, `sqlx::MySql` — none of
+/// which is `Clone`. The derive therefore produced an impl that applied to no
+/// real backend, making the store uncloneable in practice while looking as
+/// though it were not. `sqlx::Pool<DB>` is itself `Clone` for any
+/// `DB: Database` (it is an `Arc` inside), so nothing about the type actually
+/// required the bound.
+impl<DB: Database> Clone for SqlxCredentialStore<DB> {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            table_name: self.table_name.clone(),
+        }
+    }
 }
 
 impl<DB: Database> SqlxCredentialStore<DB> {
