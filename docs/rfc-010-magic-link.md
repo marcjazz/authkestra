@@ -237,6 +237,14 @@ response body refuses to.
 
 ### 4.9. Designed so OTP is the same thing with a different presentation
 
+> **Partly superseded by [RFC-011](./rfc-011-otp.md) §4.9.** This section
+> underestimated the divergence: a code short enough to type cannot be the
+> store key, so OTP keys by subject and the record, the key and the moment of
+> consumption all differ. What factors out is secret generation and hashing,
+> not the verification path. The two-respects claim below is the thing
+> RFC-011 had to correct, and is left here as written.
+
+
 Email/SMS OTP is the next roadmap item, and it differs from magic link in
 exactly two respects: the secret is short enough to be typed, and it therefore
 needs attempt-limiting.
