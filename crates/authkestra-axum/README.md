@@ -35,7 +35,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.7", features = ["macros", "session"] }
+authkestra-axum = { version = "0.13", features = ["macros", "session"] }
 tower-cookies = "0.11" # Required for session support
 ```
 
@@ -159,7 +159,7 @@ network call.
 
 ```toml
 [dependencies]
-authkestra-axum = { version = "0.7", features = ["devsig"] }
+authkestra-axum = { version = "0.13", features = ["devsig"] }
 authkestra-devsig = "0.7"
 ```
 

@@ -110,6 +110,10 @@ The RFC-001 consolidation is done; these are the crates that actually exist toda
   [rfc-008-policy-engine.md](./rfc-008-policy-engine.md)); nothing calls it yet
 - `authkestra-ssf/` — Shared Signals Framework: SET (RFC 8417) ingestion, CAEP 1.0 events, and the
   RFC 8935 push receiver
+- `authkestra-store-sqlx/` — `OpStore` on `sqlx` (`postgres`/`mysql`/`sqlite`), split out of
+  `authkestra-op` so core carries no `sqlx` dependency
+- `authkestra-store-testsuite/` — the conformance suites a store runs against to prove it honours
+  the traits' atomicity contracts
 - `authkestra-axum/`, `authkestra-actix/` — framework adapters
 - `authkestra-macros/` — `AxumState` / `ActixState` / `KvStore` derives
 
