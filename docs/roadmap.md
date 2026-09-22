@@ -56,17 +56,35 @@ This roadmap outlines the evolution of Authkestra into a next-generation identit
 - ✅ Implement `Engine` builder with Typestate pattern.
 - ✅ Update `Flow` trait for GNAP compatibility (trait shape only — see `docs/rfc-004-gnap-flow.md`; the GNAP grant endpoints themselves are tracked separately).
 
-### Phase 2: Quantum-Safe & Privacy-Preserving Auth
+### Phase 2: Passwordless-Native Authentication
+
+The strategic bet is advanced, correct primitives rather than parity on the
+basics — so the authentication methods we add are the ones a passwordless
+account actually uses, and they share one shape: the server mints a secret,
+delivers it out of band, and accepts it back exactly once.
+
+- ✅ Re-proof gating for security-posture changes (`docs/rfc-009-reproof-gate.md`). A prerequisite, not a sibling: all three items below add enrolment surfaces with identical exposure, so the gate had to exist first or be retrofitted three times.
+- Magic link — in `authkestra-engine` behind a feature flag, per the convention `webauthn`/`totp` already follow (`docs/rfc-010-magic-link.md`).
+- Email/SMS OTP — the same delivered-secret core, differing only in that the secret is short enough to type and therefore needs attempt-limiting.
+- Recovery codes, as a **look-up secret authenticator** (NIST SP 800-63B §5.1.2). Deliberately not "TOTP recovery": a factor-agnostic fallback across whichever methods an account has registered, not one tied to a single factor.
+
+> **Passwords and SAML are migration tooling here, not features.** Scope is
+> one-way: verify-once against a legacy hash, read-once of a SAML assertion,
+> so an integrator can move accounts onto Authkestra. Neither is planned as a
+> first-class ongoing authentication method — that is the market we are
+> deliberately not competing in.
+
+### Phase 3: Quantum-Safe & Privacy-Preserving Auth
 - Support ML-DSA in WebAuthn.
 - Implement SD-JWT and BBS+ proof validation.
 - Standardize DID-based identity modeling.
 
-### Phase 3: Continuous Trust & Policy-as-Code
+### Phase 4: Continuous Trust & Policy-as-Code
 - Implement SSF/CAEP for real-time revocation.
 - Launch ReBAC (Zanzibar) and ABAC (Cedar) policy engines.
 - Refocus `authkestra-resource` on dynamic policy enforcement.
 
-### Phase 4: Platform & AI-Native DX
+### Phase 5: Platform & AI-Native DX
 - CLI for rapid scaffolding.
 - Admin API & Next.js Identity Dashboard.
 - AI-driven risk scoring and anomaly detection.
