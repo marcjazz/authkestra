@@ -130,7 +130,14 @@ impl<T: Clone + Send + Sync + 'static> AtomicConsume<T> for MemoryStore<T> {
 impl<T: Clone + Send + Sync + 'static> AtomicDecrement<T> for MemoryStore<T> {
     async fn init_counter(&self, key: &str, value: u32, ttl: Duration) -> Result<(), StoreError> {
         tracing::debug!(key = %key, value, "initialising a counter in memory store");
-        self.counters.lock().unwrap().insert(
+        let mut counters = self.counters.lock().unwrap();
+        // Opportunistic sweep, in the same spirit as `insert_if_absent`'s.
+        // A counter is only ever reclaimed by a later `decrement` on its own
+        // key, so a challenge that is minted and then abandoned — the common
+        // case, since most codes are simply never submitted — would otherwise
+        // leak an entry for the life of the process.
+        counters.retain(|_, entry| !entry.is_expired());
+        counters.insert(
             key.to_string(),
             StoreEntry {
                 value,
@@ -153,8 +160,14 @@ impl<T: Clone + Send + Sync + 'static> AtomicDecrement<T> for MemoryStore<T> {
             tracing::debug!(key = %key, "counter had expired");
             return Ok(None);
         }
-        // Saturating, so a spent counter cannot be wrapped back around.
-        entry.value = entry.value.saturating_sub(1);
+        if entry.value == 0 {
+            // Already spent. Reported as "no attempt available" rather than
+            // `Some(0)`, so a caller can tell an authorised last attempt from
+            // one that was never granted.
+            tracing::debug!(key = %key, "counter already spent");
+            return Ok(None);
+        }
+        entry.value -= 1;
         let remaining = entry.value;
         tracing::debug!(key = %key, remaining, "decremented a counter");
         Ok(Some(remaining))
@@ -311,6 +324,36 @@ impl<T: Clone + Send + Sync + 'static> IndexedKvStore<T> for MemoryStore<T> {
 mod tests {
 
     use super::*;
+
+    /// Counters are only reclaimed by a later `decrement` on their own key,
+    /// so a challenge that is minted and never submitted — the common case —
+    /// would otherwise leak an entry for the life of the process. `init_counter`
+    /// sweeps opportunistically, in the same spirit as `insert_if_absent`.
+    #[tokio::test]
+    async fn init_counter_sweeps_expired_counters_under_other_keys() {
+        let store = MemoryStore::<String>::new();
+
+        for i in 0..5 {
+            store
+                .init_counter(&format!("abandoned-{i}"), 3, Duration::from_millis(10))
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.counters.lock().unwrap().len(), 5);
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        store
+            .init_counter("fresh", 3, Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        let held = store.counters.lock().unwrap().len();
+        assert_eq!(
+            held, 1,
+            "expired counters should have been swept, {held} still held"
+        );
+    }
 
     #[tokio::test]
     async fn test_get_set_delete() {

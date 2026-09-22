@@ -75,15 +75,25 @@ pub trait AtomicDecrement<T>: KvStore<T> {
     /// Start a counter at `value`, replacing any existing one under `key`.
     async fn init_counter(&self, key: &str, value: u32, ttl: Duration) -> Result<(), StoreError>;
 
-    /// Subtract one and return what remains.
+    /// Take one from the budget, reporting what remains.
     ///
-    /// `Ok(None)` means there is no counter under `key` — never set, or
-    /// expired. A caller treating that as "no attempts left" is correct; a
-    /// caller treating it as "unlimited" has inverted the guard.
+    /// `Ok(Some(n))` means **this call took an attempt** and `n` remain.
+    /// `Ok(Some(0))` therefore means this call took the *last* one.
     ///
-    /// Saturates at zero rather than going negative, so a counter that is
-    /// already spent stays spent and cannot be wrapped around by repeated
-    /// calls. Must be a single atomic operation.
+    /// `Ok(None)` means no attempt was available: no counter under `key`
+    /// (never set, or expired), or one already at zero. A caller treating
+    /// that as "no attempts left" is correct; a caller treating it as
+    /// "unlimited" has inverted the guard.
+    ///
+    /// The distinction matters and is not cosmetic. An earlier version of
+    /// this contract saturated instead, returning `Some(0)` both for "took
+    /// the last attempt" and "was already spent" — indistinguishable states,
+    /// so a caller could not tell whether the budget had authorised the
+    /// operation it was about to perform. Never returning a count for an
+    /// attempt that was not granted removes the ambiguity at the source.
+    ///
+    /// A spent counter stays spent: repeated calls keep reporting `None`
+    /// rather than wrapping. Must be a single atomic operation.
     async fn decrement(&self, key: &str) -> Result<Option<u32>, StoreError>;
 }
 

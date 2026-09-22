@@ -276,9 +276,13 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicDecrement<T>
         // A script rather than a bare `DECR` for two reasons: `DECR` on a
         // missing key creates it at -1, which would turn an expired counter
         // into an unlimited one, and it has no floor, so a spent counter
-        // would run negative. Both are checked here inside the same atomic
+        // would run negative. Both are handled here inside the same atomic
         // evaluation, so no caller can observe a value between the read and
         // the write.
+        //
+        // An exhausted counter returns nil, not 0 — the contract requires
+        // "already spent" to be distinguishable from "took the last attempt",
+        // so a count is only ever returned for an attempt actually granted.
         let script = redis::Script::new(
             r#"
             local current = redis.call('GET', KEYS[1])
@@ -287,7 +291,7 @@ impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> AtomicDecrement<T>
             end
             local n = tonumber(current)
             if n <= 0 then
-                return 0
+                return nil
             end
             return redis.call('DECR', KEYS[1])
             "#,

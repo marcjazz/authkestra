@@ -191,21 +191,18 @@ where
         Ok(OtpCode { code, expires_at })
     }
 
-    /// Deletes a challenge and its counter.
+    /// Drops a challenge whose budget is gone.
+    ///
+    /// Best effort. A failure leaves a challenge its own TTL will collect,
+    /// and whose counter is spent — and since acceptance requires winning
+    /// `consume` rather than merely finding the record, a challenge left
+    /// behind here is not a usable one.
+    ///
+    /// The counter is left to expire. It cannot be inherited by a later
+    /// challenge for the same subject, because `mint` replaces it.
     async fn discard(&self, key: &str) {
-        // Best effort on both. A failure here leaves a challenge that its own
-        // TTL will collect, and whose budget is already spent, so it cannot
-        // be used — worth logging, not worth failing the caller's request
-        // over.
         if let Err(e) = self.store.delete(key).await {
             tracing::warn!(error = %e, "failed to discard a spent otp challenge");
-        }
-        if let Err(e) = self
-            .store
-            .init_counter(key, 0, Duration::from_secs(1))
-            .await
-        {
-            tracing::warn!(error = %e, "failed to zero a spent otp counter");
         }
     }
 }
@@ -295,8 +292,27 @@ where
             return Err(AuthError::InvalidCredentials);
         }
 
-        // Correct. Single use, so it goes regardless of what the budget said.
-        self.discard(&key).await;
+        // Correct — but knowing the code is not the same as being the one who
+        // gets to use it. `consume` decides that: it fetches and removes in
+        // one operation, so among any number of concurrent submissions of the
+        // same correct code exactly one sees `Some` and the rest see `None`.
+        //
+        // Deleting after accepting would not do. Verification here is a read,
+        // a decrement and a compare, none of which excludes a second caller
+        // doing the same against the same live record — under a multi-threaded
+        // runtime that reliably yields several accepted identities from one
+        // code. Single use has to be won, not tidied up afterwards.
+        let claimed = self
+            .store
+            .consume(&key)
+            .await
+            .map_err(|e| AuthError::Internal(format!("otp claim failed: {e}")))?;
+
+        if claimed.is_none() {
+            tracing::warn!("otp rejected: the challenge was claimed concurrently");
+            return Err(AuthError::InvalidCredentials);
+        }
+
         tracing::info!(subject = %subject, channel = ?challenge.channel, "otp accepted");
 
         let mut attributes = std::collections::HashMap::new();
@@ -385,6 +401,31 @@ mod tests {
             m.authenticate(submit("alice", &minted.code)).await,
             Err(AuthError::InvalidCredentials)
         ));
+    }
+
+    /// Does a correct code submitted concurrently produce more than one
+    /// identity? (Reproduction for the review finding.)
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_correct_submissions_yield_one_identity() {
+        let store = MemoryStore::<OtpChallenge>::new();
+        let m = std::sync::Arc::new(OtpAuthMethod::new(store));
+        let minted = m.mint("alice", TTL, OtpChannel::Email, 5).await.unwrap();
+
+        let mut handles = Vec::new();
+        for _ in 0..5 {
+            let m = m.clone();
+            let code = minted.code.clone();
+            handles.push(tokio::spawn(async move {
+                m.authenticate(submit("alice", &code)).await.is_ok()
+            }));
+        }
+        let mut accepted = 0;
+        for h in handles {
+            if h.await.unwrap() {
+                accepted += 1;
+            }
+        }
+        assert_eq!(accepted, 1, "a code was accepted {accepted} times");
     }
 
     #[tokio::test]

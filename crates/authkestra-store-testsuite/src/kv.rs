@@ -24,8 +24,9 @@ where
 ///   * a counter that never existed must read as absent, not as zero and not
 ///     as unlimited — a `DECR` on a missing Redis key would happily create it
 ///     at -1;
-///   * a spent counter must stay spent, rather than wrapping or running
-///     negative on further calls;
+///   * a spent counter must report `None` rather than `Some(0)`, so a caller
+///     can tell an attempt it was granted from one it was not — and must not
+///     wrap or run negative on further calls;
 ///   * concurrent decrements must each take exactly one, which is the whole
 ///     reason this is not `get` plus `set`.
 async fn test_atomic_decrement<
@@ -45,10 +46,14 @@ async fn test_atomic_decrement<
     assert_eq!(store.decrement("budget").await.unwrap(), Some(1));
     assert_eq!(store.decrement("budget").await.unwrap(), Some(0));
 
-    // Spent stays spent. A backend that wrapped here would hand out
-    // four billion more attempts.
-    assert_eq!(store.decrement("budget").await.unwrap(), Some(0));
-    assert_eq!(store.decrement("budget").await.unwrap(), Some(0));
+    // Spent reports None, not Some(0). The distinction is the contract: a
+    // count is only ever returned for an attempt that was actually granted,
+    // so `Some(0)` uniquely means "this call took the last one". A backend
+    // saturating to Some(0) instead would leave a caller unable to tell an
+    // authorised last attempt from one that was never available — which is
+    // how a verify-after-decrement path ends up accepting a spent secret.
+    assert_eq!(store.decrement("budget").await.unwrap(), None);
+    assert_eq!(store.decrement("budget").await.unwrap(), None);
 
     // Re-initialising replaces rather than accumulating.
     store
@@ -56,6 +61,7 @@ async fn test_atomic_decrement<
         .await
         .unwrap();
     assert_eq!(store.decrement("budget").await.unwrap(), Some(0));
+    assert_eq!(store.decrement("budget").await.unwrap(), None);
 
     // A counter is independent of a value stored under the same key, so the
     // two namespaces cannot collide.
