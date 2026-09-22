@@ -266,6 +266,25 @@ This also settles the RFC-009 interaction: the re-proof gate protects
 *enrolment*, and magic link has nothing to enrol, so no gated surface is added
 here. The gate becomes relevant again at recovery codes, which do enrol.
 
+### 4.11. `amr` is the method's own name, following existing practice
+
+The returned `Identity` carries `IDENTITY_ATTR_AMR` set to `"magic-link"`.
+
+This looks like it needs a decision and does not. RFC 8176 registers no value
+meaning "followed a link sent to an inbox" — but the engine does not emit
+RFC 8176 values in the first place. `engine.rs` stamps `amr` with the
+`AuthMethod`'s own `name()`, and the two names that exist today are
+`"webauthn"` and `"totp"`, neither of which is registered either (the registry
+spells those `swk`/`hwk` and `otp`). Magic link follows the established
+convention rather than inventing a second one alongside it.
+
+Whether that convention is the right one is a real question, and a
+project-wide one rather than anything to do with magic link: a relying party
+consuming these ID tokens will recognise `otp` and `hwk` and will not
+recognise `totp` or `webauthn`. It is tracked in #395. This RFC's position
+is only that magic link must not be the one method that answers it
+differently.
+
 ## 5. Proposed surface
 
 Behind `#[cfg(feature = "magic-link")]`, in
@@ -318,10 +337,11 @@ forwarded through the facade per #325.
 1. **Should `mint` accept a caller-supplied secret?** Against: it invites weak
    secrets. For: it lets an application that already has a token-issuing
    service keep using it. Leaning against.
-2. **Is `SameContext` binding better expressed as an opaque type** than a
+2. **Should the engine expose a "resend" that invalidates the previous
+   token?** Minting twice currently leaves two live tokens until the first
+   expires. Arguably correct — the first mail may simply be slow — but it
+   widens the window, and the alternative costs a per-subject index the
+   `AtomicConsume` shape does not otherwise need.
+3. **Is `SameContext` binding better expressed as an opaque type** than a
    `String`, so the application cannot accidentally bind to something guessable
    (a username rather than a nonce)? Probably yes; costs a type.
-3. **Does the `Identity` returned carry `IDENTITY_ATTR_AMR`?** RFC-006 stamps
-   `amr` on identities from `Engine::authenticate`. There is no registered AMR
-   value for "magic link" in RFC 8176; the nearest is deferring to the
-   application. Needs a decision before implementation.
