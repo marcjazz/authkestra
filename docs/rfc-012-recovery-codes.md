@@ -1,6 +1,7 @@
 # RFC-012: Recovery codes as a look-up secret authenticator
 
-> **Status: proposed**, not implemented. Design record for the third and last
+> **Status: implemented**, in `authkestra-engine` (`auth::recovery`, feature
+> `recovery-codes`) as of v0.13.0. Design record for the third and last
 > item in
 > [Phase 2: Passwordless-Native Authentication](./roadmap.md#phase-2-passwordless-native-authentication).
 > It is the first method on that track that actually **enrols**, which is what

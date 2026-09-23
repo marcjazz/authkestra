@@ -68,11 +68,12 @@ This architectural separation is deliberate:
 
 **What Authkestra Owns (`KvStore`)**:
 Authkestra only persists ephemeral, protocol-specific state — plus, if you enable them,
-TOTP/WebAuthn credentials via `CredentialStore`:
+TOTP/WebAuthn/recovery-code credentials via `CredentialStore`:
 - `authorization_code`s (10-minute expiry)
 - `refresh_token`s
 - `device_code`s
 - `OP_Session`s (the cryptographic cookies proving authentication to the OpenID Provider)
+- magic-link and OTP one-time secrets, each consumed on first use
 
 **What Your Application Owns**:
 Your application completely owns the `users` and `accounts` tables. Authkestra has no `UserRepository`, `AccountRepository`, or `UserStore` trait — if you find one named in older documentation, it does not exist. 

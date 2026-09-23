@@ -40,7 +40,9 @@ This roadmap outlines the evolution of Authkestra into a next-generation identit
   The engine evaluates policies and reloads them at runtime, but nothing calls it yet — see
   [rfc-008-policy-engine.md](./rfc-008-policy-engine.md) and
   [authkestra#21](https://github.com/marcjazz/authkestra/issues/21).
-- *(planned)* `authkestra-ssf`: Shared Signals Framework receiver/transmitter.
+- *(shipped, receiver only)* `authkestra-ssf`: ingests and validates Security Event Tokens
+  (RFC 8417) with typed CAEP 1.0 events over an RFC 8935 push receiver. The *transmitter* side —
+  this service emitting SETs of its own — is not built; see Phase 4.
 - *(planned)* PQC-ready hardware-backed authentication; WebAuthn ships today inside
   `authkestra-engine` behind the `webauthn` feature.
 
@@ -64,9 +66,11 @@ account actually uses, and they share one shape: the server mints a secret,
 delivers it out of band, and accepts it back exactly once.
 
 - ✅ Re-proof gating for security-posture changes (`docs/rfc-009-reproof-gate.md`). A prerequisite, not a sibling: all three items below add enrolment surfaces with identical exposure, so the gate had to exist first or be retrofitted three times.
-- Magic link — in `authkestra-engine` behind a feature flag, per the convention `webauthn`/`totp` already follow (`docs/rfc-010-magic-link.md`).
-- Email/SMS OTP — the same delivered-secret core, differing only in that the secret is short enough to type and therefore needs attempt-limiting.
-- Recovery codes, as a **look-up secret authenticator** (NIST SP 800-63B §5.1.2). Deliberately not "TOTP recovery": a factor-agnostic fallback across whichever methods an account has registered, not one tied to a single factor.
+- ✅ Magic link — in `authkestra-engine` behind the `magic-link` feature flag, per the convention `webauthn`/`totp` already follow (`docs/rfc-010-magic-link.md`).
+- ✅ Email/SMS OTP — the same delivered-secret core, differing in that the secret is short enough to type and therefore needs attempt-limiting; ships with an opt-in per-subject resend cooldown (`docs/rfc-011-otp.md`).
+- ✅ Recovery codes, as a **look-up secret authenticator** (NIST SP 800-63B §5.1.2). Deliberately not "TOTP recovery": a factor-agnostic fallback across whichever methods an account has registered, not one tied to a single factor (`docs/rfc-012-recovery-codes.md`).
+
+**Phase 2 is complete as of v0.13.0.** Two pieces of shared infrastructure came out of building it, in case a future store or feature wants them: the `AtomicDecrement` store primitive (OTP's attempt budget cannot be maintained safely with read-modify-write), and a tightened `CredentialStore::delete_credential` contract — `Ok(true)` now means *this call* removed the credential, which recovery codes need for single use and which a new `authkestra-store-testsuite` conformance suite enforces.
 
 > **Passwords and SAML are migration tooling here, not features.** Scope is
 > one-way: verify-once against a legacy hash, read-once of a SAML assertion,
@@ -80,8 +84,12 @@ delivers it out of band, and accepts it back exactly once.
 - Standardize DID-based identity modeling.
 
 ### Phase 4: Continuous Trust & Policy-as-Code
-- Implement SSF/CAEP for real-time revocation.
-- Launch ReBAC (Zanzibar) and ABAC (Cedar) policy engines.
+- ✅ SSF/CAEP ingestion (the receiving half): `authkestra-ssf` validates inbound Security Event
+  Tokens and typed CAEP events. What is not built — the crate's own docs say so plainly —
+  is revoking or attenuating a live session when an event arrives, transmitting SETs of its
+  own, or middleware that rejects a token a received event invalidated.
+- Launch ReBAC (Zanzibar) and ABAC (Cedar) policy engines — `authkestra-policy` is the Cedar
+  proof of concept this builds on; still nothing calls it.
 - Refocus `authkestra-resource` on dynamic policy enforcement.
 
 ### Phase 5: Platform & AI-Native DX
