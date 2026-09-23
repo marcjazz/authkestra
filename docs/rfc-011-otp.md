@@ -1,11 +1,11 @@
 # RFC-011: Email and SMS one-time codes
 
-> **Status: proposed**, not implemented. Design record for the email/SMS OTP
-> item in
+> **Status: implemented**, in `authkestra-engine` (`auth::otp`, feature `otp`)
+> as of v0.13.0, including the opt-in resend cooldown from §7.2. Design record
+> for the email/SMS OTP item in
 > [Phase 2: Passwordless-Native Authentication](./roadmap.md#phase-2-passwordless-native-authentication),
 > and the second of the three delivered-secret methods. Read
 > [`rfc-010-magic-link.md`](./rfc-010-magic-link.md) first: this document is
-> mostly about where OTP **cannot** follow it.
 
 ## 1. Summary
 
