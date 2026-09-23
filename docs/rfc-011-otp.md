@@ -6,6 +6,7 @@
 > [Phase 2: Passwordless-Native Authentication](./roadmap.md#phase-2-passwordless-native-authentication),
 > and the second of the three delivered-secret methods. Read
 > [`rfc-010-magic-link.md`](./rfc-010-magic-link.md) first: this document is
+> mostly about where OTP **cannot** follow it.
 
 ## 1. Summary
 
