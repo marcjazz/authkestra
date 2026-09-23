@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.12.0...authkestra-engine-v0.13.0) - 2026-09-23
+
+### Added
+
+- *(engine)* magic-link authentication behind a feature flag ([#400](https://github.com/marcjazz/authkestra/pull/400))
+
+### Fixed
+
+- *(op)* make the amr pass-through a decision, not a default ([#396](https://github.com/marcjazz/authkestra/pull/396))
+
+### Other
+
+- Bring the READMEs up to v0.13 ([#409](https://github.com/marcjazz/authkestra/pull/409))
+- Recovery codes as a look-up secret authenticator ([#404](https://github.com/marcjazz/authkestra/pull/404))
+- An opt-in resend cooldown for one-time codes ([#406](https://github.com/marcjazz/authkestra/pull/406))
+- A conformance suite for CredentialStore ([#405](https://github.com/marcjazz/authkestra/pull/405))
+- Email and SMS one-time codes ([#402](https://github.com/marcjazz/authkestra/pull/402))
+
 ## [0.12.0](https://github.com/marcjazz/authkestra/compare/authkestra-engine-v0.11.1...authkestra-engine-v0.12.0) - 2026-09-19
 
 ### Other
