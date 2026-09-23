@@ -37,6 +37,10 @@ rand = "0.8"
 # key in the PKCS#8 DER shape `jsonwebtoken::EncodingKey::from_ed_der` expects, so that the
 # positive EdDSA case exercises the same signing path a real device would.
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
+# Only `tests/rejection_logging.rs` needs it: the point of that file is that a
+# rejection reason reaches the logs, which nothing can assert without reading
+# them back.
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [features]
 default = []
