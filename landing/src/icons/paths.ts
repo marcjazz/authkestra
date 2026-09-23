@@ -85,6 +85,22 @@ export const ICONS: Record<string, string> = {
     <path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3" />
     <path d="M9 11.2h5.7" />
   `,
+  link: `
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  `,
+  "message-square-code": `
+    <path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
+    <path d="m10 8-3 3 3 3" />
+    <path d="m14 14 3-3-3-3" />
+  `,
+  "list-checks": `
+    <path d="M13 5h8" />
+    <path d="M13 12h8" />
+    <path d="M13 19h8" />
+    <path d="m3 17 2 2 4-4" />
+    <path d="m3 7 2 2 4-4" />
+  `,
   menu: `
     <path d="M4 5h16" />
     <path d="M4 12h16" />
