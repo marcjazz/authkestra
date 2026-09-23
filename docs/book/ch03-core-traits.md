@@ -62,8 +62,9 @@ token validation; a plain OAuth2 provider ignores them.
 
 ### `AuthMethod`
 
-The base trait for any authentication mechanism (WebAuthn, TOTP, credentials). Everything except
-`name` and `authenticate` is defaulted, so a minimal method implements two functions.
+The base trait for any authentication mechanism (WebAuthn, TOTP, magic links, OTP codes, recovery
+codes). Everything except `name` and `authenticate` is defaulted, so a minimal method implements
+two functions.
 
 ```rust
 #[async_trait]
@@ -89,6 +90,27 @@ pub trait AuthMethod: Send + Sync {
 Register a method as a primary credential with `EngineBuilder::with_auth_method(...)`, or as a
 step-up factor only with `EngineBuilder::with_mfa_method(...)`. The convenience wrappers
 `with_totp(store)` and `with_webauthn(webauthn, store)` register those two as *primary* methods.
+
+Shipped implementations: `WebAuthnAuthMethod` and `TotpAuthMethod` (above), plus three passwordless
+methods added in v0.13.0, each behind its own feature flag and each registered through the generic
+`with_auth_method(...)` — there is no dedicated convenience wrapper for these three:
+
+- `MagicLinkAuthMethod` (feature `magic-link`) — `mint(subject, ttl, binding)` hands back a
+  one-time link secret; `authenticate()` consumes it exactly once. See
+  `docs/rfc-010-magic-link.md`.
+- `OtpAuthMethod` (feature `otp`) — `mint(subject, ttl, channel, max_attempts)` issues a short
+  numeric code against an attempt budget, with an opt-in per-subject resend cooldown via
+  `OtpAuthMethod::with_resend_cooldown`. See `docs/rfc-011-otp.md`.
+- `RecoveryCodeAuthMethod` (feature `recovery-codes`) — a look-up secret authenticator (NIST SP
+  800-63B §5.1.2), not TOTP-specific; `generate()` returns a fresh set of codes, replacing any
+  existing one. See `docs/rfc-012-recovery-codes.md`.
+
+Magic link and OTP both override `has_enrolled` to always return `false` — the same value the
+trait's own default gives, but stated explicitly rather than inherited, because neither has an
+enrolment ceremony to report on and leaving it implicit would read as an oversight rather than a
+decision. Recovery codes are the exception: they *do* enrol, so `has_enrolled` reflects whether the
+account currently holds any live, unredeemed code. All three leave `is_mfa_equivalent` at the
+trait's `false` default — none of them is worth as much as primary-plus-step-up when used alone.
 
 ### `Flow` (Protocol Orchestration)
 
@@ -167,6 +189,12 @@ pub trait AtomicConsume<T>: KvStore<T> {
 #[async_trait]
 pub trait AtomicInsert<T>: KvStore<T> { /* ... */ }
 
+/// Atomically decrement a counter. The third atomic primitive, for a budget
+/// (e.g. OTP's remaining verification attempts) that must not be
+/// read-modify-written back under concurrent callers.
+#[async_trait]
+pub trait AtomicDecrement<T>: KvStore<T> { /* ... */ }
+
 /// A primary key plus a secondary lookup index, maintained together.
 #[async_trait]
 pub trait IndexedKvStore<T>: KvStore<T> {
@@ -223,8 +251,12 @@ them, and no feature flag enables them.
   accept the multi-kilobyte signatures of ML-DSA (FIPS 204). Today, token issuance is the concrete
   `authkestra_engine::token::TokenManager`, which is not generic over signature size and supports
   the classical `jsonwebtoken` algorithm set only.
-- **`SignalReceiver`** — ingestion of Shared Signals Framework / CAEP security event tokens for
-  continuous access evaluation. Roadmap Phase 3; there is no SSF receiver, transmitter, or event
-  type in the workspace.
-- **`PolicyEngine`** — see Chapter 5, which is likewise a design sketch rather than a description
-  of shipped code.
+- **`SignalReceiver`** — no such trait exists in `authkestra-engine`, and none is planned there.
+  This is narrower than it used to be: `authkestra-ssf` is a real, published crate that ingests and
+  validates Shared Signals Framework security event tokens (RFC 8417) into typed CAEP 1.0 events,
+  receiver-side, via its own `SetHandler` trait. What is still missing is the *transmitter* side
+  (this service emitting SETs of its own) and any wiring from a received event to revoking or
+  attenuating a live session — see `docs/roadmap.md` §2.
+- **`PolicyEngine`** — no such trait exists in `authkestra-engine` either. `authkestra-policy` is
+  likewise a real, published crate — a working Cedar evaluator — but an unwired proof of concept:
+  nothing in the engine calls it yet. See Chapter 5, and `docs/roadmap.md` §2.

@@ -3,9 +3,9 @@
 Authkestra is designed to resist the security challenges of the next decade, including the threat
 of quantum computing and the limitations of point-in-time authentication.
 
-Sections 4 and 5 describe properties of the code as it ships today. Sections 1, 2 and 3 are
-RFC-002 roadmap targets and are marked as such — treat them as intent, never as guarantees you can
-rely on in a deployment.
+Sections 4 and 5 describe properties of the code as it ships today. Section 1 is a pure RFC-002
+roadmap target; sections 2 and 3 are partially shipped, with each bullet marked individually —
+treat the unshipped parts as intent, never as guarantees you can rely on in a deployment.
 
 ## 1. Quantum Resilience (PQC) *(planned — not implemented)*
 > **No post-quantum algorithm is implemented anywhere in the workspace.** Tokens are signed with
@@ -15,13 +15,18 @@ rely on in a deployment.
 The intended direction: **ML-DSA (FIPS 204)** as the primary signature algorithm, with
 **SLH-DSA (FIPS 205)** as a stateless hash-based backup for high-security environments.
 
-## 2. Continuous Session Security (CAEP) *(planned — not implemented)*
-> **There is no SSF/CAEP receiver or transmitter.** Session invalidation today is whatever your
-> `SessionStore` supports: `delete_session` on a known session id, plus the store's own TTL. There
-> is no global kill-switch and no risk-telemetry ingestion.
+## 2. Continuous Session Security (CAEP) *(partially shipped)*
+- **SSF/CAEP ingestion** *(shipped)*: `authkestra-ssf` is a real, published, receiver-only crate —
+  it validates inbound Security Event Tokens (RFC 8417) into typed CAEP 1.0 events. See
+  `docs/roadmap.md` §2.
+- **Session revocation wiring / transmitter side** *(planned — not implemented)*: nothing wires a
+  received event to revoking or attenuating a live session, and there is no transmitter (this
+  service emitting SETs of its own). Session invalidation today is whatever your `SessionStore`
+  supports: `delete_session` on a known session id, plus the store's own TTL. There is no global
+  kill-switch.
 
-The intended direction: consume Shared Signals Framework events so that a compromised account or a
-device posture change attenuates or revokes sessions in near real time.
+The intended direction: wire consumed Shared Signals Framework events so that a compromised account
+or a device posture change attenuates or revokes sessions in near real time.
 
 ## 3. Privacy-Preserving Identity *(partially shipped)*
 - **SD-JWT selective disclosure** *(shipped)*: the holder chooses, per verifier, which claims to
@@ -36,6 +41,12 @@ device posture change attenuates or revokes sessions in near real time.
 - **Sender-Constrained Tokens**: DPoP (RFC 9449) and mutual-TLS (RFC 8705) binding, both fail-closed
   when their replay/binding stores are not wired — see Chapter 4 §1.
 - **Stateless OAuth state/nonce**: carried in encrypted cookies, never in the database.
+- **Re-proof gating for security-posture changes**: enrolling a security-sensitive factor —
+  TOTP registration, WebAuthn registration, or recovery-code generation — requires a *fresh*
+  re-authentication via `ReproofRequirement` (`auth::reproof`), not merely a live session. This
+  closes a confused-deputy attack: a hijacked session (stolen cookie, XSS, unlocked laptop) that is
+  merely "logged in" cannot enrol the attacker's own factor against the victim's account. See
+  [RFC-009](../rfc-009-reproof-gate.md) for the full design.
 
 ## 5. SD-JWT: Fail-Closed Disclosure Verification *(shipped)*
 `authkestra-engine`'s SD-JWT support (`token::sd_jwt`) is deliberately fail-closed rather than lenient, on four specific points:
