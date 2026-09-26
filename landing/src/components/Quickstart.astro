@@ -1,7 +1,7 @@
 ---
 import { highlightRust, highlightRustLine } from '../lib/rust-highlight';
 
-const cargo = `authkestra = { version = "0.9", features = ["axum", "session", "github"] }`;
+const cargo = `authkestra = { version = "0.13", features = ["axum", "memory", "github"] }`;
 
 const rust = `let github_provider = GithubProvider::new(client_id, client_secret, redirect_uri);
 let session_store: Arc<dyn SessionStore> = Arc::new(MemoryStore::default());

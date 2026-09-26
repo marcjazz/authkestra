@@ -6,9 +6,6 @@
 > [Phase 2: Passwordless-Native Authentication](./roadmap.md#phase-2-passwordless-native-authentication).
 > It is the first method on that track that actually **enrols**, which is what
 > makes it different from
-> [`rfc-010-magic-link.md`](./rfc-010-magic-link.md) and
-> [`rfc-011-otp.md`](./rfc-011-otp.md) and what finally puts
-> [`rfc-009-reproof-gate.md`](./rfc-009-reproof-gate.md) to work.
 
 ## 1. Summary
 

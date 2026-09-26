@@ -10,62 +10,62 @@ const rows = [
   {
     feature: 'Category',
     authkestra: plain('Embedded identity engine'),
-    betterAuth: plain('Comprehensive auth library'),
+    embeddedAlt: plain('Embedded auth library'),
     standalone: plain('Standalone IdP server'),
   },
   {
-    feature: 'OIDC OP server',
-    authkestra: yes('Native, fully featured'),
-    betterAuth: muted('Relying party only'),
-    standalone: yes('Full support'),
+    feature: 'OAuth2 / OIDC role',
+    authkestra: yes('Provider, client, and resource server — one crate'),
+    embeddedAlt: muted('Relying party only'),
+    standalone: yes('Full provider support'),
   },
   {
     feature: 'Resource server',
-    authkestra: yes('Native (guard, strategies)'),
-    betterAuth: yes('API validation'),
+    authkestra: yes('Native — DPoP (RFC 9449) & mTLS (RFC 8705) binding'),
+    embeddedAlt: muted('Not offered'),
     standalone: yes('API validation'),
   },
   {
     feature: 'Configuration safety',
     authkestra: yes('Strict — typestate builder'),
-    betterAuth: yes('Standard builder'),
+    embeddedAlt: muted('Not documented'),
     standalone: muted('N/A — external config'),
   },
   {
     feature: 'State management',
     authkestra: plain('Stateless, encrypted cookies'),
-    betterAuth: plain('Stateful, in your DB'),
+    embeddedAlt: plain('Stateful — Redis or in-memory'),
     standalone: plain('Stateful, dedicated DB'),
   },
   {
     feature: 'Data architecture',
     authkestra: plain('Agnostic, trait-based — any DB'),
-    betterAuth: plain('Built-in adapters and ORMs'),
+    embeddedAlt: plain('SQLite / PostgreSQL built in'),
     standalone: plain('100% yours'),
   },
   {
-    feature: 'Passkeys / WebAuthn',
-    authkestra: yes('Native support'),
-    betterAuth: yes('Native support'),
-    standalone: yes('Full support'),
+    feature: 'Passwordless methods',
+    authkestra: yes('5 — passkeys, TOTP, magic link, email/SMS OTP, recovery codes'),
+    embeddedAlt: yes('Passkeys (WebAuthn)'),
+    standalone: yes('Passkeys, plus MFA'),
   },
   {
-    feature: 'Multi-factor auth',
-    authkestra: yes('Native support'),
-    betterAuth: yes('Native support'),
-    standalone: yes('Full support'),
+    feature: 'Fresh proof to enrol a factor',
+    authkestra: yes('Required — closes the session-hijack-then-enrol gap'),
+    embeddedAlt: muted('Not documented'),
+    standalone: muted('Not documented'),
   },
   {
     feature: 'Device signatures',
-    authkestra: yes('Built in'),
-    betterAuth: muted('Not offered'),
+    authkestra: yes('Built in — proof-of-possession + attestation'),
+    embeddedAlt: muted('Not offered'),
     standalone: muted('Not offered'),
   },
   {
-    feature: 'Bot protection',
-    authkestra: yes('Built in'),
-    betterAuth: yes('Plugins available'),
-    standalone: yes('Built in'),
+    feature: 'Bot / abuse protection',
+    authkestra: yes('CAPTCHA — Turnstile, hCaptcha, reCAPTCHA'),
+    embeddedAlt: muted('Not offered'),
+    standalone: plain('Rate-limit & IP-block (Rauthy)'),
   },
 ];
 ---
@@ -74,21 +74,22 @@ const rows = [
   <p class="lead">
     In the Rust ecosystem you generally choose between a standalone identity
     provider and a library you embed. Authkestra sits in between: a modular
-    identity engine, embedded in your binary, with the reach of a standalone OP
-    server. Here is how it compares to the two most popular alternatives — both
-    of which are good at what they do.
+    identity engine, embedded in your binary, that plays all three OAuth2/OIDC
+    roles — provider, client, and resource server — in one crate. Here is how
+    it compares to a well-scoped embedded library and to the standalone
+    servers, both of which are good at what they set out to do.
   </p>
 
   <div class="table-scroll">
     <table>
       <caption class="visually-hidden">
-        Feature comparison between Authkestra, better-auth.rs, and standalone servers Rauthy and Kanidm
+        Feature comparison between Authkestra, oauth2-passkey, and standalone servers Rauthy and Kanidm
       </caption>
       <thead>
         <tr>
           <th scope="col">Feature</th>
           <th scope="col" class="col-ak">Authkestra</th>
-          <th scope="col">better-auth.rs</th>
+          <th scope="col">oauth2-passkey</th>
           <th scope="col">Rauthy / Kanidm</th>
         </tr>
       </thead>
@@ -96,7 +97,7 @@ const rows = [
         {rows.map((r) => (
           <tr>
             <th scope="row">{r.feature}</th>
-            {[r.authkestra, r.betterAuth, r.standalone].map((cell, i) => (
+            {[r.authkestra, r.embeddedAlt, r.standalone].map((cell, i) => (
               <td class:list={[{ 'col-ak': i === 0 }]}>
                 {cell.kind === 'yes' && (
                   <span class="verdict yes">
@@ -116,21 +117,25 @@ const rows = [
 
   <div class="detail">
     <div>
-      <h3>vs. better-auth.rs</h3>
+      <h3>vs. oauth2-passkey</h3>
       <p>
-        A strong, batteries-included library for user management, with built-in
-        database adapters and passkeys or 2FA out of the box. It doesn't build an
-        OpenID Provider, though — Authkestra's typestate-checked builder and
-        native OP support are where it pulls ahead.
+        A clean, framework-agnostic core for signing users in with Google-style
+        OAuth2 and passkeys, backed by its own Redis/SQL session store. It's a
+        relying party, not a provider — there's no OP to issue tokens for your
+        own other services, and no resource-server side to validate them.
+        Authkestra plays all three roles from one crate, with the same
+        passkey ceremony plus four more passwordless methods alongside it.
       </p>
     </div>
     <div>
       <h3>vs. Rauthy &amp; Kanidm</h3>
       <p>
         Both are excellent, fast standalone identity servers — the right call
-        when you want a dedicated IdP microservice. Authkestra gives you the
-        same OP capability without the extra service to deploy, the network hop,
-        or the database to back up.
+        when you want a dedicated IdP microservice, and both take security at
+        least as seriously as Authkestra does. Authkestra gives you the same OP
+        capability without the extra service to deploy, the network hop, or the
+        database to back up — plus a resource-server SDK and an OIDC client for
+        your own app's other logins, which a standalone IdP doesn't hand you.
       </p>
     </div>
   </div>
