@@ -6,8 +6,12 @@ edition.workspace = true
 description = "Shared Signals Framework for the authkestra framework: ingest and validate Security Event Tokens (RFC 8417), decode typed OpenID CAEP 1.0 events, and receive them over the RFC 8935 push delivery method"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# "caep" and "rfc8417" are unambiguous, specific terms for this exact
+# spec; "set" (Security Event Token) was deliberately not used as its own
+# keyword despite being the standard's own acronym -- it collides with the
+# common English word and would not discriminate anything in search.
+keywords = ["caep", "rfc8417", "shared-signals", "security-events", "webhook"]
+categories = ["authentication", "web-programming"]
 readme = "README.md"
 
 [dependencies]

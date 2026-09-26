@@ -5,8 +5,8 @@ edition.workspace = true
 version.workspace = true
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+keywords = ["testing", "conformance", "authentication"]
+categories = ["authentication", "development-tools"]
 readme.workspace = true
 exclude.workspace = true
 

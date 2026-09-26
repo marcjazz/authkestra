@@ -6,8 +6,11 @@ edition.workspace = true
 description = "Resource server enforcement and validation for the authkestra framework"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# "jwt" and "dpop" name the two concrete things this crate actually
+# validates (RFC 9449 DPoP proof binding lives in src/dpop.rs) -- neither
+# term was reachable through the old shared keyword set.
+keywords = ["jwt", "dpop", "resource-server", "oauth2", "authentication"]
+categories = ["authentication", "web-programming"]
 readme = "README.md"
 
 [dependencies]

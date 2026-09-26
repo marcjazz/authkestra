@@ -7,8 +7,8 @@ authors = ["Authkestra Contributors"]
 license.workspace = true
 description = "Procedural macros for authkestra framework integrations"
 repository.workspace = true
-keywords.workspace = true
-categories.workspace = true
+keywords = ["proc-macro", "derive", "axum", "actix-web", "authentication"]
+categories = ["development-tools", "authentication"]
 readme = "README.md"
 
 [lib]

@@ -6,8 +6,8 @@ edition.workspace = true
 description = "Actix-web integration for the authkestra authentication framework"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+keywords = ["actix-web", "authentication", "oauth2", "session", "middleware"]
+categories = ["authentication", "web-programming"]
 readme = "README.md"
 
 [dependencies]

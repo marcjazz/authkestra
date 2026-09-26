@@ -6,8 +6,10 @@ edition.workspace = true
 description = "Consolidated OAuth providers for the authkestra framework"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# "social-login" is what most people actually type; the provider names
+# are what people search after they already know which one they want.
+keywords = ["oauth2", "social-login", "github", "google", "authentication"]
+categories = ["authentication", "web-programming"]
 readme.workspace = true
 
 [features]

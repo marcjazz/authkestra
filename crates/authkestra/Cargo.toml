@@ -6,8 +6,8 @@ edition.workspace = true
 description = "A modular authentication framework for Rust"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+keywords = ["authentication", "oauth2", "oidc", "passwordless", "webauthn"]
+categories = ["authentication", "web-programming"]
 readme.workspace = true
 
 [dependencies]

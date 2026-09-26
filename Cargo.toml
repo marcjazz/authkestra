@@ -25,8 +25,8 @@ edition = "2021"
 version = "0.13.0"
 repository = "https://github.com/marcjazz/authkestra"
 license = "MIT OR Apache-2.0"
-keywords = ["auth", "authentication", "oauth2", "oidc"]
-categories = ["authentication"]
+keywords = ["authentication", "oauth2", "oidc", "webauthn", "passwordless"]
+categories = ["authentication", "web-programming"]
 readme = "README.md"
 exclude = [
     "/Cargo.lock",
