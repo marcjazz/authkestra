@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.13.0...authkestra-oidc-v0.13.1) - 2026-09-26
+
+### Other
+
+- give every published crate its own crates.io keywords/categories ([#412](https://github.com/marcjazz/authkestra/pull/412))
+
 ## [0.11.0](https://github.com/marcjazz/authkestra/compare/authkestra-oidc-v0.10.2...authkestra-oidc-v0.11.0) - 2026-09-14
 
 ### Fixed
