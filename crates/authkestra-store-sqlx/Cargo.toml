@@ -6,8 +6,8 @@ edition.workspace = true
 description = "Native SQL-backed OpenID Provider storage for authkestra, via sqlx (Postgres/MySQL/SQLite)"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+keywords = ["sqlx", "postgres", "mysql", "sqlite", "storage"]
+categories = ["authentication", "database"]
 readme.workspace = true
 
 [dependencies]

@@ -6,8 +6,11 @@ edition.workspace = true
 description = "Device-bound signature authentication for the authkestra framework: per-request proof-of-possession signing plus an issuer-attested key binding, verifiable with no session store and no per-request network call"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# This is the least common pattern in the workspace, so its keywords lean
+# on the vocabulary someone would actually type for it rather than the
+# generic "authentication" umbrella, which this crate barely resembles.
+keywords = ["proof-of-possession", "attestation", "signatures", "device-binding", "authentication"]
+categories = ["authentication", "cryptography"]
 readme = "README.md"
 
 [dependencies]

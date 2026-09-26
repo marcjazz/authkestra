@@ -6,8 +6,12 @@ edition.workspace = true
 description = "Proof-of-concept AWS Cedar policy engine for the authkestra framework: evaluates Cedar policies against entities hydrated by a caller-supplied ResourceLoader, with runtime policy reload"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# "cedar" is a real, specific, high-value term: AWS Cedar has its own
+# distinct search community, and this is the one crate in the workspace
+# that speaks it. "abac"/"rebac" are the two policy models docs/roadmap.md
+# names as the eventual target.
+keywords = ["cedar", "authorization", "policy", "abac", "rebac"]
+categories = ["authentication"]
 readme = "README.md"
 
 [dependencies]

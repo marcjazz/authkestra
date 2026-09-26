@@ -7,6 +7,15 @@ description = "Unified authentication engine for the authkestra framework"
 repository.workspace = true
 license.workspace = true
 readme.workspace = true
+# The most specific, highest-search-volume terms for what this crate actually
+# implements (webauthn-rs and totp-rs use exactly this pairing pattern —
+# checked against their own published keywords rather than guessed). Deliberately
+# its own set rather than `keywords.workspace = true`: the shared workspace
+# keywords are the umbrella (auth/oauth2/oidc), and every other crate already
+# carries those — this crate is the one place a search for the *methods*
+# themselves (not the framework) should land.
+keywords = ["webauthn", "passkeys", "totp", "2fa", "oauth2"]
+categories = ["authentication", "web-programming"]
 
 [dependencies]
 # From authkestra-core

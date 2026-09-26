@@ -6,8 +6,8 @@ edition.workspace = true
 description = "OIDC support for the authkestra framework"
 repository.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
+keywords = ["oidc", "openid", "oauth2", "authentication", "client"]
+categories = ["authentication", "web-programming"]
 readme = "README.md"
 
 [dependencies]
